@@ -82,6 +82,7 @@ from . import concepts
 from . import facts as facts_module
 from . import questions as register
 from . import sql_evidence
+from . import routes as routing
 from .extract import _passed_through, analyse_request, decode
 from .translate import OMOP_SCHEMA
 from .vocabulary import not_fully_read
@@ -111,12 +112,35 @@ STAGE = {"table": "A", "column": "A", "relationship": "A", "filter": "A", "codes
 # clinical lead approves it. The rows reused from the register keep the register's own wording.
 WORDING = {
     "table": {
-        "question": "The steps behind this query read the table {table}, and whether the real database holds it is not yet known.",
+        "question": "The steps behind this query read the table {table}, which the catalogue lists, and the data team's SQL shows whether the team reads it in the same way.",
         "decides": "Whether the shadow database can build {table}, and so whether it can simulate the query at all.",
         "evidence_needed": "The analytics team supplies a catalogue export that lists {table}, and sample queries from the data team that read it.",
         "who": "analytics team", "mechanism": "catalogue export"},
+    # A table or column that the steps read and the catalogue does not hold. The catalogue is the evidence, so the
+    # item asks for no evidence about the name itself: the step needs another route.
+    "table-absent": {
+        "question": "The steps behind this query read the table {table}, which the catalogue does not hold.",
+        "decides": "Whether the conversion can make, at this site, the rows of the steps that read {table}.",
+        "evidence_needed": "The person who keeps the conversion gives each step that reads {table} an alternative that reads only tables that the catalogue holds, or, if the site holds the same data under another name, writes that name into the step.",
+        "who": "clinical lead", "mechanism": "a decision"},
+    "column-absent": {
+        "question": "The steps behind this query read the column {column}, which the catalogue does not hold.",
+        "decides": "Whether the conversion can fill, at this site, what the steps take from {column}.",
+        "evidence_needed": "The person who keeps the conversion gives each step that reads {column} an alternative that reads only columns that the catalogue holds, or, if the site holds the same data under another name, writes that name into the step.",
+        "who": "clinical lead", "mechanism": "a decision"},
+    # A step that gave way to one of its alternatives, because the catalogue does not hold what the step reads.
+    "route": {
+        "question": "The route that the conversion takes in place of {step} depends on what the catalogue holds.",
+        "decides": "Which tables and columns the answer rests on at this site.",
+        "evidence_needed": "The catalogue settles the route, so nothing more is needed. If the site holds {missing} under another name, the person who keeps the conversion writes that name into {step}.",
+        "who": "clinical lead", "mechanism": "catalogue export"},
+    "route-effect": {
+        "question": "The route that the conversion takes in place of {step} depends on what the catalogue holds, and the route that it takes here changes the answer.",
+        "decides": "Whether the answer can stand with the change that the route makes.",
+        "evidence_needed": "The clinical lead decides whether the answer can stand with this change, or names the column that the site uses for the same purpose, so that the step can read it.",
+        "who": "clinical lead", "mechanism": "a decision"},
     "column": {
-        "question": "The steps behind this query read the column {column}, and whether the real database holds it is not yet known.",
+        "question": "The steps behind this query read the column {column}, which the catalogue lists, and the data team's SQL shows whether the team reads it in the same way.",
         "decides": "Whether the shadow database can fill {column}, and so whether it can simulate the query at all.",
         "evidence_needed": "The analytics team supplies a catalogue export that lists {column}, and sample queries from the data team that use it.",
         "who": "analytics team", "mechanism": "catalogue export"},
@@ -170,6 +194,8 @@ WORDING = {
     "in_hand": {
         "table_listed": "The catalogue lists {table}.",
         "table_missing": "The catalogue does not list {table}.",
+        "route_taken": "Schemalyser uses {chosen} in place of {step}, because the catalogue does not hold {missing}.",
+        "route_passed": "Schemalyser passed over {alternative}, because the catalogue does not hold {missing} either.",
         "column_listed": "The catalogue lists {column}.",
         "column_missing": "The catalogue does not list {column}.",
         "used_none": "None of the {total} sample queries uses it.",
@@ -266,6 +292,9 @@ WORDING = {
     "item": {
         "table": "the table {table}",
         "column": "the column {column}",
+        "table-absent": "the table {table}, which the catalogue does not hold",
+        "column-absent": "the column {column}, which the catalogue does not hold",
+        "route-effect": "the change that the route of {chosen} makes to the answer",
         "relationship": "the join of {left} to {right}",
         "codes-concept": "a mapping row for {concept_named} in {field}",
         "codes-vocabulary": "the mapping rows under {vocabulary}",
@@ -311,7 +340,8 @@ WORDING = {
         "death_share": "The query counts the rows of {table} and the empty values of {column}, so that the clinical lead can work out the share of children who have a date of death.",
         "sampled": "Because {tables} holds more than {limit} rows, the query reads a sample of its pages and scales each count up to the whole table.",
         "waiting": "Schemalyser will show the query for this item once the check results give the size of {tables}, because it offers no query on a table whose size it does not know. The table sizes query at the head of this checklist gives it.",
-        "count": "SQL Server keeps no record of the size of {tables}, as for a view, so the query given here counts its rows and reads the whole of it. Once its result is in, Schemalyser will show the query that answers this item.",
+        "count": "SQL Server keeps no record of the size of {tables}, as for a view, so the query given here counts its rows, up to just past {limit}. Once its result is in, Schemalyser will show the query that answers this item.",
+        "unsampled": "Schemalyser offers no query for this item, because {tables} holds more than {limit} rows and SQL Server keeps no record of its size, as for a view, so a query cannot read a sample of it. The question for a colleague, where there is one, can settle the item instead.",
         "large": "Schemalyser offers no query for this item, because the count needs every row of {tables}, which holds more than {limit} rows. The whole check script still counts a table of up to {script_limit} rows, if the analytics team can run it when the server is quiet.",
         # The plain queries of the core profile, which the central OMOP team runs.
         "profile_core": "The query reads from SQL Server's own records whether the core holds {field}, and with which type, without reading any table.",
@@ -1256,7 +1286,7 @@ def _source_rows(steps, analysis, evidence, checks, confirmed, versions=None):
                          [ih["table_listed"].format(table=table),
                           _seen(earlier) if earlier else _counted("used", used, evidence.total)], table=table))
     for key, table in sorted(missing_tables.items()):
-        rows.append(_row(f"table-{table}", "table", True, "table", "open", "a guess",
+        rows.append(_row(f"table-{table}", "table", True, "table-absent", "open", "catalogue export",
                          [ih["table_missing"].format(table=table)], table=table))
 
     columns = sorted({(f[1], f[2]) for f in found if f[0] == "column"})
@@ -1269,7 +1299,7 @@ def _source_rows(steps, analysis, evidence, checks, confirmed, versions=None):
                          [ih["column_listed"].format(column=name),
                           _seen(earlier) if earlier else _counted("used", used, evidence.total)], column=name))
     for key, name in sorted(missing_columns.items()):
-        rows.append(_row(f"column-{name}", "column", True, "column", "open", "a guess",
+        rows.append(_row(f"column-{name}", "column", True, "column-absent", "open", "catalogue export",
                          [ih["column_missing"].format(column=name)], column=name))
 
     # The joins, as unordered pairs. A join of a column to itself, which arises where a key passes
@@ -1283,7 +1313,7 @@ def _source_rows(steps, analysis, evidence, checks, confirmed, versions=None):
     for step in steps:
         for pair in made.get(step.file, {}):
             makers.setdefault(pair, []).append(step.file)
-    weighed = _versions(steps, made, evidence)
+    weighed = _versions(steps, made, evidence, catalogue)
     if versions is not None:
         versions.update(weighed)
     for pair, items in sorted(joins.items(), key=lambda item: sorted(item[0])):
@@ -1350,6 +1380,33 @@ def _source_rows(steps, analysis, evidence, checks, confirmed, versions=None):
     return rows
 
 
+def _route_rows(rows, conversion, traced):
+    """An item for each step behind the query that gave way to an alternative, and the sentences that say which route and why.
+
+    The choices are those that routes.apply recorded in the conversion folder. An alternative whose author
+    says that it changes the answer is partly answered, with that sentence, for the clinical lead to accept.
+    """
+    ih = WORDING["in_hand"]
+    files = {s.file for s in traced["all"]}
+    said = []
+    for choice in routing.chosen(conversion):
+        if choice["chosen"] not in files:
+            continue
+        missing = _join(choice["missing"])
+        sentence = ih["route_taken"].format(chosen=choice["chosen"], step=choice["step"], missing=missing)
+        in_hand = [sentence] + [ih["route_passed"].format(alternative=t["file"], missing=_join(t["missing"]))
+                                for t in choice.get("tried") or [] if t.get("missing")]
+        effect = choice.get("effect") or ""
+        if effect:
+            in_hand.append(effect)
+        row = _row(f"route-{choice['step']}", "meaning", False, "route-effect" if effect else "route",
+                   "partly" if effect else "answered", "catalogue export", in_hand,
+                   step=choice["step"], chosen=choice["chosen"], missing=missing)
+        rows.append(row)
+        said.append(" ".join([sentence, effect]).strip())
+    return said
+
+
 def _made_joins(steps, catalogue, held_back, dialect):
     """The joins that each step adds to those of the steps before it, and that each of its alternatives would add in its place.
 
@@ -1403,7 +1460,7 @@ def _support(joins, evidence):
     return sum(made.values()), len(made), sum(1 for pair, inner in joins.items() if inner and not made[pair])
 
 
-def _versions(steps, made, evidence):
+def _versions(steps, made, evidence, catalogue=None):
     """For each step that offers alternatives, how far the sample queries support it and each alternative, and which is best.
 
     Returns {file: {"written": (made, total, open inner), "alternatives": [(file, (made, total, open inner))],
@@ -1417,7 +1474,11 @@ def _versions(steps, made, evidence):
         if not step.alternatives or step.file not in made:
             continue
         written = _support(made[step.file], evidence)
-        others = [(alt.file, _support(made[alt.file], evidence)) for alt in step.alternatives if alt.file in made]
+        # An alternative that reads what the catalogue does not hold is no choice at this site, so it is not weighed.
+        others = [(alt.file, _support(made[alt.file], evidence)) for alt in step.alternatives
+                  if alt.file in made and not (catalogue is not None and routing.missing(alt.sql, catalogue))]
+        if not others:
+            continue
         better = sorted((rank(support), file) for file, support in others if rank(support) < rank(written))
         found[step.file] = {"written": written, "alternatives": others, "best": better[0][1] if better else None,
                             "joins": {file: made[file] for file in [step.file] + [f for f, _ in others]}}
@@ -2077,6 +2138,9 @@ def _stages(rows, dependencies):
     for row in rows:
         names = row.get("_names") or {}
         kind = row["kind"]
+        if row["question_id"].startswith("route-"):
+            row["phase"] = "source" if names.get("chosen") in dependencies["steps"] else "unneeded"
+            continue
         if kind in ("core", "meaning", "timing") and not row["question_id"].startswith("step-"):
             row["phase"] = "release"
             continue
@@ -2308,7 +2372,9 @@ def _queries(rows, world, analysis, traced, checks, extra_sizes=(), planned=None
             sentences.append(q["sampled"].format(tables=_join(states["sampled"][:1]), limit=limit))
         if "count" in states:
             counted = [t for t in states["count"] if checking.size_of(t, checks) is None]
-            sentences.append(q["count"].format(tables=_join(counted)))
+            sentences.append(q["count"].format(tables=_join(counted), limit=limit))
+        if "unsampled" in states:
+            sentences.append(q["unsampled"].format(tables=_join(states["unsampled"][:1]), limit=limit))
         if "sizes" in states:
             waiting = [t for t in states["sizes"] if checking.size_of(t, checks) is None]
             sentences.append(q["waiting"].format(tables=_join(waiting)))
@@ -2323,7 +2389,8 @@ def _queries(rows, world, analysis, traced, checks, extra_sizes=(), planned=None
         row["query"] = "\n\n".join(listed[key]["sql"] for key in row["_queries"])
     sizes = None
     unsized += [t for t in extra_sizes if analysis.catalogue.table(t) is not None
-                and checking.size_of(t, checks) is None and t not in unsized]
+                and checking.size_of(t, checks) is None and not checking.unrecorded(t, checks)
+                and not checking.too_large(t, checks) and t not in unsized]
     unsized = [analysis.catalogue.table(t).name for t in unsized]
     if unsized:
         sizes = {"id": "sizes", "sql": checking.size_query(catalogue, unsized), "reason": q["sizes"], "tables": unsized}
@@ -2373,6 +2440,7 @@ def checklist(world, conversion, target_sql, checks_csv=None, profile_text=None,
     rows += _codes_rows(target, traced, analysis, checks)
     rows += _meaning_and_timing(target, traced, analysis, checks)
     rows += _core_rows(target, traced, conversion, profile_text)
+    traced["routes"] = _route_rows(rows, conversion, traced)
     for row in rows:
         row["intent"] = _intent(row, intents)
         row.setdefault("route", "")
@@ -2404,7 +2472,8 @@ def checklist(world, conversion, target_sql, checks_csv=None, profile_text=None,
         _stages(rows, traced["dependencies"])
     else:
         for row in rows:
-            row["phase"] = "release" if row["kind"] in ("core", "meaning", "timing") else "source"
+            row["phase"] = "release" if row["kind"] in ("core", "meaning", "timing") \
+                and not row["question_id"].startswith("route-") else "source"
     traced["name"] = name
     traced["questions"] = _questions(rows, traced, analysis.catalogue)
     return rows, traced
@@ -2452,6 +2521,8 @@ def readiness(rows, traced, scenarios=None):
     if traced["possible"]:
         possible = [s.file for s, _, _ in traced["possible"]]
         lines.append(r["possible_steps"].format(count=_n(len(possible), "further step"), steps=_join(possible)))
+    # The routes that the catalogue settled, where a step gave way to one of its alternatives.
+    lines += traced.get("routes") or []
     lines.append("")
     blocking = [row for row in rows if row["blocking"] == "yes"]
     counts = Counter(row["status"] for row in blocking)

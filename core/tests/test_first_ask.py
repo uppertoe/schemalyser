@@ -109,6 +109,12 @@ def test_the_result_becomes_the_catalogue_and_the_sizes():
     for bad in ("", "words", "dbo\tVISIT\tVISIT_KEY\n"):
         with pytest.raises(first_ask.FirstAskError):
             first_ask.read(bad, rules)
+    # A table whose size comes back empty, as for a view or an account that cannot read the server's records, is
+    # recorded as unrecorded at once, so that the table sizes query is not asked for it.
+    _, unsized, facts = first_ask.read(_result(["THEATRE_CASE", "VISIT"], {"VISIT": 520}), rules)
+    found = Checks.from_csv(unsized, catalogue, rules)
+    assert found.rows == {"VISIT": 520} and found.skipped == [("rows", "THEATRE_CASE", "", "unrecorded")]
+    assert facts["sized"] == 1
 
 
 def test_the_first_query_is_never_written_into_any_output(monkeypatch, tmp_path):

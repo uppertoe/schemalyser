@@ -18,7 +18,7 @@ The help that I need comes in short steps, and I will send each one only after t
 
 Each query is a single SELECT that writes, creates and changes nothing. It reads WITH (NOLOCK), which means that it takes no row locks, but it holds a schema lock while it runs, so please do not run it during the nightly load. Each counting query rounds its counts down to the nearest ten and leaves out anything that fewer than ten rows hold, and a query on a large table reads a sample of about five million rows, so its counts are estimates. Each query has a comment at the top that says what it does, so that you can read it before you run it.
 
-You would paste each result back to me. I put the results into a page that runs in my browser on a hospital computer with the network switched off. The results, and the facts that you confirm, are kept in a repository that the hospital controls, [the repository].
+You would paste each result back to me. I put the results into a page that runs in my browser on a hospital computer, with that browser tab taken offline so that the page cannot send anything anywhere. The results, and the facts that you confirm, are kept in a repository that the hospital controls, [the repository].
 
 The queries are written by a tool that I built with the help of an AI model, [the model and the service]. These controls can be checked: the model worked only from invented examples and never saw any hospital data, any of your team's SQL or any name from our database; the tool runs offline; and its code is open to read. The use of AI in this work follows [the hospital's AI policy].
 
@@ -36,7 +36,7 @@ export const strings = {
 
   steps: [
     'Export the catalogue from Clarity, or start without it.',
-    'Disconnect this computer from the network.',
+    'Take this page offline.',
     'Choose the state and the folder of requests.',
     'Work through the checklist for each target query.',
     'Read the inventory.',
@@ -50,20 +50,41 @@ export const strings = {
   copyQuery: 'Copy the query',
   skipCatalogue: 'If you already have the catalogue file, you can move on to the next step.',
 
-  connected: 'This computer is connected to a network.',
-  isOffline: 'This computer is offline.',
+  connected: 'This page is online.',
+  isOffline: 'This page is offline.',
 
   loading:
-    'Schemalyser is loading its analysis engine. Please keep this computer connected to the network until loading has finished.',
+    'Schemalyser is loading its analysis engine. Please keep the page online until loading has finished.',
   loadFailed:
-    'Schemalyser has not been able to load its analysis engine. If this computer is connected to the network, you can reload the page to try again.',
+    'Schemalyser has not been able to load its analysis engine. If the page is online, you can reload it to try again.',
   policyFailed:
     'Schemalyser cannot confirm that this browser will keep your files on this computer, so it has not started. Please use Chrome, Edge or Firefox.',
   loaded:
-    'Schemalyser has finished loading. Please disconnect this computer from the network now, either by turning off Wi-Fi or by unplugging the network cable.',
-  noFilesWhileConnected: 'Schemalyser will not accept any files while this computer is connected to a network.',
+    'Schemalyser has finished loading. Please take this page offline now. You can take only this browser tab offline, so that the rest of the computer, including your SQL window, stays connected, or you can disconnect the whole computer.',
+  policyHeld:
+    "While it loaded, Schemalyser tried on purpose to reach two outside addresses, policy-check.invalid and api.github.com, to confirm that this browser stops the page from sending anything elsewhere. The browser refused both, as it should, and the two refusals appear in the browser's console as messages about the Content Security Policy. If the browser had not refused them, Schemalyser would have stopped and said so.",
+  offlineHow: [
+    'In Chrome or Edge, press F12 to open the developer tools, choose the Network panel, open the throttling menu, which reads No throttling, and choose Offline. Only this tab goes offline. Leave the developer tools open while you use the page, because the tab goes back online when they close.',
+    'In Firefox, open the File menu and choose Work Offline. If you cannot see the menu bar, press the Alt key to show it. Firefox then takes all of its own tabs offline, but the rest of the computer, including your SQL window, stays connected.',
+    'To disconnect the whole computer instead, turn off Wi-Fi or unplug the network cable. Your SQL window then cannot reach the database until you reconnect.',
+    'The page must stay offline for as long as you use it. If it goes back online while it holds your files, Schemalyser locks the page, stops its analysis engine and discards what it has read. The checklist stays on the page. To carry on, choose Begin a new analysis, wait for Schemalyser to load again, take the page offline again and choose the files again. If you saved the state with the button in the checklist, choose the saved files with the state folder, and nothing that you pasted or answered is lost.',
+  ],
+  noFilesWhileConnected: 'Schemalyser will not accept any files while this page is online.',
+  exampleHeading: 'Try the invented example',
+  exampleWhat:
+    'If you would like to see the whole checklist working before you bring any files, Schemalyser can load an invented example: a catalogue, site rules, check results, a core profile, a conversion, four target queries and fifteen requests, all made up for testing. None of it comes from a hospital. Load it while the page is online, then take the page offline and analyse it in the next step.',
+  exampleLoad: 'Load the invented example',
+  exampleLoading: 'Schemalyser is loading the invented example.',
+  exampleLoaded: (state: number, requests: number) =>
+    `Schemalyser has loaded the invented example, which holds ${state} state ${files(state)} and ${requests} request ${files(requests)}. Take the page offline, then choose Analyse the requests in the next step.`,
+  exampleFailed:
+    'Schemalyser could not load the invented example. If the page is online, you can try again.',
+  exampleChosen:
+    'The invented example is loaded in place of your own files. Everything in it is made up, and none of it comes from a hospital. If you choose any file of your own, Schemalyser discards the example and anything worked out from it, and starts clean.',
+  exampleBanner:
+    'This checklist comes from the invented example. Its tables, codes, requests and results are made up, and none of them comes from a hospital.',
 
-  offline: 'This computer is offline. You can now choose the files.',
+  offline: 'This page is offline. You can now choose the files.',
   chooseState: 'Choose the state folder, if you have one:',
   stateNote:
     'The state folder holds catalogue.csv, and may also hold site-rules.json, checks.csv, a folder named conversion, target queries in a folder named targets, core-profile.csv and boundary.json. A file that you choose separately below takes the place of the same file in the folder.',
@@ -207,7 +228,11 @@ export const strings = {
   firstPasteLabel: 'The result of the first query, copied from the results grid with its headers:',
   firstRead: 'Read the result',
   firstReadDone: (tables: number, columns: number, sized: number) =>
-    `Schemalyser has read ${columns} columns of ${tables} tables, and the sizes of ${sized} of them. You can now analyse the requests.`,
+    `Schemalyser has read ${columns} columns of ${tables} tables, and the sizes of ${sized} of them.${
+      sized < tables
+        ? ` SQL Server gave no size for the other ${tables - sized}, as happens for a view or where an account cannot read the server's own records, so Schemalyser will count each of those tables only up to 10,000,000 rows when a query needs its size.`
+        : ''
+    } You can now analyse the requests.`,
   firstUnreadable:
     'Schemalyser could not read the pasted text as the result of the first query. Each row needs the ten columns that the query returns, from TABLE_SCHEMA to TABLE_ROWS.',
   saveState: 'Save the catalogue, the check results and the confirmed facts',
@@ -238,6 +263,8 @@ export const strings = {
     'The answer to this question does not depend on these items, so they do not count against answering it from the source database. The OMOP release still needs them.',
 
   // The end of the first phase: the specification, the check of a hand-written query, and the generated query.
+  auditWaiting:
+    'Schemalyser will offer the specification and the audit query once the question is ready to be answered from the source database, so that nobody writes or runs the audit query on an item that is still open.',
   specHeading: 'The specification of the audit query',
   specWhat:
     'This page is for a person who writes the audit query against the source database himself. It names source tables and local codes, so it is for use inside the hospital only.',
@@ -319,14 +346,14 @@ export const strings = {
   clear: 'Clear everything',
 
   reconnected:
-    'This computer has reconnected to a network. Schemalyser has stopped its analysis engine and discarded the contents of the requests. You can still download the inventory, or you can clear it.',
+    'This page has gone back online. Schemalyser has stopped its analysis engine and discarded the contents of the requests. You can still download the inventory, or you can clear it. To carry on, choose Begin a new analysis, wait for Schemalyser to load again, take the page offline again and choose the files again, with the state that you saved if you saved one.',
   reconnectedNoInventory:
-    'This computer has reconnected to a network. Schemalyser has stopped its analysis engine and discarded the contents of the requests. Schemalyser had not finished the inventory, so there is nothing to download.',
+    'This page has gone back online. Schemalyser has stopped its analysis engine and discarded the contents of the requests. Schemalyser had not finished the inventory, so there is nothing to download. To carry on, reload the page while it is online, take it offline again and choose the files again.',
 
   safeguardsHeading: 'What Schemalyser does with your files',
   safeguards: [
     'Schemalyser reads the files on this computer. It does not send them, or anything taken from them, to any other computer.',
-    'Schemalyser will not accept files while this computer is connected to a network, and it stops if the network returns.',
+    'Schemalyser will not accept files while this page is online, and it stops if the page goes back online.',
     'Schemalyser writes only names that it finds in your catalogue and your conversion, together with counts. It does not write comments, values, aliases or the names of request files.',
     'Schemalyser shows you everything it has written before you download it.',
   ],
@@ -415,7 +442,7 @@ export const githubStrings = {
   progress: 'Schemalyser is fetching the files from GitHub.',
   fetched: (count: number, repository: string, commit: string) =>
     `Schemalyser has fetched ${count} ${files(count)} from ${repository} at commit ${commit}.`,
-  closed: 'Schemalyser has closed its connection to GitHub. Disconnect this computer from the network to continue.',
+  closed: 'Schemalyser has closed its connection to GitHub. Take this page offline to continue.',
   skipped: (count: number) => `Schemalyser left out ${count} ${files(count)} that are larger than 2 MB.`,
   tooMany:
     'Schemalyser stopped at 5,000 files, and the repository holds more. If the requests are in one folder, fetch from a repository that holds only that folder.',
@@ -425,7 +452,7 @@ export const githubStrings = {
     `GitHub did not accept the token for ${repository}. If the token has expired or cannot read this repository, create a new token and fetch again.`,
   notFound: (repository: string, ref: string) =>
     `GitHub could not find ${repository} at ${ref}. If the name or the branch is different, correct it and fetch again.`,
-  offline: 'Schemalyser could not reach GitHub. If this computer is offline, reconnect it and fetch again.',
+  offline: 'Schemalyser could not reach GitHub. If the page is offline, bring it back online and fetch again.',
   provenance: (repository: string, commit: string) => `These results come from ${repository} at commit ${commit}.`,
 
   // Written for this feature beyond the first list of strings, and approved with it.

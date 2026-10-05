@@ -171,6 +171,10 @@ def read(text, rules, earlier_checks=None):
     writer = csv.writer(checks_out, lineterminator="\n")
     writer.writerow(CHECKS_LAYOUT)
     writer.writerows(["rows", table, "", "", "", count, "", "", ""] for table, count in sorted(sizes.items()))
+    # A table whose size came back empty has no record of its size that this account can read, as for a view, so
+    # the table sizes query would add nothing: it is recorded as unrecorded at once, and counted only up to a limit.
+    unsized = sorted({entry.name for entry in catalogue.tables()} - set(sizes))
+    writer.writerows(["skipped", table, "", "rows", "unrecorded", "", "", "", ""] for table in unsized)
     try:
         checks = Checks.from_csv(checks_out.getvalue(), catalogue, rules)
         if earlier_checks:

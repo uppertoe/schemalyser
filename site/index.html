@@ -7,9 +7,10 @@
          blob so that it inherits this policy. -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; worker-src blob:; base-uri 'none'; form-action 'none'"
+      content="default-src 'none'; img-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; worker-src blob:; base-uri 'none'; form-action 'none'"
     />
     <meta name="referrer" content="no-referrer" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <title>Schemalyser</title>
     <link rel="stylesheet" href="./src/style.css" />
   </head>
@@ -40,8 +41,17 @@
               <p id="t-load-failed" class="status problem" hidden></p>
               <div id="b-loaded" hidden>
                 <p id="t-loaded" class="status"></p>
+                <ul id="t-offline-how" class="offline-how"></ul>
+                <p id="t-policy-held" class="note"></p>
                 <p id="t-no-files"></p>
               </div>
+              <!-- The invented example, served with the page, for a first look without any file of one's own. -->
+              <section id="b-example" class="add" hidden>
+                <h3 id="h-example"></h3>
+                <p id="t-example-what"></p>
+                <button type="button" id="example-load" class="secondary"></button>
+                <p id="t-example-status" class="status" hidden></p>
+              </section>
               <p id="t-reconnected" class="status problem" hidden></p>
               <!-- The fetch itself runs in a separate window (github.html), so this page's
                    policy never allows GitHub. -->
@@ -86,6 +96,7 @@
             <h2 id="h-step-3"></h2>
             <div class="body">
               <p id="t-offline" class="status good"></p>
+              <p id="t-example-chosen" class="status example" hidden></p>
               <p id="t-kept" class="note" hidden></p>
               <div class="field">
                 <label for="state-folder" id="l-state"></label>
@@ -150,6 +161,7 @@
                 <progress id="progress-bar" max="1" value="0"></progress>
               </div>
               <div id="checklist" hidden>
+                <p id="t-example-banner" class="status example" hidden></p>
                 <!-- The loop: more requests are added here and analysed again, without starting over. -->
                 <section id="b-add" class="add">
                   <h3 id="h-add"></h3>

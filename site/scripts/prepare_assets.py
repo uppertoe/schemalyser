@@ -2,6 +2,7 @@
 
     public/pyodide/   the Pyodide runtime, copied from node_modules
     public/py/        the sqlglot wheel and the schemalyser core as a zip
+    public/example/   the invented example, taken from fixtures/, with manifest.json listing its files
 """
 import hashlib
 import json
@@ -68,3 +69,24 @@ with zipfile.ZipFile(py_out / "schemalyser.zip", "w", zipfile.ZIP_DEFLATED) as a
         archive.writestr(info, path.read_bytes())
 
 print("assets prepared in", SITE / "public")
+
+# The invented example: the invented world's state and requests, exactly as the tests use them, so that a person can
+# see the whole checklist working without bringing any file. Only the files that the page reads are copied.
+FIXTURES = SITE.parent / "fixtures"
+example_out = SITE / "public" / "example"
+shutil.rmtree(example_out, ignore_errors=True)
+copies = {"state/catalogue.csv": FIXTURES / "invented-catalogue.csv",
+          "state/site-rules.json": FIXTURES / "invented-site-rules.json",
+          "state/checks.csv": FIXTURES / "invented-checks.csv",
+          "state/core-profile.csv": FIXTURES / "profile" / "invented-core-profile.csv"}
+for folder, prefix in ((FIXTURES / "conversion", "state/conversion"), (FIXTURES / "targets", "state/targets"),
+                       (FIXTURES / "requests", "requests")):
+    for path in sorted(folder.rglob("*")):
+        if path.is_file() and "__pycache__" not in path.parts and not path.name.startswith("."):
+            copies[f"{prefix}/{path.relative_to(folder).as_posix()}"] = path
+for published, source in copies.items():
+    (example_out / published).parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, example_out / published)
+manifest = {"state": sorted(p for p in copies if p.startswith("state/")),
+            "requests": sorted(p for p in copies if p.startswith("requests/"))}
+(example_out / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n")

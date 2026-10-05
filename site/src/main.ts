@@ -62,6 +62,8 @@ interface Target {
   stageVerdicts?: string[];
   questions?: string;
   specification?: string;
+  // The routes that the catalogue settled, where a step gave way to one of its alternatives, one sentence each.
+  routes?: string[];
 }
 
 interface Boundary {
@@ -167,6 +169,10 @@ const [requestsRepository, requestsRef, stateRepository, stateRef, tokenInput] =
 let fetchWindow: Window | null = null;
 let pendingRequest: FetchRequest | null = null;
 let fetched: Fetched | null = null;
+// The invented example, fetched from this site while the page is online, and whether the checklist on the page came from it.
+let example: { requests: { path: string; file: File }[]; state: Map<string, File> } | null = null;
+let exampleLoading = false;
+let fromExample = false;
 
 function text(id: string, value: string) {
   $(id).textContent = value;
@@ -243,6 +249,10 @@ function show() {
   $('b-first').hidden = !(state === 'ready' && !online && chosen.requests.length && (!chosen.catalogue || firstCatalogue));
   $<HTMLButtonElement>('first-write').disabled = !worker || online;
   $('b-save-state').hidden = !(state === 'review' && (checksText || profileText));
+  $('b-example').hidden = !(state === 'ready' && example === null);
+  $<HTMLButtonElement>('example-load').disabled = exampleLoading;
+  $('t-example-chosen').hidden = !(example !== null && state === 'ready' && !online);
+  $('t-example-banner').hidden = !fromExample;
   $('t-save-state').hidden = $('b-save-state').hidden;
 
   showGitHub(online);
@@ -279,7 +289,7 @@ function stateFromFolder() {
 // The state, merged: a fetched file gives way to the state folder, and both give way to a file
 // chosen on its own.
 function stateFiles() {
-  const merged = new Map<string, File>(fetched?.state ?? []);
+  const merged = new Map<string, File>(fetched?.state ?? example?.state ?? []);
   // The catalogue and the sizes from the first query stand in for files that the state does not hold.
   if (firstCatalogue && !merged.has('catalogue.csv')) merged.set('catalogue.csv', firstCatalogue);
   for (const [path, file] of stateFromFolder()) merged.set(path, file);
@@ -301,7 +311,7 @@ function stateFiles() {
 function requestFiles() {
   const fromFolder = sqlFiles();
   const merged = new Map<string, File>();
-  for (const { path, file } of fromFolder.length ? fromFolder : (fetched?.requests ?? [])) merged.set(path, file);
+  for (const { path, file } of fromFolder.length ? fromFolder : (fetched?.requests ?? example?.requests ?? [])) merged.set(path, file);
   for (const { path, file } of added) merged.set(path, file);
   return [...merged].map(([path, file]) => ({ path, file })).sort(byPath);
 }
@@ -370,6 +380,9 @@ function resetInputs() {
   addedSinceAnalysis = 0;
   hideErrors();
   discardFetched();
+  example = null;
+  fromExample = false;
+  $('t-example-status').hidden = true;
 }
 
 // Lets go of the fetched files, in the same way as the file choosers are emptied.
@@ -662,6 +675,11 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
   const sourceReady = first.open === 0 && target.steps;
   section.append(el('p', (sinceAnalysis ? strings.tallySinceAnalysis : strings.tally)(first.answered, first.total, before?.answered), 'tally'));
   section.append(el('p', target.stageVerdicts?.[0] ?? target.verdict, sourceReady ? 'status good stage-verdict' : 'status stage-verdict'));
+  if (target.routes?.length) {
+    const routes = el('div', undefined, 'routes');
+    routes.append(...target.routes.map((sentence) => el('p', sentence, 'note')));
+    section.append(routes);
+  }
   // The questions that a colleague can answer from knowledge come first, as one list to send.
   if (target.questions) {
     const questions = textBlock('questions', strings.questionsHeading, strings.questionsWhat, target.questions, strings.questionsCopy);
@@ -745,14 +763,17 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
     section.append(folded);
   }
   // The first phase ends with the specification, the check of a hand-written query, and the generated query.
-  if (target.specification) {
+  // They are offered only once the question is ready to be answered from the source database, so that nobody runs or
+  // writes the audit query on a join or a code that is still open, or that a person has said is wrong.
+  if (!sourceReady && (target.specification || target.draft)) section.append(el('p', strings.auditWaiting, 'note audit-waiting'));
+  if (sourceReady && target.specification) {
     section.append(textBlock('specification', strings.specHeading, strings.specWhat, target.specification, strings.specCopy,
       strings.specSave, `${target.name}_specification.txt`));
     const check = el('div', undefined, 'sizes check');
     check.append(el('h4', strings.checkHeading), el('p', strings.checkWhat, 'sizes-reason'));
     section.append(check);
   }
-  if (target.draft) section.append(auditSection(target));
+  if (sourceReady && target.draft) section.append(auditSection(target));
 
   // Everything that only the later OMOP release needs, folded away under one heading.
   if (later.length || target.profile?.length) {
@@ -1063,12 +1084,63 @@ window.addEventListener('online', () => {
 });
 window.addEventListener('offline', show);
 
-for (const input of inputs) input.addEventListener('change', show);
+for (const input of inputs) input.addEventListener('change', () => {
+  // A file of one's own replaces the invented example, and nothing worked out from the example is kept.
+  if (input.files?.length) discardExample();
+  show();
+});
+
+function discardExample() {
+  if (example === null && !fromExample) return;
+  example = null;
+  $('t-example-status').hidden = true;
+  if (fromExample) {
+    worker?.postMessage({ type: 'clear' });
+    clearResult();
+    snapshot = null;
+    fromExample = false;
+    if (state === 'review') state = 'ready';
+  }
+}
+
+// The invented example is served with the page. Its list of files is fetched first, then each file, while the page is online.
+$('example-load').addEventListener('click', async () => {
+  if (exampleLoading || state !== 'ready') return;
+  exampleLoading = true;
+  const status = $('t-example-status');
+  status.hidden = false;
+  status.className = 'status';
+  text('t-example-status', strings.exampleLoading);
+  show();
+  try {
+    const base = new URL('./example/', location.href);
+    const listed = await fetch(new URL('manifest.json', base));
+    if (!listed.ok) throw new Error('manifest');
+    const manifest = (await listed.json()) as { state: string[]; requests: string[] };
+    const take = async (path: string) => {
+      const response = await fetch(new URL(path, base));
+      if (!response.ok) throw new Error('file');
+      return new File([await response.blob()], path.split('/').pop() ?? path);
+    };
+    const loaded = { requests: [] as { path: string; file: File }[], state: new Map<string, File>() };
+    for (const path of manifest.state) loaded.state.set(path.replace(/^state\//, ''), await take(path));
+    for (const path of manifest.requests) loaded.requests.push({ path: path.replace(/^requests\//, ''), file: await take(path) });
+    example = loaded;
+    status.className = 'status good';
+    text('t-example-status', strings.exampleLoaded(loaded.state.size, loaded.requests.length));
+  } catch {
+    status.className = 'status problem';
+    text('t-example-status', strings.exampleFailed);
+  }
+  exampleLoading = false;
+  show();
+});
 
 function startAnalysis() {
   const chosen = chosenFiles();
   if (!worker || navigator.onLine || !canAnalyse(chosen) || fetchWindow !== null) return;
   const { requests } = chosen;
+  fromExample = example !== null && !sqlFiles().length && !fetched && !stateFolder.files?.length && !catalogue.files?.length;
   const { lines, commits } = provenance(chosen);
   $('github-provenance').replaceChildren(...lines.map((line) => el('p', line)));
   $('github-provenance').hidden = lines.length === 0;
@@ -1373,6 +1445,12 @@ const fixed: Record<string, string> = {
   't-load-failed': strings.loadFailed,
   't-loaded': strings.loaded,
   't-no-files': strings.noFilesWhileConnected,
+  't-policy-held': strings.policyHeld,
+  'h-example': strings.exampleHeading,
+  't-example-what': strings.exampleWhat,
+  'example-load': strings.exampleLoad,
+  't-example-chosen': strings.exampleChosen,
+  't-example-banner': strings.exampleBanner,
   't-offline': strings.offline,
   't-kept': strings.keptForComparison,
   'l-state': strings.chooseState,
@@ -1474,6 +1552,7 @@ if (github) {
 }
 strings.steps.forEach((heading, i) => text(`h-step-${i + 1}`, heading));
 $('safeguards').replaceChildren(...strings.safeguards.map((sentence) => el('li', sentence)));
+$('t-offline-how').replaceChildren(...strings.offlineHow.map((sentence) => el('li', sentence)));
 
 // The query box is emptied when the page is left, so that the browser does not keep its contents.
 window.addEventListener('pagehide', () => {

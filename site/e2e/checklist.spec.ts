@@ -521,6 +521,30 @@ test('a state saved part of the way loads on a fresh page without the request fi
   await expect(fresh.locator('section.target[data-target="neonatal_low_mean_pressure"]')).toContainText("of the team's queries on");
 });
 
+test('the invented example loads before any file is chosen, is marked as invented, and gives way cleanly to real files', async ({ page, context, browserName }) => {
+  test.setTimeout(300_000);
+  await page.goto('./');
+  await expect(page.getByText(strings.loaded)).toBeVisible({ timeout: 120_000 });
+  // The page says how to take only this tab offline, and why two outside addresses were refused.
+  await expect(page.locator('#t-offline-how li')).toHaveCount(strings.offlineHow.length);
+  await expect(page.locator('#t-policy-held')).toHaveText(strings.policyHeld);
+  await page.locator('#example-load').click();
+  await expect(page.locator('#t-example-status')).toContainText('Schemalyser has loaded the invented example');
+  await setOnline(page, context, browserName, false);
+  await expect(page.locator('#t-example-chosen')).toHaveText(strings.exampleChosen);
+  await expect(page.locator('#analyse')).toBeEnabled();
+  await page.locator('#analyse').click();
+  await expect(page.locator('#checklists section.target')).toHaveCount(world.targets.length, { timeout: 120_000 });
+  await expect(page.locator('#t-example-banner')).toHaveText(strings.exampleBanner);
+  // The example's checklist is the command's own for the invented world.
+  await checkTargets(page, world.before);
+  // A file of one's own discards the example and everything worked out from it.
+  await page.locator('#catalogue').setInputFiles(fixtures + 'invented-catalogue.csv');
+  await expect(page.locator('#t-example-banner')).toBeHidden();
+  await expect(page.locator('#checklists section.target')).toHaveCount(0);
+  await expect(page.locator('#t-example-chosen')).toBeHidden();
+});
+
 test('without a conversion or target queries the page says what to supply to see a checklist', async ({ page, context, browserName }) => {
   await page.goto('./');
   await expect(page.getByText(strings.loaded)).toBeVisible({ timeout: 120_000 });

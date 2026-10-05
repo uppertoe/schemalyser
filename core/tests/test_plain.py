@@ -182,16 +182,24 @@ def test_a_table_of_unknown_size_gets_only_the_size_query_and_a_large_table_gets
     # A table at the limit is not large.
     assert checking.offer(column, catalogue, _sizes(OBS_READING=PLAIN_EXACT_ROWS))[0] == "exact"
     # Where the server keeps no record of the size, as for a view, the table is counted first, and the count
-    # query reads the whole of it.
+    # query reads it only up to just past the limit.
     unrecorded = Checks.from_pasted(f"skipped\tOBS_READING\tNULL\trows\t{UNRECORDED}\tNULL\tNULL\tNULL\tNULL\n",
                                     catalogue, analysis.rules)
     assert unrecorded.skipped == [("rows", "OBS_READING", "", UNRECORDED)]
     for check in (values, column):
         state, offered = checking.offer(check, catalogue, unrecorded)
-        assert state == "count" and offered == [(Check("rows", "OBS_READING"), Check("rows", "OBS_READING").plain(catalogue))]
+        assert state == "count" and offered == [(Check("rows", "OBS_READING"), Check("rows", "OBS_READING").plain(catalogue, bounded=True))]
+        assert f"SELECT TOP ({PLAIN_EXACT_ROWS + 10}) 1 AS x" in offered[0][1]
     # Once the count is in, the check is offered by its size.
     counted = unrecorded.merged(_sizes(OBS_READING=640))
     assert counted.skipped == [] and checking.offer(values, catalogue, counted)[0] == "exact"
+    # A count that passes the limit comes back as skipped for its size, and no query then reads the table, because a
+    # view cannot be read in part.
+    over = unrecorded.merged(Checks.from_pasted("skipped\tOBS_READING\tNULL\trows\tsize\tNULL\tNULL\tNULL\tNULL\n",
+                                                catalogue, analysis.rules))
+    assert checking.too_large("OBS_READING", over) and not checking.unrecorded("OBS_READING", over)
+    for check in (values, column):
+        assert checking.offer(check, catalogue, over) == ("unsampled", [])
 
 
 # Pasted results.

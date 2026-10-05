@@ -417,8 +417,17 @@ def _produce(state, requests, commits, state_left_out):
         raise BoundaryError(WORDING["bad_evidence"]) from None
 
     # The conversion is read before the profile, because the profile's reader checks its joins against the conversion.
+    # A step that reads what the catalogue does not hold gives way to an alternative that reads only what it does. The
+    # run reads a copy of the state, so the choice is written into the copy and every later reader follows it.
     steps, unread = [], []
     if conversion is not None:
+        from . import routes
+        try:
+            choices = routes.choose(conversion, Catalogue.from_csv(world.catalogue_text()))
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            choices = []
+        if choices:
+            routes.apply(conversion, choices)
         try:
             steps = questions._steps(conversion)
             if not steps or not all(isinstance(step.get("table"), str) for step, _ in steps):
@@ -494,6 +503,7 @@ def _produce(state, requests, commits, state_left_out):
                         "readiness": outputs[f"targets/{name}/readiness.txt"], "queries": traced["queries"],
                         "draft": traced.get("draft"), "draft_restructured": traced.get("draft_restructured", False),
                         "questions": traced.get("questions") or "", "specification": spec,
+                        "routes": traced.get("routes") or [],
                         "stages": {"source": target.stage_counts(rows, "source"), "release": target.stage_counts(rows)}})
 
     facts = {

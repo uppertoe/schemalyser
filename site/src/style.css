@@ -9,7 +9,7 @@
   --good: #1c6b49;
   --caution: #8a5a00;
   --problem: #a23b17;
-  --sans: 'Avenir Next', 'Segoe UI Variable Text', 'Segoe UI', Seravek, 'Gill Sans Nova', Ubuntu, Calibri, sans-serif;
+  --sans: 'Avenir Next', 'Segoe UI Variable Text', 'Segoe UI', 'Gill Sans Nova', Ubuntu, Calibri, sans-serif;
   --mono: 'Cascadia Mono', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
   color-scheme: light dark;
 }
@@ -184,6 +184,20 @@ p {
 
 .status.problem {
   border-left-color: var(--problem);
+}
+
+/* The invented example is marked plainly wherever it is in use. */
+.status.example {
+  border-left-color: var(--problem);
+  font-weight: 600;
+}
+
+.offline-how li {
+  margin-bottom: 0.5rem;
+}
+
+.routes p {
+  margin: 0.35rem 0;
 }
 
 .note {

@@ -118,7 +118,7 @@ test('the page offers the GitHub section, and its own policy still never allows 
     metas.map((meta) => meta.getAttribute('content')),
   );
   expect(policies).toEqual([
-    "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; worker-src blob:; base-uri 'none'; form-action 'none'",
+    "default-src 'none'; img-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; worker-src blob:; base-uri 'none'; form-action 'none'",
   ]);
 });
 

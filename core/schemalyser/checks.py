@@ -51,7 +51,7 @@ SAMPLE_SEED = 20261005
 # The states in which the checklist offers a check: ready as an exact query or a sampled one, waiting for the
 # size of a table, waiting for a count of a table whose size the server does not record, or not offered
 # because the table is large.
-OFFER_STATES = ("exact", "sampled", "sizes", "count", "large")
+OFFER_STATES = ("exact", "sampled", "sizes", "count", "large", "unsampled")
 # The place of the sample's percentage in a statement. T-SQL takes no variable there, so the script
 # writes the number in before it runs the statement.
 PERCENT = "<<percent>>"
@@ -225,7 +225,7 @@ class Check:
         """The tables that the check reads: its own, and for a definition key the definition table."""
         return [self.table] + ([self.definition[0]] if self.definition else [])
 
-    def plain(self, catalogue, percent=None):
+    def plain(self, catalogue, percent=None, bounded=False):
         """The check as one plain SELECT that a person can read and run alone, as T-SQL over several short lines.
 
         It returns the nine columns of LAYOUT under their own names, so that its result can be pasted back
@@ -251,11 +251,22 @@ class Check:
         if percent:
             comment.append(PLAIN_WORDING["sampled"].format(percent=percent_text(percent), table=self.table,
                                                            rows=f"{PLAIN_SAMPLE_ROWS:,}"))
+        elif self.kind == "rows" and bounded:
+            comment.append(PLAIN_WORDING["bounded"].format(table=self.table, most=f"{PLAIN_EXACT_ROWS + 10:,}"))
         elif self.kind == "rows":
             comment.append(PLAIN_WORDING["whole"].format(table=self.table))
         comment.append(PLAIN_WORDING["safe"])
         top = ""
-        if self.kind == "rows":
+        if self.kind == "rows" and bounded:
+            # A table with no recorded size, such as a view, is counted only up to just past the limit, and a
+            # count past it comes back as a skipped rows check for its size, so that no query reads all of it.
+            over = f"COUNT_BIG(*) > {PLAIN_EXACT_ROWS}"
+            given.update({"check_kind": f"CASE WHEN {over} THEN 'skipped' ELSE 'rows' END",
+                          "value": f"CASE WHEN {over} THEN 'rows' END",
+                          "label": f"CASE WHEN {over} THEN 'size' END",
+                          "row_count": f"CASE WHEN {over} THEN NULL ELSE (COUNT_BIG(*) / 10) * 10 END"})
+            body = [f"FROM (SELECT TOP ({PLAIN_EXACT_ROWS + 10}) 1 AS x", f"      FROM {source}) AS b"]
+        elif self.kind == "rows":
             given["row_count"] = "(COUNT_BIG(*) / 10) * 10"
             body = [f"FROM {source}"]
         elif self.kind == "column":
@@ -344,6 +355,8 @@ def _name(catalogue, table):
 PLAIN_WORDING = {
     "rows": "This query counts the rows of {table}, rounded down to the nearest ten.",
     "whole": "It reads the whole of {table}, because SQL Server keeps no record of its size.",
+    "bounded": "SQL Server keeps no record of the size of {table}, as for a view, so the query reads at most {most} of "
+               "its rows. If the table holds more, the query says only that it is large, with a skipped row.",
     "column": "This query counts the rows of {table}, and the distinct and the empty values of {column}, each rounded "
               "down to the nearest ten.",
     "values": "This query lists each value of {column} that at least {least} rows hold, with its count rounded down "
@@ -475,6 +488,12 @@ def size_of(table, checks):
     return next((count for name, count in checks.rows.items() if name.upper() == table.upper()), None)
 
 
+def too_large(table, checks):
+    """Whether a count of a table with no recorded size found more rows than a plain query may read."""
+    return checks is not None and any(kind == "rows" and name.upper() == table.upper() and reason == "size"
+                                      for kind, name, _, reason in checks.skipped)
+
+
 def unrecorded(table, checks):
     """Whether the check results say that the server keeps no record of a table's size."""
     return checks is not None and any(kind == "rows" and name.upper() == table.upper() and reason == UNRECORDED
@@ -520,12 +539,15 @@ def offer(check, catalogue, checks, exact_rows=None, sample_rows=None):
     """
     limit = PLAIN_EXACT_ROWS if exact_rows is None else exact_rows
     sizes = {table: size_of(table, checks) for table in check.tables()}
-    waiting = [t for t, size in sizes.items() if size is None and not unrecorded(t, checks)]
+    waiting = [t for t, size in sizes.items() if size is None and not unrecorded(t, checks) and not too_large(t, checks)]
     if waiting:
         return "sizes", []
+    if any(size is None and too_large(t, checks) for t, size in sizes.items()):
+        # A large table with no recorded size, such as a view, cannot be read in part with TABLESAMPLE.
+        return "unsampled", []
     counts = [t for t, size in sizes.items() if size is None]
     if counts:
-        return "count", [(Check("rows", t), Check("rows", t).plain(catalogue)) for t in counts]
+        return "count", [(Check("rows", t), Check("rows", t).plain(catalogue, bounded=True)) for t in counts]
     if any(size > limit for t, size in sizes.items() if t != check.table):
         return "large", []
     size = sizes[check.table]

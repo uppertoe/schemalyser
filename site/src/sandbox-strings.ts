@@ -43,7 +43,7 @@ export const sandboxStrings = {
   showTranslated: 'Show the translated query',
 
   offlineOnly:
-    'The requests may contain personal information, so Schemalyser will accept the folder only while this computer is offline.',
+    'The requests may contain personal information, so Schemalyser will accept the folder only while this page is offline.',
   runRequests: 'Run the past requests',
 
   onlyInThisTab:

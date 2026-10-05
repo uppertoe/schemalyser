@@ -13,8 +13,10 @@ A conversion is a folder holding
                               leaves out, whose first line is the sentence that reports it, with {count} for the number
 
 A step may also list "alternatives": other single-SELECT files that make the same rows by another
-route. The checklist of a target query weighs them against the sample queries; the runner and the
-release script ignore them, unless a run is given --alternative FILE to use one in its step's place.
+route. The checklist of a target query weighs them against the sample queries, and at the boundary a
+step that reads what the catalogue does not hold gives way to the first alternative that reads only
+what it holds (routes.py); the runner and the release script ignore them, unless a run is given
+--alternative FILE to use one in its step's place.
 
 Each SELECT reads the source tables, and may read OMOP tables already written as omop.<table>.
 
@@ -256,7 +258,7 @@ def _alternative_problems(step):
     found, seen = [], {name}
     for item in offered:
         if isinstance(item, dict):
-            if not set(item) <= {"file", "table", "layer"} or str(item.get("table", step.get("table"))).lower() != \
+            if not set(item) <= {"file", "table", "layer", "effect"} or str(item.get("table", step.get("table"))).lower() != \
                     str(step.get("table")).lower() or item.get("layer", step.get("layer")) != step.get("layer"):
                 found.append(WORDING["alternative_entry"].format(name=name))
                 continue

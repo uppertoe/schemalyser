@@ -299,6 +299,8 @@ def boundary_run(state_commit=None, requests_commit=None):
                         "sizes": offered["sizes"], "queries": offered["queries"],
                         "profile": offered.get("profile") or [], "draft": draft, "stages": t.get("stages"),
                         "questions": t.get("questions") or "", "specification": t.get("specification") or "",
+                        # The routes that the catalogue settled, one sentence each, shown at the head of the checklist.
+                        "routes": t.get("routes") or [],
                         "stageVerdicts": [line for line in t["readiness"].splitlines()
                                           if line.startswith(("The question is ready", "The question is not yet ready"))]})
     w = boundary.WORDING
