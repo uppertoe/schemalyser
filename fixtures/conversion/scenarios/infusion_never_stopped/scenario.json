@@ -1,0 +1,13 @@
+{
+  "description": "One child has an infusion that is started during a general anaesthetic and never stopped.",
+  "expectations": [
+    {
+      "says": "The infusion is written as one period, which ends when the anaesthetic ends.",
+      "query": "SELECT COUNT(*) AS periods, SUM(CASE WHEN d.drug_exposure_end_datetime = vd.visit_detail_end_datetime THEN 1 ELSE 0 END) AS ending_with_anaesthetic FROM omop.drug_exposure d JOIN omop.visit_detail vd ON vd.visit_detail_id = d.visit_detail_id WHERE vd.visit_detail_source_value = '990001131'",
+      "result": [
+        1,
+        1
+      ]
+    }
+  ]
+}

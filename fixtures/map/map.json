@@ -1,0 +1,83 @@
+{
+  "world": "the invented world",
+  "description": "This map supplies the three role views from the invented catalogue, and it follows the existing invented conversion wherever that affects the neonatal audit, so that the two answers can be compared.",
+  "roles": {
+    "role_patient": {
+      "file": "role_patient.sql",
+      "rows": {"status": "seen", "from": "PERSON_MASTER, which the team's queries read by PERSON_KEY",
+               "says": "One row of the patient table is one patient, and the key is unique in the stand-in database.",
+               "question": "Please confirm whether the patient table holds exactly one row for each patient, with no merged or duplicate records."},
+      "columns": {
+        "patient_key": {"status": "seen", "from": "PERSON_MASTER.PERSON_KEY",
+                        "says": "The team's queries join the patient table to visits and theatre cases on this key.",
+                        "question": "Please confirm whether PERSON_KEY is the key that visits and theatre cases carry for the patient."},
+        "birth_date": {"status": "proposed", "from": "PERSON_MASTER.BIRTH_TS",
+                       "says": "The birth time is cut to its date, so that the age in days counts calendar dates as the conversion does.",
+                       "question": "Please confirm whether BIRTH_TS holds the date of birth, and whether it is ever the date of arrival rather than of birth."},
+        "death_date": {"status": "proposed", "from": "PERSON_MASTER_2.DEATH_TS, by PERSON_KEY",
+                       "says": "The date of death comes from the second patient table, as the conversion's death step takes it.",
+                       "question": "Please confirm whether PERSON_MASTER_2.DEATH_TS records every death that the hospital knows of, including deaths after discharge."},
+        "is_test": {"status": "seen", "from": "PERSON_MASTER.TEST_PERSON_FLAG",
+                    "says": "A patient flagged Y is a test patient, and the team's queries leave such patients out.",
+                    "question": "Please confirm whether the flag marks every test and training patient in every year."}
+      }
+    },
+    "role_anaesthetic": {
+      "file": "role_anaesthetic.sql",
+      "rows": {"status": "seen", "from": "ANAES_RECORD through THEATRE_CASE to VISIT",
+               "says": "One anaesthetic record is one anaesthetic, kept where its theatre case reaches a hospital visit with an admission time, as the conversion keeps it.",
+               "question": "Please confirm whether every anaesthetic has a theatre case, and whether an anaesthetic whose visit lacks an admission time should still count."},
+      "columns": {
+        "anaesthetic_key": {"status": "seen", "from": "ANAES_RECORD.ANAES_KEY",
+                            "says": "The team's queries join the anaesthetic record to its observation sheets on this key.",
+                            "question": "Please confirm whether ANAES_KEY identifies one anaesthetic, and whether a record can be listed twice."},
+        "patient_key": {"status": "seen", "from": "VISIT.PERSON_KEY, through THEATRE_CASE.VISIT_KEY",
+                        "says": "The patient is the hospital visit's patient, which the team's queries reach through the theatre case.",
+                        "question": "Please confirm whether the visit's patient is always the patient of the anaesthetic, including for a newborn with a second record."},
+        "start_time": {"status": "proposed", "from": "ANAES_RECORD.ANAES_START_TS",
+                       "says": "The start is the recorded start of the anaesthetic, in local time.",
+                       "question": "Please confirm whether ANAES_START_TS marks the start of anaesthesia, and not the time at which the record was opened."},
+        "stop_time": {"status": "proposed", "from": "ANAES_RECORD.ANAES_STOP_TS",
+                      "says": "The stop is the recorded stop, and it is empty where none was recorded.",
+                      "question": "Please confirm whether ANAES_STOP_TS marks the end of anaesthesia, and what an empty stop means."}
+      }
+    },
+    "role_reading": {
+      "file": "role_reading.sql",
+      "rows": {"status": "seen", "from": "OBS_READING through OBS_SHEET.ANAES_KEY",
+               "says": "A reading on an observation sheet that carries an anaesthetic's key belongs to that anaesthetic, as the team's queries take it.",
+               "question": "Please confirm whether every reading charted during an anaesthetic is on a sheet that carries its key, in every year."},
+      "columns": {
+        "anaesthetic_key": {"status": "seen", "from": "OBS_SHEET.ANAES_KEY",
+                            "says": "The sheet carries the key of the anaesthetic that it was charted for.",
+                            "question": "Please confirm whether OBS_SHEET.ANAES_KEY has been filled since the earliest records."},
+        "kind": {"status": "proposed", "from": "OBS_READING.OBS_TYPE_KEY",
+                 "says": "The observation type says what was measured, and the kinds below give the codes of the two means.",
+                 "question": "Please confirm whether any other observation type has ever held a mean arterial pressure."},
+        "reading_time": {"status": "proposed", "from": "OBS_READING.READ_TS",
+                         "says": "The reading time is the time at which the value was taken, in local time.",
+                         "question": "Please confirm whether READ_TS is the time of measurement rather than the time of filing, in local time in every year."},
+        "value": {"status": "proposed", "from": "OBS_READING.READ_VALUE",
+                  "says": "The value is read as a number where it is one, rounded to three places as the conversion rounds it.",
+                  "question": "Please confirm whether READ_VALUE holds the mean in mmHg for both observation types."},
+        "accepted": {"status": "seen", "from": "OBS_READING.ACCEPTED_FLAG",
+                     "says": "A reading flagged N was not accepted, and an empty flag counts as accepted, as the team's queries treat it.",
+                     "question": "Please confirm whether an empty ACCEPTED_FLAG means that the value was accepted."}
+      }
+    }
+  },
+  "kinds": {
+    "map_arterial": {"codes": ["52"], "status": "proposed", "from": "OBS_TYPE_DEF and the conversion's mapping rows",
+                     "says": "The observation type 52 is the mean blood pressure from an arterial line.",
+                     "question": "Please confirm whether observation type 52 is the arterial mean, and whether it has held any other channel."},
+    "map_cuff": {"codes": ["51"], "status": "proposed", "from": "OBS_TYPE_DEF and the conversion's mapping rows",
+                 "says": "The observation type 51 is the mean blood pressure from the cuff.",
+                 "question": "Please confirm whether observation type 51 is the cuff mean as the monitor measured it, and not a mean calculated from a charted pressure."}
+  },
+  "eras": [
+    {"about": "role_reading", "note": "Nothing is yet known of a change over the years in how readings are filed, and the counts by year will show one if it exists."}
+  ],
+  "questions": [
+    {"about": "role_patient.death_date", "question": "Please confirm whether deaths outside the hospital reach the second patient table, and how long after the death they arrive."}
+  ]
+}

@@ -1,0 +1,26 @@
+[
+  {
+    "vocabulary": "SITE_DRUG",
+    "table": "DRUG_DEF",
+    "code": "DRUG_KEY",
+    "label": "DRUG_LABEL",
+    "domain": "Drug",
+    "concept_class": "Ingredient"
+  },
+  {
+    "vocabulary": "SITE_PROC",
+    "table": "PROC_DEF",
+    "code": "PROC_KEY",
+    "label": "PROC_LABEL",
+    "domain": "Procedure",
+    "concept_class": "Procedure"
+  },
+  {
+    "vocabulary": "SITE_DIAGNOSIS",
+    "table": "DIAG_DEF",
+    "code": "DIAG_KEY",
+    "label": "ICD_CODE",
+    "domain": "Condition",
+    "coded_in": "ICD10"
+  }
+]

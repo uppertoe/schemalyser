@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en-AU">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Nothing may be loaded from, or sent to, any other site. The worker is started from a
+         blob so that it inherits this policy. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; worker-src blob:; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="referrer" content="no-referrer" />
+    <title>Schemalyser</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <header class="masthead">
+      <h1 id="title"></h1>
+      <p id="intro" class="intro"></p>
+    </header>
+
+    <div class="layout">
+      <main>
+        <ol class="steps">
+          <li class="step" id="step-1">
+            <h2 id="h-step-1"></h2>
+            <div class="body">
+              <p id="t-catalogue-why"></p>
+              <pre id="query" class="code"></pre>
+              <div class="actions"><button type="button" id="copy" class="secondary"></button></div>
+              <p id="t-query-safe"></p>
+              <p id="t-skip-catalogue" class="note"></p>
+            </div>
+          </li>
+
+          <li class="step" id="step-2">
+            <h2 id="h-step-2"></h2>
+            <div class="body">
+              <p id="t-loading" class="status"></p>
+              <p id="t-load-failed" class="status problem" hidden></p>
+              <div id="b-loaded" hidden>
+                <p id="t-loaded" class="status"></p>
+                <p id="t-no-files"></p>
+              </div>
+              <p id="t-reconnected" class="status problem" hidden></p>
+              <!-- The fetch itself runs in a separate window (github.html), so this page's
+                   policy never allows GitHub. -->
+              <div id="b-github" class="divided" hidden>
+                <h3 id="h-github"></h3>
+                <p id="t-github-intro"></p>
+                <div id="b-github-form">
+                  <div class="field">
+                    <label for="github-requests" id="l-github-requests"></label>
+                    <input type="text" id="github-requests" autocomplete="off" spellcheck="false" />
+                  </div>
+                  <div class="field">
+                    <label for="github-requests-ref" id="l-github-requests-ref"></label>
+                    <input type="text" id="github-requests-ref" autocomplete="off" spellcheck="false" />
+                    <p id="t-github-requests-ref-note" class="note"></p>
+                  </div>
+                  <div class="field">
+                    <label for="github-state" id="l-github-state"></label>
+                    <input type="text" id="github-state" autocomplete="off" spellcheck="false" />
+                  </div>
+                  <div class="field">
+                    <label for="github-state-ref" id="l-github-state-ref"></label>
+                    <input type="text" id="github-state-ref" autocomplete="off" spellcheck="false" />
+                    <p id="t-github-state-ref-note" class="note"></p>
+                  </div>
+                  <div class="field">
+                    <label for="github-token" id="l-github-token"></label>
+                    <input type="password" id="github-token" autocomplete="off" spellcheck="false" />
+                    <p id="t-github-token-note" class="note"></p>
+                  </div>
+                  <button type="button" id="github-fetch" disabled></button>
+                </div>
+                <p id="t-github-progress" class="status" hidden></p>
+                <p id="t-github-error" class="status problem" hidden></p>
+                <div id="github-fetched"></div>
+                <p id="t-github-closed" class="status" hidden></p>
+              </div>
+            </div>
+          </li>
+
+          <li class="step" id="step-3">
+            <h2 id="h-step-3"></h2>
+            <div class="body">
+              <p id="t-offline" class="status good"></p>
+              <p id="t-kept" class="note" hidden></p>
+              <div class="field">
+                <label for="state-folder" id="l-state"></label>
+                <input type="file" id="state-folder" webkitdirectory />
+                <p id="t-state-note" class="note"></p>
+                <p id="t-state-found" class="count" hidden></p>
+              </div>
+              <div class="field">
+                <label for="catalogue" id="l-catalogue"></label>
+                <input type="file" id="catalogue" accept=".csv,text/csv" />
+                <p id="t-catalogue-note" class="note"></p>
+              </div>
+              <div class="field">
+                <label for="rules" id="l-rules"></label>
+                <input type="file" id="rules" accept=".json,application/json" />
+                <p id="t-rules-note" class="note"></p>
+              </div>
+              <div class="field">
+                <label for="folder" id="l-folder"></label>
+                <input type="file" id="folder" webkitdirectory />
+                <p id="t-folder-note" class="note"></p>
+                <p id="t-folder-count" class="count" hidden></p>
+              </div>
+              <div class="field">
+                <label for="checks" id="l-checks"></label>
+                <input type="file" id="checks" accept=".csv,text/csv" />
+                <p id="t-checks-note" class="note"></p>
+              </div>
+              <!-- Without a catalogue: one query of the names and sizes of the tables that the requests read. The
+                   query holds names from the requests, so it exists only on this page. -->
+              <section id="b-first" class="add" hidden>
+                <h3 id="h-first"></h3>
+                <p id="t-first-what"></p>
+                <details id="d-first-note">
+                  <summary id="s-first-note"></summary>
+                  <pre id="first-note" class="code wrap-text"></pre>
+                  <div class="actions"><button type="button" id="note-copy" class="secondary"></button></div>
+                </details>
+                <button type="button" id="first-write"></button>
+                <div id="b-first-query" hidden>
+                  <p id="t-first-names" class="count"></p>
+                  <pre id="first-query" class="code"></pre>
+                  <div class="actions"><button type="button" id="first-copy" class="secondary"></button></div>
+                  <label for="first-paste" id="l-first-paste"></label>
+                  <textarea id="first-paste" rows="5" spellcheck="false" autocomplete="off"></textarea>
+                  <button type="button" id="first-read"></button>
+                </div>
+                <p id="t-first-result" class="status" hidden></p>
+              </section>
+              <p id="t-catalogue-error" class="status problem" hidden></p>
+              <p id="t-checks-error" class="status problem" hidden></p>
+              <p id="t-analysis-failed" class="status problem" hidden></p>
+              <button type="button" id="analyse" disabled></button>
+            </div>
+          </li>
+
+          <li class="step" id="step-4">
+            <h2 id="h-step-4"></h2>
+            <div class="body">
+              <div id="b-progress" hidden>
+                <p id="t-progress" class="status"></p>
+                <progress id="progress-bar" max="1" value="0"></progress>
+              </div>
+              <div id="checklist" hidden>
+                <!-- The loop: more requests are added here and analysed again, without starting over. -->
+                <section id="b-add" class="add">
+                  <h3 id="h-add"></h3>
+                  <p id="t-add-what"></p>
+                  <div class="add-fields">
+                    <div class="field">
+                      <label for="add-files" id="l-add-files"></label>
+                      <input type="file" id="add-files" multiple accept=".sql" />
+                    </div>
+                    <div class="field">
+                      <label for="add-folder" id="l-add-folder"></label>
+                      <input type="file" id="add-folder" webkitdirectory />
+                    </div>
+                  </div>
+                  <p id="t-held" class="count"></p>
+                  <button type="button" id="reanalyse"></button>
+                </section>
+                <div id="b-restart" hidden>
+                  <p id="t-restart-what"></p>
+                  <button type="button" id="restart" class="secondary"></button>
+                </div>
+                <p id="t-changes" class="status good" hidden></p>
+                <p id="t-checklist-intro"></p>
+                <div class="actions" id="b-save-state" hidden>
+                  <button type="button" id="save-state" class="secondary"></button>
+                </div>
+                <p id="t-save-state" class="note" hidden></p>
+                <p id="t-no-checklist" class="note" hidden></p>
+                <p id="t-boundary-problem" class="status problem" hidden></p>
+                <!-- The results of the queries on the checklist are pasted here, read by the core and added to
+                     the check results, and the checklist is worked out again. -->
+                <section id="b-paste" class="add" hidden>
+                  <h3 id="h-paste"></h3>
+                  <p id="t-paste-what"></p>
+                  <label for="paste" id="l-paste"></label>
+                  <textarea id="paste" rows="6" spellcheck="false" autocomplete="off"></textarea>
+                  <div class="actions">
+                    <button type="button" id="read-paste"></button>
+                    <button type="button" id="save-checks" class="secondary" hidden></button>
+                  </div>
+                  <p id="t-paste-result" class="status" hidden></p>
+                  <p id="t-save-checks" class="note" hidden></p>
+                </section>
+                <!-- The results of the core profile's queries, which the central OMOP team runs, are pasted here
+                     and added to the core profile in the same way. -->
+                <section id="b-profile-paste" class="add" hidden>
+                  <h3 id="h-profile-paste"></h3>
+                  <p id="t-profile-paste-what"></p>
+                  <label for="profile-paste" id="l-profile-paste"></label>
+                  <textarea id="profile-paste" rows="5" spellcheck="false" autocomplete="off"></textarea>
+                  <div class="actions">
+                    <button type="button" id="read-profile-paste"></button>
+                    <button type="button" id="save-profile" class="secondary" hidden></button>
+                  </div>
+                  <p id="t-profile-paste-result" class="status" hidden></p>
+                  <p id="t-save-profile" class="note" hidden></p>
+                </section>
+                <div id="boundary-notes"></div>
+                <div id="checklists"></div>
+              </div>
+            </div>
+          </li>
+
+          <li class="step" id="step-5">
+            <h2 id="h-step-5"></h2>
+            <div class="body">
+              <div id="results" hidden>
+                <p id="t-files-sentence" class="status good"></p>
+                <p id="t-found-sentence"></p>
+                <div id="github-provenance" hidden></div>
+                <p id="t-checks-used" hidden></p>
+                <p id="t-checks-unanswered" hidden></p>
+                <p id="t-no-headers" class="note" hidden></p>
+                <p id="t-checks-no-headers" class="note" hidden></p>
+                <h3 id="h-unread"></h3>
+                <p id="t-nothing-unread" hidden></p>
+                <dl id="unread"></dl>
+                <div class="review">
+                  <p id="t-read-before"></p>
+                  <p id="t-names-only"></p>
+                  <p id="t-do-not-download"></p>
+                </div>
+                <div id="pack"></div>
+                <div id="index-block">
+                  <p id="t-index-note"></p>
+                  <ol id="index"></ol>
+                </div>
+              </div>
+            </div>
+          </li>
+
+          <li class="step" id="step-6">
+            <h2 id="h-step-6"></h2>
+            <div class="body">
+              <p id="t-download-holds" hidden></p>
+              <details id="d-summary" hidden>
+                <summary id="s-summary"></summary>
+                <pre id="t-summary" class="code"></pre>
+              </details>
+              <div class="actions">
+                <button type="button" id="download"></button>
+                <button type="button" id="clear" class="secondary"></button>
+              </div>
+              <div id="b-check-script">
+                <p id="t-check-script-what"></p>
+                <p id="t-check-script-safe"></p>
+                <p id="t-check-script-how"></p>
+                <div class="actions"><button type="button" id="download-check-script" class="secondary"></button></div>
+              </div>
+            </div>
+          </li>
+
+          <li class="step" id="step-7">
+            <h2 id="h-step-7"></h2>
+            <div class="body">
+              <div id="b-build-form">
+                <p id="t-build-what"></p>
+                <div class="field">
+                  <label for="rows" id="l-rows"></label>
+                  <input type="number" id="rows" min="10" max="5000" step="10" value="500" />
+                </div>
+                <button type="button" id="build"></button>
+              </div>
+              <p id="t-building" class="status" hidden></p>
+              <div id="b-built" hidden>
+                <p id="t-built" class="status good"></p>
+                <p id="t-invented"></p>
+                <p id="t-no-values-yet" hidden></p>
+                <p id="t-uses-checks" hidden></p>
+
+                <label for="sql" id="l-sql"></label>
+                <textarea id="sql" rows="8" spellcheck="false" autocomplete="off"></textarea>
+                <button type="button" id="run"></button>
+                <div id="query-result" hidden>
+                  <p id="t-query-message" class="status"></p>
+                  <pre id="t-database-message" class="code" hidden></pre>
+                  <div id="query-table"></div>
+                  <details id="d-translated" hidden>
+                    <summary id="s-translated"></summary>
+                    <pre id="t-translated" class="code"></pre>
+                  </details>
+                </div>
+
+                <p id="t-runs-chosen" class="divided"></p>
+                <button type="button" id="run-requests"></button>
+                <div id="b-requests-progress" hidden>
+                  <p id="t-requests-progress" class="status"></p>
+                  <progress id="requests-progress-bar" max="1" value="0"></progress>
+                </div>
+                <div id="requests-result" hidden>
+                  <p id="t-requests-sentence" class="status good"></p>
+                  <div id="requests-table"></div>
+                </div>
+              </div>
+            </div>
+          </li>
+        </ol>
+      </main>
+
+      <aside>
+        <p id="t-connection" class="connection"></p>
+        <h2 id="h-safeguards"></h2>
+        <ul id="safeguards"></ul>
+        <p id="t-check-yourself" class="note"></p>
+        <p class="note"><a id="a-sandbox" href="./sandbox.html"></a></p>
+      </aside>
+    </div>
+
+    <footer>
+      <p id="t-keeps-nothing"></p>
+      <p id="t-version"></p>
+    </footer>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

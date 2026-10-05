@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en-AU">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- The fetch window. Its only job is to read files from GitHub and hand them to the page that
+         opened it. Its policy allows connections to this site and to api.github.com, and to nothing
+         else. When the fetch ends, the window adds a second policy that removes api.github.com, and
+         it confirms that the second policy holds before it hands the files over and closes. The
+         main page never allows api.github.com, so neither it nor its worker can reach GitHub. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self' https://api.github.com; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="referrer" content="no-referrer" />
+    <title>Schemalyser</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <header class="masthead">
+      <p id="t-github-progress" class="status"></p>
+    </header>
+    <script type="module" src="./src/github.ts"></script>
+  </body>
+</html>

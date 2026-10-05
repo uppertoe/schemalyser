@@ -1,0 +1,60 @@
+{
+  "2023/theatre_utilisation.sql": {
+    "tables": ["THEATRE_CASE", "ANAES_RECORD", "LK_SERVICE"]
+  },
+  "2023/REQ-0412 Quartermaine airway audit.sql": {
+    "tables": ["PERSON_MASTER", "THEATRE_CASE", "ANAES_RECORD", "OBS_SHEET", "OBS_READING", "OBS_TYPE_DEF"]
+  },
+  "2023/risk_grade_by_age.sql": {
+    "tables": ["ANAES_RECORD", "THEATRE_CASE", "PERSON_MASTER", "LK_RISK_GRADE"],
+    "columns": [
+      "ANAES_RECORD.ANAES_KEY", "ANAES_RECORD.RISK_GRADE_CAT", "ANAES_RECORD.CASE_KEY",
+      "PERSON_MASTER.BIRTH_TS", "PERSON_MASTER.PERSON_KEY",
+      "THEATRE_CASE.CASE_DATE", "THEATRE_CASE.CASE_KEY", "THEATRE_CASE.PERSON_KEY", "THEATRE_CASE.CASE_STATUS_CAT",
+      "LK_RISK_GRADE.LABEL", "LK_RISK_GRADE.RISK_GRADE_CAT"
+    ]
+  },
+  "2024/anaes_duration.sql": {
+    "tables": ["ANAES_RECORD", "ANAES_EVENT"]
+  },
+  "2024/first_weight_before_case.sql": {
+    "tables": ["THEATRE_CASE", "OBS_SHEET", "OBS_READING"]
+  },
+  "2024/drug_doses_mgkg.sql": {
+    "tables": ["DRUG_GIVEN", "DRUG_DEF", "ANAES_RECORD", "THEATRE_CASE", "PERSON_MASTER_2", "LK_ROUTE", "OBS_SHEET", "OBS_READING"]
+  },
+  "2024/staff_handover.sql": {
+    "tables": ["ANAES_STAFF", "STAFF_MASTER"]
+  },
+  "2024/pivot_obs.sql": {
+    "tables": ["OBS_READING"]
+  },
+  "2024/multi_batch_temp.sql": {
+    "tables": ["THEATRE_CASE", "ANAES_RECORD", "ANAES_EVENT", "VISIT", "WARD_DEF"]
+  },
+  "2025/proc_emergency_cases.sql": {
+    "tables": ["THEATRE_CASE", "CASE_PROC", "PROC_DEF"]
+  },
+  "2025/dynamic_sql.sql": {
+    "tables": []
+  },
+  "2025/xml_path_concat.sql": {
+    "tables": ["THEATRE_CASE", "CASE_PROC", "PROC_DEF"]
+  },
+  "2025/union_exists.sql": {
+    "tables": ["THEATRE_CASE", "ANAES_RECORD", "VISIT", "PERSON_MASTER"],
+    "columns": [
+      "THEATRE_CASE.PERSON_KEY", "THEATRE_CASE.CASE_STATUS_CAT", "THEATRE_CASE.CASE_KEY", "THEATRE_CASE.VISIT_KEY",
+      "ANAES_RECORD.CASE_KEY",
+      "VISIT.PERSON_KEY", "VISIT.VISIT_KEY", "VISIT.ADMIT_TS",
+      "PERSON_MASTER.PERSON_KEY", "PERSON_MASTER.SEX_CAT"
+    ]
+  },
+  "2025/pasted_values.sql": {
+    "tables": ["PERSON_MASTER", "THEATRE_CASE", "LK_CASE_STATUS"]
+  },
+  "2025/broken_draft.sql": {
+    "tables": [],
+    "expectFailure": true
+  }
+}

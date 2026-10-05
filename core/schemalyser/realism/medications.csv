@@ -1,0 +1,116 @@
+name,class
+PROPOFOL,induction agent
+THIOPENTONE,induction agent
+KETAMINE,induction agent
+ETOMIDATE,induction agent
+SEVOFLURANE,volatile agent
+ISOFLURANE,volatile agent
+DESFLURANE,volatile agent
+NITROUS OXIDE,anaesthetic gas
+OXYGEN,medical gas
+FENTANYL,opioid
+REMIFENTANIL,opioid
+ALFENTANIL,opioid
+SUFENTANIL,opioid
+MORPHINE,opioid
+HYDROMORPHONE,opioid
+OXYCODONE,opioid
+TRAMADOL,opioid
+TAPENTADOL,opioid
+METHADONE,opioid
+PETHIDINE,opioid
+ROCURONIUM,muscle relaxant
+VECURONIUM,muscle relaxant
+ATRACURIUM,muscle relaxant
+CISATRACURIUM,muscle relaxant
+PANCURONIUM,muscle relaxant
+SUXAMETHONIUM,muscle relaxant
+NEOSTIGMINE,reversal agent
+SUGAMMADEX,reversal agent
+NALOXONE,reversal agent
+FLUMAZENIL,reversal agent
+ATROPINE,anticholinergic
+GLYCOPYRRONIUM,anticholinergic
+ONDANSETRON,antiemetic
+GRANISETRON,antiemetic
+TROPISETRON,antiemetic
+DROPERIDOL,antiemetic
+METOCLOPRAMIDE,antiemetic
+CYCLIZINE,antiemetic
+PROMETHAZINE,antiemetic
+DEXAMETHASONE,steroid
+HYDROCORTISONE,steroid
+METHYLPREDNISOLONE,steroid
+PREDNISOLONE,steroid
+PARACETAMOL,analgesic
+IBUPROFEN,analgesic
+PARECOXIB,analgesic
+KETOROLAC,analgesic
+DICLOFENAC,analgesic
+CELECOXIB,analgesic
+LIGNOCAINE,local anaesthetic
+BUPIVACAINE,local anaesthetic
+LEVOBUPIVACAINE,local anaesthetic
+ROPIVACAINE,local anaesthetic
+PRILOCAINE,local anaesthetic
+AMETHOCAINE,local anaesthetic
+MIDAZOLAM,sedative
+DIAZEPAM,sedative
+LORAZEPAM,sedative
+CHLORAL HYDRATE,sedative
+CLONIDINE,sedative
+DEXMEDETOMIDINE,sedative
+MELATONIN,sedative
+CEPHAZOLIN,antibiotic
+CEPHALEXIN,antibiotic
+CEFTRIAXONE,antibiotic
+CEFOTAXIME,antibiotic
+AMPICILLIN,antibiotic
+AMOXYCILLIN,antibiotic
+BENZYLPENICILLIN,antibiotic
+FLUCLOXACILLIN,antibiotic
+PIPERACILLIN-TAZOBACTAM,antibiotic
+MEROPENEM,antibiotic
+GENTAMICIN,antibiotic
+VANCOMYCIN,antibiotic
+TEICOPLANIN,antibiotic
+METRONIDAZOLE,antibiotic
+CLINDAMYCIN,antibiotic
+ADRENALINE,vasoactive
+NORADRENALINE,vasoactive
+METARAMINOL,vasoactive
+PHENYLEPHRINE,vasoactive
+EPHEDRINE,vasoactive
+DOPAMINE,vasoactive
+DOBUTAMINE,vasoactive
+MILRINONE,vasoactive
+VASOPRESSIN,vasoactive
+ISOPRENALINE,vasoactive
+GLYCERYL TRINITRATE,vasoactive
+SODIUM NITROPRUSSIDE,vasoactive
+LABETALOL,antihypertensive
+ESMOLOL,antihypertensive
+HYDRALAZINE,antihypertensive
+ADENOSINE,antiarrhythmic
+AMIODARONE,antiarrhythmic
+SODIUM CHLORIDE 0.9%,fluid
+COMPOUND SODIUM LACTATE,fluid
+GLUCOSE 5%,fluid
+GLUCOSE 10%,fluid
+SODIUM CHLORIDE 0.45% WITH GLUCOSE 5%,fluid
+ALBUMIN 4%,fluid
+CALCIUM GLUCONATE,electrolyte
+CALCIUM CHLORIDE,electrolyte
+MAGNESIUM SULFATE,electrolyte
+POTASSIUM CHLORIDE,electrolyte
+SODIUM BICARBONATE,electrolyte
+HEPARIN,anticoagulant
+PROTAMINE,anticoagulant reversal
+TRANEXAMIC ACID,antifibrinolytic
+SALBUTAMOL,bronchodilator
+IPRATROPIUM,bronchodilator
+FRUSEMIDE,diuretic
+MANNITOL,diuretic
+DANTROLENE,malignant hyperthermia treatment
+LEVETIRACETAM,anticonvulsant
+PHENYTOIN,anticonvulsant

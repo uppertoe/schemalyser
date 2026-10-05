@@ -1,0 +1,13 @@
+{
+  "description": "One child has a blood pressure of 120/80 entered twice, at the same time, on the record of a general anaesthetic.",
+  "expectations": [
+    {
+      "says": "The anaesthesia layer writes both entries, so the anaesthetic has two systolic rows with the same time and value.",
+      "query": "SELECT COUNT(*) AS readings, COUNT(DISTINCT m.measurement_datetime) AS times FROM omop.measurement m JOIN omop.anaesthetic a ON a.anaesthetic_id = m.measurement_event_id JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id WHERE vd.visit_detail_source_value = '990000731' AND m.measurement_concept_id = 3004249",
+      "result": [
+        2,
+        1
+      ]
+    }
+  ]
+}

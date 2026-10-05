@@ -1,0 +1,27 @@
+{
+  "description": "One child has a general anaesthetic that starts at ten past eleven at night and ends at twenty to two the next morning, with a blood pressure taken after midnight.",
+  "expectations": [
+    {
+      "says": "The anaesthetic lasts 150 minutes and ends on the day after it starts.",
+      "query": "SELECT a.duration_minutes, DATEDIFF(day, a.start_datetime, a.end_datetime) AS days FROM omop.anaesthetic a JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id WHERE vd.visit_detail_source_value = '990000431'",
+      "result": [
+        150,
+        1
+      ]
+    },
+    {
+      "says": "The visit detail ends on the date after the date on which it starts.",
+      "query": "SELECT DATEDIFF(day, vd.visit_detail_start_date, vd.visit_detail_end_date) AS days FROM omop.visit_detail vd WHERE vd.visit_detail_source_value = '990000431'",
+      "result": [
+        1
+      ]
+    },
+    {
+      "says": "The systolic reading taken after midnight points at the anaesthetic and falls within its times.",
+      "query": "SELECT COUNT(*) AS readings FROM omop.measurement m JOIN omop.anaesthetic a ON a.anaesthetic_id = m.measurement_event_id JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id WHERE vd.visit_detail_source_value = '990000431' AND m.measurement_concept_id = 3004249 AND m.measurement_datetime BETWEEN a.start_datetime AND a.end_datetime",
+      "result": [
+        1
+      ]
+    }
+  ]
+}

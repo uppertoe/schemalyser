@@ -1,0 +1,20 @@
+{
+  "description": "One child has an infusion that is started during a general anaesthetic, changed in rate twice, and then stopped.",
+  "expectations": [
+    {
+      "says": "The infusion is written as three periods, one for each rate, and no period starts when the infusion is stopped.",
+      "query": "SELECT COUNT(*) AS periods FROM omop.drug_exposure d JOIN omop.visit_detail vd ON vd.visit_detail_id = d.visit_detail_id WHERE vd.visit_detail_source_value = '990001231'",
+      "result": [
+        3
+      ]
+    },
+    {
+      "says": "The three periods together run for 90 minutes, from fifteen minutes after the start of the anaesthetic to the stop of the infusion.",
+      "query": "SELECT SUM(DATEDIFF(minute, d.drug_exposure_start_datetime, d.drug_exposure_end_datetime)) AS minutes, MIN(DATEDIFF(minute, vd.visit_detail_start_datetime, d.drug_exposure_start_datetime)) AS first_start FROM omop.drug_exposure d JOIN omop.visit_detail vd ON vd.visit_detail_id = d.visit_detail_id WHERE vd.visit_detail_source_value = '990001231'",
+      "result": [
+        90,
+        15
+      ]
+    }
+  ]
+}

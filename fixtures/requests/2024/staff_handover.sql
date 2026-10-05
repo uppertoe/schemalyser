@@ -1,0 +1,12 @@
+SELECT a.ANAES_KEY,
+       COUNT(*) AS n_staff,
+       STRING_AGG(sm.STAFF_LABEL, '; ') WITHIN GROUP (ORDER BY a.START_TS) AS staff_list,
+       MAX(CASE WHEN a.next_start IS NOT NULL THEN 1 ELSE 0 END) AS had_handover
+FROM (
+    SELECT st.ANAES_KEY, st.STAFF_KEY, st.START_TS,
+           LEAD(st.START_TS) OVER (PARTITION BY st.ANAES_KEY ORDER BY st.START_TS) AS next_start
+    FROM   ANAES_STAFF st
+    WHERE  st.ROLE_CAT = 1
+) a
+JOIN STAFF_MASTER sm ON sm.STAFF_KEY = a.STAFF_KEY
+GROUP BY a.ANAES_KEY;

@@ -1,0 +1,52 @@
+{
+  "description": "The roles of an anaesthetic record, written with no hospital in mind. A hospital's map supplies each role view as one SELECT over its own tables, and an audit written against the role views then runs unchanged at any hospital.",
+  "views": [
+    {
+      "name": "role_patient",
+      "description": "One row for each patient, test and training patients included, so that an audit can leave them out by is_test.",
+      "key": ["patient_key"],
+      "columns": [
+        {"name": "patient_key", "type": "key", "meaning": "The hospital's own identifier of the patient, the same value that role_anaesthetic.patient_key holds."},
+        {"name": "birth_date", "type": "date", "meaning": "The date of birth, to the day, so that an age in days counts calendar dates."},
+        {"name": "death_date", "type": "date", "meaning": "The date of death where the hospital knows of it, and empty otherwise."},
+        {"name": "is_test", "type": "flag", "meaning": "1 for a test or training patient who is not a real person, and 0 for every other patient."}
+      ]
+    },
+    {
+      "name": "role_anaesthetic",
+      "description": "One row for each episode of anaesthesia or sedation given by an anaesthetist, including those whose start or stop is missing or out of order, so that the counts can see them.",
+      "key": ["anaesthetic_key"],
+      "columns": [
+        {"name": "anaesthetic_key", "type": "key", "meaning": "The hospital's own identifier of the anaesthetic, the same value that role_reading.anaesthetic_key holds."},
+        {"name": "patient_key", "type": "key", "meaning": "The patient who had the anaesthetic, as role_patient.patient_key."},
+        {"name": "start_time", "type": "datetime", "meaning": "When the anaesthetic started, in local time."},
+        {"name": "stop_time", "type": "datetime", "meaning": "When the anaesthetic stopped, in local time, and empty where no stop was recorded."}
+      ]
+    },
+    {
+      "name": "role_reading",
+      "description": "One row for each value charted in an anaesthetic's own record, with its kind from the vocabulary below, including values that were not accepted and values that are not numbers.",
+      "key": ["anaesthetic_key", "kind", "reading_time"],
+      "columns": [
+        {"name": "anaesthetic_key", "type": "key", "meaning": "The anaesthetic whose record holds the reading, as role_anaesthetic.anaesthetic_key."},
+        {"name": "kind", "type": "kind", "meaning": "What was measured, as one of the kinds of the vocabulary."},
+        {"name": "reading_time", "type": "datetime", "meaning": "When the value was taken, in local time, and not when it was filed."},
+        {"name": "value", "type": "number", "meaning": "The value as a number in the kind's own unit, and empty where the charted value is not a number."},
+        {"name": "accepted", "type": "flag", "meaning": "1 where the value counts as valid, and 0 where it was marked as an artefact, rejected or superseded."}
+      ]
+    }
+  ],
+  "types": {
+    "key": "Any type that compares equal with itself within one hospital, such as a whole number or text.",
+    "date": "A date without a time.",
+    "datetime": "A date and a time of day, in local time.",
+    "number": "A number that may hold a fraction.",
+    "flag": "The whole number 1 or 0, and never empty.",
+    "kind": "Text that is one of the kinds of the vocabulary."
+  },
+  "kinds": [
+    {"kind": "map_arterial", "meaning": "A mean arterial pressure from an arterial line, in mmHg."},
+    {"kind": "map_cuff", "meaning": "A mean arterial pressure from a non-invasive cuff, in mmHg."},
+    {"kind": "other", "meaning": "Any other value charted in the anaesthetic's record, which the counts use to see whether the record is reached at all."}
+  ]
+}

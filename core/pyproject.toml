@@ -1,0 +1,16 @@
+[project]
+name = "schemalyser"
+version = "0.1.0"
+description = "Builds an inventory of how a repo of SQL requests uses a database, by allowlist."
+requires-python = ">=3.11"
+dependencies = ["sqlglot==30.21.0"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

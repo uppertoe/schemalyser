@@ -1,0 +1,58 @@
+[
+  {
+    "name": "anaesthetic",
+    "description": "This table holds one row for each anaesthetic that the anaesthesia layer has written, with the facts that most questions about an anaesthetic start from.",
+    "fields": [
+      {"name": "anaesthetic_id", "type": "integer", "required": true, "primary_key": true,
+       "description": "The identifier is the procedure_occurrence_id of the anaesthetic's own row in PROCEDURE_OCCURRENCE, the row whose procedure_source_value is ANAESTHETIC."},
+      {"name": "person_id", "type": "integer", "required": true, "primary_key": false,
+       "description": "The person is the person of the anaesthetic's own procedure row."},
+      {"name": "visit_occurrence_id", "type": "integer", "required": false, "primary_key": false,
+       "description": "The hospital visit is the visit of the anaesthetic's own procedure row."},
+      {"name": "visit_detail_id", "type": "integer", "required": true, "primary_key": false,
+       "description": "The visit detail is the one that the anaesthetic's own procedure row names, which covers the time under anaesthesia."},
+      {"name": "anaesthesia_type_concept_id", "type": "integer", "required": true, "primary_key": false,
+       "description": "The type of anaesthetic is the procedure concept of the anaesthetic's own procedure row, such as 4174669 for a general anaesthetic."},
+      {"name": "start_datetime", "type": "datetime", "required": true, "primary_key": false,
+       "description": "The start is the procedure_datetime of the anaesthetic's own procedure row."},
+      {"name": "end_datetime", "type": "datetime", "required": false, "primary_key": false,
+       "description": "The end is the procedure_end_datetime of the anaesthetic's own procedure row, and it is empty where the source records a start and no stop."},
+      {"name": "duration_minutes", "type": "integer", "required": false, "primary_key": false,
+       "description": "The duration is the number of minute boundaries from the start to the end, as DATEDIFF(minute, start, end) counts them, and it is empty where the anaesthetic has no end."},
+      {"name": "age_days", "type": "integer", "required": false, "primary_key": false,
+       "description": "The age is the number of calendar days from the date of birth in person.birth_datetime to the date of the start, as DATEDIFF(day, birth, start) counts them."},
+      {"name": "age_years", "type": "integer", "required": false, "primary_key": false,
+       "description": "The age in years is the number of whole years completed from the date of birth in person.birth_datetime to the date of the start, by calendar date, so that a child is one year old from the date of the first birthday, and a child born on 29 February completes a year on 1 March in a year without that date."},
+      {"name": "age_months", "type": "integer", "required": false, "primary_key": false,
+       "description": "The age in months is the number of whole months completed from the date of birth in person.birth_datetime to the date of the start, by calendar date, so that a month is completed on the day of the month of birth, or on the first day of the next month where a month has no such day."},
+      {"name": "asa_class_concept_id", "type": "integer", "required": false, "primary_key": false,
+       "description": "The ASA class is the value concept of the ASA measurement (concept 4199571) whose measurement_event_id points at the anaesthetic, taking the earliest where there is more than one."},
+      {"name": "weight_kg", "type": "float", "required": false, "primary_key": false,
+       "description": "The weight is the most recent body weight measurement (concept 3025315, in kilograms) of the person recorded from seven days before the start to the end of the anaesthetic, or to its start where it has no end, and it is empty where none was recorded in that time."},
+      {"name": "provider_id", "type": "integer", "required": false, "primary_key": false,
+       "description": "The provider is the provider of the anaesthetic's own procedure row, who is the first member of staff that the source lists for the anaesthetic."}
+    ]
+  },
+  {
+    "name": "anaesthetic_phase",
+    "description": "This table holds one row for each phase of an anaesthetic, and for now the only phase is the whole anaesthetic, from its start to its end.",
+    "fields": [
+      {"name": "anaesthetic_phase_id", "type": "integer", "required": true, "primary_key": true,
+       "description": "The identifier numbers the phases from 1, in the order of the anaesthetic and then of the phase within it."},
+      {"name": "anaesthetic_id", "type": "integer", "required": true, "primary_key": false,
+       "description": "The anaesthetic is the row of the anaesthetic table that the phase belongs to."},
+      {"name": "phase_sequence", "type": "integer", "required": true, "primary_key": false,
+       "description": "The sequence numbers the phases of one anaesthetic from 1, and the whole anaesthetic is phase 1."},
+      {"name": "phase_name", "type": "varchar(50)", "required": true, "primary_key": false,
+       "description": "The name of the phase is taken from a fixed list, which at present holds only whole anaesthetic."},
+      {"name": "start_datetime", "type": "datetime", "required": true, "primary_key": false,
+       "description": "The start of the phase is set by the phase's rule, and for the whole anaesthetic it is the anaesthetic's start."},
+      {"name": "end_datetime", "type": "datetime", "required": false, "primary_key": false,
+       "description": "The end of the phase is set by the phase's rule, and for the whole anaesthetic it is the anaesthetic's end, which is empty where the anaesthetic has no recorded stop."},
+      {"name": "phase_rule", "type": "varchar(250)", "required": true, "primary_key": false,
+       "description": "The rule states in one sentence how the start and the end of the phase were found."},
+      {"name": "phase_rule_version", "type": "integer", "required": true, "primary_key": false,
+       "description": "The version of the rule rises by one whenever the rule changes, so that rows made under an earlier rule can be told apart."}
+    ]
+  }
+]

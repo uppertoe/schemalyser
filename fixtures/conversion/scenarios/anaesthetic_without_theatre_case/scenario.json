@@ -1,0 +1,19 @@
+{
+  "description": "One child has a general anaesthetic whose record carries its hospital visit, but which has no theatre case, or row in the anaesthesia link table, through which the visit detail step reaches that visit.",
+  "expectations": [
+    {
+      "says": "The anaesthesia layer does not write the anaesthetic, because the visit detail step reaches the hospital visit only through the theatre case or the link table, as the data team's queries do, and the run counts the anaesthetic as left out.",
+      "query": "SELECT COUNT(*) AS visit_details FROM omop.visit_detail vd WHERE vd.visit_detail_source_value = '990001731'",
+      "result": [
+        0
+      ]
+    },
+    {
+      "says": "The core still writes the child and the hospital visit.",
+      "query": "SELECT COUNT(*) AS visits FROM omop.visit_occurrence vo JOIN omop.person p ON p.person_id = vo.person_id WHERE p.person_source_value = '990001711'",
+      "result": [
+        1
+      ]
+    }
+  ]
+}

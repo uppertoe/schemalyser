@@ -1,0 +1,158 @@
+{
+  "definitionKeys": [
+    {
+      "column": "OBS_TYPE_KEY",
+      "definitionTable": "OBS_TYPE_DEF",
+      "labelColumn": "OBS_LABEL"
+    },
+    {
+      "column": "EVENT_TYPE_KEY",
+      "definitionTable": "EVENT_TYPE_DEF",
+      "labelColumn": "EVENT_LABEL"
+    }
+  ],
+  "personTables": [
+    "STAFF_MASTER"
+  ],
+  "roles": [
+    {
+      "table": "PERSON_MASTER",
+      "column": "BIRTH_TS",
+      "role": "birth_date"
+    },
+    {
+      "table": "PERSON_MASTER",
+      "column": "SEX_CAT",
+      "role": "sex",
+      "values": {
+        "male": "1",
+        "female": "2"
+      }
+    },
+    {
+      "table": "THEATRE_CASE",
+      "column": "CASE_DATE",
+      "role": "event_time"
+    },
+    {
+      "table": "DRUG_DEF",
+      "column": "DRUG_LABEL",
+      "role": "medication_name"
+    },
+    {
+      "table": "ANAES_RECORD",
+      "column": "ANAES_START_TS",
+      "role": "anaesthetic_start"
+    },
+    {
+      "table": "ANAES_RECORD",
+      "column": "ANAES_STOP_TS",
+      "role": "anaesthetic_stop"
+    },
+    {
+      "table": "OBS_READING",
+      "column": "READ_VALUE",
+      "role": "weight",
+      "unit": "oz",
+      "when": {
+        "column": "OBS_TYPE_KEY",
+        "equals": "14"
+      },
+      "at": "READ_TS"
+    },
+    {
+      "table": "OBS_READING",
+      "column": "READ_VALUE",
+      "role": "heart_rate",
+      "when": {
+        "column": "OBS_TYPE_KEY",
+        "equals": "8"
+      },
+      "at": "READ_TS"
+    },
+    {
+      "table": "OBS_READING",
+      "column": "READ_VALUE",
+      "role": "oxygen_saturation",
+      "when": {
+        "column": "OBS_TYPE_KEY",
+        "equals": "10"
+      }
+    },
+    {
+      "table": "OBS_READING",
+      "column": "READ_VALUE",
+      "role": "blood_pressure",
+      "when": {
+        "column": "OBS_TYPE_KEY",
+        "equals": "5"
+      },
+      "at": "READ_TS"
+    },
+    {
+      "table": "OBS_READING",
+      "column": "READ_VALUE",
+      "role": "cuff_mean_pressure",
+      "when": {
+        "column": "OBS_TYPE_KEY",
+        "equals": "51"
+      },
+      "at": "READ_TS"
+    },
+    {
+      "table": "OBS_READING",
+      "column": "READ_VALUE",
+      "role": "arterial_mean_pressure",
+      "when": {
+        "column": "OBS_TYPE_KEY",
+        "equals": "52"
+      },
+      "at": "READ_TS"
+    },
+    {
+      "table": "DRUG_GIVEN",
+      "column": "GIVEN_TS",
+      "role": "administration_time"
+    },
+    {
+      "table": "ANAES_EVENT",
+      "column": "EVENT_TS",
+      "role": "time_during_anaesthetic"
+    },
+    {
+      "table": "AIRWAY_DEVICE",
+      "column": "PLACED_TS",
+      "role": "placement_time"
+    },
+    {
+      "table": "AIRWAY_DEVICE",
+      "column": "REMOVED_TS",
+      "role": "removal_time"
+    },
+    {
+      "table": "PROC_DEF",
+      "column": "PROC_LABEL",
+      "role": "procedure_name"
+    },
+    {
+      "table": "DIAG_DEF",
+      "column": "ICD_CODE",
+      "role": "diagnosis_code"
+    },
+    {
+      "table": "PERSON_MASTER_2",
+      "column": "DEATH_TS",
+      "role": "death_date"
+    },
+    {
+      "table": "VISIT",
+      "column": "ADMIT_TS",
+      "role": "admission_time"
+    },
+    {
+      "table": "VISIT",
+      "column": "DISCH_TS",
+      "role": "discharge_time"
+    }
+  ]
+}

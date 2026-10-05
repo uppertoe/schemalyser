@@ -1,0 +1,47 @@
+concept_id,concept_name,vocabulary_id
+1,Domain,Domain
+15,Route,Domain
+8507,MALE,Gender
+8532,FEMALE,Gender
+8541,per minute,UCUM
+8554,percent,UCUM
+8582,centimeter,UCUM
+8876,millimeter mercury column,UCUM
+9201,Inpatient Visit,Visit
+9289,degree Fahrenheit,UCUM
+9327,inch (international),UCUM
+9373,ounce (avoirdupois),UCUM
+9529,kilogram,UCUM
+32817,EHR,Type Concept
+32818,EHR administration record,Type Concept
+32882,Standard algorithm from EHR,Type Concept
+586323,degree Celsius,UCUM
+756265,OMOP CDM Version 5.4.0,CDM
+1147082,procedure_occurrence.procedure_occurrence_id,CDM
+3004249,Systolic blood pressure,LOINC
+3012888,Diastolic blood pressure,LOINC
+3025315,Body weight,LOINC
+3027018,Heart rate,LOINC
+3027598,Mean blood pressure,LOINC
+4013354,Insertion of endotracheal tube,SNOMED
+4097216,Endotracheal tube,SNOMED
+4100052,Regional anesthesia,SNOMED
+4106029,Laryngeal mask,SNOMED
+4132161,Oral,SNOMED
+4160029,Anesthesia finish time,SNOMED
+4161949,Anesthesia start time,SNOMED
+4171047,Intravenous,SNOMED
+4174669,Administration of general anesthetic,SNOMED
+4184967,American Society of Anesthesiologists physical status class 2,SNOMED
+4186042,American Society of Anesthesiologists physical status class 1,SNOMED
+4186043,American Society of Anesthesiologists physical status class 3,SNOMED
+4186044,American Society of Anesthesiologists physical status class 5,SNOMED
+4199571,American Society of Anesthesiologists physical status class,SNOMED
+4211334,American Society of Anesthesiologists physical status class 4,SNOMED
+4219502,Sedation,SNOMED
+4219637,Peripheral intravenous catheter,SNOMED
+4249997,Administration of anesthesia AND/OR sedation,SNOMED
+21490852,Invasive Mean blood pressure,LOINC
+21492241,Mean blood pressure by Noninvasive,LOINC
+40486069,Respiratory tract,SNOMED
+40762499,Oxygen saturation in Arterial blood by Pulse oximetry,LOINC

@@ -1,0 +1,19 @@
+{
+  "description": "A test patient, whom the core leaves out, has a general anaesthetic with a blood pressure on its record.",
+  "expectations": [
+    {
+      "says": "The core writes no person for the test patient.",
+      "query": "SELECT COUNT(*) AS people FROM omop.person p WHERE p.person_source_value = '990001311'",
+      "result": [
+        0
+      ]
+    },
+    {
+      "says": "The anaesthesia layer writes no visit detail for the test patient's anaesthetic.",
+      "query": "SELECT COUNT(*) AS visit_details FROM omop.visit_detail vd WHERE vd.visit_detail_source_value = '990001331'",
+      "result": [
+        0
+      ]
+    }
+  ]
+}

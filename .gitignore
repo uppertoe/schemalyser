@@ -1,0 +1,54 @@
+# Planning and research notes are kept out of version control.
+PLAN.md
+notes/
+
+# Site files must never be committed.
+catalogue.csv
+checks.csv
+site-rules.*
+inventory-pack/
+*.duckdb
+
+# Dependencies and downloaded packages.
+node_modules/
+wheels/
+.venv/
+__pycache__/
+
+# Reference material downloaded from elsewhere (Epic copyright; never commit).
+reference/
+
+# Built output and generated assets.
+dist/
+site/public/pyodide/
+site/public/py/
+test-results/
+playwright-report/
+
+# Outputs of the tool and of the harness, which can hold real names.
+scorecard*.txt
+schemalyser-inventory*.zip
+schemalyser-checks*.sql
+worlds/
+
+# Outputs of the boundary, the conversion, the release and the target commands. Each can hold the
+# names of a real database, and some hold its local codes, so none is ever committed here.
+core-profile.csv
+boundary.json
+check_script.sql
+questions.csv
+questions-summary.txt
+checklist.csv
+readiness.txt
+provenance.json
+release.sql
+source_manifest.csv
+source_draft.sql
+published.sql
+unmapped_measurements.csv
+dictionary.json
+dictionary.md
+load_postgresql.sql
+
+# The conversion to OMOP names Clarity tables, so it is kept out of the public repo.
+etl/

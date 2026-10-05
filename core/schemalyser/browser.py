@@ -1,0 +1,542 @@
+"""The functions the page's worker calls. They take and return plain values only."""
+import io
+import json
+import os
+import shutil
+import zipfile
+
+from .analysis import Analysis
+from .catalogue import CatalogueError
+from .checks import ChecksError
+from .extract import decode
+from .vocabulary import NOTHING_UNREAD
+
+_analysis = None
+
+
+def _skipped(checks):
+    """How many checks the script left out for want of time, and how many because a table is large."""
+    skipped = set(getattr(checks, "skipped", ()))
+    return (sum(1 for item in skipped if item[3] == "time"), sum(1 for item in skipped if item[3] == "size"))
+
+
+def _bytes(data):
+    # Under Pyodide a JavaScript Uint8Array arrives as a proxy with to_bytes().
+    return data.to_bytes() if hasattr(data, "to_bytes") else bytes(data)
+
+
+def start(catalogue, rules=None, checks=None):
+    """Begins an analysis. Returns "ok", "ok-no-headers", or "catalogue" or "checks" if that file cannot be read."""
+    global _analysis
+    _analysis = None
+    try:
+        _analysis = Analysis(decode(_bytes(catalogue)), decode(_bytes(rules)) if rules is not None else None,
+                             checks_csv=decode(_bytes(checks)) if checks is not None else None)
+    except CatalogueError:
+        return "catalogue"
+    except ChecksError:
+        return "checks"
+    return "ok-no-headers" if _analysis.catalogue.assumed_headers else "ok"
+
+
+def check_script():
+    """The check script that the page offers: the boundary's, when it ran, which also plans checks for the
+    columns that the conversion maps, and otherwise the analysis's own, with the spans and fanout checks."""
+    if _boundary is not None:
+        return _boundary["files"]["check_script.sql"]
+    return _analysis.check_script(include_spans=True, include_fanout=True)
+
+
+def add(name, data):
+    _analysis.add_request(name, decode(_bytes(data)))
+
+
+def finish():
+    """Returns the pack, the request index and two counts, as JSON."""
+    from . import vocabulary as v
+    pack = _analysis.pack()
+    checks = None
+    if _analysis.checks is not None:
+        confirmed = {f[1:3] + (f[5],) for r in _analysis._requests.values() for f in r.findings
+                     if f[0] == "filter" and f[5]}
+        checks = {
+            "used": v.checks_used_sentence(len(confirmed), len({c[:2] for c in confirmed})),
+            "unanswered": " ".join(part for part in (
+                v.checks_unanswered_sentence(_analysis.checks.errors) if _analysis.checks.errors else "",
+                v.checks_skipped_sentence(*_skipped(_analysis.checks))) if part),
+            "noHeaders": _analysis.checks.assumed_headers,
+        }
+    return json.dumps({"pack": pack, "index": _analysis.request_index(), "summary": _analysis.summary,
+                       "nothingUnread": NOTHING_UNREAD, "checks": checks})
+
+
+def pack_zip():
+    """The pack as one zip file, with fixed timestamps so that two runs give identical bytes.
+
+    When the boundary has run, its outputs follow in the folder boundary/, exactly as the boundary
+    command writes them. The sandbox reads only the pack's own files at the top of the zip.
+    """
+    out = io.BytesIO()
+    files = dict(_analysis.pack())
+    if _boundary is not None:
+        files.update({f"{BOUNDARY_FOLDER}/{name}": text for name, text in sorted(_boundary["files"].items())})
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, text in files.items():
+            archive.writestr(zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0)), text)
+    return out.getvalue()
+
+
+def clear():
+    global _analysis, _sandbox, _boundary, _checks, _pasted, _pasted_profile, _profile, _first_names, _facts
+    _analysis = None
+    _sandbox = None
+    _boundary = None
+    _checks = None
+    _pasted = None
+    _pasted_profile = None
+    _profile = None
+    _first_names = None
+    _facts = None
+    _outcomes.clear()
+    shutil.rmtree(BOUNDARY_ROOT, ignore_errors=True)
+
+
+# The boundary. The page writes the state and the requests into the worker's own file system, in the
+# layout of the state folder, and runs boundary.produce over them, so that the page and the boundary
+# command can never disagree. Nothing here is written outside the worker's memory.
+
+BOUNDARY_ROOT = "/tmp/schemalyser-boundary"
+BOUNDARY_FOLDER = "boundary"
+# The limits on a path that boundary_put writes: the characters in one name, the characters in the
+# whole path, and the number of folders and file in it. A path beyond any of them is left out.
+MAX_NAME_LENGTH = 255
+MAX_PATH_LENGTH = 1024
+MAX_PATH_DEPTH = 32
+_boundary = None
+# The check results that the checklists use: those of the state, with every result pasted since added; the
+# results pasted since the page was cleared, which a new analysis keeps; and the requests commit of the last
+# run, which a run after a paste keeps.
+_checks = None
+_pasted = None
+_requests_commit = None
+# The same for the core profile: the rows pasted since the page was cleared, and the profile that the
+# checklists use, as the text of core-profile.csv.
+_pasted_profile = None
+_profile = None
+# The facts that a person confirmed on this page since it was cleared, which a new analysis keeps.
+_facts = None
+# The files that boundary_put could not write, by kind, which the summary counts as left out.
+_put_refused = {"state": 0, "requests": 0}
+# The kinds of checklist item that a sample query from the data team can settle, and the sentence in
+# the evidence in hand that says that no sample query yet does.
+_SAMPLE_KINDS = {"table": "used", "column": "used", "relationship": "joined", "filter": "filtered"}
+
+
+def boundary_begin():
+    global _boundary, _checks
+    _boundary = None
+    _checks = None
+    shutil.rmtree(BOUNDARY_ROOT, ignore_errors=True)
+    for kind in ("state", "requests"):
+        os.makedirs(f"{BOUNDARY_ROOT}/{kind}")
+        _put_refused[kind] = 0
+
+
+def _safe_path(path):
+    """A relative path inside the folder, or None. Empty parts, '.' and '..' are refused, as is a path beyond the limits."""
+    text = str(path).replace("\\", "/")
+    parts = text.split("/")
+    if not parts or len(text) > MAX_PATH_LENGTH or len(parts) > MAX_PATH_DEPTH or any(
+            part in ("", ".", "..") or "\x00" in part or len(part) > MAX_NAME_LENGTH for part in parts):
+        return None
+    return "/".join(parts)
+
+
+def boundary_put(kind, path, data):
+    """Writes one file of the state or of the requests. Returns False, and counts the file as left out, when the path cannot be used."""
+    if kind not in ("state", "requests"):
+        return False
+    relative = _safe_path(path)
+    target = f"{BOUNDARY_ROOT}/{kind}/{relative}"
+    try:
+        if relative is None:
+            raise ValueError
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "wb") as f:
+            f.write(_bytes(data))
+    except (OSError, ValueError, RecursionError):
+        # A name too long for the file system, or a file where a folder must be, as with a.sql and then a.sql/b.sql.
+        _put_refused[kind] += 1
+        return False
+    return True
+
+
+def _group(row, total):
+    """Where the page lists an item: answered, settled by a sample query, or needing something else."""
+    from . import target
+    if row["status"] == "answered":
+        return "answered"
+    prefix = _SAMPLE_KINDS.get(row["kind"])
+    if prefix is not None:
+        none = target.WORDING["in_hand"][f"{prefix}_none"].format(total=total)
+        if none in row["evidence_in_hand"]:
+            return "sql"
+    return "other"
+
+
+def _actor(row):
+    """Who must act on an item and how, in the readiness statement's own words, or "" where it has none."""
+    from . import target
+    who, how = target.WORDING["who"].get(row["who"]), target.WORDING["how"].get(row["mechanism"])
+    if not who or not how:
+        return ""
+    item = target._item(row) if target.WORDING["item"].get(row.get("_wording")) or \
+        target.WORDING["item"].get(row["kind"]) else ""
+    return target.WORDING["readiness"]["act"].format(who=who, item=item or "this item", how=how)
+
+
+def _reading():
+    """The catalogue and the site rules by which check results are read: the analysis's, or else the state's own."""
+    if _analysis is not None:
+        return _analysis.catalogue, _analysis.rules
+    def text(name):
+        path = f"{BOUNDARY_ROOT}/state/{name}"
+        if not os.path.isfile(path):
+            return None
+        with open(path, "rb") as f:
+            return decode(f.read())
+    from . import boundary
+    try:
+        reading = Analysis(text(boundary.CATALOGUE) or "", text(boundary.RULES))
+    except (CatalogueError, ValueError, TypeError, AttributeError):
+        return None, None
+    return reading.catalogue, reading.rules
+
+
+def boundary_run(state_commit=None, requests_commit=None):
+    """Runs the boundary over what boundary_put wrote. Returns JSON for the page.
+
+    {"ok": false, "problem": key} when the state cannot be used, where key names the sentence in
+    boundary.WORDING; otherwise the checklist of each target query, with the facts the page shows.
+    """
+    global _boundary, _checks, _requests_commit, _profile
+    from . import boundary
+    from . import profile as core_profile
+    from .checks import Checks
+    _boundary = None
+    _requests_commit = requests_commit
+    path = f"{BOUNDARY_ROOT}/state/{boundary.CHECKS}"
+    _checks, unreadable = None, False
+    catalogue, rules = _reading()
+    if catalogue is None:
+        unreadable = True       # the boundary refuses the catalogue in its own words
+    elif os.path.isfile(path):
+        try:
+            with open(path, "rb") as f:
+                _checks = Checks.from_csv(decode(f.read()), catalogue, rules)
+        except ChecksError:
+            unreadable = True   # the boundary refuses the file in its own words
+    if _pasted is not None and not unreadable:
+        # The results pasted since the page was cleared are added to those of the state, which then differs
+        # from any commit.
+        _checks = _pasted if _checks is None else _checks.merged(_pasted)
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            f.write(_checks.to_csv())
+        state_commit = None
+    profile_path, conversion = f"{BOUNDARY_ROOT}/state/{boundary.PROFILE}", f"{BOUNDARY_ROOT}/state/{boundary.CONVERSION}"
+    _profile = None
+    if os.path.isfile(profile_path):
+        with open(profile_path, "rb") as f:
+            _profile = decode(f.read())
+    if _pasted_profile and os.path.isdir(conversion):
+        # The rows pasted into the core profile since the page was cleared are added to the state's profile.
+        try:
+            _profile = core_profile.merged(_profile, _pasted_profile, conversion)
+            with open(profile_path, "w", encoding="utf-8", newline="") as f:
+                f.write(_profile)
+            state_commit = None
+        except (core_profile.ProfileError, ValueError, KeyError, IndexError, OSError):
+            pass    # the boundary refuses the state's profile in its own words
+    _write_facts(catalogue)
+    if _facts:
+        state_commit = None
+    try:
+        outputs, facts = boundary.produce(f"{BOUNDARY_ROOT}/state", f"{BOUNDARY_ROOT}/requests",
+                                          state_commit or None, requests_commit or None, refused=dict(_put_refused))
+    except boundary.BoundaryError as error:
+        problem = next((key for key, text in boundary.WORDING.items() if text == str(error)), "other")
+        return json.dumps({"ok": False, "problem": problem})
+    files = boundary.everything(outputs, facts)
+    _boundary = {"files": files}
+    total = facts["summary"]["files"]
+    targets = []
+    for t in facts["targets"]:
+        rows = [{"id": row["question_id"], "kind": row["kind"], "status": row["status"],
+                 "blocking": row["blocking"] == "yes", "question": row["question"],
+                 "needed": row["evidence_needed"], "inHand": row["evidence_in_hand"],
+                 "actor": _actor(row), "group": _group(row, total),
+                 # Optional columns that the checklist may carry: what the step is trying to do, and how
+                 # the sample queries get between the same tables instead. Read by name, empty when absent.
+                 "intent": row.get("intent") or "", "route": row.get("route") or "",
+                 # The plain queries that would answer an open item, by identifier, with why and whether they can run.
+                 "queryState": row.get("query_state") or "", "queryReason": row.get("query_reason") or "",
+                 "queryIds": list(row.get("_queries") or []), "stage": row.get("phase") or "source",
+                 # The question that a colleague can answer from knowledge, and the answer a person gave, if any.
+                 "ask": row.get("_ask"), "fact": row.get("_fact") or ""} for row in t["rows"]]
+        offered = t.get("queries") or {"sizes": None, "queries": []}
+        # The source draft, which the page offers as the audit query once the first stage is ready. It stays
+        # in this page, which runs inside the hospital, and is written to no file unless the user saves it.
+        draft = None
+        if t.get("draft"):
+            from . import target as target_module
+            facts_of = target_module.draft_facts(t["draft"], _reading()[0])
+            sizes = _checks.rows if _checks is not None else {}
+            draft = {"sql": t["draft"], "countsOnly": facts_of["counts_only"], "restructured": bool(t.get("draft_restructured")),
+                     "tables": [{"name": n, "rows": next((v for k, v in sizes.items() if k.upper() == n.upper()), None)}
+                                for n in facts_of["tables"]]}
+        targets.append({"name": t["name"], "counts": t["counts"], "steps": t["steps"],
+                        "verdict": boundary.verdict(t), "readiness": t["readiness"], "rows": rows,
+                        "sizes": offered["sizes"], "queries": offered["queries"],
+                        "profile": offered.get("profile") or [], "draft": draft, "stages": t.get("stages"),
+                        "questions": t.get("questions") or "", "specification": t.get("specification") or "",
+                        "stageVerdicts": [line for line in t["readiness"].splitlines()
+                                          if line.startswith(("The question is ready", "The question is not yet ready"))]})
+    w = boundary.WORDING
+    notes = [w["target_refused"].format(name=name) for name in facts["refused"]]
+    if facts["named_out"]:
+        notes.append(w["target_names_refused"].format(count=boundary._n(facts["named_out"], "target query")))
+    return json.dumps({
+        "ok": True, "conversion": facts["present"]["conversion"], "targetFiles": facts["target_files"],
+        "targets": targets, "notes": notes, "summary": files["summary.md"], "files": sorted(files),
+        "requests": total, "checks": _checks.to_csv() if _checks is not None else "", "profile": _profile or "",
+    })
+
+
+def checks_paste(text):
+    """Reads results pasted from a results grid or a CSV file, adds them to the check results, and works out the checklists again.
+
+    The pasted rows are read by Checks.from_pasted under the same rules as a check results file, and a
+    later result for a check replaces the earlier one. The merged results take the place of checks.csv in
+    the state, and the boundary runs again over the same state and requests, so that the page and the
+    boundary command agree. Returns JSON: {"ok": false} when no row could be read; otherwise the counts
+    of rows read and kept under "pasted", and under "boundary" what boundary_run returns, or null when no
+    row was kept and nothing changed.
+    """
+    global _pasted
+    from .checks import Checks
+    catalogue, rules = _reading()
+    try:
+        if catalogue is None:
+            raise ChecksError
+        pasted = Checks.from_pasted(str(text), catalogue, rules)
+    except ChecksError:
+        return json.dumps({"ok": False})
+    counts = {"read": pasted.read, "accepted": pasted.accepted}
+    if not pasted.accepted:
+        return json.dumps({"ok": True, "pasted": counts, "boundary": None})
+    _pasted = pasted if _pasted is None else _pasted.merged(pasted)
+    result = json.loads(boundary_run(None, _requests_commit))
+    return json.dumps({"ok": True, "pasted": counts, "boundary": result})
+
+
+# The sandbox. DuckDB is imported only here, so that the analysis page does not need it.
+
+_sandbox = None
+_outcomes = {}
+
+
+def sandbox_start(catalogue, inventory):
+    """Returns "ok", "ok-no-headers", "catalogue" or "inventory"."""
+    global _sandbox
+    from .catalogue import Catalogue
+    from .sandbox import InventoryError, Sandbox
+    _sandbox = None
+    try:
+        entries = Catalogue.from_csv(decode(_bytes(catalogue)))
+    except CatalogueError:
+        return "catalogue"
+    try:
+        _sandbox = Sandbox(entries, _bytes(inventory))
+    except InventoryError:
+        return "inventory"
+    return "ok-no-headers" if entries.assumed_headers else "ok"
+
+
+def sandbox_from_analysis():
+    """Makes the sandbox from the analysis just finished, so that no file has to be chosen again."""
+    global _sandbox
+    from .sandbox import Sandbox
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as archive:
+        for name, text in _analysis.pack().items():
+            archive.writestr(name, text)
+    _sandbox = Sandbox(_analysis.catalogue, out.getvalue())
+
+
+def sandbox_build(rows):
+    return json.dumps(_sandbox.build(rows))
+
+
+def sandbox_run(sql):
+    return json.dumps(_sandbox.run(sql))
+
+
+def sandbox_requests_begin():
+    _outcomes.clear()
+
+
+def sandbox_request(name, data):
+    _outcomes[name] = _sandbox.outcome(decode(_bytes(data)))
+
+
+def sandbox_requests_finish():
+    from . import vocabulary as v
+    names = sorted(_outcomes)
+    counts = [sum(1 for n in names if _outcomes[n] == kind) for kind in (v.OUTCOME_ROWS, v.OUTCOME_NO_ROWS, v.OUTCOME_NOT_RUN)]
+    return json.dumps({
+        "sentence": v.requests_sentence(len(names), *counts),
+        "outcomes": [[number, _outcomes[name]] for number, name in enumerate(names, start=1)],
+        "index": [[number, name] for number, name in enumerate(names, start=1)],
+    })
+
+
+def profile_paste(text):
+    """Reads core profile results pasted from a results grid or a CSV file, adds them to the core profile, and works out the checklists again.
+
+    Each pasted row is read by profile.read on its own, with the state's conversion, and a row that it
+    refuses is left out. The kept rows are merged into the state's core profile by profile.merged, which
+    reads the whole profile again, and the boundary runs again. Returns JSON as checks_paste does.
+    """
+    global _pasted_profile
+    from . import boundary
+    from . import profile as core_profile
+    conversion = f"{BOUNDARY_ROOT}/state/{boundary.CONVERSION}"
+    try:
+        if not os.path.isdir(conversion):
+            raise core_profile.ProfileError("no conversion")
+        rows = core_profile.pasted_rows(str(text))
+        if not rows:
+            raise core_profile.ProfileError("no rows")
+        kept = core_profile.accepted_rows(rows, conversion)
+    except (core_profile.ProfileError, ValueError, KeyError, IndexError, OSError):
+        return json.dumps({"ok": False})
+    counts = {"read": len(rows), "accepted": len(kept)}
+    if not kept:
+        return json.dumps({"ok": True, "pasted": counts, "boundary": None})
+    _pasted_profile = (_pasted_profile or []) + kept
+    result = json.loads(boundary_run(None, _requests_commit))
+    return json.dumps({"ok": True, "pasted": counts, "boundary": result})
+
+
+# The first ask, for a project that starts without a catalogue. The names that it lists come from the
+# requests, so the query exists only here and on the page, and nothing here writes it anywhere.
+
+_first_names = None
+
+
+def first_ask_begin():
+    global _first_names
+    from .first_ask import Names
+    _first_names = Names()
+
+
+def first_ask_add(data):
+    """Adds the table names that one request, or one step of the conversion, reads."""
+    _first_names.add(decode(_bytes(data)))
+
+
+def first_ask_query():
+    """The first query, as JSON: {"sql", "names", "leftOut"}. "sql" is empty when no plain name was found."""
+    from . import first_ask
+    names, left_out = _first_names.chosen()
+    return json.dumps({"sql": first_ask.query(names), "names": len(names), "leftOut": left_out})
+
+
+def first_ask_read(text, rules=None, checks=None):
+    """Reads the pasted result of the first query as a catalogue and as check results.
+
+    Returns JSON: {"ok": false} when the text is not the result; otherwise the catalogue and the check
+    results as the text of their files, and counts of what was read.
+    """
+    from . import first_ask
+    from .rules import SiteRules
+    try:
+        rules_text = decode(_bytes(rules)) if rules is not None else None
+        catalogue, checks_text, facts = first_ask.read(str(text), SiteRules.from_json(rules_text),
+                                                       decode(_bytes(checks)) if checks is not None else None)
+    except (first_ask.FirstAskError, ValueError, TypeError, AttributeError):
+        return json.dumps({"ok": False})
+    return json.dumps({"ok": True, "catalogue": catalogue, "checks": checks_text, "facts": facts})
+
+
+def state_zip():
+    """The state that a second project starts from, as a zip: the catalogue, the check results, the core profile,
+    the facts and the site's mapping rows, and what the team's SQL showed."""
+    from . import boundary
+    out = io.BytesIO()
+    files = {}
+    path = f"{BOUNDARY_ROOT}/state/{boundary.CATALOGUE}"
+    if os.path.isfile(path):
+        with open(path, "rb") as f:
+            files[boundary.CATALOGUE] = decode(f.read())
+    if _checks is not None:
+        files[boundary.CHECKS] = _checks.to_csv()
+    if _profile:
+        files[boundary.PROFILE] = _profile
+    # What the team's SQL showed, as the last run gathered it, so that a later run can count it without the request files.
+    if _boundary is not None and boundary.EVIDENCE in _boundary["files"]:
+        files[boundary.EVIDENCE] = _boundary["files"][boundary.EVIDENCE]
+    for name in (boundary.FACTS, f"{boundary.CONVERSION}/site_mappings.csv"):
+        path = f"{BOUNDARY_ROOT}/state/{name}"
+        if os.path.isfile(path):
+            with open(path, "rb") as f:
+                files[name] = decode(f.read())
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, content in sorted(files.items()):
+            archive.writestr(zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0)), content)
+    return out.getvalue()
+
+
+# Facts that a person confirmed on this page.
+
+def _write_facts(catalogue):
+    """Adds the facts confirmed on this page to the state's facts.json, and writes the codes as the site's mapping rows."""
+    from . import boundary
+    from . import facts as facts_module
+    if not _facts or catalogue is None:
+        return
+    path = f"{BOUNDARY_ROOT}/state/{boundary.FACTS}"
+    held = facts_module.Facts()
+    if os.path.isfile(path):
+        try:
+            with open(path, "rb") as f:
+                held = facts_module.Facts.from_json(decode(f.read()), catalogue)
+        except facts_module.FactsError:
+            return      # the boundary refuses the state's file in its own words
+    for fact in _facts:
+        held = held.with_fact(fact)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(held.to_json())
+    conversion = f"{BOUNDARY_ROOT}/state/{boundary.CONVERSION}"
+    if os.path.isdir(conversion):
+        with open(f"{conversion}/{facts_module.SITE_MAPPINGS}", "w", encoding="utf-8", newline="") as f:
+            f.write(held.site_mappings())
+
+
+def fact_add(text):
+    """Adds one fact that a person confirmed, given as JSON, and works out the checklists again.
+
+    Returns JSON: {"ok": false} when the fact does not have the expected form or names something that the
+    catalogue does not hold; otherwise {"ok": true, "boundary": what boundary_run returns}.
+    """
+    global _facts
+    from . import facts as facts_module
+    catalogue, _ = _reading()
+    try:
+        if catalogue is None:
+            raise facts_module.FactsError("no catalogue")
+        fact = facts_module.check(json.loads(str(text)), catalogue)
+    except (facts_module.FactsError, ValueError, TypeError):
+        return json.dumps({"ok": False})
+    _facts = (_facts or []) + [fact]
+    return json.dumps({"ok": True, "boundary": json.loads(boundary_run(None, _requests_commit))})

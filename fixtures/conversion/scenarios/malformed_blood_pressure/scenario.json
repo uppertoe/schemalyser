@@ -1,0 +1,28 @@
+{
+  "description": "One child has three blood pressures on the record of a general anaesthetic: one written as 110/, one written as a word, and one written correctly as 100/60.",
+  "expectations": [
+    {
+      "says": "The pressure written as 110/ gives a systolic row of 110 and no diastolic row.",
+      "query": "SELECT SUM(CASE WHEN m.measurement_concept_id = 3004249 THEN 1 ELSE 0 END) AS systolic, SUM(CASE WHEN m.measurement_concept_id = 3012888 THEN 1 ELSE 0 END) AS diastolic, MAX(m.value_as_number) AS value FROM omop.measurement m JOIN omop.person p ON p.person_id = m.person_id WHERE p.person_source_value = '990000811' AND m.value_source_value = '110/'",
+      "result": [
+        1,
+        0,
+        110
+      ]
+    },
+    {
+      "says": "The pressure written as a word gives no row.",
+      "query": "SELECT COUNT(*) AS readings FROM omop.measurement m JOIN omop.person p ON p.person_id = m.person_id WHERE p.person_source_value = '990000811' AND m.value_source_value = 'unrecordable'",
+      "result": [
+        0
+      ]
+    },
+    {
+      "says": "The pressure written correctly gives one systolic row and one diastolic row.",
+      "query": "SELECT COUNT(*) AS readings FROM omop.measurement m JOIN omop.person p ON p.person_id = m.person_id WHERE p.person_source_value = '990000811' AND m.value_source_value = '100/60'",
+      "result": [
+        2
+      ]
+    }
+  ]
+}
