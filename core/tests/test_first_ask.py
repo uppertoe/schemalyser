@@ -158,7 +158,7 @@ def test_each_item_says_which_phase_needs_it_and_readiness_is_stated_for_each():
     phases = {row["question_id"]: row["phase"] for row in rows}
     assert set(phases.values()) == set(target.PHASES)
     for row in rows:
-        if row["kind"] in ("core", "meaning", "timing"):
+        if row["kind"] in ("core", "meaning", "timing") and not row["question_id"].startswith(("count-", "route-")):
             assert row["phase"] == "release", row["question_id"]
         if row["kind"] in ("table", "column", "relationship"):
             # A table, a column or a join is needed unless the answer does not depend on it.

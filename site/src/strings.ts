@@ -92,12 +92,11 @@ export const strings = {
   catalogueNote: "This is the CSV file that the query in the first step produces. Without it, Schemalyser writes a shorter query for you below.",
   chooseRules: 'Choose the site rules file, if you have one:',
   rulesNote: 'The site rules file tells Schemalyser about naming conventions at your site. Schemalyser works without one.',
-  chooseFolder: "Your team's existing SQL files:",
-  folderNote: "Choose the folder that holds the team's .sql files. Schemalyser reads them here to see how the team already joins and filters these tables, and it keeps no text from them.",
+  chooseFolder: 'The SQL files that you already have for this database, your own or your team\'s:',
+  folderNote: 'Choose the folder that holds them. Schemalyser reads them here to see how you already join and filter these tables, and it keeps no text from them.',
   folderCount: (n: number) => `The folder you chose contains ${n} SQL ${files(n)}.`,
-  chooseChecks: 'Choose the check results file, if you have one:',
-  checksNote:
-    'The check results file is the CSV file that the check script produces. With it, Schemalyser can write the values that your requests filter on.',
+  chooseChecks: 'Earlier query results saved by Schemalyser, if you have them:',
+  checksNote: 'Only needed if an earlier meeting saved results as a separate file. A saved state from an earlier meeting already holds them.',
   checksError:
     'Schemalyser could not read the check results file. Please check that you have chosen the CSV file saved from the check script.',
   analyse: 'Analyse the requests',
@@ -189,7 +188,7 @@ export const strings = {
       : `Schemalyser has worked out the checklist again with the pasted results, and ${answered} ${items(answered)} ${
           answered === 1 ? 'is' : 'are'
         } now answered that ${answered === 1 ? 'was' : 'were'} not answered before.`,
-  profileHeading: 'For the central OMOP team',
+  profileHeading: 'For the central OMOP team, the team that runs the hospital\'s main OMOP database',
   profileWhat:
     "These queries run on the OMOP database, not on Clarity. The first reads only SQL Server's own records, and the others wait for its result, because Schemalyser offers no query on a core table whose size it does not know.",
   queryInProfile: 'The query for this item is in the section for the central OMOP team, above.',
@@ -233,7 +232,7 @@ export const strings = {
 
   // Questions that a colleague can answer from knowledge.
   questionsHeading: 'Questions for a colleague',
-  questionsWhat: "These are all the questions for you on one list, which you can copy. Answer each one beside its item below: yes; no, with what is true instead; or not sure, in which case Schemalyser offers a short query.",
+  questionsWhat: 'These are all the questions for you on one list, which you can copy. Answer each one beside its item below.',
   questionsCopy: 'Copy the questions',
   whoLabel: "Your name, if you would like it kept with your answers (it is kept only in the saved state):",
   factYes: 'Yes, this is right',
@@ -380,7 +379,7 @@ export const strings = {
   settingsWhat: 'The study period applies to the start of each anaesthetic. Without a period, the audit counts every anaesthetic on record. Without a kind chosen, every kind counts. Both are carried into the specification and the reference query.',
   settingsFrom: 'From',
   settingsTo: 'To',
-  settingsKinds: 'Count only these kinds of anaesthetic:',
+  settingsKinds: 'Count only these kinds of anaesthetic (none ticked means every kind, including sedation and procedures at the bedside):',
   settingsApply: 'Apply the period and the kinds',
   endingHeading: 'Where this audit question stands',
   endingSettled: (n: number) => `${n} ${n === 1 ? 'thing is' : 'things are'} settled.`,
@@ -388,14 +387,50 @@ export const strings = {
   endingByQuestion: 'You can answer the question with it above.',
   endingByQuery: 'The short query with it above settles it.',
   endingNothing: 'Nothing remains to be settled.',
+  endingClinician: 'The clinician settles this after the meeting.',
   endingLessCertain: (n: number) => `${n} further ${n === 1 ? 'point is' : 'points are'} less certain. The audit query does not wait for ${n === 1 ? 'it' : 'them'}, and the specification lists ${n === 1 ? 'it' : 'them'}.`,
-  endingSave: "Save the state before you close the page, and keep the file in the clinician's folder for this audit, on the hospital's network, so that the next meeting starts from here.",
-  specWhatOpen: 'This page is for the person who writes the audit query. Some points are not yet settled, and the specification shows each as an assumption. It names this hospital\'s tables and codes, so it is for use inside the hospital only.',
+  endingSave: "Save before you close the page, and keep the file in the clinician's folder for this audit, on the hospital's network. At the next meeting, choose that folder, and nothing will be asked twice.",
+  specWhatOpen: 'This page is for the person who writes the audit query. Some points are not yet settled, and it shows each as an assumption. It names this hospital\'s tables and codes, so it is for use inside the hospital only.',
   itemMore: 'More about this point',
   groupYou: 'Questions for you, and short queries',
   groupYouNote: 'Answer each question beside it. Where you are not sure, choose Not sure, and Schemalyser offers a short query that settles it instead.',
   groupYouNone: 'Nothing here needs you now.',
   groupLater: (n: number) => `Show the ${n} other ${n === 1 ? 'point' : 'points'}, which wait for the team's SQL, the clinician or the central team`,
+  otherFilesSummary: 'Other files from an earlier meeting, if you have them',
+  firstMissing: (names: string[]) =>
+    `The first query asked about ${names.length} ${names.length === 1 ? 'table' : 'tables'} that did not come back: ${names.join(', ')}. Each is not visible to this login: it may not exist here, or this login may not be allowed to see it.`,
+  auditNeedsPeriod: 'Schemalyser will offer the reference query once a study period has been entered above, because without one it would read every anaesthetic on record.',
+  searchWords: 'The words that the search looks for, separated by semicolons:',
+  searchRewrite: 'Write the search again with these words',
+  searchText: 'A blood pressure charted as text, with the mean in brackets',
+  countPasteLabel: 'The result of the count, copied from the results grid with its headers:',
+  countRead: 'Show the counts',
+  countNone: 'Schemalyser could not read any year in the pasted text. Each row needs the three columns that the count returns.',
+  countYear: 'Year',
+  countAll: 'Anaesthetics',
+  countCohort: 'In the cohort',
+  countUnderTen: 'under 10',
+  countAsk: 'Do these numbers look right for this hospital?',
+  countEmpty: 'The count found no anaesthetic at all. Does that look right for this hospital?',
+  countRight: 'About right',
+  countFew: 'Too few',
+  countMany: 'Too many',
+  decisionsHeading: 'Decisions for the clinicians',
+  decisionsWhat: 'The audit makes these choices. Make each one together, and add a short note if you wish; the notes are kept only in the saved file. Each decision is carried into the specification.',
+  decisionNote: 'A short note, if you wish',
+  decisionRecorded: 'The specification records this decision, and the reference query does not yet apply it.',
+  decisions: [
+    { key: 'pressures', title: 'Which pressures count once an arterial line is running:', applied: true, options: [
+      ['preferred', 'The arterial reading is preferred only where an arterial and a cuff reading share a time (present rule)'],
+      ['arterial_only', 'The arterial line alone, from its first reading to its last']] as [string, string][] },
+    { key: 'floor', title: 'A mean pressure below this is treated as an artefact of zeroing, flushing or sampling (leave empty for no floor):', applied: true, options: [] as [string, string][] },
+    { key: 'isolated', title: 'A single isolated low reading:', applied: false, options: [
+      ['counts', 'It counts (present rule)'], ['ignored', 'It is ignored']] as [string, string][] },
+    { key: 'bypass', title: 'Time on cardiopulmonary bypass or ECMO:', applied: false, options: [
+      ['counted', 'It is counted (present rule)'], ['left_out', 'It is left out']] as [string, string][] },
+    { key: 'age', title: 'Age:', applied: false, options: [
+      ['postnatal', 'Under 28 days of postnatal age (present rule)'], ['postmenstrual', 'A limit on postmenstrual age']] as [string, string][] },
+  ],
   keepsNothing: 'Schemalyser keeps nothing after you close this page.',
   version: (version: string, checksum: string) => `Version ${version}. Checksum: ${checksum}`,
 };

@@ -382,7 +382,7 @@ def test_the_wording_is_calm_and_complete():
                 texts.append(entry[part])
     texts += [line for value in target.DRAFT_WORDING.values() for line in (value if isinstance(value, list) else [value])]
     # The questions for a colleague are questions, and only they may end in a question mark.
-    asked = {v for k, v in target.WORDING["facts"].items() if k in ("ask_join", "ask_filter_keep", "ask_filter_leave", "ask_route")}
+    asked = {v for k, v in target.WORDING["facts"].items() if k in ("ask_join", "ask_join_plain", "ask_filter_keep", "ask_filter_leave", "ask_route")}
     for text in texts:
         assert ("?" not in text or text in asked) and "!" not in text and "  " not in text, text
 

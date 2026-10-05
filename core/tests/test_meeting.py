@@ -32,12 +32,12 @@ def test_a_join_question_states_its_direction_and_a_filter_question_asks_what_a_
     rows, traced = neonatal
     asks = {row["question_id"]: row["_ask"] for row in rows if row.get("_ask")}
     join = next(a for a in asks.values() if a["kind"] == "join")
-    assert join["text"].startswith(("This join", "Is it right that")) and "should have" in join["text"] or "may match" in join["text"]
+    assert join["text"].startswith("The query ") and join["text"].endswith(". Is that right?")
     assert "conversion" not in " ".join(a["text"] for a in asks.values())
     filters = [a for a in asks.values() if a["kind"] == "filter"]
     for ask in filters:
         assert ask["text"].startswith("In ") and "mark" in ask["text"]
-    assert "Each question has three answers" in traced["questions"]
+    assert "three answers" not in traced["questions"]
 
 
 def test_a_picker_offers_only_columns_that_could_be_keys():
@@ -51,10 +51,11 @@ def test_codes_are_found_by_a_name_search_on_the_definition_table():
     search = [row["_ask"] for row in rows if row.get("_ask", {}).get("search")]
     assert search, "the neonatal codes are offered a name search"
     sql = search[0]["search"]
-    assert "FROM [dbo].[OBS_TYPE_DEF] AS d WITH (NOLOCK)" in sql and "LIKE N'%MEAN%'" in sql and "TOP (200)" in sql
+    assert "FROM [dbo].[OBS_TYPE_DEF] AS d WITH (NOLOCK)" in sql and "LIKE N'%MEAN%'" in sql and "TOP" not in sql
+    assert "LIKE N'%UAC%'" in sql and "LIKE N'%A-LINE%'" in sql
     assert "a mean arterial pressure measured through an arterial line" in " ".join(a["meaning"] for a in search)
-    found = json.loads(browser.codes_search_read("code\tname\n52\tART MEAN\n51\tNIBP MEAN\n=1+1\tBAD\n"))
-    assert [c["code"] for c in found["candidates"]] == ["52", "51"]
+    found = json.loads(browser.codes_search_read("code\tOBS_LABEL\tUNIT_LABEL\n52\tART MEAN\tmmHg\n51\tNIBP MEAN\tmmHg\n=1+1\tBAD\tx\n"))
+    assert [c["code"] for c in found["candidates"]] == ["52", "51"] and found["columns"] == ["OBS_LABEL", "UNIT_LABEL"]
 
 
 def test_not_sure_is_recorded_and_offers_a_match_query_that_settles_the_join(neonatal):
@@ -115,7 +116,7 @@ def test_the_specification_is_in_the_hospitals_own_terms(neonatal):
     text = target.specification(CONVERSION, NEONATAL, rows, traced, CATALOGUE, "neonatal_low_mean_pressure",
                                 {"from": "2022-01-01", "to": "2024-12-31", "kinds": []})
     for heading in ("1. The question", "2. The study period", "3. Where each part", "4. How the tables are joined",
-                    "5. What is left out", "6. The local codes", "7. The result", "8. What is not yet settled", "9. Cases"):
+                    "5. What is left out", "6. The local codes", "7. The result", "8. What is not yet settled", "9. Decisions for the clinicians", "10. Cases"):
         assert heading in text
     assert "The study period runs from 2022-01-01 to 2024-12-31" in text
     for field in ("measurement_event_id", "age_days", "anaesthetic_id", "value_as_number", "python -m"):
@@ -150,3 +151,46 @@ def test_a_table_whose_size_is_not_visible_is_counted_only_when_it_is_plainly_sm
     assert checking.offer(values, CATALOGUE, unrecorded, small={"OBS_TYPE_DEF"}) == ("unsampled", [])
     label = Check("values", "OBS_TYPE_DEF", "OBS_LABEL")
     assert checking.offer(label, CATALOGUE, unrecorded, small={"OBS_TYPE_DEF"})[0] == "count"
+
+
+def test_the_count_by_year_reads_no_reading_and_stays_open_until_it_looks_right(neonatal):
+    rows, traced = neonatal
+    sql = target.year_count(CONVERSION, NEONATAL, CATALOGUE)
+    assert sql and "OBS_READING" not in sql and "start_year" in sql and "age_days < 28" in sql
+    count = {r["question_id"]: r for r in rows}["count-by-year"]
+    assert count["status"] == "open" and count["_queries"] == ["yearcount"] and count["phase"] == "source" and not count["query"]
+    for answer, years, settled in (("right", [[2023, 120, 10], [2024, 130, 20]], True),
+                                   ("right", [[2022, 120, 10], [2024, 130, 20]], False),
+                                   ("few", [[2023, 120, 10]], False), ("right", [[2023, 120, None]], False)):
+        given = json.dumps({"facts": [{"kind": "count", "answer": answer, "years": years, "date": "2026-10-05"}]})
+        found, _ = target.checklist(make_checks.WORLD, CONVERSION, NEONATAL, CHECKS, facts_text=given, name="n")
+        row = {r["question_id"]: r for r in found}["count-by-year"]
+        assert (row["status"] == "answered") == settled, (answer, years)
+        if not settled:
+            assert "The count rests on these matches" in row["evidence_in_hand"]
+
+
+def test_a_code_marked_not_sure_stays_open_and_is_unsettled_in_the_specification():
+    given = json.dumps({"facts": [{"kind": "codes", "vocabulary": "SITE_OBS", "concept": 21490852, "codes": ["52"],
+                                   "uncertain": ["53"], "column": "OBS_READING.OBS_TYPE_KEY", "date": "2026-10-05"}]})
+    rows, traced = target.checklist(make_checks.WORLD, CONVERSION, NEONATAL, facts_text=given, name="n")
+    row = {r["question_id"]: r for r in rows}["codes-measurement.measurement_concept_id-21490852"]
+    assert row["status"] == "open" and "whether 53 also means this" in row["evidence_in_hand"]
+    assert browser._remains(row)
+
+
+def test_the_floor_changes_the_answer_on_the_planted_cases_and_the_reference_query_agrees():
+    world = make_checks.WORLD
+    plain = target.check_query(world, CONVERSION, NEONATAL, target.source_draft(CONVERSION, NEONATAL, CATALOGUE, blank=False), rows=300)
+    floored = target.with_settings(NEONATAL, {"floor": 36}, CONVERSION)
+    assert "m.value_as_number >= 36" in floored
+    result = target.check_query(world, CONVERSION, floored, target.source_draft(CONVERSION, floored, CATALOGUE, blank=False), rows=300)
+    assert result["agree"] and result["target"] != plain["target"]
+    arterial = target.with_settings(NEONATAL, {"pressures": "arterial_only"}, CONVERSION)
+    assert "art_before" in arterial and "art_after" in arterial
+    assert target.check_query(world, CONVERSION, arterial, target.source_draft(CONVERSION, arterial, CATALOGUE, blank=False), rows=300)["agree"]
+    assert target.with_settings(NEONATAL, {"pressures": None, "floor": None}, CONVERSION) == NEONATAL
+    with pytest.raises(target.TargetError):
+        target.read_settings('{"floor": 0}')
+    with pytest.raises(target.TargetError):
+        target.read_settings('{"bypass": "sometimes"}')

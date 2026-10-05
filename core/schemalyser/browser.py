@@ -216,14 +216,29 @@ def _reading():
     return reading.catalogue, reading.rules
 
 
+def _remains(row):
+    """Whether an item of the first phase remains to be settled: a blocking item that is open, or any item that a person
+    was asked about and that nothing has yet settled, such as a doubt, a match given in place of another, a code marked not
+    sure or a name whose visibility is not known."""
+    if (row.get("phase") or "source") != "source" or row["status"] == "answered":
+        return False
+    if row["blocking"] == "yes" and row["status"] == "open":
+        return True
+    if row.get("_fact") in ("unsure", "measure", "noted", "no"):
+        return True
+    # A route rests on a name that is not visible, so it remains until a person has said that the name does not exist here.
+    return row["question_id"].startswith("route-")
+
+
 def _needs(rows):
     """What a person must still do for the first phase, by kind, and how many points are only less certain."""
     first = [r for r in rows if (r.get("phase") or "source") == "source"]
-    must = [r for r in first if r["blocking"] == "yes" and r["status"] == "open"]
+    must = [r for r in first if _remains(r)]
     asked = [r for r in must if r.get("_ask") and not r.get("_fact")]
     queried = [r for r in must if r not in asked and r.get("_queries")]
     return {"questions": len(asked), "queries": len(queried), "other": len(must) - len(asked) - len(queried),
-            "lessCertain": sum(1 for r in first if r["status"] == "partly"),
+            "lessCertain": sum(1 for r in first if r["status"] == "partly" and not _remains(r)),
+            "remaining": [r["question_id"] for r in must],
             "settled": sum(1 for r in first if r["status"] == "answered")}
 
 
@@ -315,7 +330,9 @@ def boundary_run(state_commit=None, requests_commit=None):
                                 for n in facts_of["tables"]]}
         targets.append({"name": t["name"], "counts": t["counts"], "steps": t["steps"],
                         "verdict": boundary.verdict(t), "readiness": t["readiness"], "rows": rows,
-                        "sizes": offered["sizes"], "queries": offered["queries"],
+                        "sizes": offered["sizes"],
+                        "queries": offered["queries"] + ([{"id": "yearcount", "sql": t["year_count"], "state": "ready", "table": ""}]
+                                                         if t.get("year_count") else []),
                         "profile": offered.get("profile") or [], "draft": draft, "stages": t.get("stages"),
                         "questions": t.get("questions") or "", "specification": t.get("specification") or "",
                         # The routes that the catalogue settled, one sentence each, shown at the head of the checklist.
@@ -489,7 +506,14 @@ def first_ask_read(text, rules=None, checks=None):
                                                        decode(_bytes(checks)) if checks is not None else None)
     except (first_ask.FirstAskError, ValueError, TypeError, AttributeError):
         return json.dumps({"ok": False})
-    return json.dumps({"ok": True, "catalogue": catalogue, "checks": checks_text, "facts": facts})
+    # The tables that the first query asked about and that did not come back, which are not visible to this login. Their
+    # names come from the requests and the conversion, so they are shown only on the page.
+    missing = []
+    if _first_names is not None:
+        from .catalogue import Catalogue
+        held = {t.name.upper() for t in Catalogue.from_csv(catalogue).tables()}
+        missing = sorted(n for n in _first_names.chosen()[0] if n.upper() not in held)
+    return json.dumps({"ok": True, "catalogue": catalogue, "checks": checks_text, "facts": facts, "missing": missing})
 
 
 def state_zip():
@@ -564,24 +588,56 @@ def facts_add(text):
     return json.dumps({"ok": True, "boundary": json.loads(boundary_run(None, _requests_commit))})
 
 
-def codes_search_read(text):
-    """Reads the pasted result of a name search as candidates: {"ok", "candidates": [{"code", "name"}]}.
+def codes_search_sql(text):
+    """The name search again, with the words that the two people chose on the page: {"ok", "sql"}."""
+    from . import target as target_module
+    catalogue, rules = _reading()
+    try:
+        given = json.loads(str(text))
+        table, code, label = given["definition"]
+        definition = target_module._definition(rules, catalogue, given["table"], given["column"])
+        if catalogue is None or definition is None or definition[:3] != (table, code, label):
+            raise ValueError
+        words = [w for w in given["words"] if isinstance(w, str) and target_module.PLAIN_WORD.fullmatch(w.strip())]
+        if not words:
+            raise ValueError
+        return json.dumps({"ok": True, "sql": target_module.code_search(catalogue, definition, [w.strip() for w in words])})
+    except (ValueError, KeyError, TypeError):
+        return json.dumps({"ok": False})
 
-    The names are the hospital's own build. They are returned to the page to show, and written into no file.
+
+def codes_search_read(text):
+    """Reads the pasted result of a name search: {"ok", "columns", "candidates": [{"code", "values"}]}.
+
+    The first column is the code and the rest are its names and kinds, which are the hospital's own build. They are
+    returned to the page to show, and written into no file.
     """
     from .checks import MAXIMUM_TEXT_LENGTH, _acceptable
-    lines = str(text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    lines = [l for l in str(text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n") if l.strip()]
+    rows = [[c.strip() for c in (l.split("\t") if "\t" in l else l.split(","))] for l in lines]
+    rows = [r for r in rows if not all(set(c) <= {"-"} for c in r) and not (len(r) == 1 and "rows affected" in r[0])]
+    columns = rows[0][1:] if rows and rows[0][0].lower() == "code" else []
     found, seen = [], set()
-    for line in lines:
-        cells = [c.strip() for c in (line.split("\t") if "\t" in line else line.split(",", 1))]
-        if len(cells) != 2 or (cells[0].lower(), cells[1].lower()) == ("code", "name") or set(cells[0]) <= {"-"}:
-            continue
-        code, name = cells
-        if not _acceptable(code, MAXIMUM_TEXT_LENGTH) or "," in code or len(name) > 200 or code in seen:
+    for row in rows[1 if columns else 0:]:
+        code, values = row[0], [v if v != "NULL" else "" for v in row[1:]]
+        if not _acceptable(code, MAXIMUM_TEXT_LENGTH) or "," in code or code in seen or any(len(v) > 200 for v in values):
             continue
         seen.add(code)
-        found.append({"code": code, "name": name})
-    return json.dumps({"ok": bool(found), "candidates": found[:200]})
+        found.append({"code": code, "values": values})
+    return json.dumps({"ok": bool(found), "columns": columns, "candidates": found})
+
+
+def year_count_read(text):
+    """Reads the pasted result of the count by year: {"ok", "years": [[year, anaesthetics, in the cohort]]}."""
+    found = []
+    for line in str(text or "").replace("\r", "").split("\n"):
+        cells = [c.strip() for c in (line.split("\t") if "\t" in line else line.split(","))]
+        if len(cells) != 3 or not cells[0].isdecimal() or not 1900 <= int(cells[0]) <= 2200:
+            continue
+        values = [int(c) if c.isdecimal() else None for c in cells[1:]]
+        found.append([int(cells[0])] + values)
+    headed = "start_year" in str(text or "").lower()
+    return json.dumps({"ok": bool(found) or headed, "years": sorted(found)[:200]})
 
 
 def settings_set(text):

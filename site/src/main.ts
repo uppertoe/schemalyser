@@ -34,7 +34,8 @@ interface Item {
   stage?: 'source' | 'unneeded' | 'release';
   // The question that a colleague can answer from knowledge, and the answer a person gave.
   ask?: { kind: 'join' | 'filter' | 'codes' | 'route'; text: string; left?: string; right?: string; tables?: Record<string, string[]>;
-    column?: string; vocabulary?: string; concept?: string; meaning?: string; search?: string; group?: string; step?: string } | null;
+    column?: string; vocabulary?: string; concept?: string; meaning?: string; search?: string; group?: string; step?: string;
+    steps?: string[]; words?: string[]; definition?: string[] } | null;
   fact?: string;
 }
 
@@ -64,9 +65,10 @@ interface Target {
   specification?: string;
   // The routes that the catalogue settled, where a step gave way to one of its alternatives, one sentence each.
   routes?: string[];
-  settings?: { from?: string | null; to?: string | null; kinds?: number[] };
+  settings?: { from?: string | null; to?: string | null; kinds?: number[]; pressures?: string | null; floor?: number | null;
+    isolated?: string | null; bypass?: string | null; age?: string | null; notes?: Record<string, string> };
   kinds?: [number, string][];
-  needs?: { questions: number; queries: number; other: number; lessCertain: number; settled: number };
+  needs?: { questions: number; queries: number; other: number; lessCertain: number; settled: number; remaining: string[] };
 }
 
 interface Boundary {
@@ -280,7 +282,7 @@ const byPath = (a: { path: string }, b: { path: string }) => (a.path < b.path ? 
 // The state folder chosen from this computer, in the layout of the boundary's state folder. Only the
 // files that the state may hold are taken, by the same rule as the fetch from GitHub.
 // The state files that the page writes itself, which a state folder chosen here may hold besides those of the state repository.
-const SAVED_STATE_FILES = ['facts.json', 'sql_evidence.json'];
+const SAVED_STATE_FILES = ['facts.json', 'sql_evidence.json', 'audit.json'];
 
 function stateFromFolder() {
   const found = new Map<string, File>();
@@ -518,9 +520,9 @@ function askElement(item: Item) {
   const actions = el('div', undefined, 'actions');
   if (ask.kind === 'route') {
     actions.append(
-      askButton(strings.routeAbsent, 'fact-yes', () => send({ kind: 'route', step: ask.step, answer: 'absent' })),
-      askButton(strings.routeHidden, 'secondary fact-no', () => send({ kind: 'route', step: ask.step, answer: 'hidden' })),
-      askButton(strings.notSure, 'secondary fact-unsure', () => send({ kind: 'route', step: ask.step, answer: 'unsure' })));
+      ...([['absent', strings.routeAbsent, 'fact-yes'], ['hidden', strings.routeHidden, 'secondary fact-no'],
+        ['unsure', strings.notSure, 'secondary fact-unsure']] as const).map(([answer, label, cls]) => askButton(label, cls, () =>
+        sendFacts(box, (ask.steps?.length ? ask.steps : [ask.step]).map((step) => ({ kind: 'route', step, answer }))))));
     box.append(actions);
     return box;
   }
@@ -570,7 +572,19 @@ function askElement(item: Item) {
     label.append(area);
     const list = el('div', undefined, 'candidates');
     list.dataset.group = ask.group;
-    box.append(code, copyRow, label, askButton(strings.searchRead, 'search-read', () => {
+    // The words can be narrowed or widened on the page; the core writes the search again from them.
+    const words = el('label', strings.searchWords);
+    const wordsInput = el('input', undefined, 'search-words') as HTMLInputElement;
+    wordsInput.type = 'text';
+    wordsInput.value = (ask.words ?? []).join('; ');
+    words.append(wordsInput);
+    const rewrite = askButton(strings.searchRewrite, 'secondary search-rewrite', () => {
+      const [table, column] = ask.column!.split('.');
+      worker?.postMessage({ type: 'search-sql', group: ask.group, request: JSON.stringify({
+        definition: ask.definition, table, column, words: wordsInput.value.split(';').map((w) => w.trim()).filter(Boolean) }) });
+    });
+    code.dataset.search = ask.group;
+    box.append(code, copyRow, words, rewrite, label, askButton(strings.searchRead, 'search-read', () => {
       if (area.value.trim()) worker?.postMessage({ type: 'codes-search', group: ask.group, text: area.value });
     }), list, el('p', strings.searchPrivate, 'note'));
     return box;
@@ -586,10 +600,10 @@ function askElement(item: Item) {
   return box;
 }
 
-// The candidates that a name search found: for each, the two people choose which meaning it has, if any. Several rows
-// may have one meaning. The choices become the codes of each meaning; a meaning with no row chosen and a row marked
-// not sure is recorded as not sure.
-function showCandidates(group: string, candidates: { code: string; name: string }[]) {
+// The candidates that a name search found: every one is listed, and for each the two people choose what it is. Several rows
+// may have one meaning. The choices become the codes of each meaning; a row marked not sure stays open, and a row charted
+// as text with the mean in brackets is recorded as such.
+function showCandidates(group: string, columns: string[], candidates: { code: string; values: string[] }[]) {
   const list = document.querySelector<HTMLElement>(`.candidates[data-group="${CSS.escape(group)}"]`);
   const meanings = searchGroups.get(group) ?? [];
   if (!list) return;
@@ -599,7 +613,7 @@ function showCandidates(group: string, candidates: { code: string; name: string 
   }
   const table = el('table', undefined, 'candidate-table');
   const head = el('tr');
-  head.append(el('th', strings.searchName), el('th', strings.searchCode), el('th', strings.searchChoice));
+  head.append(el('th', strings.searchCode), ...(columns.length ? columns : [strings.searchName]).map((c) => el('th', c)), el('th', strings.searchChoice));
   table.append(head);
   const selects: [string, HTMLSelectElement][] = [];
   for (const candidate of candidates) {
@@ -611,22 +625,64 @@ function showCandidates(group: string, candidates: { code: string; name: string 
       o.value = value;
       return o;
     };
-    select.append(option('', strings.searchNeither), ...meanings.map((m) => option(m.concept, m.meaning)), option('unsure', strings.notSure));
+    select.append(option('', strings.searchNeither), ...meanings.map((m) => option(m.concept, m.meaning)),
+      option('text', strings.searchText), option('unsure', strings.notSure));
     const cell = el('td');
     cell.append(select);
-    row.append(el('td', candidate.name), el('td', candidate.code), cell);
+    row.append(el('td', candidate.code), ...candidate.values.map((v) => el('td', v)), cell);
     table.append(row);
     selects.push([candidate.code, select]);
   }
   const save = askButton(strings.searchSave, 'search-save', () => {
-    const facts = meanings.map((m) => {
+    const unsure = selects.filter(([, s]) => s.value === 'unsure').map(([code]) => code);
+    const facts: Record<string, unknown>[] = meanings.map((m) => {
       const codes = selects.filter(([, s]) => s.value === m.concept).map(([code]) => code);
-      return codes.length ? { kind: 'codes', vocabulary: m.vocabulary, concept: m.concept, column: m.column, codes }
+      return codes.length ? { kind: 'codes', vocabulary: m.vocabulary, concept: m.concept, column: m.column, codes, ...(unsure.length ? { uncertain: unsure } : {}) }
         : { kind: 'codes', vocabulary: m.vocabulary, concept: m.concept, column: m.column, codes: [], answer: 'unsure' };
     });
+    const text = selects.filter(([, s]) => s.value === 'text').map(([code]) => code);
+    if (text.length && meanings[0]) facts.push({ kind: 'textbp', column: meanings[0].column, codes: text });
     sendFacts(list, facts);
   });
   list.replaceChildren(el('p', strings.searchFound(candidates.length), 'note'), table, save);
+}
+
+// The count by year: its result is pasted here, shown as a small table, and the two people say whether it looks right.
+function yearCountBox() {
+  const box = el('div', undefined, 'year-count');
+  const label = el('label', strings.countPasteLabel);
+  const area = el('textarea', undefined, 'count-paste') as HTMLTextAreaElement;
+  area.rows = 5;
+  label.append(area);
+  const shown = el('div', undefined, 'count-result');
+  box.append(label, askButton(strings.countRead, 'count-read', () => {
+    if (area.value.trim()) worker?.postMessage({ type: 'year-count', text: area.value });
+  }), shown);
+  return box;
+}
+
+function showYearCount(years: [number, number | null, number | null][]) {
+  const shown = document.querySelector<HTMLElement>('.count-result');
+  if (!shown) return;
+  const table = el('table', undefined, 'count-table');
+  const head = el('tr');
+  head.append(el('th', strings.countYear), el('th', strings.countAll), el('th', strings.countCohort));
+  table.append(head);
+  for (const [year, all, cohort] of years) {
+    const row = el('tr');
+    row.append(el('td', String(year)), el('td', all === null ? strings.countUnderTen : all.toLocaleString('en-AU')),
+      el('td', cohort === null ? strings.countUnderTen : cohort.toLocaleString('en-AU')));
+    table.append(row);
+  }
+  const ask = el('p', years.length ? strings.countAsk : strings.countEmpty, 'ask-text');
+  const actions = el('div', undefined, 'actions');
+  for (const [answer, label] of [['right', strings.countRight], ['few', strings.countFew], ['many', strings.countMany], ['unsure', strings.notSure]] as const) {
+    actions.append(askButton(label, `count-${answer}`, () => sendFacts(shown, [{ kind: 'count', answer, years }])));
+  }
+  // The earliest year with anaesthetics is offered as the start of the study period, where none has been entered.
+  const from = document.querySelector<HTMLInputElement>('input.setting-date');
+  if (from && !from.value && years.length) from.value = `${years[0][0]}-01-01`;
+  shown.replaceChildren(table, ask, actions);
 }
 
 // A block of text that the core wrote, with buttons that copy it and, where given, save it.
@@ -717,6 +773,7 @@ function queryElements(item: Item, queries: Map<string, Query>, shown: Set<strin
     code.dataset.query = id;
     copy.dataset.query = id;
     parts.push(code, copy);
+    if (id === 'yearcount') parts.push(yearCountBox());
   }
   return parts;
 }
@@ -794,11 +851,61 @@ function settingsElement(target: Target) {
     }
     box.append(kinds);
   }
+  // The decisions that the two clinicians make together, each with its options, the present choice and a short note.
+  const decisions = el('div', undefined, 'decisions');
+  decisions.append(el('h4', strings.decisionsHeading), el('p', strings.decisionsWhat, 'sizes-reason'));
+  const chosenNow = target.settings ?? {};
+  const pickers: [string, HTMLSelectElement | HTMLInputElement][] = [];
+  const notes: [string, HTMLInputElement][] = [];
+  for (const decision of strings.decisions) {
+    const wrap = el('div', undefined, 'decision');
+    wrap.dataset.decision = decision.key;
+    const label = el('label', decision.title);
+    let input: HTMLSelectElement | HTMLInputElement;
+    if (decision.key === 'floor') {
+      input = el('input', undefined, 'decision-floor') as HTMLInputElement;
+      input.type = 'number';
+      input.min = '1';
+      input.max = '99';
+      input.value = chosenNow.floor ? String(chosenNow.floor) : '';
+    } else {
+      input = el('select', undefined, 'decision-choice') as HTMLSelectElement;
+      for (const [value, text] of decision.options) {
+        const o = el('option', text);
+        o.value = value;
+        input.append(o);
+      }
+      input.value = ((chosenNow as Record<string, unknown>)[decision.key] as string) ?? decision.options[0][0];
+    }
+    label.append(input);
+    const note = el('input', undefined, 'decision-note') as HTMLInputElement;
+    note.type = 'text';
+    note.maxLength = 300;
+    note.placeholder = strings.decisionNote;
+    note.value = chosenNow.notes?.[decision.key] ?? '';
+    wrap.append(label, note);
+    if (decision.applied === false) wrap.append(el('p', strings.decisionRecorded, 'note'));
+    decisions.append(wrap);
+    pickers.push([decision.key, input]);
+    notes.push([decision.key, note]);
+  }
+  box.append(decisions);
   box.append(askButton(strings.settingsApply, 'settings-apply', () => {
-    const settings = { from: from.value || null, to: to.value || null, kinds: boxes.filter(([, t]) => t.checked).map(([c]) => c) };
+    const settings: Record<string, unknown> = { from: from.value || null, to: to.value || null, kinds: boxes.filter(([, t]) => t.checked).map(([c]) => c) };
+    for (const [key, input] of pickers) {
+      if (key === 'floor') settings.floor = input.value ? Number(input.value) : null;
+      else settings[key] = input.value === (strings.decisions.find((d) => d.key === key)?.options[0][0]) ? null : input.value;
+    }
+    settings.notes = Object.fromEntries(notes.filter(([, n]) => n.value.trim()).map(([k, n]) => [k, n.value.trim()]));
     worker?.postMessage({ type: 'settings', settings: JSON.stringify(settings) });
   }));
   return box;
+}
+
+// The last thing that was found about an item, so that the list of what remains says what was found and not only the question.
+function lastSentence(text: string) {
+  const sentences = text.split(/(?<=\.)\s+(?=[A-Z])/).filter((t) => /^(You|A query|The count|Because)/.test(t));
+  return sentences.slice(-2).join(' ');
 }
 
 // Where the audit stands, in plain words, with what remains and who can settle each part, and where to keep the state.
@@ -806,13 +913,13 @@ function endingElement(target: Target, needs: NonNullable<Target['needs']>, read
   const box = el('div', undefined, 'sizes ending');
   box.append(el('h4', strings.endingHeading));
   box.append(el('p', strings.endingSettled(needs.settled), 'note'));
-  const remaining = target.rows.filter((item) => (item.stage ?? 'source') === 'source' && item.blocking && item.status === 'open');
+  const remaining = target.rows.filter((item) => needs.remaining.includes(item.id));
   if (remaining.length) {
     box.append(el('p', strings.endingRemaining, 'note'));
     const list = el('ul', undefined, 'remaining');
     for (const item of remaining) {
-      const who = item.ask && !item.fact ? strings.endingByQuestion : item.queryIds?.length ? strings.endingByQuery : item.actor || item.needed;
-      list.append(el('li', `${item.question} ${who}`));
+      const who = item.queryIds?.length ? strings.endingByQuery : item.ask && !item.fact ? strings.endingByQuestion : strings.endingClinician;
+      list.append(el('li', `${item.question} ${item.status === 'answered' ? '' : lastSentence(item.inHand)} ${who}`.replace(/\s+/g, ' ').trim()));
     }
     box.append(list);
   } else box.append(el('p', ready ? strings.endingNothing : strings.notReadyYet, 'note'));
@@ -830,8 +937,9 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
   section.append(heading);
   // The first stage leads: what a person still needs to do before the audit query can be written.
   const first = target.stages?.source ?? target.counts;
-  const sourceReady = first.open === 0 && target.steps;
-  const needs = target.needs ?? { questions: 0, queries: 0, other: first.open, lessCertain: first.partly, settled: first.answered };
+  const needs = target.needs ?? { questions: 0, queries: 0, other: first.open, lessCertain: first.partly, settled: first.answered, remaining: [] };
+  // Ready means that nothing remains: no open item, and no doubt that a person raised and nothing has yet settled.
+  const sourceReady = needs.remaining.length === 0 && target.steps;
   section.append(el('p', strings.needs(needs.questions, needs.queries, needs.other), 'tally'));
   section.append(el('p', sourceReady ? strings.readyNow(needs.lessCertain) : strings.notReadyYet, sourceReady ? 'status good stage-verdict' : 'status stage-verdict'));
   // Searches gather the meanings of the codes they look for, so that the candidates can be chosen among them.
@@ -903,7 +1011,7 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
   const firstStage = (item: Item) => (item.stage ?? 'source') === 'source';
   const later = target.rows.filter((item) => item.stage === 'release' && !fresh.includes(item));
   // What needs the colleague now: a question not yet answered, or a short query ready to run.
-  const needsYou = (item: Item) => (item.ask && !item.fact) || item.queryState === 'ready';
+  const needsYou = (item: Item) => (item.ask && !item.fact) || item.queryState === 'ready' || !!item.queryIds?.includes('yearcount');
   const open = target.rows.filter((item) => item.group !== 'answered' && firstStage(item));
   const yours = ordered(open.filter(needsYou));
   section.append(el('h4', strings.groupYou));
@@ -946,7 +1054,9 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
   const readiness = el('details', undefined, 'readiness');
   readiness.append(el('summary', strings.readinessInFull), el('pre', target.readiness, 'code'));
   section.append(readiness);
-  if (sourceReady && target.draft) section.append(auditSection(target));
+  // The reference query waits for a study period, because without one it reads every anaesthetic on record.
+  if (sourceReady && target.draft && target.settings?.from) section.append(auditSection(target));
+  else if (sourceReady && target.draft) section.append(el('p', strings.auditNeedsPeriod, 'note audit-waiting'));
 
   // Everything that only the later OMOP release needs, folded away under one heading.
   if (later.length || target.profile?.length) {
@@ -1177,13 +1287,20 @@ function onMessage(event: MessageEvent) {
       firstCatalogue = new File([message.catalogue], 'catalogue.csv', { type: 'text/csv' });
       firstChecks = new File([message.checks], 'checks.csv', { type: 'text/csv' });
       result.className = 'status good';
-      result.textContent = strings.firstReadDone(message.facts.tables, message.facts.columns, message.facts.sized);
+      result.textContent = strings.firstReadDone(message.facts.tables, message.facts.columns, message.facts.sized)
+        + (message.missing?.length ? ` ${strings.firstMissing(message.missing)}` : '');
       $<HTMLTextAreaElement>('first-paste').value = '';
     }
   } else if (message.type === 'state-zip') {
     save([message.zip], 'application/zip', 'schemalyser-state.zip');
   } else if (message.type === 'codes-found') {
-    showCandidates(message.group, message.ok ? message.candidates : []);
+    showCandidates(message.group, message.columns ?? [], message.ok ? message.candidates : []);
+  } else if (message.type === 'search-sql') {
+    const code = document.querySelector<HTMLElement>(`pre[data-search="${CSS.escape(message.group)}"]`);
+    if (code && message.ok) code.textContent = message.sql;
+  } else if (message.type === 'year-counted') {
+    if (message.ok) showYearCount(message.years);
+    else document.querySelector('.count-result')?.replaceChildren(el('p', strings.countNone, 'status problem'));
   } else if (message.type === 'fact-added') {
     const result = $('t-paste-result');
     result.hidden = false;
@@ -1627,6 +1744,7 @@ const fixed: Record<string, string> = {
   's-policy': strings.policySummary,
   's-github': strings.githubSummary,
   's-catalogue': strings.catalogueSummary,
+  's-other-files': strings.otherFilesSummary,
   'h-example': strings.exampleHeading,
   't-example-what': strings.exampleWhat,
   'example-load': strings.exampleLoad,

@@ -173,6 +173,10 @@ self.onmessage = async (event) => {
         const zip = browser.pack_zip().toJs();
         self.postMessage({ type: 'fact-added', ...reply, zip, checkScript: browser.check_script() }, [zip.buffer]);
       } else self.postMessage({ type: 'fact-added', ...reply });
+    } else if (message.type === 'search-sql') {
+      self.postMessage({ type: 'search-sql', group: message.group, ...JSON.parse(browser.codes_search_sql(message.request)) });
+    } else if (message.type === 'year-count') {
+      self.postMessage({ type: 'year-counted', ...JSON.parse(browser.year_count_read(message.text)) });
     } else if (message.type === 'codes-search') {
       // The names that the search returns are shown on the page and written into no file.
       self.postMessage({ type: 'codes-found', group: message.group, ...JSON.parse(browser.codes_search_read(message.text)) });

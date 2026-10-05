@@ -34,7 +34,8 @@ from .checks import MAXIMUM_TEXT_LENGTH, _acceptable
 
 FILE = "facts.json"
 SITE_MAPPINGS = "site_mappings.csv"
-KINDS = ("join", "filter", "codes", "route")
+KINDS = ("join", "filter", "codes", "route", "count", "textbp")
+COUNT_ANSWERS = ("right", "few", "many", "unsure")
 ROUTE_ANSWERS = ("absent", "hidden", "unsure")
 STEP_FILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\.sql")
 ANSWERS = ("yes", "no", "unsure")
@@ -77,6 +78,24 @@ def check(fact, catalogue):
     found = {"kind": fact["kind"], "date": date}
     if fact.get("who"):
         found["who"] = _who(fact["who"])
+    if fact["kind"] == "count":
+        if fact.get("answer") not in COUNT_ANSWERS or not isinstance(fact.get("years"), list) or len(fact["years"]) > 200:
+            raise FactsError("a count fact gives the answer and the counts by year")
+        years = []
+        for item in fact["years"]:
+            if not (isinstance(item, list) and len(item) == 3 and isinstance(item[0], int) and 1900 <= item[0] <= 2200
+                    and all(v is None or (isinstance(v, int) and not isinstance(v, bool) and v >= 0) for v in item[1:])):
+                raise FactsError("each year of a count fact is a year and two counts")
+            years.append(list(item))
+        found.update(answer=fact["answer"], years=years)
+        return found
+    if fact["kind"] == "textbp":
+        found["column"] = _name(catalogue, fact.get("column"))
+        codes = fact.get("codes")
+        if not isinstance(codes, list) or not codes or not all(_acceptable(str(c), MAXIMUM_TEXT_LENGTH) and "," not in str(c) for c in codes):
+            raise FactsError("a textbp fact gives the codes charted as text")
+        found["codes"] = sorted({str(c) for c in codes})
+        return found
     if fact["kind"] == "route":
         if fact.get("answer") not in ROUTE_ANSWERS or not STEP_FILE.fullmatch(str(fact.get("step") or "")):
             raise FactsError("a route fact names a step of the conversion and says absent, hidden or unsure")
@@ -110,6 +129,11 @@ def check(fact, catalogue):
             raise FactsError("a codes fact's answer is yes or unsure")
         if not isinstance(codes, list) or (not codes and not unsure) or len(codes) > 200:
             raise FactsError("a codes fact gives at least one code")
+        uncertain = fact.get("uncertain") or []
+        if not isinstance(uncertain, list) or not all(_acceptable(str(c), MAXIMUM_TEXT_LENGTH) and "," not in str(c) for c in uncertain):
+            raise FactsError("the codes that a person was not sure of are plain codes")
+        if uncertain:
+            found["uncertain"] = sorted({str(c) for c in uncertain})
         clean = []
         for code in codes:
             text = str(code).strip()
@@ -131,6 +155,8 @@ def _subject(fact):
         return ("filter", fact["column"].upper())
     if fact["kind"] == "route":
         return ("route", fact["step"].upper())
+    if fact["kind"] in ("count", "textbp"):
+        return (fact["kind"], fact.get("column", "").upper())
     return ("codes", fact["vocabulary"].upper(), fact["concept"])
 
 
@@ -173,6 +199,12 @@ class Facts:
 
     def route(self, step):
         return next((f for f in self.items if _subject(f) == ("route", step.upper())), None)
+
+    def count(self):
+        return next((f for f in self.items if f["kind"] == "count"), None)
+
+    def text_codes(self):
+        return [f for f in self.items if f["kind"] == "textbp"]
 
     def filter(self, column):
         return next((f for f in self.items if _subject(f) == ("filter", column.upper())), None)

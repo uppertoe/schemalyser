@@ -1,10 +1,12 @@
 concept_id,meaning,words
-21490852,a mean arterial pressure measured through an arterial line,MEAN;MAP;ARTERIAL;ART LINE;ABP;UMBILICAL;INVASIVE
+21490852,a mean arterial pressure measured through an arterial line,MEAN;MAP;ARTERIAL;ART;A-LINE;ART LINE;ABP;UAC;UMBILICAL;INVASIVE
 21492241,a mean arterial pressure measured with a cuff,MEAN;MAP;CUFF;NIBP;NON-INVASIVE;NONINVASIVE;NBP
 3004249,a systolic blood pressure,SYSTOLIC;SBP;BLOOD PRESSURE;BP
 3027598,a mean arterial pressure calculated from a charted systolic and diastolic pressure,MEAN;MAP;CALCULATED
 4097216,an endotracheal tube,ENDOTRACHEAL;ETT;TUBE;INTUBATION
 4106029,a laryngeal mask airway,LARYNGEAL;LMA;MASK
-4174669,a general anaesthetic,GENERAL;GA
-4100052,a regional anaesthetic,REGIONAL;BLOCK;SPINAL;EPIDURAL;CAUDAL
+4174669,general anaesthetic,GENERAL;GA
+4100052,regional anaesthetic,REGIONAL;BLOCK;SPINAL;EPIDURAL;CAUDAL
 4219502,sedation,SEDATION;SEDATED
+4303995,local anaesthetic,LOCAL
+4332593,spinal anaesthetic,SPINAL

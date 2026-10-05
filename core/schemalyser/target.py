@@ -129,6 +129,12 @@ WORDING = {
         "decides": "Whether the conversion can fill, at this site, what the steps take from {column}.",
         "evidence_needed": "The person who keeps the conversion gives each step that reads {column} an alternative that reads only columns that the catalogue holds, or, if the site holds the same data under another name, writes that name into the step.",
         "who": "clinical lead", "mechanism": "a decision"},
+    # The count by year, which two clinicians judge at a glance before the audit query is written.
+    "count": {
+        "question": "The number of anaesthetics by year, and of those in the audit's cohort, has not yet been seen.",
+        "decides": "Whether the tables and joins that the audit rests on find the anaesthetics that this hospital performs.",
+        "evidence_needed": "Run the count given here, paste its result, and say whether the numbers look right for this hospital.",
+        "who": "clinical lead", "mechanism": "a decision"},
     # A step that gave way to one of its alternatives, because the catalogue does not hold what the step reads.
     "route": {
         "question": "The list of tables and columns did not include {missing}, so it is not visible to this login: it may not exist here, or this login may not be allowed to see it.",
@@ -195,6 +201,7 @@ WORDING = {
     "in_hand": {
         "table_listed": "The catalogue lists {table}.",
         "table_missing": "The catalogue does not list {table}.",
+        "sampled_empty": "A query read a sample of this column and found no value that at least ten rows hold, so this is not yet settled.",
         "route_taken": "Because {missing} is not visible to this login, Schemalyser takes the {what} from {tables} for now.",
         "column_listed": "The catalogue lists {column}.",
         "column_missing": "The catalogue does not list {column}.",
@@ -290,6 +297,7 @@ WORDING = {
     },
     # How each open item is named in the readiness, and how the person who acts can settle it.
     "item": {
+        "count": "the count of anaesthetics by year",
         "table": "the table {table}",
         "column": "the column {column}",
         "table-absent": "the table {table}, which the catalogue does not hold",
@@ -316,14 +324,14 @@ WORDING = {
             "clinical lead": "The clinical lead"},
     # The facts that a person confirmed, and the questions that a person can answer from knowledge.
     "facts": {
-        "join_yes": "A person confirmed on {date} that these two columns join.",
+        "join_yes": "You confirmed on {date} that {left} matches {right}.",
         "join_no": "A person said on {date} that these two columns do not join, so {steps} must change.",
         "join_no_instead": "A person said on {date} that these two columns do not join and that {left} joins to {right} instead, so {steps} must change to join those columns.",
-        "filter_yes": "A person confirmed on {date} that the steps compare this column with the right fixed values.",
+        "filter_yes": "You confirmed on {date} what the values of this column mean.",
         "filter_no": "A person said on {date} that the steps do not compare this column with the right fixed values, so the step that compares it must change.",
-        "codes_yes": "A person gave on {date} {count} that mean this, which are now mapping rows of the site.",
-        "ask_join": "{purpose}Is it right that {left} matches {right}? {shape}",
-        "ask_join_purpose": "{intent} ",
+        "codes_yes": "You chose on {date} {count} that mean this.",
+        "ask_join": "The query {purpose} by {left} = {right}. Is that right?",
+        "ask_join_plain": "The query links {left} to {right} by {left} = {right}. Is that right?",
         "shape_many_one": "Each row of {many} should have one matching row in {one}, and one row of {one} may have many rows in {many}.",
         "shape_one_one": "Each row of {left_table} should have at most one matching row in {right_table}, and the reverse.",
         "shape_many_many": "A row on either side may match several rows on the other.",
@@ -338,12 +346,13 @@ WORDING = {
         "route_unsure": "A person was asked on {date} and was not sure whether {missing} exists here, so Schemalyser keeps to this route for now.",
         "ask_route": "The list of tables and columns did not include {missing}. It may not exist here, or this login may not be allowed to see it. Which is it?",
         "unsure_codes": "A person was asked on {date} and was not sure which codes mean this.",
-        "join_adapted": "A person said on {date} that {left} matches {right}, in place of {old}, and Schemalyser now uses that match.",
+        "join_adapted": "You said on {date} that {left} matches {right}, in place of {old}. Schemalyser uses that match for now, until the query given here has measured it.",
+        "codes_uncertain": "You were not sure on {date} whether {codes} also {verb} this, so that remains open.",
         "join_not_adapted": "A person said on {date} that these two columns do not match{instead}. Schemalyser cannot change the step to match other columns by itself, so the clinician will change it after the meeting, and nothing more is needed from you for this item.",
         "matched_good": "A query found that {found} of {sampled} values of {left} that it took have a matching row in {right}.",
         "matched_poor": "A query found that only {found} of {sampled} values of {left} that it took have a matching row in {right}, so this match may be wrong.",
         "questions_head": "Questions about {name} for a colleague who knows the source database. Most can be answered from what you know; where you are not sure, the page offers a short query instead.",
-        "questions_foot": "Each question has three answers: yes; no, with what is true instead; and not sure.",
+        "questions_foot": "",
         "this_question": "this question",
     },
     # The queries that the checklist offers with an item: why the item needs them, what state they are in,
@@ -376,8 +385,9 @@ WORDING = {
         "direct_codes": "If the clinical lead already knows which codes the real database holds, the clinical lead can write their mapping rows without the query, and the item then stays partly answered until the check results list one of those codes.",
         "direct_tuning": "If the clinical lead already knows the answer, the clinical lead can give {keys} under tuning in the site rules, which answers this item without the query.",
         # The table sizes query at the head of each checklist.
+        "year_count": "This query counts the anaesthetics by the year of their start, and those of the audit's cohort, each rounded down to the nearest ten and left blank under ten. It reads the tables of anaesthetics and patients only, and no reading.",
         "by_search": "Schemalyser offers no counting query for these codes, because the table that holds them is large; the name search with the question settles them instead.",
-        "search": "This query lists the codes and names in {table} whose name holds any of these words: {words}. {table} holds only the names of the codes, and no patient's data. It returns at most 200 rows.",
+        "search": "This query lists every code in {table} whose name holds any of these words: {words}. {table} holds only the names of the codes, and no patient's data.",
         "matched": "You were not sure of this match, so this query measures it: it takes up to 10,000 values of {left} and counts how many have a matching row in {right}. It returns only counts.",
         "sizes": "This query reads the size of each table that the queries of this checklist read, from SQL Server's own records, without reading any of the tables. Schemalyser shows those queries once it knows the sizes, so that it never offers a query that reads the whole of a large table.",
         # The file of queries that the boundary writes for each target query.
@@ -1379,7 +1389,8 @@ def _source_rows(steps, analysis, evidence, checks, confirmed, versions=None):
             in_hand.append(ih["no_checks"])
             settled = False
         elif listed is None:
-            in_hand.append(ih["ran_empty"] if _ran_empty(checks, table, column) else ih["not_listed"])
+            sampled = any(k == "values" and (t.upper(), c.upper()) == (table.upper(), column.upper()) for k, t, c, _ in checks.sampled)
+            in_hand.append(ih["ran_empty"] if _ran_empty(checks, table, column) else ih["sampled_empty"] if sampled else ih["not_listed"])
             settled = False
         else:
             in_hand.append(ih["listed"])
@@ -1580,7 +1591,7 @@ def _codes_rows(target, traced, analysis, checks):
                 in_hand = [ih["concept_no_rows"].format(field=name, vocabularies=_join(candidates)) if candidates
                            else ih["concept_no_vocabulary"].format(field=name)]
                 rows.append(_row(f"codes-{name}-{concept}", "codes", True, "codes-concept", "open", "a guess", in_hand,
-                                 concept=concept, concept_named=concepts.named(traced.get("folder"), concept), field=name,
+                                 concept=concept, concept_named=_meaning(traced.get("folder"), concept, concept_words(traced.get("folder")).get(int(concept), (None,))[0] if str(concept).isdecimal() else None), field=name,
                                  vocabularies=_join(candidates) or "a vocabulary of the site"))
                 continue
             in_hand, status = [], "partly"
@@ -1612,7 +1623,7 @@ def _codes_rows(target, traced, analysis, checks):
             else:
                 status = "answered"
             row = _row(f"codes-{name}-{concept}", "codes", True, "codes-concept", status, "mapping rows", in_hand,
-                       concept=concept, concept_named=concepts.named(traced.get("folder"), concept), field=name,
+                       concept=concept, concept_named=_meaning(traced.get("folder"), concept, concept_words(traced.get("folder")).get(int(concept), (None,))[0] if str(concept).isdecimal() else None), field=name,
                        vocabularies=_join(sorted(vocabularies)) or "a vocabulary of the site")
             row["_columns"] = list(columns)
             rows.append(row)
@@ -2068,12 +2079,15 @@ def _apply_facts(rows, confirmed, traced):
             fact = confirmed.join(names.get("left", ""), names.get("right", ""))
             adapted = confirmed.instead_of(names.get("left", ""), names.get("right", ""))
             if fact is None and adapted is not None:
-                fact = dict(adapted, answer="yes")
-                sentence = q["join_adapted"].format(date=adapted["date"], left=names.get("left"), right=names.get("right"),
-                                                    old=f"{adapted['left']} = {adapted['right']}")
+                # The match that a person gave is used at once, and stays open until a match query has measured it.
+                if row["status"] != "answered":
+                    row["evidence_in_hand"] += " " + q["join_adapted"].format(
+                        date=adapted["date"], left=names.get("left"), right=names.get("right"), old=f"{adapted['left']} = {adapted['right']}")
+                    row["status"], row["_fact"] = "open", "measure"
+                continue
             elif fact is not None:
                 if fact["answer"] == "yes":
-                    sentence = q["join_yes"].format(date=fact["date"])
+                    sentence = q["join_yes"].format(date=fact["date"], left=names.get("left"), right=names.get("right"))
                 elif fact["answer"] == "unsure":
                     sentence = q["unsure"].format(date=fact["date"])
                 else:
@@ -2096,7 +2110,14 @@ def _apply_facts(rows, confirmed, traced):
             else:
                 found = confirmed.codes(names["vocabulary"])
             given = [f for f in found if f.get("answer") != "unsure"]
-            if given:
+            uncertain = sorted({c for f in found for c in f.get("uncertain") or []})
+            if given and uncertain:
+                fact = dict(given[-1], answer="noted")
+                sentence = " ".join([q["codes_yes"].format(date=fact["date"], count=_n(sum(len(f["codes"]) for f in given), "code")),
+                                     q["codes_uncertain"].format(date=fact["date"], codes=_join(uncertain),
+                                                                 verb="means" if len(uncertain) == 1 else "mean")])
+                row["status"] = "open"
+            elif given:
                 fact = dict(given[-1], answer="yes")
                 sentence = q["codes_yes"].format(date=fact["date"], count=_n(sum(len(f["codes"]) for f in given), "code"))
             elif found:
@@ -2218,52 +2239,43 @@ def _definition(rules, catalogue, table, column):
                           if c.name.upper().endswith("NAME")), None)
         if code is None or label is None:
             return None
-        return entry.name, code.name, label.name
+        # Every naming column, and any column that says what kind of value a row holds or whether it is calculated.
+        shown = [c.name for c in sorted(entry.columns.values(), key=lambda c: c.position or 0)
+                 if c.name.upper() != code.name.upper() and re.search(r"NAME|TYPE|CALC|VAL_TYPE|UNIT", c.name.upper())]
+        if label.name not in shown:
+            shown.insert(0, label.name)
+        return entry.name, code.name, label.name, shown
     return None
 
 
 def code_search(catalogue, definition, words):
-    """The name search: the codes and names of a definition table whose name holds any of the words, at most 200 rows."""
-    table, code, label = definition
-    words = sorted({w.upper() for w in words}, key=str)
+    """The name search: every code of a definition table whose name holds any of the words, with every naming column and
+    any column that says what kind of value the row holds. It returns every match; nothing is cut off."""
+    table, code, label, shown = definition
+    words = sorted({w.upper() for w in words if PLAIN_WORD.fullmatch(w)}, key=str)
     lines = checking._comment([WORDING["query"]["search"].format(table=table, words=_join(words))])
-    lines += [f"SELECT TOP (200) CAST(d.{checking._bracket(code)} AS nvarchar(200)) AS code,",
-              f"       CAST(d.{checking._bracket(label)} AS nvarchar(200)) AS name",
-              f"FROM {checking._name(catalogue, table)} AS d WITH (NOLOCK)"]
+    lines += [f"SELECT CAST(d.{checking._bracket(code)} AS nvarchar(200)) AS code,"]
+    lines += [f"       CAST(d.{checking._bracket(c)} AS nvarchar(200)) AS {checking._bracket(c)}" + ("," if i < len(shown) - 1 else "")
+              for i, c in enumerate(shown)]
+    lines.append(f"FROM {checking._name(catalogue, table)} AS d WITH (NOLOCK)")
     for i, word in enumerate(words):
         lines.append(("WHERE " if i == 0 else "   OR ") + f"UPPER(d.{checking._bracket(label)}) LIKE N'%{word}%'")
-    lines.append("ORDER BY name;")
+    lines.append(f"ORDER BY d.{checking._bracket(label)};")
     return "\n".join(lines)
 
 
 def _join_text(row, rows, catalogue):
-    """The question for a join, in the reader's terms: what the match is for, which way it runs and how many rows to expect,
-    and, where the same step matches the same column to another table for other rows, that it does so."""
+    """The question for a join, in the reader's form: what the query does with the match, then the match itself, then
+    "Is that right?"; and, where the same step matches the same column to another table for other rows, that it does so."""
     q = WORDING["facts"]
     names = row.get("_names") or {}
     left, right = names.get("left", ""), names.get("right", "")
-    (lt, lc), (rt, rc) = left.split(".", 1), right.split(".", 1)
-    left_key, right_key = _own_key(catalogue, lt, lc), _own_key(catalogue, rt, rc)
-    if left_key and right_key:
-        shape = q["shape_one_one"].format(left_table=lt, right_table=rt)
-    elif right_key or left_key:
-        many, one = (lt, rt) if right_key else (rt, lt)
-        shape = q["shape_many_one"].format(many=many, one=one)
+    (lt, _), (rt, _) = left.split(".", 1), right.split(".", 1)
+    intent = (row.get("intent") or "").strip()
+    if intent.startswith("This join ") and intent.endswith("."):
+        text = q["ask_join"].format(purpose=intent[len("This join "):-1], left=left, right=right)
     else:
-        shape = q["shape_many_many"]
-    purpose = q["ask_join_purpose"].format(intent=row["intent"]) if row.get("intent") else ""
-    text = q["ask_join"].format(purpose=purpose, left=left, right=right, shape=shape)
-    makers = set(row.get("_makers") or [])
-    for other in rows:
-        if other is row or other["kind"] != "relationship" or not makers & set(other.get("_makers") or []):
-            continue
-        o = other.get("_names") or {}
-        for mine in (left, right):
-            pair = {o.get("left", ""), o.get("right", "")}
-            if mine in pair:
-                rest = next(iter(pair - {mine}), "")
-                if rest and rest.split(".")[0] not in (lt, rt):
-                    text += " " + q["ask_join_two"].format(column=mine, other=rest)
+        text = q["ask_join_plain"].format(left=left, right=right)
     return text
 
 
@@ -2273,13 +2285,22 @@ def _questions(rows, traced, catalogue, rules=None):
     q = WORDING["facts"]
     asked = []
     words = concept_words(traced.get("folder"))
+    # Only a join that the answer depends on is asked about in the first phase.
+    deps = traced.get("dependencies")
+    depends = {frozenset(tuple(c.upper().split(".", 1)) for c in pair) for pair in deps["joins"]} if deps else None
     for row in rows:
         if row.get("phase") != "source" or row["status"] == "answered" or row.get("_fact"):
             continue
         names = row.get("_names") or {}
         ask = None
         if row["question_id"].startswith("route-"):
-            ask = {"kind": "route", "step": names.get("step", ""), "text": q["ask_route"].format(missing=names.get("missing", ""))}
+            # One question for each name that is not visible, however many routes rest on it.
+            same = [r for r in rows if r["question_id"].startswith("route-") and not r.get("_fact")
+                    and (r.get("_names") or {}).get("missing") == names.get("missing")]
+            ask = {"kind": "route", "step": names.get("step", ""), "steps": [(r.get("_names") or {}).get("step") for r in same],
+                   "text": q["ask_route"].format(missing=names.get("missing", ""))}
+        elif row["kind"] == "relationship" and depends is not None and row.get("_pair") not in depends and row["blocking"] != "yes":
+            continue
         elif row["kind"] == "relationship":
             left, right = names.get("left", ""), names.get("right", "")
             tables = {}
@@ -2310,16 +2331,17 @@ def _questions(rows, traced, catalogue, rules=None):
                 group = [r for r in rows if r.get("_wording") == "codes-concept" and [f"{t}.{c}" for t, c in r.get("_columns") or []][:1] == columns[:1]]
                 search_words = sorted({w for r in group for w in words.get(int((r.get("_names") or {}).get("concept", 0) or 0), (None, []))[1]})
                 if definition is not None and search_words:
-                    ask.update(search=code_search(catalogue, definition, search_words), group=columns[0],
+                    ask.update(search=code_search(catalogue, definition, search_words), group=columns[0], words=search_words,
+                               definition=list(definition[:3]),
                                text=q["ask_codes"].format(columns=_join(columns), meaning=meaning, table=definition[0]))
-        if ask is not None:
+        if ask is not None and ask["text"] not in asked:
             row["_ask"] = ask
             asked.append(ask["text"])
     if not asked:
         return ""
     lines = [q["questions_head"].format(name=traced.get("name") or WORDING["facts"]["this_question"]), ""]
     lines += [f"{i}. {text}" for i, text in enumerate(asked, start=1)]
-    lines += ["", q["questions_foot"]]
+    lines += [q["questions_foot"]] if q["questions_foot"] else []
     return "\n".join(lines) + "\n"
 
 
@@ -2592,7 +2614,7 @@ def _queries(rows, world, analysis, traced, checks, extra_sizes=(), planned=None
     # A join that a person was not sure of is measured by a match query, which returns only counts. It takes values from
     # the side that is not a key and looks each one up on the side that is, where the names tell which is which.
     for row in rows:
-        if row["kind"] != "relationship" or row["status"] == "answered" or row.get("_fact") != "unsure":
+        if row["kind"] != "relationship" or row["status"] == "answered" or row.get("_fact") not in ("unsure", "measure"):
             continue
         names = row.get("_names") or {}
         (lt, lc), (rt, rc) = names["left"].split(".", 1), names["right"].split(".", 1)
@@ -2705,7 +2727,12 @@ def checklist(world, conversion, target_sql, checks_csv=None, profile_text=None,
             row["phase"] = "release" if row["kind"] in ("core", "meaning", "timing") \
                 and not row["question_id"].startswith("route-") else "source"
     traced["name"] = name
+    _count_row(rows, traced, conversion, target_sql, analysis.catalogue, confirmed, name)
     traced["questions"] = _questions(rows, traced, analysis.catalogue, analysis.rules)
+    # A settled item says what settled it, and never that something is not yet known.
+    for row in rows:
+        if row["status"] == "answered":
+            row["question"] = re.sub(r",? and (whether|which)[^.]*not yet (settled|known)\.$", ".", row["question"])
     return rows, traced
 
 
@@ -3308,10 +3335,41 @@ SPECIFICATION_WORDING = {
     "open": "Not yet settled: {item}. Until it is, this specification assumes that the conversion is right about it.",
     "partly": "Less certain: {item}. The answer does not wait for it, but it may change what the answer means.",
     "settled": "Everything that the answer rests on is settled.",
-    "h_cases": "9. Cases to check the query against",
+    "h_decisions": "9. Decisions for the clinicians",
+    "decision": "{title}: {choice}.",
+    "decision_note": "Note: {note}",
+    "not_applied": "The reference query does not yet apply this decision. {needed}",
+    "text_codes": "In {column}, the codes {codes} hold a blood pressure charted as text, with the mean in brackets. The reference query does not yet read a mean from such text.",
+    "uncertain_code": "Not yet settled: whether {codes} in {column} also {verb} {meaning}.",
+    "h_cases": "10. Cases to check the query against",
     "cases": "A query that follows these rules gives the following on cases like these.",
     "case": "{description} {expectations}",
     "no_cases": "No prepared case bears on this question.",
+}
+
+COUNT_WORDING = {
+    "reason": "This count reads only the tables of anaesthetics and patients, so it reads no large table. It shows from which year records exist, and whether the numbers look right for this hospital.",
+    "seen": "You looked at the count on {date} and said that {answer}.",
+    "answers": {"right": "the numbers look about right", "few": "there are too few", "many": "there are too many",
+                "unsure": "you are not sure"},
+    "empty_years": "The count found no anaesthetic in {years}.",
+    "no_cohort": "The count found no anaesthetic in the audit's cohort.",
+    "question_seen": "The count of anaesthetics by year, and of those in the audit's cohort, has been seen.",
+    "rests": "The count rests on these matches: {joins}; and on these conditions: {filters}. A fault most likely lies in one of them.",
+}
+
+# The decisions as the specification states them: title, the words for each option, and what applying the rest would need.
+DECISION_WORDS = {
+    "pressures": ("Which pressures count once an arterial line is running",
+                  ("the arterial reading is preferred only where an arterial and a cuff reading share a time",
+                   "the arterial line alone, from its first reading to its last"), ""),
+    "floor": ("Readings that cannot be real", ("no floor; every reading counts", "a mean pressure below {floor} is treated as an artefact of zeroing, flushing or sampling and is left out"), ""),
+    "isolated": ("A single isolated low reading", ("it counts", "it is ignored"),
+                 "It would need a rule for what makes a reading isolated, such as no other low reading within five minutes."),
+    "bypass": ("Time on cardiopulmonary bypass or ECMO", ("it is counted", "it is left out"),
+               "It would need the events that mark the start and the end of bypass on the anaesthetic record."),
+    "age": ("Age", ("under 28 days of postnatal age", "a limit on postmenstrual age"),
+            "It would need the column that holds the gestational age at birth."),
 }
 
 # Plain words for what the question reads, so that the specification names no field of the shared model.
@@ -3502,6 +3560,34 @@ def specification(conversion, target_sql, rows, traced, catalogue, name="the tar
     if not unsettled:
         lines.append(w["settled"])
 
+    lines += ["", w["h_decisions"], ""]
+    for key, (title, choices, needed) in DECISION_WORDS.items():
+        value = settings.get(key)
+        if key == "floor":
+            choice = choices[1].format(floor=value) if value else choices[0]
+        else:
+            options = DECISIONS[key][0]
+            choice = choices[options.index(value) if value in options else 0]
+        lines.append(w["decision"].format(title=title, choice=choice))
+        if not DECISIONS[key][1] and value not in (None, DECISIONS[key][0][0]):
+            lines.append(w["not_applied"].format(needed=needed))
+    kinds = settings.get("kinds")
+    lines.append(w["decision"].format(title="Which anaesthetics count", choice="the kinds chosen above" if kinds else
+                                      "every kind, including sedation and procedures at the bedside"))
+    from . import facts as facts_module
+    try:
+        held = facts_module.Facts.from_json((folder / ".." / facts_module.FILE).read_text(), catalogue) \
+            if (folder / ".." / facts_module.FILE).is_file() else facts_module.Facts()
+    except facts_module.FactsError:
+        held = facts_module.Facts()
+    for fact in held.text_codes():
+        lines.append(w["text_codes"].format(column=fact["column"], codes=_join(fact["codes"])))
+    for fact in held.items:
+        if fact["kind"] == "codes" and fact.get("uncertain"):
+            meaning = _meaning(folder, fact["concept"], concept_words(folder).get(fact["concept"], (None,))[0])
+            lines.append(w["uncertain_code"].format(codes=_join(fact["uncertain"]), column=fact.get("column", "the coded column"),
+                                                    verb="means" if len(fact["uncertain"]) == 1 else "mean", meaning=meaning))
+
     lines += ["", w["h_cases"], ""]
     tables = {t.name.lower() for t in tree.find_all(exp.Table) if _is_omop(t)}
     numbers = {str(c) for values in target_read["concepts"].values() for c in values}
@@ -3514,8 +3600,9 @@ def specification(conversion, target_sql, rows, traced, catalogue, name="the tar
     if bearing:
         lines += [w["cases"], ""]
         for scenario in bearing:
-            said = " ".join(item["says"] for item in scenario["expectations"])
-            lines.append("- " + w["case"].format(description=scenario["description"].strip(), expectations=said))
+            lines.append("- " + scenario["description"].strip())
+            for item in scenario["expectations"]:
+                lines.append("  - " + re.sub(r"\b(reading below 40\b[^.]*?) stand for", r"\1 stands for", item["says"]))
     else:
         lines.append(w["no_cases"])
     return "\n".join(lines) + "\n"
@@ -4105,9 +4192,22 @@ def read_settings(text):
         data = json.loads(text)
     except ValueError as error:
         raise TargetError("audit.json is not valid JSON") from error
-    if not isinstance(data, dict) or set(data) - {"from", "to", "kinds"}:
-        raise TargetError("audit.json may set only from, to and kinds")
+    if not isinstance(data, dict) or set(data) - {"from", "to", "kinds"} - set(DECISIONS) - {"notes"}:
+        raise TargetError("audit.json may set only the period, the kinds, the decisions and their notes")
     found = {"from": data.get("from") or None, "to": data.get("to") or None, "kinds": data.get("kinds") or []}
+    for key, (options, _) in DECISIONS.items():
+        value = data.get(key)
+        if key == "floor":
+            if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value < 100):
+                raise TargetError("the floor in audit.json is a pressure from 1 to 99")
+        elif value is not None and value not in options:
+            raise TargetError("a decision in audit.json is one of its options")
+        found[key] = value
+    notes = data.get("notes") or {}
+    if not isinstance(notes, dict) or not all(k in DECISIONS or k == "period" for k in notes) or \
+            not all(isinstance(v, str) and len(v) <= 300 and "\n" not in v for v in notes.values()):
+        raise TargetError("the notes in audit.json are short lines, one for each decision")
+    found["notes"] = notes
     for key in ("from", "to"):
         if found[key] is not None and not (isinstance(found[key], str) and DATE.fullmatch(found[key])):
             raise TargetError("a date in audit.json is written yyyy-mm-dd")
@@ -4117,6 +4217,17 @@ def read_settings(text):
     if found["from"] and found["to"] and found["from"] > found["to"]:
         raise TargetError("the study period in audit.json ends before it starts")
     return found
+
+
+# The decisions that the two clinicians make in the meeting: for each, its options, the first being the present rule.
+# The arterial line and the floor change the audit's rule; the others are recorded and stated in the specification.
+DECISIONS = {
+    "pressures": (("preferred", "arterial_only"), True),
+    "floor": ((), True),
+    "isolated": (("counts", "ignored"), False),
+    "bypass": (("counted", "left_out"), False),
+    "age": (("postnatal", "postmenstrual"), False),
+}
 
 
 def kinds_offered(conversion):
@@ -4129,17 +4240,61 @@ def kinds_offered(conversion):
         if re.search(r"ANAES|ANES", vocabulary) and concept.isdecimal() and int(concept):
             found.add(int(concept))
     names = concepts.names(conversion)
-    return sorted(((c, names.get(c) or f"concept {c}") for c in found), key=lambda item: item[1])
+    words = concept_words(conversion)
+    described = {}
+    for row in convert.mapping_dicts(conversion):
+        concept = str(row.get("target_concept_id") or "").strip()
+        if concept.isdecimal() and re.search(r"ANAES|ANES", str(row.get("source_vocabulary_id") or "").upper()):
+            described.setdefault(int(concept), str(row.get("source_code_description") or "").strip())
+    def plain(c):
+        if c in words:
+            return words[c][0]
+        text = described.get(c, "")
+        return (text[0].lower() + text[1:]) if text and not text.startswith("confirmed") else None
+    return sorted(((c, _meaning(conversion, c, plain(c))) for c in found), key=lambda item: item[1])
 
 
-def with_settings(target_sql, settings):
+def _apply_pressure_decisions(tree, settings, conversion):
+    """Applies the floor and the rule for an arterial line to each SELECT that reads the mean pressures from the
+    measurement table. Returns whether it changed anything."""
+    words = concept_words(conversion) if conversion is not None else {}
+    arterial = next((c for c, (meaning, _) in words.items() if "arterial line" in meaning), 21490852)
+    cuff = next((c for c, (meaning, _) in words.items() if "cuff" in meaning), 21492241)
+    touched = False
+    for select in list(tree.find_all(exp.Select)):
+        tables = [t for t in select.find_all(exp.Table) if _is_omop(t) and t.name.lower() == "measurement"
+                  and t.find_ancestor(exp.Select) is select]
+        text = select.sql(dialect="tsql")
+        if not tables or str(arterial) not in text or str(cuff) not in text:
+            continue
+        m = tables[0].alias_or_name
+        conditions = []
+        if settings.get("floor"):
+            conditions.append(f"{m}.value_as_number >= {settings['floor']}")
+        if settings.get("pressures") == "arterial_only":
+            later = (f"EXISTS (SELECT 1 FROM omop.measurement art_{{w}} WHERE art_{{w}}.measurement_event_id = {m}.measurement_event_id "
+                     f"AND art_{{w}}.measurement_concept_id = {arterial} AND art_{{w}}.measurement_datetime {{op}} {m}.measurement_datetime)")
+            conditions.append(f"NOT ({m}.measurement_concept_id = {cuff} AND {later.format(w='before', op='<=')} "
+                              f"AND {later.format(w='after', op='>=')})")
+        for condition in conditions:
+            join = next((j for j in select.args.get("joins") or [] if j.this is tables[0] or j.this.alias_or_name == m), None)
+            if join is not None and join.args.get("on") is not None:
+                join.set("on", exp.and_(join.args["on"], sqlglot.parse_one(condition, dialect="tsql")))
+            else:
+                select.where(sqlglot.parse_one(condition, dialect="tsql"), append=True, copy=False)
+            touched = True
+    return touched
+
+
+def with_settings(target_sql, settings, conversion=None):
     """The target query with the study period and the chosen kinds applied to the anaesthetic it starts from.
 
     Each SELECT that reads the custom table with the anaesthetic's start and kind gains, in its WHERE, the start on or
     after the first day and before the day after the last, and the kind among those chosen. Without any setting the
     query is returned unchanged, so that the answer is the same.
     """
-    if not settings or not (settings.get("from") or settings.get("to") or settings.get("kinds")):
+    if not settings or not (settings.get("from") or settings.get("to") or settings.get("kinds")
+                            or settings.get("floor") or settings.get("pressures") == "arterial_only"):
         return target_sql
     tree = sqlglot.parse_one(target_sql, dialect="tsql")
     touched = False
@@ -4159,6 +4314,7 @@ def with_settings(target_sql, settings):
             for condition in conditions:
                 select.where(sqlglot.parse_one(condition, dialect="tsql"), append=True, copy=False)
             touched = True
+    touched = _apply_pressure_decisions(tree, settings, conversion) or touched
     if not touched:
         return target_sql
     header = []
@@ -4168,3 +4324,91 @@ def with_settings(target_sql, settings):
         else:
             break
     return "\n".join(header) + "\n" + tree.sql(dialect="tsql", pretty=True) + "\n"
+
+
+# The count by year: the anaesthetics by the year of their start, and those of the audit's cohort, from the tables that
+# hold anaesthetics and patients only, so that two clinicians can judge at a glance whether the numbers look right.
+
+def _cohort_conditions(target_sql):
+    """The conditions that the target query puts on the anaesthetic table where it first reads it, as SQL in its alias."""
+    tree = sqlglot.parse_one(target_sql, dialect="tsql")
+    for select in tree.find_all(exp.Select):
+        source = select.args.get("from_") or select.args.get("from")
+        for table in source.find_all(exp.Table) if source is not None else []:
+            if _is_omop(table) and table.name.lower() == "anaesthetic" and table.find_ancestor(exp.Select) is select:
+                where = select.args.get("where")
+                found = [c for c in _conjuncts(where.this if where is not None else None)
+                         if not any(col.name.lower() in (START_FIELD, KIND_FIELD) for col in c.find_all(exp.Column))]
+                return table.alias_or_name, [c.sql(dialect="tsql") for c in found]
+    return None, []
+
+
+def _count_row(rows, traced, conversion, target_sql, catalogue, confirmed, name):
+    """The item for the count by year: open until the two people have seen it and said that it looks right."""
+    if not traced["steps"]:
+        return
+    sql = year_count(conversion, target_sql, catalogue, name or "the audit")
+    if sql is None:
+        return
+    w = COUNT_WORDING
+    fact = confirmed.count()
+    deps = traced.get("dependencies") or {"joins": [], "filters": []}
+    rests = w["rests"].format(joins=_join(sorted(" = ".join(sorted(p)) for p in deps["joins"])) or "none",
+                              filters=_join(sorted(deps["filters"])) or "none")
+    in_hand, status = [], "open"
+    if fact is not None:
+        years = fact["years"]
+        # A year with none: one between the first and the last that the count does not list, or that it lists as none.
+        listed = {y: n for y, n, _ in years}
+        span = range(min(listed), max(listed) + 1) if listed else range(0)
+        empty = [str(y) for y in span if y not in listed or listed[y] == 0]
+        no_cohort = not any(c for _, _, c in years)
+        in_hand.append(w["seen"].format(date=fact["date"], answer=w["answers"][fact["answer"]]))
+        if empty:
+            in_hand.append(w["empty_years"].format(years=_join(empty)))
+        if no_cohort:
+            in_hand.append(w["no_cohort"])
+        if fact["answer"] == "right" and not empty and not no_cohort:
+            status = "answered"
+        else:
+            in_hand.append(rests)
+    row = _row("count-by-year", "meaning", True, "count", status, "check results" if fact else "a guess", in_hand)
+    if fact is not None:
+        row["question"] = w["question_seen"]
+    row["phase"] = "source"
+    row.update({"query_state": "", "query_reason": w["reason"], "query": "",
+                "intent": "", "route": "", "_queries": [] if status == "answered" else ["yearcount"]})
+    # The count is composed from the steps, so it is given to the page alone and written into no output file.
+    traced["year_count"] = sql if status != "answered" else None
+    row["_count"] = fact
+    rows.insert(0, row)
+
+
+def year_count_target(target_sql):
+    """The count by year as a query over the anaesthetic table, or None where the target does not read that table."""
+    alias, conditions = _cohort_conditions(target_sql)
+    if alias is None:
+        return None
+    cohort = " AND ".join(conditions) or "1 = 1"
+    least = checking.MINIMUM_COUNT
+    return (f"SELECT YEAR({alias}.{START_FIELD}) AS start_year,\n"
+            f"       CASE WHEN COUNT(*) >= {least} THEN (COUNT(*) / 10) * 10 END AS anaesthetics,\n"
+            f"       CASE WHEN SUM(CASE WHEN {cohort} THEN 1 ELSE 0 END) >= {least}\n"
+            f"            THEN (SUM(CASE WHEN {cohort} THEN 1 ELSE 0 END) / 10) * 10 END AS in_the_cohort\n"
+            f"FROM omop.anaesthetic {alias}\n"
+            f"GROUP BY YEAR({alias}.{START_FIELD})\n"
+            f"ORDER BY start_year")
+
+
+def year_count(conversion, target_sql, catalogue, name="the audit"):
+    """The count by year as one plain query over the source tables, or None. Its header says what it reads."""
+    count = year_count_target(target_sql)
+    if count is None:
+        return None
+    try:
+        found = source_query(conversion, count, catalogue, target_name=name, blank=False)
+    except Exception:   # noqa: BLE001 - where the count cannot be composed, the page offers none
+        return None
+    body = found["sql"].split("\nWITH\n", 1)
+    text = ("-- " + WORDING["query"]["year_count"] + "\n" + "WITH\n" + body[1]) if len(body) == 2 else found["sql"]
+    return text

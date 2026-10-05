@@ -94,7 +94,7 @@ def test_the_concepts_are_named_where_a_person_is_asked_about_them(tmp_path):
                                     name="neonatal_low_mean_pressure")
     assert "(Invasive Mean blood pressure, concept 21490852)" in traced["questions"]
     item = {r["question_id"]: r for r in rows}["codes-measurement.measurement_concept_id-21492241"]
-    assert "Mean blood pressure by Noninvasive (concept 21492241)" in item["question"]
+    assert "a mean arterial pressure measured with a cuff (Mean blood pressure by Noninvasive, concept 21492241)" in item["question"]
     spec = target.specification(CONVERSION, (TARGETS / "neonatal_low_mean_pressure.sql").read_text(), rows, traced,
                                 Catalogue.from_csv((FIXTURES / "invented-catalogue.csv").read_text()), "n")
     assert "Invasive Mean blood pressure, concept 21490852" in spec

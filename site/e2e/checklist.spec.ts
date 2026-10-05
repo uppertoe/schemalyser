@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
@@ -319,7 +319,7 @@ test('the core profile queries are shown for the central OMOP team, and a pasted
 
 test('without a catalogue, one first query of names and sizes starts the project, and a ready question offers its audit query', async ({ page, context, browserName }) => {
   test.setTimeout(300_000);
-  const state = makeState(join(mkdtempSync(join(tmpdir(), 'schemalyser-first-')), 'state'), { catalogue: false, checks: false });
+  const state = seen(makeState(join(mkdtempSync(join(tmpdir(), 'schemalyser-first-')), 'state'), { catalogue: false, checks: false }));
   await page.goto('./');
   await expect(page.getByText(strings.loaded)).toBeVisible({ timeout: 120_000 });
   await setOnline(page, context, browserName, false);
@@ -358,7 +358,7 @@ test('without a catalogue, one first query of names and sizes starts the project
   const [saved] = await Promise.all([page.waitForEvent('download'), page.locator('#save-state').click()]);
   expect(saved.suggestedFilename()).toBe('schemalyser-state.zip');
   const listing = execFileSync('unzip', ['-Z1', await saved.path()], { encoding: 'utf8' }).trim().split('\n').sort();
-  expect(listing).toEqual(['catalogue.csv', 'checks.csv', 'core-profile.csv', 'sql_evidence.json']);
+  expect(listing).toEqual(['audit.json', 'catalogue.csv', 'checks.csv', 'core-profile.csv', 'facts.json', 'sql_evidence.json']);
   const savedCatalogue = execFileSync('unzip', ['-p', await saved.path(), 'catalogue.csv'], { encoding: 'utf8' });
   expect(savedCatalogue).toContain('THEATRE_CASE');
   // Nothing that the page writes holds the first query.
@@ -373,7 +373,7 @@ test('a question that is ready to be answered from the source database offers th
   await page.goto('./');
   await expect(page.getByText(strings.loaded)).toBeVisible({ timeout: 120_000 });
   await setOnline(page, context, browserName, false);
-  await page.locator('#state-folder').setInputFiles(world.state);
+  await page.locator('#state-folder').setInputFiles(seen(makeState(join(mkdtempSync(join(tmpdir(), 'schemalyser-ready-')), 'state'))));
   await page.locator('#folder').setInputFiles(fixtures + 'requests');
   await page.locator('#analyse').click();
   await expect(page.locator('#checklists section.target')).toHaveCount(world.targets.length, { timeout: 120_000 });
@@ -386,7 +386,7 @@ test('a question that is ready to be answered from the source database offers th
   await expect(audit).toContainText('This query starts from the cohort of the question');
   await expect(audit).not.toContainText('DENSE_RANK');
   // The specification comes before it, with the check of a hand-written query.
-  await expect(ready.locator('.specification pre')).toContainText('9. Cases to check the query against');
+  await expect(ready.locator('.specification pre')).toContainText('10. Cases to check the query against');
   await expect(audit).toContainText('WITH (NOLOCK)');
   await expect(ready.locator('.audit')).toContainText(strings.auditCounts);
   await expect(ready.locator('.audit')).toContainText('OBS_READING, which holds about');
@@ -407,22 +407,22 @@ test('a colleague answers a question from knowledge, and the item ticks without 
   const section = page.locator('section.target[data-target="neonatal_low_mean_pressure"]');
   // The questions come first, as one list to send.
   const questions = section.locator('.questions pre');
-  await expect(questions).toContainText('Is it right that OBS_SHEET.VISIT_KEY matches VISIT.VISIT_KEY?');
+  await expect(questions).toContainText('by OBS_SHEET.VISIT_KEY = VISIT.VISIT_KEY. Is that right?');
   const copy = section.locator('.questions button', { hasText: strings.questionsCopy });
   await copy.click();
   await expect(copy).toHaveAttribute('data-copied', 'true');
   if (browserName === 'chromium') expect(await page.evaluate(() => navigator.clipboard.readText())).toBe((await questions.textContent()) ?? '');
   // The item puts the question first, and the query, where there is one, second.
   const item = section.locator('li.item[data-id="relationship-OBS_SHEET.VISIT_KEY=VISIT.VISIT_KEY"]');
-  await expect(item.locator('.ask .ask-text')).toContainText('Is it right that');
+  await expect(item.locator('.ask .ask-text')).toContainText('Is that right?');
   await expect(item.locator('button.fact-unsure')).toHaveText(strings.notSure);
   await section.locator('input.fact-who').fill('A colleague');
   await item.locator('button.fact-yes').click();
   await expect(page.locator('#t-paste-result')).toHaveText(strings.factRecorded, { timeout: 120_000 });
   const ticked = section.locator('li.item[data-id="relationship-OBS_SHEET.VISIT_KEY=VISIT.VISIT_KEY"]');
   await expect(ticked.first()).toHaveAttribute('data-status', 'answered');
-  await expect(ticked.first()).toContainText('A person confirmed on');
-  await expect(section.locator('.questions pre')).not.toContainText('OBS_SHEET.VISIT_KEY matches VISIT.VISIT_KEY');
+  await expect(ticked.first()).toContainText('You confirmed on');
+  await expect(section.locator('.questions pre')).not.toContainText('OBS_SHEET.VISIT_KEY = VISIT.VISIT_KEY');
   // The codes for a concept are found by the name search and chosen, and become the site's mapping rows.
   await chooseCodes(page, section);
   // The saved state holds the facts and the site's mapping rows, and nothing else that the page writes names who answered.
@@ -451,8 +451,16 @@ async function chooseCodes(page: Page, section: ReturnType<Page['locator']>): Pr
   await choices.first().selectOption(values[1]);
   await item.locator('button.search-save').click();
   await expect(page.locator('#t-paste-result')).toHaveText(strings.factRecorded, { timeout: 120_000 });
-  await expect(page.locator('#checklists li.item', { hasText: 'A person gave on' }).first()).toBeAttached();
+  await expect(page.locator('#checklists li.item', { hasText: 'You chose on' }).first()).toBeAttached();
   return true;
+}
+
+// A state in which the count by year has been seen and judged about right, and a study period chosen, as a meeting leaves it.
+function seen(folder: string) {
+  writeFileSync(join(folder, 'facts.json'), JSON.stringify({ facts: [{ kind: 'count', answer: 'right', date: '2026-10-05',
+    years: [[2023, 120, 10], [2024, 130, 20]] }] }));
+  writeFileSync(join(folder, 'audit.json'), JSON.stringify({ from: '2019-01-01', to: '2025-12-31' }));
+  return folder;
 }
 
 // Each target's items, as identifier and status, in the order of their identifiers.

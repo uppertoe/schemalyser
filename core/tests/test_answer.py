@@ -106,7 +106,7 @@ def test_a_persons_answer_settles_an_item_and_a_no_says_which_step_must_change(n
     rows, traced = neonatal
     questions = traced["questions"]
     assert questions.startswith("Questions about neonatal_low_mean_pressure for a colleague")
-    assert "Is it right that OBS_SHEET.VISIT_KEY matches VISIT.VISIT_KEY?" in questions
+    assert "by OBS_SHEET.VISIT_KEY = VISIT.VISIT_KEY. Is that right?" in questions
     assert "!" not in questions
     given = {"facts": [
         {"kind": "join", "left": "OBS_SHEET.VISIT_KEY", "right": "VISIT.VISIT_KEY", "answer": "yes", "date": "2026-10-05",
@@ -117,7 +117,7 @@ def test_a_persons_answer_settles_an_item_and_a_no_says_which_step_must_change(n
     by_id = {row["question_id"]: row for row in found}
     yes = by_id["relationship-OBS_SHEET.VISIT_KEY=VISIT.VISIT_KEY"]
     assert yes["status"] == "answered" and yes["currently_from"] == "a person"
-    assert "A person confirmed on 2026-10-05 that these two columns join." in yes["evidence_in_hand"]
+    assert "You confirmed on 2026-10-05 that OBS_SHEET.VISIT_KEY matches VISIT.VISIT_KEY." in yes["evidence_in_hand"]
     no = by_id["relationship-PERSON_MASTER.PERSON_KEY=PERSON_MASTER_2.PERSON_KEY"]
     assert no["status"] == "open" and "the clinician will change it after the meeting" in no["evidence_in_hand"]
     assert "PERSON_MASTER.RECORD_NO matches PERSON_MASTER_2.PERSON_KEY instead" in no["evidence_in_hand"]
@@ -134,7 +134,7 @@ def test_codes_given_by_a_person_settle_the_concept(tmp_path):
     (folder / facts.SITE_MAPPINGS).write_text(given.site_mappings())
     rows, traced = target.checklist(make_checks.WORLD, folder, NEONATAL, facts_text=given.to_json(), name="n")
     item = {row["question_id"]: row for row in rows}["codes-measurement.measurement_concept_id-21490852"]
-    assert item["status"] == "answered" and "A person gave on 2026-10-05 1 local code that mean this" in item["evidence_in_hand"]
+    assert item["status"] == "answered" and "You chose on 2026-10-05 1 local code that mean this" in item["evidence_in_hand"]
     assert "the concept 21490852" not in traced["questions"]
 
 
@@ -144,14 +144,14 @@ def test_the_specification_states_the_rules_what_the_answer_rests_on_and_the_cas
     rows, traced = neonatal
     text = target.specification(CONVERSION, NEONATAL, rows, traced, CATALOGUE, "neonatal_low_mean_pressure")
     for heading in ("1. The question", "4. How the tables are joined", "5. What is left out", "6. The local codes",
-                    "7. The result", "9. Cases to check the query against"):
+                    "7. The result", "9. Decisions for the clinicians", "10. Cases to check the query against"):
         assert heading in text
     assert "A neonate is a child whose age at the start of the anaesthetic" in text and "age_days" not in text
     assert "OBS_READING.SHEET_KEY matches OBS_SHEET.SHEET_KEY" in text
     assert "OBS_SHEET.VISIT_KEY matches VISIT.VISIT_KEY" in text and ": not yet confirmed." in text
     assert "COALESCE(OBS_READING.ACCEPTED_FLAG, 'Y') <> 'N'" in text
     assert "In OBS_READING.OBS_TYPE_KEY, the code 52 means a mean arterial pressure measured through an arterial line" in text
-    assert "the code 8 means" not in text and "WARD_DEF" not in text.split("9. Cases")[0]
+    assert "the code 8 means" not in text and "WARD_DEF" not in text.split("10. Cases")[0]
     assert "python -m" not in text and "for use inside the hospital only" in text
 
 
@@ -202,12 +202,12 @@ def test_the_boundary_reads_facts_and_writes_the_specification_only_when_asked(t
     state = _state(tmp_path / "state", given)
     outputs, facts_found = boundary.produce(state, FIXTURES / "requests")
     checklist = outputs["targets/neonatal_low_mean_pressure/checklist.csv"]
-    assert "A person confirmed on 2026-10-05" in checklist
+    assert "You confirmed on 2026-10-05" in checklist
     assert not any("specification" in name for name in outputs)
     assert all("Zanzibar" not in text for text in outputs.values())
     (state / "boundary.json").write_text(json.dumps({"writeSpecification": True}))
     outputs, _ = boundary.produce(state, FIXTURES / "requests")
-    assert "9. Cases to check the query against" in outputs["targets/neonatal_low_mean_pressure/specification.txt"]
+    assert "10. Cases to check the query against" in outputs["targets/neonatal_low_mean_pressure/specification.txt"]
     (state / "facts.json").write_text('{"facts": [{"kind": "join", "left": "SECRET.X", "right": "VISIT.VISIT_KEY", '
                                       '"answer": "yes", "date": "2026-10-05"}]}')
     with pytest.raises(boundary.BoundaryError):
