@@ -76,6 +76,7 @@ CONVERSION = "conversion"
 TARGETS = "targets"
 PROFILE = "core-profile.csv"
 FACTS = "facts.json"
+SETTINGS = "audit.json"
 EVIDENCE = "sql_evidence.json"
 OPTIONS = "boundary.json"
 # The options that boundary.json may set, with their defaults. The spans and fanout checks are on by
@@ -213,6 +214,8 @@ WORDING = {
                  "or does not have the expected form, so it has not written anything.",
     "bad_evidence": "Schemalyser could not read sql_evidence.json, because a finding in it names something that the catalogue "
                     "does not hold or does not have the expected form, so it has not written anything.",
+    "bad_settings": "Schemalyser could not read audit.json, because a date in it is not written as yyyy-mm-dd, the period ends "
+                    "before it starts, or a kind is not a concept number, so it has not written anything.",
     "unexpected": "Schemalyser met an unexpected error and has stopped, so the output folder may be incomplete. "
                   "Schemalyser does not show the error itself, because its text could quote an input.",
 
@@ -395,6 +398,7 @@ def _produce(state, requests, commits, state_left_out):
     checks_text = _text(state / CHECKS)
     profile_text = _text(state / PROFILE)
     facts_text = _text(state / FACTS)
+    settings_text = _text(state / SETTINGS)
     evidence_text = _text(state / EVIDENCE)
     conversion = state / CONVERSION if (state / CONVERSION).is_dir() else None
 
@@ -428,6 +432,14 @@ def _produce(state, requests, commits, state_left_out):
             choices = []
         if choices:
             routes.apply(conversion, choices)
+        # A match that a person said is wrong, naming the columns that do match, is changed in the copy of the steps.
+        if facts_text:
+            from . import facts as facts_module
+            try:
+                held = facts_module.Facts.from_json(facts_text, Catalogue.from_csv(world.catalogue_text()))
+            except facts_module.FactsError:
+                raise BoundaryError(WORDING["bad_facts"]) from None
+            routes.rejoin(conversion, held)
         try:
             steps = questions._steps(conversion)
             if not steps or not all(isinstance(step.get("table"), str) for step, _ in steps):
@@ -478,7 +490,12 @@ def _produce(state, requests, commits, state_left_out):
             continue
         name = path.name[:-len(".sql")]
         try:
-            rows, traced = target.checklist(world, conversion, decode(path.read_bytes()), checks_text, profile_text,
+            settings = target.read_settings(settings_text)
+        except target.TargetError:
+            raise BoundaryError(WORDING["bad_settings"]) from None
+        try:
+            target_text = target.with_settings(decode(path.read_bytes()), settings)
+            rows, traced = target.checklist(world, conversion, target_text, checks_text, profile_text,
                                             facts_text, name, evidence_text)
         except target.TargetError as error:
             if "facts.json" in str(error):
@@ -493,7 +510,7 @@ def _produce(state, requests, commits, state_left_out):
         if options["writeSourceDraft"] and traced.get("draft"):
             outputs[f"targets/{name}/source_draft.sql"] = traced["draft"]
         try:
-            spec = target.specification(conversion, decode(path.read_bytes()), rows, traced, first.catalogue, name) \
+            spec = target.specification(conversion, target_text, rows, traced, first.catalogue, name, settings) \
                 if traced["steps"] else ""
         except Exception:   # noqa: BLE001 - a specification that cannot be written is left out, and the checklist stands
             spec = ""
@@ -503,7 +520,8 @@ def _produce(state, requests, commits, state_left_out):
                         "readiness": outputs[f"targets/{name}/readiness.txt"], "queries": traced["queries"],
                         "draft": traced.get("draft"), "draft_restructured": traced.get("draft_restructured", False),
                         "questions": traced.get("questions") or "", "specification": spec,
-                        "routes": traced.get("routes") or [],
+                        "routes": traced.get("routes") or [], "settings": settings,
+                        "kinds": target.kinds_offered(conversion),
                         "stages": {"source": target.stage_counts(rows, "source"), "release": target.stage_counts(rows)}})
 
     facts = {

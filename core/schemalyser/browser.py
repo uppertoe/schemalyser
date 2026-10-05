@@ -87,7 +87,7 @@ def pack_zip():
 
 
 def clear():
-    global _analysis, _sandbox, _boundary, _checks, _pasted, _pasted_profile, _profile, _first_names, _facts
+    global _analysis, _sandbox, _boundary, _checks, _pasted, _pasted_profile, _profile, _first_names, _facts, _settings
     _analysis = None
     _sandbox = None
     _boundary = None
@@ -97,6 +97,7 @@ def clear():
     _profile = None
     _first_names = None
     _facts = None
+    _settings = None
     _outcomes.clear()
     shutil.rmtree(BOUNDARY_ROOT, ignore_errors=True)
 
@@ -125,6 +126,8 @@ _pasted_profile = None
 _profile = None
 # The facts that a person confirmed on this page since it was cleared, which a new analysis keeps.
 _facts = None
+# The audit's settings entered on this page since it was cleared, as the text of audit.json, which a new analysis keeps.
+_settings = None
 # The files that boundary_put could not write, by kind, which the summary counts as left out.
 _put_refused = {"state": 0, "requests": 0}
 # The kinds of checklist item that a sample query from the data team can settle, and the sentence in
@@ -213,6 +216,17 @@ def _reading():
     return reading.catalogue, reading.rules
 
 
+def _needs(rows):
+    """What a person must still do for the first phase, by kind, and how many points are only less certain."""
+    first = [r for r in rows if (r.get("phase") or "source") == "source"]
+    must = [r for r in first if r["blocking"] == "yes" and r["status"] == "open"]
+    asked = [r for r in must if r.get("_ask") and not r.get("_fact")]
+    queried = [r for r in must if r not in asked and r.get("_queries")]
+    return {"questions": len(asked), "queries": len(queried), "other": len(must) - len(asked) - len(queried),
+            "lessCertain": sum(1 for r in first if r["status"] == "partly"),
+            "settled": sum(1 for r in first if r["status"] == "answered")}
+
+
 def boundary_run(state_commit=None, requests_commit=None):
     """Runs the boundary over what boundary_put wrote. Returns JSON for the page.
 
@@ -258,6 +272,11 @@ def boundary_run(state_commit=None, requests_commit=None):
         except (core_profile.ProfileError, ValueError, KeyError, IndexError, OSError):
             pass    # the boundary refuses the state's profile in its own words
     _write_facts(catalogue)
+    if _settings is not None:
+        # The settings entered on this page since it was cleared take the place of the state's own.
+        with open(f"{BOUNDARY_ROOT}/state/{boundary.SETTINGS}", "w", encoding="utf-8") as f:
+            f.write(_settings)
+        state_commit = None
     if _facts:
         state_commit = None
     try:
@@ -301,6 +320,8 @@ def boundary_run(state_commit=None, requests_commit=None):
                         "questions": t.get("questions") or "", "specification": t.get("specification") or "",
                         # The routes that the catalogue settled, one sentence each, shown at the head of the checklist.
                         "routes": t.get("routes") or [],
+                        "settings": t.get("settings") or {}, "kinds": [[k, n] for k, n in t.get("kinds") or []],
+                        "needs": _needs(t["rows"]),
                         "stageVerdicts": [line for line in t["readiness"].splitlines()
                                           if line.startswith(("The question is ready", "The question is not yet ready"))]})
     w = boundary.WORDING
@@ -488,7 +509,7 @@ def state_zip():
     # What the team's SQL showed, as the last run gathered it, so that a later run can count it without the request files.
     if _boundary is not None and boundary.EVIDENCE in _boundary["files"]:
         files[boundary.EVIDENCE] = _boundary["files"][boundary.EVIDENCE]
-    for name in (boundary.FACTS, f"{boundary.CONVERSION}/site_mappings.csv"):
+    for name in (boundary.FACTS, boundary.SETTINGS, f"{boundary.CONVERSION}/site_mappings.csv"):
         path = f"{BOUNDARY_ROOT}/state/{name}"
         if os.path.isfile(path):
             with open(path, "rb") as f:
@@ -523,6 +544,58 @@ def _write_facts(catalogue):
     if os.path.isdir(conversion):
         with open(f"{conversion}/{facts_module.SITE_MAPPINGS}", "w", encoding="utf-8", newline="") as f:
             f.write(held.site_mappings())
+
+
+def facts_add(text):
+    """Adds several facts at once, given as a JSON list, and works out the checklists once. Returns JSON as fact_add does."""
+    global _facts
+    from . import facts as facts_module
+    catalogue, _ = _reading()
+    try:
+        if catalogue is None:
+            raise facts_module.FactsError("no catalogue")
+        given = json.loads(str(text))
+        if not isinstance(given, list) or not given or len(given) > 50:
+            raise facts_module.FactsError("a list of facts")
+        checked = [facts_module.check(fact, catalogue) for fact in given]
+    except (facts_module.FactsError, ValueError, TypeError):
+        return json.dumps({"ok": False})
+    _facts = (_facts or []) + checked
+    return json.dumps({"ok": True, "boundary": json.loads(boundary_run(None, _requests_commit))})
+
+
+def codes_search_read(text):
+    """Reads the pasted result of a name search as candidates: {"ok", "candidates": [{"code", "name"}]}.
+
+    The names are the hospital's own build. They are returned to the page to show, and written into no file.
+    """
+    from .checks import MAXIMUM_TEXT_LENGTH, _acceptable
+    lines = str(text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    found, seen = [], set()
+    for line in lines:
+        cells = [c.strip() for c in (line.split("\t") if "\t" in line else line.split(",", 1))]
+        if len(cells) != 2 or (cells[0].lower(), cells[1].lower()) == ("code", "name") or set(cells[0]) <= {"-"}:
+            continue
+        code, name = cells
+        if not _acceptable(code, MAXIMUM_TEXT_LENGTH) or "," in code or len(name) > 200 or code in seen:
+            continue
+        seen.add(code)
+        found.append({"code": code, "name": name})
+    return json.dumps({"ok": bool(found), "candidates": found[:200]})
+
+
+def settings_set(text):
+    """Writes the audit's settings, the study period and the kinds of anaesthetic, into the state, and works out the
+    checklists again. Returns JSON: {"ok": false} when they cannot be read; otherwise what boundary_run returns."""
+    from . import boundary
+    from . import target as target_module
+    try:
+        settings = target_module.read_settings(str(text))
+    except target_module.TargetError:
+        return json.dumps({"ok": False})
+    global _settings
+    _settings = json.dumps({k: v for k, v in settings.items() if v}) + "\n"
+    return json.dumps({"ok": True, "boundary": json.loads(boundary_run(None, _requests_commit))})
 
 
 def fact_add(text):

@@ -1,22 +1,23 @@
 -- Among neonates who had an anaesthetic, how many minutes of the anaesthetic did each spend with a mean arterial pressure
 -- below 40, and how many of the children died within 90 days of the anaesthetic?
--- A neonate is a child whose age_days at the start of the anaesthetic, in the anaesthetic table, is below 28.
--- The query reads two kinds of mean pressure that the monitor charts: the mean from the cuff, with the concept 21492241
--- (Mean blood pressure by Noninvasive), and the mean from an arterial line, with the concept 21490852 (Invasive Mean
--- blood pressure). It leaves out the mean that the conversion can calculate from a charted pressure, which has the
--- concept 3027598, because that mean was not measured.
--- A reading belongs to the anaesthetic when its measurement_event_id holds the anaesthetic_id and it was taken from the
--- start to the end of the anaesthetic. Where the anaesthetic has no recorded end, the window stays open after the start.
--- The conversion links a reading to its anaesthetic within a margin of 15 minutes before the start and after the end,
--- and this query then keeps only the readings taken from the start to the end.
+-- A neonate is a child whose age at the start of the anaesthetic, counted in calendar days from the date of birth to the
+-- date of the start, is below 28.
+-- The query reads two kinds of mean pressure that the monitor charts: the mean from the cuff (Mean blood pressure by
+-- Noninvasive, concept 21492241), and the mean from an arterial line (Invasive Mean blood pressure, concept 21490852).
+-- It leaves out a mean calculated from a charted systolic and diastolic pressure (Mean blood pressure, concept 3027598),
+-- because that mean was not measured.
+-- A reading belongs to the anaesthetic when it was charted on the anaesthetic's own record and taken from the start to
+-- the end of the anaesthetic. Where the anaesthetic has no recorded end, the window stays open after the start.
+-- A reading is linked to its anaesthetic within a margin of 15 minutes before the start and after the end, and this
+-- query then keeps only the readings taken from the start to the end.
 -- Where a cuff mean and an arterial mean of the same anaesthetic have the same time, the query keeps the arterial one.
--- Where two readings of the same kind have the same time, it keeps the one with the lower measurement_id.
+-- Where two readings of the same kind have the same time, it keeps the one that was charted first.
 -- Each kept reading stands until the next kept reading of the same anaesthetic, or until the end of the anaesthetic for
 -- the last reading, and for no longer than five minutes. The last reading of an anaesthetic with no recorded end stands
 -- for no time, because nothing marks when it stopped applying.
 -- The minutes below 40 are the sum of the time for which the readings below 40 stand.
--- The child died within 90 days when the death_date lies from the date of the start of the anaesthetic to 90 days after
--- that date, both days included.
+-- The child died within 90 days when the date of death lies from the date of the start of the anaesthetic to 90 days
+-- after that date, both days included.
 -- The query counts anaesthetics, so that a child with two neonatal anaesthetics is counted once for each of them, and
 -- it also counts children, so that a child is counted once in each band in which one of their anaesthetics falls.
 -- It gives one row for each band of minutes below 40, in order: no mean pressure recorded, none, under 5 minutes,

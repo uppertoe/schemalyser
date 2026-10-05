@@ -35,21 +35,18 @@ export const strings = {
     "Schemalyser reads the data team's SQL requests on this computer. For each target query, it shows what the shadow database still needs and which existing SQL would supply it, and it builds an inventory of the tables and columns that the requests use.",
 
   steps: [
-    'Export the catalogue from Clarity, or start without it.',
-    'Take this page offline.',
-    'Choose the state and the folder of requests.',
-    'Work through the checklist for each target query.',
-    'Read the inventory.',
-    'Download the results and the check script.',
-    'Try the inventory in the sandbox.',
+    'Before you start',
+    'Take this page offline',
+    'Choose the files',
+    'Work through the checklist together',
+    'What Schemalyser found in the SQL files',
+    'Download the results',
+    'Try the SQL files in a practice database',
   ],
-
-  catalogueWhy:
-    'Schemalyser recognises the tables and columns of Clarity in the requests from a list of them. If you have none, you can skip this step: in the third step, Schemalyser writes one short query of the names and sizes of the tables that your SQL files read. If your team prefers to export the whole list, this query in SQL Server Management Studio produces it, and you can save the results as a CSV file.',
-  querySafe: "The query reads Clarity's own list of tables and columns. It does not read any patient table.",
+  catalogueWhy: "Schemalyser helps a clinician and a colleague who writes SQL to work out, together, how to answer an audit question from the hospital's database. The clinician brings a folder that describes the audit, and the colleague brings the team's existing SQL files. Schemalyser reads both on this computer, and it asks only questions that the colleague can answer and short queries that return names or rounded counts.",
+  querySafe: "The query reads only SQL Server's own list of tables and columns. It does not read any patient table.",
   copyQuery: 'Copy the query',
-  skipCatalogue: 'If you already have the catalogue file, you can move on to the next step.',
-
+  skipCatalogue: "Most people can skip this, because in the third step Schemalyser writes a shorter query of only the tables that the audit needs.",
   connected: 'This page is online.',
   isOffline: 'This page is offline.',
 
@@ -59,15 +56,13 @@ export const strings = {
     'Schemalyser has not been able to load its analysis engine. If the page is online, you can reload it to try again.',
   policyFailed:
     'Schemalyser cannot confirm that this browser will keep your files on this computer, so it has not started. Please use Chrome, Edge or Firefox.',
-  loaded:
-    'Schemalyser has finished loading. Please take this page offline now. You can take only this browser tab offline, so that the rest of the computer, including your SQL window, stays connected, or you can disconnect the whole computer.',
-  policyHeld:
-    "While it loaded, Schemalyser tried on purpose to reach two outside addresses, policy-check.invalid and api.github.com, to confirm that this browser stops the page from sending anything elsewhere. The browser refused both, as it should, and the two refusals appear in the browser's console as messages about the Content Security Policy. If the browser had not refused them, Schemalyser would have stopped and said so.",
+  loaded: "Schemalyser has finished loading. Please take this page offline now, so that you can see for yourself that nothing can leave it. Your SQL window can stay connected.",
+  policyHeld: "When it loaded, Schemalyser asked the browser to reach two outside addresses, to make sure that the browser refuses them. The browser refused both, as it should, so the page cannot send anything anywhere. The browser's console shows the two refusals as messages about its Content Security Policy. Had either not been refused, Schemalyser would have stopped and said so.",
   offlineHow: [
-    'In Chrome or Edge, press F12 to open the developer tools, choose the Network panel, open the throttling menu, which reads No throttling, and choose Offline. Only this tab goes offline. Leave the developer tools open while you use the page, because the tab goes back online when they close.',
-    'In Firefox, open the File menu and choose Work Offline. If you cannot see the menu bar, press the Alt key to show it. Firefox then takes all of its own tabs offline, but the rest of the computer, including your SQL window, stays connected.',
-    'To disconnect the whole computer instead, turn off Wi-Fi or unplug the network cable. Your SQL window then cannot reach the database until you reconnect.',
-    'The page must stay offline for as long as you use it. If it goes back online while it holds your files, Schemalyser locks the page, stops its analysis engine and discards what it has read. The checklist stays on the page. To carry on, choose Begin a new analysis, wait for Schemalyser to load again, take the page offline again and choose the files again. If you saved the state with the button in the checklist, choose the saved files with the state folder, and nothing that you pasted or answered is lost.',
+    'In Chrome or Edge, press F12 to open the developer tools, choose the Network panel, open the menu that reads No throttling, and choose Offline. Only this tab goes offline. Leave the developer tools open while you use the page, because the tab goes back online when they close.',
+    'In Firefox, open the File menu and choose Work Offline. If you cannot see the menu bar, press the Alt key. Firefox then takes all of its own tabs offline, but the rest of the computer, including your SQL window, stays connected.',
+    'If the developer tools are not available on this computer, use Firefox and Work Offline, or disconnect the computer from the network while the page holds your files and reconnect it to run each query.',
+    'The page must stay offline for as long as you use it. If it goes back online while it holds your files, Schemalyser locks the page and discards what it has read. To carry on, choose Begin a new analysis, wait for the page to load again, take it offline again and choose the files again; if you saved the state, nothing that you answered is lost.',
   ],
   noFilesWhileConnected: 'Schemalyser will not accept any files while this page is online.',
   exampleHeading: 'Try the invented example',
@@ -85,22 +80,20 @@ export const strings = {
     'This checklist comes from the invented example. Its tables, codes, requests and results are made up, and none of them comes from a hospital.',
 
   offline: 'This page is offline. You can now choose the files.',
-  chooseState: 'Choose the state folder, if you have one:',
-  stateNote:
-    'The state folder holds catalogue.csv, and may also hold site-rules.json, checks.csv, a folder named conversion, target queries in a folder named targets, core-profile.csv and boundary.json. A file that you choose separately below takes the place of the same file in the folder.',
+  chooseState: "The clinician's folder for this audit:",
+  stateNote: "The clinician brings this folder. It describes the audit: the audit question, how the hospital's tables are read to answer it, and the answers saved from earlier meetings. It may also hold a list of tables and columns.",
   stateFound: (catalogue: boolean, conversion: number, targets: number) =>
-    `The folder you chose holds ${catalogue ? 'a catalogue' : 'no catalogue'}, ${
-      conversion ? `a conversion of ${conversion} ${files(conversion)}` : 'no conversion'
-    } and ${targets ? `${targets} target ${queries(targets)}` : 'no target queries'}.`,
+    `The folder you chose describes ${targets ? `${targets} audit ${targets === 1 ? 'question' : 'questions'}` : 'no audit question'}${
+      conversion ? '' : ', without the steps that read the tables'
+    }${catalogue ? ', and it holds a list of tables and columns' : ''}.`,
   keptForComparison:
     'Schemalyser has kept the checklist from the previous analysis, and it will show what the next analysis answers.',
-  chooseCatalogue: 'Choose the catalogue file:',
-  catalogueNote: 'The catalogue file is the CSV file that the query in the first step produces.',
+  chooseCatalogue: "The list of tables and columns, if you already have it as a CSV file:",
+  catalogueNote: "This is the CSV file that the query in the first step produces. Without it, Schemalyser writes a shorter query for you below.",
   chooseRules: 'Choose the site rules file, if you have one:',
   rulesNote: 'The site rules file tells Schemalyser about naming conventions at your site. Schemalyser works without one.',
-  chooseFolder: 'Choose the folder of requests:',
-  folderNote:
-    'Schemalyser reads every file ending in .sql in the folder you choose, including files in the folders inside it. It ignores all other files.',
+  chooseFolder: "Your team's existing SQL files:",
+  folderNote: "Choose the folder that holds the team's .sql files. Schemalyser reads them here to see how the team already joins and filters these tables, and it keeps no text from them.",
   folderCount: (n: number) => `The folder you chose contains ${n} SQL ${files(n)}.`,
   chooseChecks: 'Choose the check results file, if you have one:',
   checksNote:
@@ -117,8 +110,7 @@ export const strings = {
   boundaryProgress: 'Schemalyser has read the requests and is now working out the checklist for each target query.',
 
   // The checklist.
-  checklistIntro:
-    'Schemalyser ticks each item once the requests, the check results or the other files in the state settle it. The boxes show what Schemalyser has found, and you cannot tick them by hand. Where a short query against Clarity would settle an item, Schemalyser gives the query with the item, and the query of table sizes at the head of each checklist comes first.',
+  checklistIntro: "For each audit question, Schemalyser shows what it still needs, with a question for you or a short query beside each. The marks show what is settled, and you cannot tick them by hand.",
   noChecklist:
     "To see a checklist for each target query, supply a state folder, or Schemalyser's repository on GitHub, that holds a conversion folder and a folder of target queries.",
   boundaryProblems: {
@@ -156,18 +148,16 @@ export const strings = {
           answered === 1 ? 'is' : 'are'
         } now answered that ${answered === 1 ? 'was' : 'were'} not answered before.`,
   groupNew: 'Answered since the previous analysis',
-  groupSql: 'Items that existing SQL can settle',
-  groupSqlNote:
-    'For each item below, Schemalyser says what a query from the data team would need to do. If you find such a query, add its file at the top of this step and analyse again.',
-  groupSqlNone: 'No open item for this query can be settled by existing SQL.',
-  groupOther: 'Items that need something other than SQL',
-  groupOtherNote:
-    'The check results, the mapping rows, the site rules or the core profile settle these items. Each one says who must act and how, and where a query against Clarity would settle it, the query is given with the item.',
+  groupSql: 'Points that the team\'s existing SQL could settle later',
+  groupSqlNote: 'Nothing is needed from you for these in the meeting. If one of your team\'s SQL files does what an item describes, add the file below and analyse again.',
+  groupSqlNone: 'No point for this audit question waits for the team\'s SQL.',
+  groupOther: 'Points for the clinician or the central team after the meeting',
+  groupOtherNote: 'Nothing is needed from you for these in the meeting. Each says who settles it and how.',
   groupAnswered: (n: number) => `Show the ${n} answered ${items(n)}`,
-  blocking: 'This item blocks the simulation.',
-  notBlocking: 'This item bears on how realistic the result is, and it does not block the simulation.',
+  blocking: 'The audit query must rest on this.',
+  notBlocking: 'This makes the answer more certain, and the audit query does not wait for it.',
   statusNames: { answered: 'Answered.', partly: 'Partly answered.', open: 'Open.' } as Record<string, string>,
-  readinessInFull: 'Show the readiness statement in full',
+  readinessInFull: "Show the developer's detail",
 
   // The plain queries on the checklist, and the results pasted back.
   sizesHeading: 'Table sizes',
@@ -179,17 +169,16 @@ export const strings = {
   } as Record<string, string>,
   queryShownEarlier: 'The query shown with an earlier item answers this item as well.',
   pasteHeading: 'Paste the results of the queries',
-  pasteWhat:
-    'Run a query from the checklist below in SQL Server Management Studio, copy its results grid with the headers, and paste it here. You can paste the results of several queries at once. Schemalyser reads them by the same rules as a check results file, adds them to the check results that it holds, and works out the checklist again.',
+  pasteWhat: 'Run a query from the checklist below in your SQL window, copy its results grid with the headers, and paste it here. You can paste the results of several queries at once. Schemalyser adds them to what it holds and works out the checklist again.',
   pasteLabel: 'The results, copied from the results grid or from a CSV file:',
   readPaste: 'Read the pasted results',
   pasteReading: 'Schemalyser is reading the pasted results and working out the checklist again.',
   pasted: (read: number, accepted: number) =>
     accepted === 0
-      ? `Schemalyser has not added any of the ${read} pasted ${rows(read)} to the check results, because none of them is a row that a query from this page could have returned.`
+      ? `Schemalyser has not kept any of the ${read} pasted ${rows(read)}, because none of them is a row that a query from this page could have returned.`
       : accepted === read
-        ? `Schemalyser has added the ${read} pasted ${rows(read)} to the check results.`
-        : `Schemalyser has added ${accepted} of the ${read} pasted rows to the check results. It left out the others, because a query from this page could not have returned them.`,
+        ? `Schemalyser has read the ${read} pasted ${rows(read)}.`
+        : `Schemalyser has kept ${accepted} of the ${read} pasted rows, and left out the others, because a query from this page could not have returned them.`,
   pasteUnreadable:
     'Schemalyser could not read the pasted text as the results of a query from this page. Each row needs the nine columns that the query returns, from check_kind to is_unique.',
   pasteFailed:
@@ -216,8 +205,7 @@ export const strings = {
     'The file holds the core profile from the state together with every result that you have pasted. If you put it in the state folder in place of core-profile.csv, the next analysis begins from it.',
   // The first ask, for a project that starts without a catalogue.
   firstHeading: 'Start without a catalogue',
-  firstWhat:
-    'If you have no catalogue file, Schemalyser can write one short query that asks Clarity for the columns and the sizes of the tables that your SQL files and the conversion read. Choose the folder of requests above, and the state folder if you have one, then write the query. The query holds the table names from your files, so Schemalyser shows it only here and writes it into no file.',
+  firstWhat: "Without a list of tables and columns, Schemalyser writes one short query that asks SQL Server which columns the tables of the audit and of your SQL files have, and how large each table is. Choose the folders above, then write the query. The query holds the table names from your files, so Schemalyser shows it only here and writes it into no file.",
   firstWrite: 'Write the first query',
   firstNames: (n: number, leftOut: number) =>
     leftOut
@@ -228,14 +216,16 @@ export const strings = {
   firstPasteLabel: 'The result of the first query, copied from the results grid with its headers:',
   firstRead: 'Read the result',
   firstReadDone: (tables: number, columns: number, sized: number) =>
-    `Schemalyser has read ${columns} columns of ${tables} tables, and the sizes of ${sized} of them.${
-      sized < tables
-        ? ` SQL Server gave no size for the other ${tables - sized}, as happens for a view or where an account cannot read the server's own records, so Schemalyser will count each of those tables only up to 10,000,000 rows when a query needs its size.`
-        : ''
-    } You can now analyse the requests.`,
+    `Schemalyser has read ${columns} columns of ${tables} tables.${
+      sized === 0
+        ? ' This login cannot see the sizes of the tables, so Schemalyser will offer no query on a table that could be large, and will ask you instead.'
+        : sized < tables
+          ? ` SQL Server gave no size for ${tables - sized} of them, as happens for a view, so Schemalyser will offer no query on those that could be large.`
+          : ''
+    } A table or column that the audit needs and that did not come back is not visible to this login: it may not exist here, or this login may not be allowed to see it, and Schemalyser will ask you which. You can now analyse the files.`,
   firstUnreadable:
     'Schemalyser could not read the pasted text as the result of the first query. Each row needs the ten columns that the query returns, from TABLE_SCHEMA to TABLE_ROWS.',
-  saveState: 'Save the catalogue, the check results and the confirmed facts',
+  saveState: 'Save what has been settled today',
   // The note to send with the first query, as docs/first-ask-note.md gives it.
   noteHeading: 'Show the note to send with the first query',
   noteCopy: 'Copy the note',
@@ -243,52 +233,45 @@ export const strings = {
 
   // Questions that a colleague can answer from knowledge.
   questionsHeading: 'Questions for a colleague',
-  questionsWhat:
-    'A colleague who knows the source database can answer these from knowledge, without running a query. You can copy the list and send it, and enter each answer beside its item when it comes back.',
+  questionsWhat: "These are all the questions for you on one list, which you can copy. Answer each one beside its item below: yes; no, with what is true instead; or not sure, in which case Schemalyser offers a short query.",
   questionsCopy: 'Copy the questions',
-  whoLabel: 'The person who answered, if you wish to record it, which Schemalyser keeps only in facts.json:',
+  whoLabel: "Your name, if you would like it kept with your answers (it is kept only in the saved state):",
   factYes: 'Yes, this is right',
-  factNo: 'No, this is not right',
-  factInstead: 'If it is not, the columns that do join:',
+  factNo: "No",
+  factInstead: "If it is not right, the columns that do match:",
   factSaveNo: 'Save the answer that this is not right',
   codesLabel: 'The local codes, separated by commas:',
   codesSave: 'Save the codes',
   factUnreadable:
     'Schemalyser could not record that answer, because it names something that the catalogue does not hold or a code that cannot be accepted.',
   factRecorded: 'Schemalyser has recorded the answer and worked out the checklist again.',
-  questionFirst: 'The question for a colleague:',
+  questionFirst: 'The question for you:',
   queryAlternative: 'If nobody can answer the question from knowledge, the query below answers it instead.',
   groupUnneeded: (n: number) => `Show the ${n} ${items(n)} that this question does not depend on`,
   unneededWhat:
     'The answer to this question does not depend on these items, so they do not count against answering it from the source database. The OMOP release still needs them.',
 
   // The end of the first phase: the specification, the check of a hand-written query, and the generated query.
-  auditWaiting:
-    'Schemalyser will offer the specification and the audit query once the question is ready to be answered from the source database, so that nobody writes or runs the audit query on an item that is still open.',
+  auditWaiting: "Schemalyser will offer the reference query once nothing above remains to be settled.",
   specHeading: 'The specification of the audit query',
-  specWhat:
-    'This page is for a person who writes the audit query against the source database himself. It names source tables and local codes, so it is for use inside the hospital only.',
+  specWhat: "This page is for the person who writes the audit query. It names this hospital's tables and codes, so it is for use inside the hospital only.",
   specCopy: 'Copy the specification',
   specSave: 'Save the specification',
   checkHeading: 'Checking a query written by hand',
   checkWhat:
     'Schemalyser can run a query written by hand on the synthetic database, with the planted cases, beside the target query, and say whether the two tables agree. Please run python -m schemalyser.target WORLD CONVERSION TARGET.sql --check-query FILE --out FOLDER from the state, which shows only the synthetic results and writes nothing of the query.',
-  auditRestructured:
-    "Schemalyser wrote this query from the steps of the conversion, and arranged it to start from the cohort of the question. It gives the right answer on the synthetic database, and it is offered as a reference for the person who writes the audit query. Schemalyser cannot tell how SQL Server will run it on a large database, so please show it to the database administrator before anyone runs it there.",
+  auditRestructured: "Schemalyser wrote this query from the steps that read the tables, arranged to start from the children of the question. It gives the right answer on the practice database. It is a reference for the person who writes the audit query.",
   generatedHeading: 'The generated query, for reference',
   generatedWarning:
     'Schemalyser could not restructure this query to start from the cohort, so it is the composition of the steps of the conversion as they are, and its header says why. It builds every row of those steps before it keeps the rows of the question, so it is not suitable to run on a large database. It is shown here as a reference for the specification.',
   saveChecks: 'Save the check results as checks.csv',
-  saveStateNote:
-    "The file holds catalogue.csv, checks.csv, core-profile.csv where there is one, the confirmed facts, and sql_evidence.json, which records what the team's SQL showed. If you put them in the state folder, the next project starts from them and is asked only for what is new, even without the request files.",
-
+  saveStateNote: "The file holds everything that you have settled today: the list of tables and columns, the results that you pasted, your answers and the codes that you chose. Please keep it in the clinician's folder for this audit, on the hospital's network, and choose it as that folder at the next meeting, so that nothing is asked twice.",
   // The two stages of each checklist.
   releaseHeading: 'For the later OMOP release',
   releaseWhat:
     'These items matter only when the conversion is released into the OMOP database. They do not count against answering the question from the source database.',
   auditHeading: 'The audit query',
-  auditWhat:
-    'This is the question itself, written as one query over the source database. Please run it once, on the source database, and keep its result with the audit.',
+  auditWhat: "This is the question itself, written as one query over the hospital's tables, as a reference for the person who writes the audit query. Before any query like it is run on a large database, choose a study period, run it on the reporting copy rather than the live system, and run it out of hours.",
   auditTables: (tables: { name: string; rows: number | null }[]) =>
     `It reads ${tables.map((t) => (t.rows === null ? `${t.name}, whose size is not known` : `${t.name}, which holds about ${t.rows.toLocaleString('en-AU')} rows`)).join('; ')}.`,
   auditCost:
@@ -302,15 +285,14 @@ export const strings = {
     'The file holds the check results from the state together with every result that you have pasted. If you put it in the state folder in place of checks.csv, the next analysis begins from it.',
 
   // Adding requests and analysing again.
-  addHeading: 'Add more requests',
-  addWhat:
-    'If you find existing SQL that settles an item, add its file here and analyse again. Schemalyser keeps the requests that you have already chosen and shows what the new files answer.',
-  addFiles: 'Add request files:',
-  addFolder: 'Add a folder of requests:',
+  addHeading: 'Add more of your team\'s SQL files',
+  addWhat: 'If you find one of your team\'s SQL files that does what an item describes, add it here and analyse again. Schemalyser keeps the files that you have already chosen.',
+  addFiles: 'Add SQL files:',
+  addFolder: 'Add a folder of SQL files:',
   held: (n: number, added: number) =>
     added
-      ? `Schemalyser holds ${n} request ${files(n)}, including ${added} that you have added since the previous analysis.`
-      : `Schemalyser holds ${n} request ${files(n)}.`,
+      ? `Schemalyser holds ${n} of your team's SQL ${files(n)}, including ${added} that you have added since the previous analysis.`
+      : `Schemalyser holds ${n} of your team's SQL ${files(n)}.`,
   reanalyse: 'Analyse again',
   restartWhat:
     'If you have more requests to add, for example by fetching again from GitHub, you can begin a new analysis. Schemalyser keeps the checklist so that it can show what the new files answer.',
@@ -360,6 +342,60 @@ export const strings = {
   checkYourself:
     "You can confirm that Schemalyser sends nothing by opening your browser's developer tools and watching the Network panel while it works.",
 
+  offlineHowSummary: 'How to take this page offline',
+  policySummary: 'How this page checks that nothing can leave it',
+  githubSummary: 'Fetch the files from GitHub instead (not needed in a meeting)',
+  catalogueSummary: 'If your team already keeps the full list of tables and columns',
+  needs: (questions: number, queries: number, other: number) => {
+    const total = questions + queries + other;
+    if (!total) return 'Schemalyser needs nothing more for this audit question.';
+    const parts = [
+      questions ? `${questions} ${questions === 1 ? 'question' : 'questions'} for you` : '',
+      queries ? `${queries} short ${queries === 1 ? 'query' : 'queries'}` : '',
+      other ? `${other} ${other === 1 ? 'point' : 'points'} for the clinician after the meeting` : '',
+    ].filter(Boolean);
+    const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
+    return `Schemalyser needs ${total} more ${total === 1 ? 'thing' : 'things'} for this audit question: ${list}.`;
+  },
+  readyNow: (lessCertain: number) =>
+    `Everything that the audit query must rest on is settled, so the query can be written now.${
+      lessCertain ? ` ${lessCertain === 1 ? 'One further point is' : `${lessCertain} further points are`} less certain; the query does not wait for ${lessCertain === 1 ? 'it' : 'them'}, and the specification lists ${lessCertain === 1 ? 'it' : 'them'}.` : ''
+    }`,
+  notReadyYet: 'Some of what the audit query must rest on is not yet settled. The list at the end says what remains and who can settle it.',
+  notSure: 'Not sure',
+  routeAbsent: 'It does not exist here',
+  routeHidden: 'It exists, but I cannot see it',
+  searchAbove: 'The name search with the item above also finds these codes.',
+  searchPasteLabel: 'The result of the search, copied from the results grid with its headers:',
+  searchRead: 'Show the names',
+  searchPrivate: "The names that the search returns are the hospital's own. Schemalyser shows them only on this page, and keeps only the codes that you choose, in the saved state.",
+  searchNone: 'Schemalyser could not read any code and name in the pasted text. Each row needs the two columns that the search returns, code and name.',
+  searchName: 'Name',
+  searchCode: 'Code',
+  searchChoice: 'What it is',
+  searchNeither: 'Neither',
+  searchSave: 'Save the choices',
+  searchFound: (n: number) => `The search found ${n} ${n === 1 ? 'row' : 'rows'}. For each, choose what it is. Several rows may have the same meaning, and most will be neither.`,
+  settingsHeading: 'The study period and the kinds of anaesthetic',
+  settingsWhat: 'The study period applies to the start of each anaesthetic. Without a period, the audit counts every anaesthetic on record. Without a kind chosen, every kind counts. Both are carried into the specification and the reference query.',
+  settingsFrom: 'From',
+  settingsTo: 'To',
+  settingsKinds: 'Count only these kinds of anaesthetic:',
+  settingsApply: 'Apply the period and the kinds',
+  endingHeading: 'Where this audit question stands',
+  endingSettled: (n: number) => `${n} ${n === 1 ? 'thing is' : 'things are'} settled.`,
+  endingRemaining: 'These remain, each with who can settle it:',
+  endingByQuestion: 'You can answer the question with it above.',
+  endingByQuery: 'The short query with it above settles it.',
+  endingNothing: 'Nothing remains to be settled.',
+  endingLessCertain: (n: number) => `${n} further ${n === 1 ? 'point is' : 'points are'} less certain. The audit query does not wait for ${n === 1 ? 'it' : 'them'}, and the specification lists ${n === 1 ? 'it' : 'them'}.`,
+  endingSave: "Save the state before you close the page, and keep the file in the clinician's folder for this audit, on the hospital's network, so that the next meeting starts from here.",
+  specWhatOpen: 'This page is for the person who writes the audit query. Some points are not yet settled, and the specification shows each as an assumption. It names this hospital\'s tables and codes, so it is for use inside the hospital only.',
+  itemMore: 'More about this point',
+  groupYou: 'Questions for you, and short queries',
+  groupYouNote: 'Answer each question beside it. Where you are not sure, choose Not sure, and Schemalyser offers a short query that settles it instead.',
+  groupYouNone: 'Nothing here needs you now.',
+  groupLater: (n: number) => `Show the ${n} other ${n === 1 ? 'point' : 'points'}, which wait for the team's SQL, the clinician or the central team`,
   keepsNothing: 'Schemalyser keeps nothing after you close this page.',
   version: (version: string, checksum: string) => `Version ${version}. Checksum: ${checksum}`,
 };

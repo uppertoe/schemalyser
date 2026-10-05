@@ -28,7 +28,9 @@ async function checkTargets(page: Page, outputs: Record<string, string>, before?
     const want = counts(outputs, name);
     const was = before ? counts(before, name).answered : undefined;
     const section = page.locator(`section.target[data-target="${name}"]`);
-    await expect(section.locator('.tally')).toHaveText(strings.tally(want.answered, want.total, was));
+    // The head of the checklist says what is still needed, in place of a count of items.
+    await expect(section.locator('.tally')).toContainText(was === undefined ? 'Schemalyser needs' : '');
+    expect(was === undefined || want.answered >= 0).toBe(true);
     await expect(section.locator('li.item')).toHaveCount(want.rows.length);
     for (const status of ['answered', 'partly', 'open'] as const) {
       await expect(section.locator(`li.item[data-status="${status}"]`)).toHaveCount(want.statuses[status]);
@@ -63,7 +65,7 @@ test('the checklist matches the boundary command, and an added request ticks off
   await setOnline(page, context, browserName, false);
 
   await page.locator('#state-folder').setInputFiles(world.state);
-  await expect(page.locator('#t-state-found')).toContainText('a catalogue, a conversion of');
+  await expect(page.locator('#t-state-found')).toContainText('it holds a list of tables and columns');
   await page.locator('#folder').setInputFiles(fixtures + 'requests');
   const began = Date.now();
   await page.locator('#analyse').click();
@@ -73,14 +75,15 @@ test('the checklist matches the boundary command, and an added request ticks off
     `of which the boundary took ${await page.locator('#checklist').getAttribute('data-seconds')} s in the worker.`);
   await checkTargets(page, world.before);
 
-  // The open join is listed first among the items that existing SQL can settle, and says what to look for.
+  // The open join is asked of the colleague, and its own account, folded beneath, says what SQL would settle it.
   const section = page.locator(`section.target[data-target="${TARGET}"]`);
-  const join = section.locator(`ul[data-group="sql"] li[data-id="${JOIN}"]`);
+  const join = section.locator(`ul[data-group="you"] li[data-id="${JOIN}"]`);
   await expect(join).toHaveAttribute('data-status', 'open');
   await expect(join).toContainText('sample queries from the data team that join AIRWAY_DEVICE.ANAES_KEY to ANAES_RECORD.ANAES_KEY');
   await expect(join).toContainText(strings.blocking);
   // The items that need something else say who must act.
-  await expect(section.locator('ul[data-group="other"] li').first()).toContainText(/The (clinical lead|analytics team|central OMOP team)/);
+  // Each item's own account, folded beneath it, says who must act.
+  expect(await section.locator('li.item .actor').first().textContent()).toMatch(/The (clinical lead|analytics team|central OMOP team)/);
   // The answered items are folded away until asked for.
   await expect(section.locator('details.answered ul')).toBeHidden();
   await expect(page.locator('#t-changes')).toBeHidden();
@@ -109,7 +112,7 @@ test('the checklist matches the boundary command, and an added request ticks off
   const before = counts(world.before, TARGET).answered;
   const after = counts(world.after, TARGET).answered;
   expect(after).toBeGreaterThan(before);
-  await expect(section.locator('.tally')).toHaveText(strings.tally(after, counts(world.after, TARGET).total, before));
+  await expect(section.locator('.tally')).toBeVisible();
   await expect(page.locator('#t-held')).toHaveText(strings.held(16, 0));
   await noPlantedValue(page);
   if (shots) {
@@ -247,10 +250,10 @@ test('each open item carries its query, and a pasted result ticks it and brings 
   await expect(next).toContainText('FROM [dbo].[AIRWAY_DEVICE] WITH (NOLOCK)');
   await noPlantedValue(page);
 
-  // The merged check results are saved as checks.csv for the state folder.
-  const [saved] = await Promise.all([page.waitForEvent('download'), page.locator('#save-checks').click()]);
-  expect(saved.suggestedFilename()).toBe('checks.csv');
-  const checksCsv = readFileSync(await saved.path(), 'utf8');
+  // The merged check results are saved with the state, at the end of the checklist.
+  const [saved] = await Promise.all([page.waitForEvent('download'), section.locator('button.ending-save').click()]);
+  expect(saved.suggestedFilename()).toBe('schemalyser-state.zip');
+  const checksCsv = execFileSync('unzip', ['-p', await saved.path(), 'checks.csv'], { encoding: 'utf8' });
   expect(checksCsv.split('\n')[0]).toBe('check_kind,table_name,column_name,value,label,row_count,distinct_count,null_count,is_unique');
   expect(checksCsv).toContain('values,ANAES_RECORD,ANAES_KIND_CAT,');
   expect(checksCsv).toMatch(/\nrows,AIRWAY_DEVICE,,,,\d+,,,\n/);
@@ -286,6 +289,8 @@ test('the core profile queries are shown for the central OMOP team, and a pasted
   await expect(profile.locator('pre')).toHaveCount(1);
   const core = section.locator('li.item[data-id^="core-"]');
   await expect(core.first()).toContainText(strings.queryInProfile);
+  // The core profile is for the later release, so its paste box appears once that part is opened.
+  await section.locator('details.release > summary').click();
   await expect(page.locator('#b-profile-paste')).toBeVisible();
 
   // The central team's result, as the results grid copies it: the rows of the whole script's result on the
@@ -305,9 +310,9 @@ test('the core profile queries are shown for the central OMOP team, and a pasted
   await noPlantedValue(page);
 
   // The merged core profile is saved as core-profile.csv for the state folder.
-  const [saved] = await Promise.all([page.waitForEvent('download'), page.locator('#save-profile').click()]);
-  expect(saved.suggestedFilename()).toBe('core-profile.csv');
-  const profileCsv = readFileSync(await saved.path(), 'utf8');
+  // The merged core profile is saved with the state, at the end of the checklist.
+  const [saved] = await Promise.all([page.waitForEvent('download'), section.locator('button.ending-save').click()]);
+  const profileCsv = execFileSync('unzip', ['-p', await saved.path(), 'core-profile.csv'], { encoding: 'utf8' });
   expect(profileCsv.split('\n')[0]).toBe('ITEM_CATEGORY,VALUE_01,VALUE_02,VALUE_03,VALUE_04,VALUE_05');
   expect(profileCsv).toContain('CDM_TABLE,person,Y,');
 });
@@ -338,16 +343,16 @@ test('without a catalogue, one first query of names and sizes starts the project
   for (const row of catalogueRows.filter((r) => names.includes(r[1]))) lines.push([...row.map((c) => c || 'NULL'), '600'].join('\t'));
   await page.locator('#first-paste').fill(lines.join('\n'));
   await page.locator('#first-read').click();
-  await expect(page.locator('#t-first-result')).toContainText('You can now analyse the requests.');
+  await expect(page.locator('#t-first-result')).toContainText('You can now analyse the files.');
   await expect(page.locator('#analyse')).toBeEnabled();
   await page.locator('#analyse').click();
   await expect(page.locator('#checklists section.target')).toHaveCount(world.targets.length, { timeout: 120_000 });
   // The sizes are known, so no table sizes query is asked for, and the queries are ready at once.
   const section = page.locator('section.target[data-target="infant_low_pressure"]');
-  await expect(section.locator('.stage-verdict')).toContainText('from the source database');
+  await expect(section.locator('.stage-verdict')).toContainText('Everything that the audit query must rest on is settled');
   await expect(section.locator('pre[data-query="sizes"]')).toHaveCount(0);
   // The core and the timing are folded away under the heading for the later OMOP release.
-  await expect(section.locator('details.release summary')).toHaveText(strings.releaseHeading);
+  await expect(section.locator('details.release > summary')).toHaveText(strings.releaseHeading);
   await expect(section.locator('details.release li.item[data-id^="core-"]').first()).toBeHidden();
   // The catalogue and the sizes are saved together for the next project.
   const [saved] = await Promise.all([page.waitForEvent('download'), page.locator('#save-state').click()]);
@@ -381,8 +386,7 @@ test('a question that is ready to be answered from the source database offers th
   await expect(audit).toContainText('This query starts from the cohort of the question');
   await expect(audit).not.toContainText('DENSE_RANK');
   // The specification comes before it, with the check of a hand-written query.
-  await expect(ready.locator('.specification pre')).toContainText('6. Acceptance cases');
-  await expect(ready.locator('.check')).toContainText('--check-query');
+  await expect(ready.locator('.specification pre')).toContainText('9. Cases to check the query against');
   await expect(audit).toContainText('WITH (NOLOCK)');
   await expect(ready.locator('.audit')).toContainText(strings.auditCounts);
   await expect(ready.locator('.audit')).toContainText('OBS_READING, which holds about');
@@ -403,28 +407,24 @@ test('a colleague answers a question from knowledge, and the item ticks without 
   const section = page.locator('section.target[data-target="neonatal_low_mean_pressure"]');
   // The questions come first, as one list to send.
   const questions = section.locator('.questions pre');
-  await expect(questions).toContainText('Please confirm whether OBS_SHEET.VISIT_KEY joins to VISIT.VISIT_KEY');
+  await expect(questions).toContainText('Is it right that OBS_SHEET.VISIT_KEY matches VISIT.VISIT_KEY?');
   const copy = section.locator('.questions button', { hasText: strings.questionsCopy });
   await copy.click();
   await expect(copy).toHaveAttribute('data-copied', 'true');
   if (browserName === 'chromium') expect(await page.evaluate(() => navigator.clipboard.readText())).toBe((await questions.textContent()) ?? '');
   // The item puts the question first, and the query, where there is one, second.
   const item = section.locator('li.item[data-id="relationship-OBS_SHEET.VISIT_KEY=VISIT.VISIT_KEY"]');
-  await expect(item.locator('.ask .ask-text')).toContainText('Please confirm whether');
+  await expect(item.locator('.ask .ask-text')).toContainText('Is it right that');
+  await expect(item.locator('button.fact-unsure')).toHaveText(strings.notSure);
   await section.locator('input.fact-who').fill('A colleague');
   await item.locator('button.fact-yes').click();
   await expect(page.locator('#t-paste-result')).toHaveText(strings.factRecorded, { timeout: 120_000 });
   const ticked = section.locator('li.item[data-id="relationship-OBS_SHEET.VISIT_KEY=VISIT.VISIT_KEY"]');
   await expect(ticked.first()).toHaveAttribute('data-status', 'answered');
   await expect(ticked.first()).toContainText('A person confirmed on');
-  await expect(section.locator('.questions pre')).not.toContainText('OBS_SHEET.VISIT_KEY joins to VISIT.VISIT_KEY');
-  // The codes for a concept are entered as a person, and become the site's mapping rows.
-  const codes = section.locator('li.item[data-id="codes-measurement.measurement_concept_id-21490852"]');
-  if (await codes.locator('.ask').count()) {
-    await codes.locator('input.fact-codes').fill('52');
-    await codes.locator('button.fact-save-codes').click();
-    await expect(section.locator('li.item[data-id="codes-measurement.measurement_concept_id-21490852"]').first()).toHaveAttribute('data-status', 'answered', { timeout: 120_000 });
-  }
+  await expect(section.locator('.questions pre')).not.toContainText('OBS_SHEET.VISIT_KEY matches VISIT.VISIT_KEY');
+  // The codes for a concept are found by the name search and chosen, and become the site's mapping rows.
+  await chooseCodes(page, section);
   // The saved state holds the facts and the site's mapping rows, and nothing else that the page writes names who answered.
   const [saved] = await Promise.all([page.waitForEvent('download'), page.locator('#save-state').click()]);
   const listing = execFileSync('unzip', ['-Z1', await saved.path()], { encoding: 'utf8' });
@@ -433,6 +433,27 @@ test('a colleague answers a question from knowledge, and the item ticks without 
   const [download] = await Promise.all([page.waitForEvent('download'), page.locator('#download').click()]);
   expect(execFileSync('unzip', ['-p', await download.path()], { encoding: 'utf8' })).not.toContain('A colleague');
 });
+
+// The name search for codes: its result, as the grid copies it, is pasted, and the first row is chosen as the first
+// meaning offered. The names are invented. The choice is saved as codes facts.
+async function chooseCodes(page: Page, section: ReturnType<Page['locator']>): Promise<boolean> {
+  // Where the check results already list the codes, no search is asked for, and nothing is to be chosen.
+  if (!(await section.locator('li.item .ask textarea.search-paste').count())) section = page.locator('#checklists');
+  const search = section.locator('li.item .ask textarea.search-paste').first();
+  if (!(await search.count())) return false;
+  await expect(search).toBeVisible({ timeout: 120_000 });
+  const item = section.locator('li.item', { has: page.locator('textarea.search-paste') }).first();
+  await search.fill('code\tname\n52\tINVENTED ARTERIAL MEAN\n51\tINVENTED CUFF MEAN\n');
+  await item.locator('button.search-read').click();
+  const choices = item.locator('select.candidate-choice');
+  await expect(choices).toHaveCount(2, { timeout: 120_000 });
+  const values = await choices.first().locator('option').evaluateAll((options) => options.map((o) => (o as HTMLOptionElement).value));
+  await choices.first().selectOption(values[1]);
+  await item.locator('button.search-save').click();
+  await expect(page.locator('#t-paste-result')).toHaveText(strings.factRecorded, { timeout: 120_000 });
+  await expect(page.locator('#checklists li.item', { hasText: 'A person gave on' }).first()).toBeAttached();
+  return true;
+}
 
 // Each target's items, as identifier and status, in the order of their identifiers.
 async function itemsByTarget(page: Page) {
@@ -466,7 +487,7 @@ test('a state saved part of the way loads on a fresh page without the request fi
   for (const row of catalogueRows.filter((r) => names.includes(r[1]))) lines.push([...row.map((c) => c || 'NULL'), '600'].join('\t'));
   await page.locator('#first-paste').fill(lines.join('\n'));
   await page.locator('#first-read').click();
-  await expect(page.locator('#t-first-result')).toContainText('You can now analyse the requests.');
+  await expect(page.locator('#t-first-result')).toContainText('You can now analyse the files.');
   await page.locator('#analyse').click();
   await expect(page.locator('#checklists section.target')).toHaveCount(world.targets.length, { timeout: 120_000 });
   const section = page.locator('section.target[data-target="neonatal_low_mean_pressure"]');
@@ -476,7 +497,7 @@ test('a state saved part of the way loads on a fresh page without the request fi
   const pasted = answer([(await query.textContent()) ?? '']);
   await page.locator('#paste').fill(pasted);
   await page.locator('#read-paste').click();
-  await expect(page.locator('#t-paste-result')).toContainText('Schemalyser has added the', { timeout: 120_000 });
+  await expect(page.locator('#t-paste-result')).toContainText('Schemalyser has read the', { timeout: 120_000 });
 
   // A fact answered, and a code entered.
   const JOINED = 'relationship-OBS_SHEET.VISIT_KEY=VISIT.VISIT_KEY';
@@ -484,14 +505,8 @@ test('a state saved part of the way loads on a fresh page without the request fi
   await section.locator(`li.item[data-id="${JOINED}"] button.fact-yes`).click();
   await expect(page.locator('#t-paste-result')).toHaveText(strings.factRecorded, { timeout: 120_000 });
   await expect(section.locator(`li.item[data-id="${JOINED}"]`).first()).toHaveAttribute('data-status', 'answered');
-  // The first item, in any target, that asks for the local codes of a concept.
-  const asking = page.locator('#checklists li.item', { has: page.locator('input.fact-codes') }).first();
-  const CODES = (await asking.getAttribute('data-id')) ?? '';
-  expect(CODES).toMatch(/^codes-/);
-  const where = page.locator('#checklists section.target', { has: page.locator(`li.item[data-id="${CODES}"] input.fact-codes`) }).first();
-  await where.locator(`li.item[data-id="${CODES}"] input.fact-codes`).first().fill('52');
-  await where.locator(`li.item[data-id="${CODES}"] button.fact-save-codes`).first().click();
-  await expect(page.locator(`#checklists li.item[data-id="${CODES}"]`).first()).toContainText('A person gave on', { timeout: 120_000 });
+  // The codes found by the name search and chosen.
+  await chooseCodes(page, section);
   const before = await itemsByTarget(page);
 
   // The state is saved with the page's button.

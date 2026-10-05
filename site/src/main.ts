@@ -33,8 +33,8 @@ interface Item {
   // Which phase needs the item: the answer from the source database, not this question, or only the release.
   stage?: 'source' | 'unneeded' | 'release';
   // The question that a colleague can answer from knowledge, and the answer a person gave.
-  ask?: { kind: 'join' | 'filter' | 'codes'; text: string; left?: string; right?: string; tables?: Record<string, string[]>;
-    column?: string; vocabulary?: string; concept?: string } | null;
+  ask?: { kind: 'join' | 'filter' | 'codes' | 'route'; text: string; left?: string; right?: string; tables?: Record<string, string[]>;
+    column?: string; vocabulary?: string; concept?: string; meaning?: string; search?: string; group?: string; step?: string } | null;
   fact?: string;
 }
 
@@ -64,6 +64,9 @@ interface Target {
   specification?: string;
   // The routes that the catalogue settled, where a step gave way to one of its alternatives, one sentence each.
   routes?: string[];
+  settings?: { from?: string | null; to?: string | null; kinds?: number[] };
+  kinds?: [number, string][];
+  needs?: { questions: number; queries: number; other: number; lessCertain: number; settled: number };
 }
 
 interface Boundary {
@@ -213,13 +216,15 @@ function show() {
   $('b-check-script').hidden = state !== 'review';
   $('b-paste').hidden = !(state === 'review' || state === 'analysing') || !$('checklists').childElementCount;
   $<HTMLButtonElement>('read-paste').disabled = state !== 'review' || pasting;
-  $('save-checks').hidden = !checksText;
-  $('t-save-checks').hidden = !checksText;
-  const anyProfile = [...document.querySelectorAll('#checklists .profile-queries')].length > 0;
+  // The state's own save button, at the end of each checklist, holds the check results and the core profile as well.
+  $('save-checks').hidden = true;
+  $('t-save-checks').hidden = true;
+  // The core profile is for the later OMOP release, so its paste box appears only once that part is opened.
+  const anyProfile = [...document.querySelectorAll('#checklists details.release[open] .profile-queries')].length > 0;
   $('b-profile-paste').hidden = !(state === 'review' || state === 'analysing') || !(anyProfile || profileText);
   $<HTMLButtonElement>('read-profile-paste').disabled = state !== 'review' || pasting;
-  $('save-profile').hidden = !profileText;
-  $('t-save-profile').hidden = !profileText;
+  $('save-profile').hidden = true;
+  $('t-save-profile').hidden = true;
 
   $('b-build-form').hidden = sandbox !== 'none';
   $('t-building').hidden = sandbox !== 'building';
@@ -248,9 +253,9 @@ function show() {
   // Without a catalogue, the first query is offered, once the requests are chosen and the computer is offline.
   $('b-first').hidden = !(state === 'ready' && !online && chosen.requests.length && (!chosen.catalogue || firstCatalogue));
   $<HTMLButtonElement>('first-write').disabled = !worker || online;
-  $('b-save-state').hidden = !(state === 'review' && (checksText || profileText));
-  $('b-example').hidden = !(state === 'ready' && example === null);
-  $<HTMLButtonElement>('example-load').disabled = exampleLoading;
+  $('b-save-state').hidden = state !== 'review';
+  $('b-example').hidden = state !== 'ready';
+  $<HTMLButtonElement>('example-load').disabled = exampleLoading || example !== null;
   $('t-example-chosen').hidden = !(example !== null && state === 'ready' && !online);
   $('t-example-banner').hidden = !fromExample;
   $('t-save-state').hidden = $('b-save-state').hidden;
@@ -483,27 +488,45 @@ function grid(header: string[] | null, rows: (string | null)[][], wrap: string[]
   return frame;
 }
 
-// The question that a colleague can answer from knowledge, with the controls that record the answer as a fact.
+// The question that a colleague can answer from knowledge, with the controls that record the answer as a fact. Every
+// question has three answers: yes; no, with what is true instead; and not sure.
+function sendFacts(box: Element, facts: Record<string, unknown>[]) {
+  const section = box.closest('section.target');
+  const who = (section?.querySelector('input.fact-who') as HTMLInputElement | null)?.value.trim() ?? '';
+  const date = new Date().toISOString().slice(0, 10);
+  const stamped = facts.map((fact) => ({ ...fact, date, ...(who ? { who } : {}) }));
+  if (stamped.length === 1) worker?.postMessage({ type: 'fact', fact: JSON.stringify(stamped[0]) });
+  else if (stamped.length) worker?.postMessage({ type: 'facts', facts: JSON.stringify(stamped) });
+}
+
+function askButton(label: string, className: string, onClick: () => void) {
+  const b = el('button', label, className);
+  b.type = 'button';
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+// The codes of each meaning that a name search covers, gathered from the items of one target that share the search.
+let searchGroups = new Map<string, { concept: string; vocabulary: string; meaning: string; column: string }[]>();
+
 function askElement(item: Item) {
   const ask = item.ask!;
   const box = el('div', undefined, 'ask');
   box.dataset.ask = ask.kind;
   box.append(el('p', strings.questionFirst, 'ask-label'), el('p', ask.text, 'ask-text'));
-  const send = (fact: Record<string, unknown>) => {
-    const section = box.closest('section.target');
-    const who = (section?.querySelector('input.fact-who') as HTMLInputElement | null)?.value.trim() ?? '';
-    const date = new Date().toISOString().slice(0, 10);
-    worker?.postMessage({ type: 'fact', fact: JSON.stringify({ ...fact, date, ...(who ? { who } : {}) }) });
-  };
-  const button = (label: string, className: string, onClick: () => void) => {
-    const b = el('button', label, className);
-    b.type = 'button';
-    b.addEventListener('click', onClick);
-    return b;
-  };
+  const send = (fact: Record<string, unknown>) => sendFacts(box, [fact]);
   const actions = el('div', undefined, 'actions');
+  if (ask.kind === 'route') {
+    actions.append(
+      askButton(strings.routeAbsent, 'fact-yes', () => send({ kind: 'route', step: ask.step, answer: 'absent' })),
+      askButton(strings.routeHidden, 'secondary fact-no', () => send({ kind: 'route', step: ask.step, answer: 'hidden' })),
+      askButton(strings.notSure, 'secondary fact-unsure', () => send({ kind: 'route', step: ask.step, answer: 'unsure' })));
+    box.append(actions);
+    return box;
+  }
   if (ask.kind === 'join') {
-    actions.append(button(strings.factYes, 'fact-yes', () => send({ kind: 'join', left: ask.left, right: ask.right, answer: 'yes' })));
+    actions.append(askButton(strings.factYes, 'fact-yes', () => send({ kind: 'join', left: ask.left, right: ask.right, answer: 'yes' })),
+      askButton(strings.notSure, 'secondary fact-unsure', () => send({ kind: 'join', left: ask.left, right: ask.right, answer: 'unsure' })));
     const [leftTable, rightTable] = [ask.left!.split('.')[0], ask.right!.split('.')[0]];
     const choose = (table: string) => {
       const select = el('select', undefined, 'fact-column');
@@ -517,25 +540,93 @@ function askElement(item: Item) {
     const left = choose(leftTable);
     const right = choose(rightTable);
     box.append(actions, el('p', strings.factInstead, 'note'), left, right);
-    box.append(button(strings.factSaveNo, 'secondary fact-no', () =>
+    box.append(askButton(strings.factSaveNo, 'secondary fact-no', () =>
       send({ kind: 'join', left: ask.left, right: ask.right, answer: 'no', ...(left.value && right.value ? { instead: [left.value, right.value] } : {}) })));
     return box;
   }
   if (ask.kind === 'filter') {
-    actions.append(button(strings.factYes, 'fact-yes', () => send({ kind: 'filter', column: ask.column, answer: 'yes' })),
-      button(strings.factNo, 'secondary fact-no', () => send({ kind: 'filter', column: ask.column, answer: 'no' })));
+    actions.append(askButton(strings.factYes, 'fact-yes', () => send({ kind: 'filter', column: ask.column, answer: 'yes' })),
+      askButton(strings.factNo, 'secondary fact-no', () => send({ kind: 'filter', column: ask.column, answer: 'no' })),
+      askButton(strings.notSure, 'secondary fact-unsure', () => send({ kind: 'filter', column: ask.column, answer: 'unsure' })));
     box.append(actions);
+    return box;
+  }
+  const unsure = { kind: 'codes', vocabulary: ask.vocabulary, concept: ask.concept, column: ask.column, codes: [], answer: 'unsure' };
+  if (ask.search && ask.group) {
+    const group = searchGroups.get(ask.group) ?? [];
+    const first = group[0]?.concept === ask.concept;
+    if (!first) {
+      box.append(el('p', strings.searchAbove, 'note'));
+      return box;
+    }
+    const [code, copy] = queryBlock(ask.search, `search:${ask.group}`);
+    copy.textContent = strings.firstCopy;
+    const copyRow = el('div', undefined, 'actions');
+    copyRow.append(copy);
+    const label = el('label', strings.searchPasteLabel);
+    const area = el('textarea', undefined, 'search-paste') as HTMLTextAreaElement;
+    area.rows = 5;
+    area.spellcheck = false;
+    label.append(area);
+    const list = el('div', undefined, 'candidates');
+    list.dataset.group = ask.group;
+    box.append(code, copyRow, label, askButton(strings.searchRead, 'search-read', () => {
+      if (area.value.trim()) worker?.postMessage({ type: 'codes-search', group: ask.group, text: area.value });
+    }), list, el('p', strings.searchPrivate, 'note'));
     return box;
   }
   const label = el('label', strings.codesLabel);
   const input = el('input', undefined, 'fact-codes') as HTMLInputElement;
   input.type = 'text';
   label.append(input);
-  box.append(label, button(strings.codesSave, 'fact-save-codes', () => {
+  box.append(label, askButton(strings.codesSave, 'fact-save-codes', () => {
     const codes = input.value.split(',').map((code) => code.trim()).filter(Boolean);
     if (codes.length) send({ kind: 'codes', vocabulary: ask.vocabulary, concept: ask.concept, column: ask.column, codes });
-  }));
+  }), askButton(strings.notSure, 'secondary fact-unsure', () => send(unsure)));
   return box;
+}
+
+// The candidates that a name search found: for each, the two people choose which meaning it has, if any. Several rows
+// may have one meaning. The choices become the codes of each meaning; a meaning with no row chosen and a row marked
+// not sure is recorded as not sure.
+function showCandidates(group: string, candidates: { code: string; name: string }[]) {
+  const list = document.querySelector<HTMLElement>(`.candidates[data-group="${CSS.escape(group)}"]`);
+  const meanings = searchGroups.get(group) ?? [];
+  if (!list) return;
+  if (!candidates.length) {
+    list.replaceChildren(el('p', strings.searchNone, 'status problem'));
+    return;
+  }
+  const table = el('table', undefined, 'candidate-table');
+  const head = el('tr');
+  head.append(el('th', strings.searchName), el('th', strings.searchCode), el('th', strings.searchChoice));
+  table.append(head);
+  const selects: [string, HTMLSelectElement][] = [];
+  for (const candidate of candidates) {
+    const row = el('tr');
+    const select = el('select', undefined, 'candidate-choice') as HTMLSelectElement;
+    select.dataset.code = candidate.code;
+    const option = (value: string, label: string) => {
+      const o = el('option', label);
+      o.value = value;
+      return o;
+    };
+    select.append(option('', strings.searchNeither), ...meanings.map((m) => option(m.concept, m.meaning)), option('unsure', strings.notSure));
+    const cell = el('td');
+    cell.append(select);
+    row.append(el('td', candidate.name), el('td', candidate.code), cell);
+    table.append(row);
+    selects.push([candidate.code, select]);
+  }
+  const save = askButton(strings.searchSave, 'search-save', () => {
+    const facts = meanings.map((m) => {
+      const codes = selects.filter(([, s]) => s.value === m.concept).map(([code]) => code);
+      return codes.length ? { kind: 'codes', vocabulary: m.vocabulary, concept: m.concept, column: m.column, codes }
+        : { kind: 'codes', vocabulary: m.vocabulary, concept: m.concept, column: m.column, codes: [], answer: 'unsure' };
+    });
+    sendFacts(list, facts);
+  });
+  list.replaceChildren(el('p', strings.searchFound(candidates.length), 'note'), table, save);
 }
 
 // A block of text that the core wrote, with buttons that copy it and, where given, save it.
@@ -641,18 +732,25 @@ function itemElement(item: Item, previous?: string, queries?: Map<string, Query>
   mark.setAttribute('aria-hidden', 'true');
   const body = el('div', undefined, 'item-body');
   body.append(el('span', strings.statusNames[item.status], 'visually-hidden'));
-  // What the step is trying to do is read first, before the named columns.
-  if (item.intent) body.append(el('p', item.intent, 'intent'));
-  body.append(el('p', item.question, 'question'));
+  // The question for the colleague, where there is one, is what he reads; the checklist's own account of the point is
+  // folded beneath it, one click away.
+  const asking = item.status !== 'answered' && item.ask && item.stage === 'source' && !item.fact;
+  if (!asking) body.append(el('p', item.question, 'question'));
   if (item.status !== 'answered') {
-    // How the data team's queries get between the same tables instead.
-    if (item.route && item.status === 'open') body.append(el('p', item.route, 'route'));
-    body.append(el('p', item.needed, 'needed'));
-    if (item.group === 'other' && item.actor) body.append(el('p', item.actor, 'actor'));
-    if (item.ask && item.stage === 'source') body.append(askElement(item));
+    if (asking) body.append(askElement(item));
     if (queries && shown) body.append(...queryElements(item, queries, shown));
   }
-  body.append(el('p', `${item.inHand} ${item.blocking ? strings.blocking : strings.notBlocking}`.trim(), 'in-hand'));
+  const more = el('details', undefined, 'item-more');
+  more.append(el('summary', strings.itemMore));
+  if (asking) more.append(el('p', item.question, 'question'));
+  if (item.intent) more.append(el('p', item.intent, 'intent'));
+  if (item.status !== 'answered') {
+    if (item.route && item.status === 'open') more.append(el('p', item.route, 'route'));
+    more.append(el('p', item.needed, 'needed'));
+    if (item.actor) more.append(el('p', item.actor, 'actor'));
+  }
+  more.append(el('p', `${item.inHand} ${item.blocking ? strings.blocking : strings.notBlocking}`.trim(), 'in-hand'));
+  body.append(more);
   line.append(mark, body);
   return line;
 }
@@ -664,17 +762,87 @@ function itemList(group: string, entries: HTMLElement[]) {
   return list;
 }
 
+// The audit's settings: the study period, applied to the anaesthetic's start, and the kinds of anaesthetic that count.
+function settingsElement(target: Target) {
+  const box = el('div', undefined, 'sizes settings');
+  box.append(el('h4', strings.settingsHeading), el('p', strings.settingsWhat, 'sizes-reason'));
+  const date = (label: string, value?: string | null) => {
+    const wrap = el('label', label);
+    const input = el('input', undefined, 'setting-date') as HTMLInputElement;
+    input.type = 'date';
+    input.value = value ?? '';
+    wrap.append(input);
+    return [wrap, input] as const;
+  };
+  const [fromLabel, from] = date(strings.settingsFrom, target.settings?.from);
+  const [toLabel, to] = date(strings.settingsTo, target.settings?.to);
+  box.append(fromLabel, toLabel);
+  const chosen = new Set(target.settings?.kinds ?? []);
+  const boxes: [number, HTMLInputElement][] = [];
+  if (target.kinds?.length) {
+    const kinds = el('fieldset', undefined, 'setting-kinds');
+    kinds.append(el('legend', strings.settingsKinds));
+    for (const [concept, name] of target.kinds) {
+      const wrap = el('label', ` ${name}`);
+      const tick = el('input') as HTMLInputElement;
+      tick.type = 'checkbox';
+      tick.checked = chosen.has(concept);
+      tick.dataset.concept = String(concept);
+      wrap.prepend(tick);
+      kinds.append(wrap);
+      boxes.push([concept, tick]);
+    }
+    box.append(kinds);
+  }
+  box.append(askButton(strings.settingsApply, 'settings-apply', () => {
+    const settings = { from: from.value || null, to: to.value || null, kinds: boxes.filter(([, t]) => t.checked).map(([c]) => c) };
+    worker?.postMessage({ type: 'settings', settings: JSON.stringify(settings) });
+  }));
+  return box;
+}
+
+// Where the audit stands, in plain words, with what remains and who can settle each part, and where to keep the state.
+function endingElement(target: Target, needs: NonNullable<Target['needs']>, ready: boolean) {
+  const box = el('div', undefined, 'sizes ending');
+  box.append(el('h4', strings.endingHeading));
+  box.append(el('p', strings.endingSettled(needs.settled), 'note'));
+  const remaining = target.rows.filter((item) => (item.stage ?? 'source') === 'source' && item.blocking && item.status === 'open');
+  if (remaining.length) {
+    box.append(el('p', strings.endingRemaining, 'note'));
+    const list = el('ul', undefined, 'remaining');
+    for (const item of remaining) {
+      const who = item.ask && !item.fact ? strings.endingByQuestion : item.queryIds?.length ? strings.endingByQuery : item.actor || item.needed;
+      list.append(el('li', `${item.question} ${who}`));
+    }
+    box.append(list);
+  } else box.append(el('p', ready ? strings.endingNothing : strings.notReadyYet, 'note'));
+  if (needs.lessCertain) box.append(el('p', strings.endingLessCertain(needs.lessCertain), 'note'));
+  box.append(el('p', strings.endingSave, 'note'));
+  box.append(askButton(strings.saveState, 'secondary ending-save', () => worker?.postMessage({ type: 'state-zip' })));
+  return box;
+}
+
 function targetSection(target: Target, before?: { answered: number; statuses: Map<string, string> }) {
   const section = el('section', undefined, 'target');
   section.dataset.target = target.name;
   const heading = el('h3');
   heading.append(el('span', target.name, 'target-name'));
   section.append(heading);
-  // The first stage leads: what the answer from the source database rests on.
+  // The first stage leads: what a person still needs to do before the audit query can be written.
   const first = target.stages?.source ?? target.counts;
   const sourceReady = first.open === 0 && target.steps;
-  section.append(el('p', (sinceAnalysis ? strings.tallySinceAnalysis : strings.tally)(first.answered, first.total, before?.answered), 'tally'));
-  section.append(el('p', target.stageVerdicts?.[0] ?? target.verdict, sourceReady ? 'status good stage-verdict' : 'status stage-verdict'));
+  const needs = target.needs ?? { questions: 0, queries: 0, other: first.open, lessCertain: first.partly, settled: first.answered };
+  section.append(el('p', strings.needs(needs.questions, needs.queries, needs.other), 'tally'));
+  section.append(el('p', sourceReady ? strings.readyNow(needs.lessCertain) : strings.notReadyYet, sourceReady ? 'status good stage-verdict' : 'status stage-verdict'));
+  // Searches gather the meanings of the codes they look for, so that the candidates can be chosen among them.
+  searchGroups = new Map();
+  for (const item of target.rows) {
+    if (item.ask?.kind === 'codes' && item.ask.group && item.stage === 'source') {
+      const list = searchGroups.get(item.ask.group) ?? [];
+      list.push({ concept: item.ask.concept!, vocabulary: item.ask.vocabulary!, meaning: item.ask.meaning ?? item.ask.concept!, column: item.ask.column! });
+      searchGroups.set(item.ask.group, list);
+    }
+  }
   if (target.routes?.length) {
     const routes = el('div', undefined, 'routes');
     routes.append(...target.routes.map((sentence) => el('p', sentence, 'note')));
@@ -691,9 +859,7 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
     questions.append(who);
     section.append(questions);
   }
-  const readiness = el('details', undefined, 'readiness');
-  readiness.append(el('summary', strings.readinessInFull), el('pre', target.readiness, 'code'));
-  section.append(readiness);
+  section.append(settingsElement(target));
 
   // The table sizes query comes first, because every other query waits for the sizes it gives.
   if (target.sizes) {
@@ -736,16 +902,22 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
   const ordered = (list: Item[]) => list.map((item, i) => ({ item, i })).sort((a, b) => rank(a.item) - rank(b.item) || a.i - b.i).map(({ item }) => item);
   const firstStage = (item: Item) => (item.stage ?? 'source') === 'source';
   const later = target.rows.filter((item) => item.stage === 'release' && !fresh.includes(item));
-  const sql = ordered(target.rows.filter((item) => item.group === 'sql' && firstStage(item)));
-  section.append(el('h4', strings.groupSql));
-  if (sql.length) {
-    section.append(el('p', strings.groupSqlNote, 'note'), itemList('sql', sql.map(offered)));
-  } else section.append(el('p', strings.groupSqlNone, 'note'));
-
-  const other = ordered(target.rows.filter((item) => item.group === 'other' && firstStage(item)));
-  if (other.length) {
-    section.append(el('h4', strings.groupOther), el('p', strings.groupOtherNote, 'note'));
-    section.append(itemList('other', other.map(offered)));
+  // What needs the colleague now: a question not yet answered, or a short query ready to run.
+  const needsYou = (item: Item) => (item.ask && !item.fact) || item.queryState === 'ready';
+  const open = target.rows.filter((item) => item.group !== 'answered' && firstStage(item));
+  const yours = ordered(open.filter(needsYou));
+  section.append(el('h4', strings.groupYou));
+  if (yours.length) section.append(el('p', strings.groupYouNote, 'note'), itemList('you', yours.map(offered)));
+  else section.append(el('p', strings.groupYouNone, 'note'));
+  const rest = open.filter((item) => !needsYou(item));
+  if (rest.length) {
+    const folded = el('details', undefined, 'later');
+    folded.append(el('summary', strings.groupLater(rest.length)));
+    const sql = ordered(rest.filter((item) => item.group === 'sql'));
+    if (sql.length) folded.append(el('h4', strings.groupSql), el('p', strings.groupSqlNote, 'note'), itemList('sql', sql.map(offered)));
+    const other = ordered(rest.filter((item) => item.group !== 'sql'));
+    if (other.length) folded.append(el('h4', strings.groupOther), el('p', strings.groupOtherNote, 'note'), itemList('other', other.map(offered)));
+    section.append(folded);
   }
 
   const answered = target.rows.filter((item) => item.group === 'answered' && !fresh.includes(item) && firstStage(item));
@@ -762,17 +934,18 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
       itemList('unneeded', unneeded.map((item) => itemElement(item))));
     section.append(folded);
   }
-  // The first phase ends with the specification, the check of a hand-written query, and the generated query.
-  // They are offered only once the question is ready to be answered from the source database, so that nobody runs or
-  // writes the audit query on a join or a code that is still open, or that a person has said is wrong.
-  if (!sourceReady && (target.specification || target.draft)) section.append(el('p', strings.auditWaiting, 'note audit-waiting'));
-  if (sourceReady && target.specification) {
-    section.append(textBlock('specification', strings.specHeading, strings.specWhat, target.specification, strings.specCopy,
-      strings.specSave, `${target.name}_specification.txt`));
-    const check = el('div', undefined, 'sizes check');
-    check.append(el('h4', strings.checkHeading), el('p', strings.checkWhat, 'sizes-reason'));
-    section.append(check);
+  // The ending, whatever the state of the checklist: what is settled, what remains and who can settle it, the button
+  // that saves the state, and the specification, in which each open point is an unsettled assumption.
+  section.append(endingElement(target, needs, sourceReady));
+  if (target.specification) {
+    section.append(textBlock('specification', strings.specHeading, sourceReady ? strings.specWhat : strings.specWhatOpen,
+      target.specification, strings.specCopy, strings.specSave, `${target.name}_specification.txt`));
   }
+  if (!sourceReady && target.draft) section.append(el('p', strings.auditWaiting, 'note audit-waiting'));
+  // The developer's detail: the readiness statement in full, folded away.
+  const readiness = el('details', undefined, 'readiness');
+  readiness.append(el('summary', strings.readinessInFull), el('pre', target.readiness, 'code'));
+  section.append(readiness);
   if (sourceReady && target.draft) section.append(auditSection(target));
 
   // Everything that only the later OMOP release needs, folded away under one heading.
@@ -1009,6 +1182,8 @@ function onMessage(event: MessageEvent) {
     }
   } else if (message.type === 'state-zip') {
     save([message.zip], 'application/zip', 'schemalyser-state.zip');
+  } else if (message.type === 'codes-found') {
+    showCandidates(message.group, message.ok ? message.candidates : []);
   } else if (message.type === 'fact-added') {
     const result = $('t-paste-result');
     result.hidden = false;
@@ -1083,6 +1258,8 @@ window.addEventListener('online', () => {
   if (state === 'locked') $('step-2').scrollIntoView({ block: 'start' });
 });
 window.addEventListener('offline', show);
+// Opening the part for the later OMOP release shows its paste box.
+document.addEventListener('toggle', show, true);
 
 for (const input of inputs) input.addEventListener('change', () => {
   // A file of one's own replaces the invented example, and nothing worked out from the example is kept.
@@ -1446,6 +1623,10 @@ const fixed: Record<string, string> = {
   't-loaded': strings.loaded,
   't-no-files': strings.noFilesWhileConnected,
   't-policy-held': strings.policyHeld,
+  's-offline-how': strings.offlineHowSummary,
+  's-policy': strings.policySummary,
+  's-github': strings.githubSummary,
+  's-catalogue': strings.catalogueSummary,
   'h-example': strings.exampleHeading,
   't-example-what': strings.exampleWhat,
   'example-load': strings.exampleLoad,
@@ -1553,6 +1734,8 @@ if (github) {
 strings.steps.forEach((heading, i) => text(`h-step-${i + 1}`, heading));
 $('safeguards').replaceChildren(...strings.safeguards.map((sentence) => el('li', sentence)));
 $('t-offline-how').replaceChildren(...strings.offlineHow.map((sentence) => el('li', sentence)));
+// The fetch from GitHub is folded away, as a meeting does not need it, and opened at once by a link that asks for it.
+if (new URLSearchParams(location.search).get('source') === 'github') ($('b-github') as HTMLDetailsElement).open = true;
 
 // The query box is emptied when the page is left, so that the browser does not keep its contents.
 window.addEventListener('pagehide', () => {

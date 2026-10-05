@@ -166,6 +166,16 @@ self.onmessage = async (event) => {
         const zip = browser.pack_zip().toJs();
         self.postMessage({ type: 'fact-added', ...reply, zip, checkScript: browser.check_script() }, [zip.buffer]);
       } else self.postMessage({ type: 'fact-added', ...reply });
+    } else if (message.type === 'facts' || message.type === 'settings') {
+      // Several answers at once, or the audit's settings: the core checks them and works the checklists out again.
+      const reply = JSON.parse(message.type === 'facts' ? browser.facts_add(message.facts) : browser.settings_set(message.settings));
+      if (reply.ok) {
+        const zip = browser.pack_zip().toJs();
+        self.postMessage({ type: 'fact-added', ...reply, zip, checkScript: browser.check_script() }, [zip.buffer]);
+      } else self.postMessage({ type: 'fact-added', ...reply });
+    } else if (message.type === 'codes-search') {
+      // The names that the search returns are shown on the page and written into no file.
+      self.postMessage({ type: 'codes-found', group: message.group, ...JSON.parse(browser.codes_search_read(message.text)) });
     } else if (message.type === 'state-zip') {
       const zip = browser.state_zip().toJs();
       self.postMessage({ type: 'state-zip', zip }, [zip.buffer]);

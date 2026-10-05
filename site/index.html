@@ -27,10 +27,13 @@
             <h2 id="h-step-1"></h2>
             <div class="body">
               <p id="t-catalogue-why"></p>
-              <pre id="query" class="code"></pre>
-              <div class="actions"><button type="button" id="copy" class="secondary"></button></div>
-              <p id="t-query-safe"></p>
-              <p id="t-skip-catalogue" class="note"></p>
+              <details id="d-catalogue">
+                <summary id="s-catalogue"></summary>
+                <p id="t-skip-catalogue" class="note"></p>
+                <pre id="query" class="code"></pre>
+                <div class="actions"><button type="button" id="copy" class="secondary"></button></div>
+                <p id="t-query-safe"></p>
+              </details>
             </div>
           </li>
 
@@ -41,8 +44,10 @@
               <p id="t-load-failed" class="status problem" hidden></p>
               <div id="b-loaded" hidden>
                 <p id="t-loaded" class="status"></p>
-                <ul id="t-offline-how" class="offline-how"></ul>
-                <p id="t-policy-held" class="note"></p>
+                <details id="d-offline-how">
+                  <summary id="s-offline-how"></summary>
+                  <ul id="t-offline-how" class="offline-how"></ul>
+                </details>
                 <p id="t-no-files"></p>
               </div>
               <!-- The invented example, served with the page, for a first look without any file of one's own. -->
@@ -55,7 +60,12 @@
               <p id="t-reconnected" class="status problem" hidden></p>
               <!-- The fetch itself runs in a separate window (github.html), so this page's
                    policy never allows GitHub. -->
-              <div id="b-github" class="divided" hidden>
+              <details id="d-policy">
+                <summary id="s-policy"></summary>
+                <p id="t-policy-held" class="note"></p>
+              </details>
+              <details id="b-github" class="divided" hidden>
+                <summary id="s-github"></summary>
                 <h3 id="h-github"></h3>
                 <p id="t-github-intro"></p>
                 <div id="b-github-form">
@@ -88,7 +98,7 @@
                 <p id="t-github-error" class="status problem" hidden></p>
                 <div id="github-fetched"></div>
                 <p id="t-github-closed" class="status" hidden></p>
-              </div>
+              </details>
             </div>
           </li>
 

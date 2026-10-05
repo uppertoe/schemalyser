@@ -69,15 +69,15 @@ def test_the_checklist_says_which_route_it_takes_and_asks_nothing_about_an_absen
     rows = {r["question_id"]: r for r in csv.DictReader(io.StringIO(outputs[f"targets/{name}/checklist.csv"]))}
     route = rows["route-person.sql"]
     assert route["status"] == "partly" and route["phase"] == "source" and EFFECT in route["evidence_in_hand"]
-    assert ("Schemalyser uses person_all_people.sql in place of person.sql, because the catalogue does not hold "
-            "PERSON_MASTER.TEST_PERSON_FLAG.") in route["evidence_in_hand"]
+    assert ("Because PERSON_MASTER.TEST_PERSON_FLAG is not visible to this login, Schemalyser takes the patients from "
+            "PERSON_MASTER for now.") in route["evidence_in_hand"] and ".sql" not in route["evidence_in_hand"]
     readiness = outputs[f"targets/{name}/readiness.txt"]
-    assert "Schemalyser uses person_all_people.sql in place of person.sql" in readiness
+    assert "Because PERSON_MASTER.TEST_PERSON_FLAG is not visible to this login" in readiness
     target = facts["targets"][0]
-    assert any("person_all_people.sql" in sentence for sentence in target["routes"])
+    assert any("takes the patients from PERSON_MASTER" in sentence for sentence in target["routes"])
     # No item of the first phase asks about the table or the column that the catalogue does not hold.
     for row in rows.values():
-        if row["phase"] == "source":
+        if row["phase"] == "source" and not row["question_id"].startswith("route-"):
             assert "TEST_PERSON_FLAG" not in row["question"] and "THEATRE_CASE" not in row["question"], row["question_id"]
     # Where a table that the catalogue does not hold is still read by a step that has no alternative, its item asks for
     # a decision about the step, not for evidence that the table exists.

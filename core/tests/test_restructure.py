@@ -92,12 +92,12 @@ def test_the_concepts_are_named_where_a_person_is_asked_about_them(tmp_path):
     assert concepts.named(tmp_path, 21490852) == "the concept 21490852"
     rows, traced = target.checklist(make_checks.WORLD, CONVERSION, (TARGETS / "neonatal_low_mean_pressure.sql").read_text(),
                                     name="neonatal_low_mean_pressure")
-    assert "that mean Invasive Mean blood pressure (concept 21490852)" in traced["questions"]
+    assert "(Invasive Mean blood pressure, concept 21490852)" in traced["questions"]
     item = {r["question_id"]: r for r in rows}["codes-measurement.measurement_concept_id-21492241"]
     assert "Mean blood pressure by Noninvasive (concept 21492241)" in item["question"]
     spec = target.specification(CONVERSION, (TARGETS / "neonatal_low_mean_pressure.sql").read_text(), rows, traced,
                                 Catalogue.from_csv((FIXTURES / "invented-catalogue.csv").read_text()), "n")
-    assert "reads as Invasive Mean blood pressure (concept 21490852)" in spec
+    assert "Invasive Mean blood pressure, concept 21490852" in spec
     # A name that is not plain is left out.
     folder = tmp_path / "conversion"
     folder.mkdir()

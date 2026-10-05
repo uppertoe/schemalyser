@@ -11,8 +11,13 @@ output; the checklist says only that a person confirmed it, and on which date.
       {"kind": "join", "left": "T.A", "right": "U.B", "answer": "yes", "date": "2026-10-05", "who": "..."},
       {"kind": "join", "left": "T.A", "right": "U.B", "answer": "no", "instead": ["T.C", "U.D"], "date": "..."},
       {"kind": "filter", "column": "T.A", "answer": "yes", "date": "..."},
-      {"kind": "codes", "vocabulary": "SITE_X", "concept": 123, "codes": ["14", "15"], "date": "..."}
+      {"kind": "codes", "vocabulary": "SITE_X", "concept": 123, "codes": ["14", "15"], "date": "..."},
+      {"kind": "join", "left": "T.A", "right": "U.B", "answer": "unsure", "date": "..."},
+      {"kind": "codes", "vocabulary": "SITE_X", "concept": 123, "codes": [], "answer": "unsure", "date": "..."}
     ]}
+
+An answer of "unsure" records that a person was asked and could not say, with the date, so that the question is
+not asked again and a query can settle it instead.
 
 The codes of a codes fact become mapping rows in site_mappings.csv, in the conversion folder beside the
 conversion's own source_to_concept_map.csv, so that the conversion, the checklist and the release load them
@@ -29,8 +34,10 @@ from .checks import MAXIMUM_TEXT_LENGTH, _acceptable
 
 FILE = "facts.json"
 SITE_MAPPINGS = "site_mappings.csv"
-KINDS = ("join", "filter", "codes")
-ANSWERS = ("yes", "no")
+KINDS = ("join", "filter", "codes", "route")
+ROUTE_ANSWERS = ("absent", "hidden", "unsure")
+STEP_FILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\.sql")
+ANSWERS = ("yes", "no", "unsure")
 DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 VOCABULARY = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,49}")
 MAXIMUM_WHO = 80
@@ -70,6 +77,11 @@ def check(fact, catalogue):
     found = {"kind": fact["kind"], "date": date}
     if fact.get("who"):
         found["who"] = _who(fact["who"])
+    if fact["kind"] == "route":
+        if fact.get("answer") not in ROUTE_ANSWERS or not STEP_FILE.fullmatch(str(fact.get("step") or "")):
+            raise FactsError("a route fact names a step of the conversion and says absent, hidden or unsure")
+        found.update(step=fact["step"], answer=fact["answer"])
+        return found
     if fact["kind"] in ("join", "filter"):
         if fact.get("answer") not in ANSWERS:
             raise FactsError("a fact's answer is yes or no")
@@ -93,7 +105,10 @@ def check(fact, catalogue):
         if not concept.isdecimal() or len(concept) > 12:
             raise FactsError("a codes fact names a concept by its number")
         codes = fact.get("codes")
-        if not isinstance(codes, list) or not codes or len(codes) > 200:
+        unsure = fact.get("answer") == "unsure"
+        if fact.get("answer") not in (None, "yes", "unsure"):
+            raise FactsError("a codes fact's answer is yes or unsure")
+        if not isinstance(codes, list) or (not codes and not unsure) or len(codes) > 200:
             raise FactsError("a codes fact gives at least one code")
         clean = []
         for code in codes:
@@ -102,6 +117,8 @@ def check(fact, catalogue):
                 raise FactsError("a code is not acceptable")
             clean.append(text)
         found.update(vocabulary=vocabulary, concept=int(concept), codes=sorted(dict.fromkeys(clean)))
+        if unsure:
+            found["answer"] = "unsure"
         if fact.get("column"):
             found["column"] = _name(catalogue, fact["column"])
     return found
@@ -112,6 +129,8 @@ def _subject(fact):
         return ("join", frozenset({fact["left"].upper(), fact["right"].upper()}))
     if fact["kind"] == "filter":
         return ("filter", fact["column"].upper())
+    if fact["kind"] == "route":
+        return ("route", fact["step"].upper())
     return ("codes", fact["vocabulary"].upper(), fact["concept"])
 
 
@@ -146,6 +165,15 @@ class Facts:
         wanted = ("join", frozenset({left.upper(), right.upper()}))
         return next((f for f in self.items if _subject(f) == wanted), None)
 
+    def instead_of(self, left, right):
+        """The fact whose answer names these two columns as the ones that join in place of another pair, or None."""
+        wanted = frozenset({left.upper(), right.upper()})
+        return next((f for f in self.items if f["kind"] == "join" and f.get("instead")
+                     and frozenset(n.upper() for n in f["instead"]) == wanted), None)
+
+    def route(self, step):
+        return next((f for f in self.items if _subject(f) == ("route", step.upper())), None)
+
     def filter(self, column):
         return next((f for f in self.items if _subject(f) == ("filter", column.upper())), None)
 
@@ -159,7 +187,7 @@ class Facts:
         writer = csv.writer(out, lineterminator="\n")
         writer.writerow(MAPPING_FIELDS)
         for fact in self.items:
-            if fact["kind"] != "codes":
+            if fact["kind"] != "codes" or fact.get("answer") == "unsure":
                 continue
             for code in fact["codes"]:
                 writer.writerow([code, 0, fact["vocabulary"], f"confirmed by a person on {fact['date']}",

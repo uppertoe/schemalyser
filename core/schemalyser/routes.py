@@ -138,3 +138,57 @@ def chosen(folder):
     except ValueError:
         return []
     return [c for c in data if isinstance(c, dict) and {"step", "chosen", "missing"} <= set(c)] if isinstance(data, list) else []
+
+
+REJOINED = "rejoined.json"
+
+
+def _aliases(tree):
+    """Each alias of a source table in a step, in capitals, with its table's name."""
+    return {t.alias_or_name.upper(): t.name for t in tree.find_all(exp.Table)
+            if (t.db or "").upper() != OMOP_SCHEMA.upper() and t.name}
+
+
+def rejoin(folder, facts):
+    """Changes, in a copy of a conversion folder, each match that a person said is wrong and named the columns that do match.
+
+    facts is a facts.Facts. For each join fact with the answer no and the columns that do match, each step that matches
+    the two named tables on the old pair of columns is changed to match them on the new pair, in the step's own text, so
+    that its comments stay. Returns [{"step", "old", "new"}] for each change, which is also written to REJOINED.
+    """
+    import re
+    folder = Path(folder)
+    entries = json.loads((folder / "conversion.json").read_text())
+    changes = []
+    for fact in facts.items:
+        if fact.get("kind") != "join" or fact.get("answer") != "no" or not fact.get("instead"):
+            continue
+        old = {fact["left"].split(".")[0].upper(): fact["left"].split(".")[1], fact["right"].split(".")[0].upper(): fact["right"].split(".")[1]}
+        new = {n.split(".")[0].upper(): n.split(".")[1] for n in fact["instead"]}
+        for entry in entries:
+            path = folder / str(entry.get("file"))
+            if not path.is_file():
+                continue
+            text = decode(path.read_bytes())
+            try:
+                tree = sqlglot.parse_one(text, dialect="tsql")
+            except sqlglot.errors.SqlglotError:
+                continue
+            aliases = _aliases(tree)
+            changed = text
+            for eq in tree.find_all(exp.EQ):
+                a, b = eq.this, eq.expression
+                if not (isinstance(a, exp.Column) and isinstance(b, exp.Column) and a.table and b.table):
+                    continue
+                ta, tb = aliases.get(a.table.upper(), "").upper(), aliases.get(b.table.upper(), "").upper()
+                if {ta, tb} != set(old) or ta == tb or a.name.upper() != old[ta].upper() or b.name.upper() != old[tb].upper():
+                    continue
+                pattern = (rf"\b{re.escape(a.table)}\s*\.\s*\[?{re.escape(a.name)}\]?\s*=\s*"
+                           rf"{re.escape(b.table)}\s*\.\s*\[?{re.escape(b.name)}\]?")
+                changed = re.sub(pattern, f"{a.table}.{new[ta]} = {b.table}.{new[tb]}", changed, flags=re.IGNORECASE)
+            if changed != text:
+                path.write_text(changed, encoding="utf-8")
+                changes.append({"step": entry["file"], "old": [fact["left"], fact["right"]], "new": list(fact["instead"])})
+    if changes:
+        (folder / REJOINED).write_text(json.dumps(changes, indent=1) + "\n")
+    return changes

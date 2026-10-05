@@ -23,7 +23,9 @@ from fnmatch import fnmatchcase
 
 LAYOUT = ("check_kind", "table_name", "column_name", "value", "label",
           "row_count", "distinct_count", "null_count", "is_unique")
-KINDS = ("column", "rows", "values", "years", "spans", "fanout", "skipped", "sampled", "ran", "error")
+KINDS = ("column", "rows", "values", "years", "spans", "fanout", "skipped", "sampled", "ran", "error", "matched")
+# How many distinct values of a column a match query takes before it looks each one up in the other table.
+MATCH_SAMPLE = 10_000
 # The kinds of check whose plain query can find nothing. Each such query adds one constant row of the kind ran,
 # so that a query that has run and found nothing is recorded as asked and answered with nothing.
 RAN_KINDS = ("values", "years", "spans", "fanout")
@@ -225,6 +227,24 @@ class Check:
         """The tables that the check reads: its own, and for a definition key the definition table."""
         return [self.table] + ([self.definition[0]] if self.definition else [])
 
+    def matched_plain(self, catalogue):
+        """The plain query of a match check: up to MATCH_SAMPLE distinct values of the column, and how many of them have
+        a row in the other table with the same value, each count rounded down to ten. It returns no value itself."""
+        other_table, other_column = self.parent
+        comment = [PLAIN_WORDING["matched"].format(column=f"{self.table}.{self.column}", other=f"{other_table}.{other_column}",
+                                                   most=f"{MATCH_SAMPLE:,}"), PLAIN_WORDING["safe"]]
+        c, o = _bracket(self.column), _bracket(other_column)
+        given = {"check_kind": "'matched'", "table_name": _text(self.table), "column_name": _text(self.column),
+                 "label": _text(f"{other_table}.{other_column}"), "row_count": "(COUNT_BIG(*) / 10) * 10",
+                 "distinct_count": "(COUNT_BIG(m.found) / 10) * 10"}
+        body = [f"FROM (SELECT DISTINCT TOP ({MATCH_SAMPLE}) s.{c} AS k",
+                f"      FROM {_name(catalogue, self.table)} AS s WITH (NOLOCK)",
+                f"      WHERE s.{c} IS NOT NULL) AS v",
+                f"OUTER APPLY (SELECT TOP (1) 1 AS found",
+                f"             FROM {_name(catalogue, other_table)} AS u WITH (NOLOCK)",
+                f"             WHERE u.{o} = v.k) AS m"]
+        return "\n".join(_comment(comment) + _select(given) + body) + ";"
+
     def plain(self, catalogue, percent=None, bounded=False):
         """The check as one plain SELECT that a person can read and run alone, as T-SQL over several short lines.
 
@@ -371,6 +391,8 @@ PLAIN_WORDING = {
     "sampled": "Because {table} is large, the query reads about {percent} per cent of its pages, a sample of about "
                "{rows} rows, and its counts are estimates scaled up from that sample. The least count of ten applies "
                "to the rows of the sample, and the sampled row at the end records the percentage, rounded to a whole number.",
+    "matched": "This query takes up to {most} distinct values of {column}, and counts how many of them have a row in "
+               "{other} with the same value, each count rounded down to the nearest ten. It returns no value itself.",
     "safe": "It only reads. WITH (NOLOCK) means that it takes no row locks, but it holds a schema lock while it runs, "
             "so it should not run during the nightly load.",
     "sizes": "This query reads from SQL Server's own records the number of rows in each table below, rounded down "
@@ -528,7 +550,7 @@ def scaled(count, percent):
     return f"(CAST({count} * 100.0 / {percent_text(percent)} AS bigint) / 10) * 10"
 
 
-def offer(check, catalogue, checks, exact_rows=None, sample_rows=None):
+def offer(check, catalogue, checks, exact_rows=None, sample_rows=None, small=None):
     """How the checklist offers one check, as (state, [(check, plain SELECT)]).
 
     The state is one of OFFER_STATES. A check on a table whose size the check results do not give waits
@@ -546,6 +568,10 @@ def offer(check, catalogue, checks, exact_rows=None, sample_rows=None):
         # A large table with no recorded size, such as a view, cannot be read in part with TABLESAMPLE.
         return "unsampled", []
     counts = [t for t, size in sizes.items() if size is None]
+    if small is not None and any(t.upper() not in small for t in counts):
+        # Where the size is not visible, only a table that is plainly small by its role, such as a table of definitions,
+        # is counted; any other is treated as large, because it may hold readings or other rows in great numbers.
+        return "unsampled", []
     if counts:
         return "count", [(Check("rows", t), Check("rows", t).plain(catalogue, bounded=True)) for t in counts]
     if any(size > limit for t, size in sizes.items() if t != check.table):
@@ -876,6 +902,7 @@ class Checks:
         self.failed = []      # (table, column or "", the server's error number) for each check that met an error
         self.skipped = []     # (kind of check, table, column or "", "time", "size" or "unrecorded")
         self.sampled = []     # (kind of check, table, column, the percentage of the table that was read)
+        self.matched = {}     # (table, column, other table, other column) -> (values sampled, values found)
         self.ran = []         # (kind of check, table, column, second column or parent as TABLE.COLUMN, or ""), each a
                               # plain query that has run, whatever it found
         self.assumed_headers = False
@@ -947,6 +974,13 @@ class Checks:
                     other = f"{parent.name}.{found_column.name}" if found_column is not None else None
                 if value in RAN_KINDS and field is not None and other is not None:
                     checks.ran.append((value, entry.name, field.name, other))
+                    checks.accepted += 1
+            elif kind == "matched":
+                other_table, _, other_column = label.partition(".")
+                other = catalogue.table(other_table) if other_column else None
+                found_column = other.column(other_column) if other is not None else None
+                if field is not None and found_column is not None:
+                    checks.matched[(entry.name, field.name, other.name, found_column.name)] = (count, _number(distinct_count) or 0)
                     checks.accepted += 1
             elif kind == "sampled":
                 if value in SAMPLED_KINDS and field is not None and 1 <= count <= 100:
@@ -1045,7 +1079,7 @@ class Checks:
         answered |= {("spans",) + up(*k[:2]) for k in later.spans}
         answered |= {("fanout",) + up(*k[:2]) for k in later.fanout}
         answered |= {(kind,) + up(t, c) for kind, t, c, _ in later.sampled + later.skipped + later.ran}
-        for name in ("columns", "values", "years", "spans", "fanout"):
+        for name in ("columns", "values", "years", "spans", "fanout", "matched"):
             mine, theirs = getattr(self, name), getattr(later, name)
             later_keys = {up(*k) for k in theirs}
             combined = {k: v for k, v in mine.items() if up(*k) not in later_keys}
@@ -1111,6 +1145,8 @@ class Checks:
             writer.writerow(["ran", table, column, kind, other, "", "", "", ""])
         for kind, table, column, percent in sorted(set(self.sampled)):
             writer.writerow(["sampled", table, column, kind, "", percent, "", "", ""])
+        for (table, column, other, key), (sampled, found) in sorted(self.matched.items()):
+            writer.writerow(["matched", table, column, "", f"{other}.{key}", sampled, found, "", ""])
         for table, column, number in sorted(set(self.failed)):
             writer.writerow(["error", table, column, "", "", number, "", "", ""])
         return out.getvalue()

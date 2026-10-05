@@ -381,8 +381,10 @@ def test_the_wording_is_calm_and_complete():
                 assert entry[part].endswith(".") and entry[part][0].isupper(), entry[part]
                 texts.append(entry[part])
     texts += [line for value in target.DRAFT_WORDING.values() for line in (value if isinstance(value, list) else [value])]
+    # The questions for a colleague are questions, and only they may end in a question mark.
+    asked = {v for k, v in target.WORDING["facts"].items() if k in ("ask_join", "ask_filter_keep", "ask_filter_leave", "ask_route")}
     for text in texts:
-        assert "?" not in text and "!" not in text and "  " not in text, text
+        assert ("?" not in text or text in asked) and "!" not in text and "  " not in text, text
 
 
 # The custom tables.
@@ -767,11 +769,12 @@ def test_the_checklist_weighs_a_step_against_its_alternatives(situations, former
     # As the steps stood before, the checklist found each alternative better supported, and said what to do.
     rows, traced = checklist(conversion=former)
     visit = by_id(rows)[VISIT_JOIN]
+    text = target.readiness(rows, traced)
+    # The weighing names the steps' files, so it is in the readiness statement, and not on the item, which a colleague reads.
     assert ("The sample queries make 1 of the 3 joins that visit_detail.sql makes as written. The sample queries make 3 of the "
             "4 joins that visit_detail_through_case.sql, an alternative to visit_detail.sql, makes. The sample queries support "
-            "the alternative visit_detail_through_case.sql better than visit_detail.sql as written.") in visit["evidence_in_hand"]
-    assert "measurement_blood_pressure_through_anaesthetic.sql" in by_id(rows)[SHEET_JOIN]["evidence_in_hand"]
-    text = target.readiness(rows, traced)
+            "the alternative visit_detail_through_case.sql better than visit_detail.sql as written.") in text.replace("\n", " ")
+    assert ".sql" not in visit["evidence_in_hand"]
     assert "The sample queries make 2 of the 2 joins that measurement_blood_pressure_through_anaesthetic.sql" in text
     # The statement ends with what to do about each open join that a better supported alternative avoids.
     assert text.rstrip().endswith(
