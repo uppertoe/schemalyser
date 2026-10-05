@@ -915,6 +915,7 @@ def test_a_mapping_row_gives_unmapped_rows_their_concept_on_the_next_run(ran):
 # Planted scenarios.
 
 DEFAULT_SCENARIOS = {"age_by_calendar_date", "airway_still_in_place", "anaesthetic_across_midnight", "anaesthetic_without_stop",
+                     "cuff_reading_during_arterial_line",
                      "anaesthetic_without_theatre_case", "event_link_margin",
                      "infant_systolic_cases", "infusion_never_stopped", "infusion_rate_changes_twice", "long_anaesthetic",
                      "malformed_blood_pressure", "neonatal_mean_pressure_minutes", "neonatal_mean_pressure_who_counts",

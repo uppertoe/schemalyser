@@ -143,5 +143,15 @@
         2
       ]
     }
+  ],
+  "cases": [
+    "A neonate of 10 days with ten arterial means below 40 a minute apart, who died 30 days after the date of the start, should give 10 minutes below 40 and a death within 90 days.",
+    "A neonate of 10 days with the same ten arterial means, who died late on the 90th day after the date of the start, should give 10 minutes below 40 and a death within 90 days.",
+    "A neonate of 10 days with the same ten arterial means, who died just after midnight on the 91st day after the date of the start, should give 10 minutes below 40 and no death within 90 days.",
+    "A neonate of 10 days whose cuff mean below 40 is followed by the next reading 20 minutes later should give 5 minutes below 40, because a reading stands for no longer than five minutes.",
+    "A neonate of 10 days whose only means below 40 were taken ten minutes before the start and an hour after the end should give no minutes below 40.",
+    "A neonate of 10 days whose last mean, below 40, was taken two minutes before the end should give 2 minutes below 40.",
+    "A neonate of 10 days whose anaesthetic has no recorded stop, and whose last mean is below 40, should give no minutes below 40 for that last reading.",
+    "A neonate of 10 days with a cuff mean of 35 and an arterial mean of 50 at the same time should give no minutes below 40, because the arterial mean is kept."
   ]
 }

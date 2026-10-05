@@ -13,8 +13,13 @@ output; the checklist says only that a person confirmed it, and on which date.
       {"kind": "filter", "column": "T.A", "answer": "yes", "date": "..."},
       {"kind": "codes", "vocabulary": "SITE_X", "concept": 123, "codes": ["14", "15"], "date": "..."},
       {"kind": "join", "left": "T.A", "right": "U.B", "answer": "unsure", "date": "..."},
-      {"kind": "codes", "vocabulary": "SITE_X", "concept": 123, "codes": [], "answer": "unsure", "date": "..."}
+      {"kind": "codes", "vocabulary": "SITE_X", "concept": 123, "codes": [], "answer": "unsure", "date": "..."},
+      {"kind": "charted", "from": "2025-01-01", "to": "2025-12-31", "codes": ["14", "15"], "counts": [["14", 1200, 80]], "date": "..."}
     ]}
+
+A charted fact records what the optional count of the chosen codes gave: for each code, the readings charted on the
+cohort's anaesthetics in the last year of the study period and the number of those anaesthetics, each rounded down to
+the nearest ten, or empty under ten. A code that the count does not list was not charted on them.
 
 An answer of "unsure" records that a person was asked and could not say, with the date, so that the question is
 not asked again and a query can settle it instead.
@@ -34,7 +39,7 @@ from .checks import MAXIMUM_TEXT_LENGTH, _acceptable
 
 FILE = "facts.json"
 SITE_MAPPINGS = "site_mappings.csv"
-KINDS = ("join", "filter", "codes", "route", "count", "textbp")
+KINDS = ("join", "filter", "codes", "route", "count", "textbp", "charted")
 COUNT_ANSWERS = ("right", "few", "many", "unsure")
 ROUTE_ANSWERS = ("absent", "hidden", "unsure")
 STEP_FILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\.sql")
@@ -88,6 +93,21 @@ def check(fact, catalogue):
                 raise FactsError("each year of a count fact is a year and two counts")
             years.append(list(item))
         found.update(answer=fact["answer"], years=years)
+        return found
+    if fact["kind"] == "charted":
+        codes, counts = fact.get("codes"), fact.get("counts")
+        if not all(DATE.fullmatch(str(fact.get(k) or "")) for k in ("from", "to")) or not isinstance(codes, list) \
+                or not codes or len(codes) > 200 or not isinstance(counts, list) or len(counts) > 200:
+            raise FactsError("a charted fact gives the period, the codes counted and the counts")
+        if not all(_acceptable(str(c), MAXIMUM_TEXT_LENGTH) and "," not in str(c) for c in codes):
+            raise FactsError("the codes of a charted fact are plain codes")
+        kept = []
+        for item in counts:
+            if not (isinstance(item, list) and len(item) == 3 and str(item[0]) in {str(c) for c in codes}
+                    and all(v is None or (isinstance(v, int) and not isinstance(v, bool) and v >= 0) for v in item[1:])):
+                raise FactsError("each count of a charted fact is a code counted and two counts")
+            kept.append([str(item[0]), item[1], item[2]])
+        found.update({"from": fact["from"], "to": fact["to"], "codes": sorted({str(c) for c in codes}), "counts": kept})
         return found
     if fact["kind"] == "textbp":
         found["column"] = _name(catalogue, fact.get("column"))
@@ -155,7 +175,7 @@ def _subject(fact):
         return ("filter", fact["column"].upper())
     if fact["kind"] == "route":
         return ("route", fact["step"].upper())
-    if fact["kind"] in ("count", "textbp"):
+    if fact["kind"] in ("count", "textbp", "charted"):
         return (fact["kind"], fact.get("column", "").upper())
     return ("codes", fact["vocabulary"].upper(), fact["concept"])
 
@@ -202,6 +222,9 @@ class Facts:
 
     def count(self):
         return next((f for f in self.items if f["kind"] == "count"), None)
+
+    def charted(self):
+        return next((f for f in self.items if f["kind"] == "charted"), None)
 
     def text_codes(self):
         return [f for f in self.items if f["kind"] == "textbp"]

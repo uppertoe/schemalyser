@@ -434,6 +434,36 @@ test('a colleague answers a question from knowledge, and the item ticks without 
   expect(execFileSync('unzip', ['-p', await download.path()], { encoding: 'utf8' })).not.toContain('A colleague');
 });
 
+test('a long name search is cut with a request to narrow it, and the chosen codes are counted on the cohort and reach the specification', async ({ page, context, browserName }) => {
+  test.setTimeout(300_000);
+  await page.goto('./');
+  await expect(page.getByText(strings.loaded)).toBeVisible({ timeout: 120_000 });
+  await setOnline(page, context, browserName, false);
+  await page.locator('#state-folder').setInputFiles(seen(makeState(join(mkdtempSync(join(tmpdir(), 'schemalyser-charted-')), 'state'), { checks: false })));
+  await page.locator('#folder').setInputFiles(fixtures + 'requests');
+  await page.locator('#analyse').click();
+  await expect(page.locator('#checklists section.target')).toHaveCount(world.targets.length, { timeout: 120_000 });
+  const section = page.locator('section.target[data-target="neonatal_low_mean_pressure"]');
+  const item = section.locator('li.item', { has: page.locator('textarea.search-paste') }).first();
+  // Forty-five rows are more than the page lists: it says how many came back, shows the first forty, and asks for narrower words.
+  const many = ['code\tname', ...Array.from({ length: 45 }, (_, i) => `${100 + i}\tINVENTED MEAN ${i}`)].join('\n');
+  await item.locator('textarea.search-paste').fill(many);
+  await item.locator('button.search-read').click();
+  await expect(item.locator('.search-too-many')).toHaveText(strings.searchTooMany(45, 40), { timeout: 120_000 });
+  await expect(item.locator('select.candidate-choice')).toHaveCount(40);
+  // Narrowed, the search returns two rows, and the first is chosen.
+  expect(await chooseCodes(page, section)).toBe(true);
+  // With codes chosen and a study period set, the optional count is offered, and its result reaches the specification.
+  const charted = section.locator('.charted');
+  await expect(charted.locator('pre[data-query="charted"]')).toContainText('FROM q22_cohort AS c', { timeout: 120_000 });
+  await expect(charted.locator('.sizes-reason')).toContainText('never the whole table of readings');
+  await charted.locator('textarea.charted-paste').fill('code\treadings\tanaesthetics\n52\t1230\t40\n');
+  await charted.locator('button.charted-read').click();
+  await expect(page.locator('#t-paste-result')).toHaveText(strings.factRecorded, { timeout: 120_000 });
+  await expect(section.locator('.charted .charted-result')).toHaveText(strings.chartedKept);
+  await expect(section.locator('.specification pre')).toContainText('the code 52 was charted 1,230 times on 40 of the audit\'s anaesthetics');
+});
+
 // The name search for codes: its result, as the grid copies it, is pasted, and the first row is chosen as the first
 // meaning offered. The names are invented. The choice is saved as codes facts.
 async function chooseCodes(page: Page, section: ReturnType<Page['locator']>): Promise<boolean> {

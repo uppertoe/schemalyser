@@ -66,6 +66,7 @@ concept ids are those that the target query names, which are public.
 import argparse
 import fnmatch
 import csv
+import datetime
 import io
 import json
 import re
@@ -386,6 +387,7 @@ WORDING = {
         "direct_tuning": "If the clinical lead already knows the answer, the clinical lead can give {keys} under tuning in the site rules, which answers this item without the query.",
         # The table sizes query at the head of each checklist.
         "year_count": "This query counts the anaesthetics by the year of their start, and those of the audit's cohort, each rounded down to the nearest ten and left blank under ten. It reads the tables of anaesthetics and patients only, and no reading.",
+        "charted": "This query counts how often each chosen code was charted on the audit's anaesthetics that started from {start} to {end}, the last year of the study period, with the number of those anaesthetics on which it was charted, each rounded down to the nearest ten and left blank under ten. It starts from the cohort's anaesthetics and reads only the readings of these meanings that belong to them, and never the whole table of readings.",
         "by_search": "Schemalyser offers no counting query for these codes, because the table that holds them is large; the name search with the question settles them instead.",
         "search": "This query lists every code in {table} whose name holds any of these words: {words}. {table} holds only the names of the codes, and no patient's data.",
         "matched": "You were not sure of this match, so this query measures it: it takes up to 10,000 values of {left} and counts how many have a matching row in {right}. It returns only counts.",
@@ -1986,6 +1988,14 @@ def _step_dependencies(step, needed_fields):
 
 
 def answer_dependencies(conversion, target_sql, catalogue=None, traced=None):
+    """answer_dependencies's result, worked out once for the same conversion, target query and catalogue. The trace,
+    where it is given, is the one that these three determine, so it does not enter the key."""
+    from . import memo
+    key = (memo.folder(conversion), memo.digest(target_sql), memo.catalogue(catalogue))
+    return memo.remembered("dependencies", key, lambda: _answer_dependencies(conversion, target_sql, catalogue, traced))
+
+
+def _answer_dependencies(conversion, target_sql, catalogue=None, traced=None):
     """What the ANSWER of a target query depends on, followed back through the steps by column lineage.
 
     Returns {"tables", "columns" (as "TABLE.COLUMN"), "joins" (frozensets of two "TABLE.COLUMN"), "filters" (as
@@ -2652,7 +2662,8 @@ def queries_file(name, offered):
     return text
 
 
-def checklist(world, conversion, target_sql, checks_csv=None, profile_text=None, facts_text=None, name=None, evidence_text=None):
+def checklist(world, conversion, target_sql, checks_csv=None, profile_text=None, facts_text=None, name=None, evidence_text=None,
+              draft=True):
     """The checklist for one target query, as (rows, trace). Each row is a dictionary in LAYOUT, with private keys that begin with _.
 
     evidence_text is sql_evidence.json, what the team's SQL showed in earlier runs, which settles an item
@@ -2660,6 +2671,9 @@ def checklist(world, conversion, target_sql, checks_csv=None, profile_text=None,
 
     The trace gains "versions": for each relevant step that offers alternatives, how far the sample
     queries support it and each alternative, which readiness reports.
+
+    With draft False, the source draft is not composed now: the trace holds, under "draft_later", a function that
+    composes it, and the page calls it only when it shows the reference query.
     """
     target = read_target(target_sql, custom_fields(conversion))
     try:
@@ -2681,7 +2695,10 @@ def checklist(world, conversion, target_sql, checks_csv=None, profile_text=None,
     traced["versions"] = versions
     rows += _codes_rows(target, traced, analysis, checks)
     rows += _meaning_and_timing(target, traced, analysis, checks)
-    rows += _core_rows(target, traced, conversion, profile_text)
+    from . import memo
+    rows += memo.remembered("core_rows", (memo.folder(conversion), memo.digest(target_sql), memo.catalogue(analysis.catalogue),
+                                          memo.digest(profile_text)),
+                            lambda: _core_rows(target, traced, conversion, profile_text))
     traced["routes"] = _route_rows(rows, conversion, traced)
     for row in rows:
         row["intent"] = _intent(row, intents)
@@ -2701,12 +2718,20 @@ def checklist(world, conversion, target_sql, checks_csv=None, profile_text=None,
     traced["queries"] = _queries(rows, world, analysis, traced, checks, source_tables, planned)
     traced["queries"]["profile"] = profile_queries
     traced["draft"], traced["draft_restructured"], traced["draft_reason"] = None, False, ""
-    try:
-        if traced["steps"]:
-            found = source_query(conversion, target_sql, analysis.catalogue, target_name=name or "the target query")
-            traced["draft"], traced["draft_restructured"], traced["draft_reason"] = found["sql"], found["restructured"], found["reason"]
-    except Exception:   # noqa: BLE001 - a draft that cannot be composed leaves the stages to the kinds of item
-        traced["draft"] = None
+    catalogue_now = analysis.catalogue
+
+    def compose():
+        """The source draft as (sql, restructured, reason), or (None, False, "") where it cannot be composed."""
+        try:
+            found = source_query(conversion, target_sql, catalogue_now, target_name=name or "the target query")
+            return found["sql"], found["restructured"], found["reason"]
+        except Exception:   # noqa: BLE001 - a draft that cannot be composed leaves the stages to the kinds of item
+            return None, False, ""
+    if traced["steps"]:
+        if draft:
+            traced["draft"], traced["draft_restructured"], traced["draft_reason"] = compose()
+        else:
+            traced["draft_later"] = compose
     try:
         traced["dependencies"] = answer_dependencies(conversion, target_sql, analysis.catalogue, traced)
     except Exception:   # noqa: BLE001 - where the lineage cannot be followed, every item of the first phase counts
@@ -3326,6 +3351,12 @@ SPECIFICATION_WORDING = {
     "h_codes": "6. The local codes",
     "code": "In {column}, the code {code} means {meaning}{confirmed}.",
     "code_person": ", as a person confirmed on {date}",
+    "charted": "From {start} to {end}, the code {code} was charted {readings} on {anaesthetics} of the audit's anaesthetics.",
+    "charted_none": "From {start} to {end}, the code {code} was not charted on any of the audit's anaesthetics.",
+    "charted_many": "{count:,} times",
+    "charted_few": "fewer than ten times",
+    "charted_some": "{count:,}",
+    "charted_some_few": "fewer than ten",
     "no_codes": "The answer depends on no local code.",
     "h_shape": "7. The result",
     "shape": "The result has the columns {columns}, in that order.",
@@ -3342,7 +3373,7 @@ SPECIFICATION_WORDING = {
     "text_codes": "In {column}, the codes {codes} hold a blood pressure charted as text, with the mean in brackets. The reference query does not yet read a mean from such text.",
     "uncertain_code": "Not yet settled: whether {codes} in {column} also {verb} {meaning}.",
     "h_cases": "10. Cases to check the query against",
-    "cases": "A query that follows these rules gives the following on cases like these.",
+    "cases": "A query that follows these rules should give the following on cases like these, one case to a line.",
     "case": "{description} {expectations}",
     "no_cases": "No prepared case bears on this question.",
 }
@@ -3353,7 +3384,7 @@ COUNT_WORDING = {
     "answers": {"right": "the numbers look about right", "few": "there are too few", "many": "there are too many",
                 "unsure": "you are not sure"},
     "empty_years": "The count found no anaesthetic in {years}.",
-    "no_cohort": "The count found no anaesthetic in the audit's cohort.",
+    "no_cohort": "In every year the count found fewer than ten anaesthetics in the audit's cohort, or none, so it does not yet show that the audit finds its cohort.",
     "question_seen": "The count of anaesthetics by year, and of those in the audit's cohort, has been seen.",
     "rests": "The count rests on these matches: {joins}; and on these conditions: {filters}. A fault most likely lies in one of them.",
 }
@@ -3390,7 +3421,7 @@ FIELD_WORDS = {
     ("death", "death_date"): "The date of death",
     ("death", "person_id"): "The patient who died",
 }
-STEP_WORDS = {"person": "patients", "visit_occurrence": "hospital encounters", "visit_detail": "anaesthetics",
+STEP_WORDS = {"person": "patients", "visit_occurrence": "visits", "visit_detail": "anaesthetics",
               "procedure_occurrence": "anaesthetics", "measurement": "readings", "death": "deaths",
               "anaesthetic": "anaesthetics", "observation": "events", "drug_exposure": "drugs", "device_exposure": "devices"}
 
@@ -3418,6 +3449,16 @@ def _plain_item(row, folder, words):
     if row["question_id"].startswith("route-"):
         return f"whether {names.get('missing')} exists here, which decides how the {names.get('what')} are found"
     return _item(row)
+
+
+def _charted_line(w, charted, code):
+    """The sentence of the specification that says how often a chosen code was charted, from the charted fact."""
+    found = next((item for item in charted["counts"] if item[0] == code), None)
+    if found is None:
+        return w["charted_none"].format(start=charted["from"], end=charted["to"], code=code)
+    readings = w["charted_many"].format(count=found[1]) if found[1] else w["charted_few"]
+    anaesthetics = w["charted_some"].format(count=found[2]) if found[2] else w["charted_some_few"]
+    return w["charted"].format(start=charted["from"], end=charted["to"], code=code, readings=readings, anaesthetics=anaesthetics)
 
 
 def _source_condition(node, aliases):
@@ -3455,7 +3496,8 @@ def specification(conversion, target_sql, rows, traced, catalogue, name="the tar
     else:
         lines.append(w["period_none"])
     if settings.get("kinds"):
-        lines.append(w["kinds"].format(kinds=_join(concepts.named(folder, k) for k in settings["kinds"])))
+        plain = concept_words(folder)
+        lines.append(w["kinds"].format(kinds=_join(_meaning(folder, k, plain.get(int(k), (None,))[0]) for k in settings["kinds"])))
     else:
         lines.append(w["kinds_all"])
 
@@ -3529,6 +3571,11 @@ def specification(conversion, target_sql, rows, traced, catalogue, name="the tar
             for v in str((r.get("_names") or {}).get("vocabularies", "")).replace(" and ", ",").split(","):
                 columns_of.setdefault(v.strip(), "{}.{}".format(*r["_columns"][0]))
     words = concept_words(folder)
+    try:
+        charted = facts_module.Facts.from_json((folder / ".." / facts_module.FILE).read_text(), catalogue).charted() \
+            if (folder / ".." / facts_module.FILE).is_file() else None
+    except facts_module.FactsError:
+        charted = None
     every = [r for r in convert.mapping_dicts(folder) if r.get("source_vocabulary_id") in deps["vocabularies"]
              and r.get("source_vocabulary_id") != "SITE_SETTING" and _norm(r.get("target_concept_id") or "") in compared]
     for r in sorted(every, key=lambda r: (r.get("source_vocabulary_id") or "", r.get("source_code") or "")):
@@ -3539,6 +3586,8 @@ def specification(conversion, target_sql, rows, traced, catalogue, name="the tar
         confirmed = w["code_person"].format(date=site[key]) if site.get(key) else ""
         column = columns_of.get(r.get("source_vocabulary_id"), "the coded column")
         lines.append(w["code"].format(column=column, code=r.get("source_code"), meaning=meaning, confirmed=confirmed))
+        if charted is not None and str(r.get("source_code")) in charted["codes"]:
+            lines.append(_charted_line(w, charted, str(r.get("source_code"))))
     if not every:
         lines.append(w["no_codes"])
 
@@ -3598,11 +3647,12 @@ def specification(conversion, target_sql, rows, traced, catalogue, name="the tar
                 and (not mentioned or mentioned & numbers):
             bearing.append(scenario)
     if bearing:
+        # One case to a line, each saying in one sentence what the query should give; a scenario that does not yet list its
+        # cases is given as its description, on one line.
         lines += [w["cases"], ""]
         for scenario in bearing:
-            lines.append("- " + scenario["description"].strip())
-            for item in scenario["expectations"]:
-                lines.append("  - " + re.sub(r"\b(reading below 40\b[^.]*?) stand for", r"\1 stands for", item["says"]))
+            for case in scenario.get("cases") or [" ".join(scenario["description"].split())]:
+                lines.append("- " + case)
     else:
         lines.append(w["no_cases"])
     return "\n".join(lines) + "\n"
@@ -3762,6 +3812,15 @@ RESTRUCTURE_WORDING = {
 
 
 def source_query(conversion, target_sql, catalogue, mappings=None, target_name="the target query", blank=True, traced=None):
+    """source_query's result, worked out once for the same conversion, target query, catalogue and options."""
+    from . import memo
+    key = (memo.folder(conversion), memo.digest(target_sql), memo.catalogue(catalogue), memo.digest(mappings),
+           target_name, blank)
+    return memo.remembered("source_query", key, lambda: _source_query(conversion, target_sql, catalogue, mappings,
+                                                                        target_name, blank))
+
+
+def _source_query(conversion, target_sql, catalogue, mappings=None, target_name="the target query", blank=True):
     """The question as one query over the source tables, restructured to start from the cohort where that is safe.
 
     Returns {"sql", "restructured", "reason", "lines"}. Where a rewrite cannot be shown to keep the answer, the
@@ -4412,3 +4471,86 @@ def year_count(conversion, target_sql, catalogue, name="the audit"):
     body = found["sql"].split("\nWITH\n", 1)
     text = ("-- " + WORDING["query"]["year_count"] + "\n" + "WITH\n" + body[1]) if len(body) == 2 else found["sql"]
     return text
+
+
+# How often each chosen code is charted: once the name search has chosen codes and a study period is set, one optional
+# query counts, for the chosen codes only, the readings of each on the cohort's anaesthetics in the last year of the
+# period. It is composed over the OMOP tables and turned into the source tables' terms by source_query, which starts it
+# from the cohort, so that it reads the readings on the cohort's own records and never the whole table of readings.
+
+def _last_year(settings):
+    """(first day, last day) of the last year of the study period, or None where the period has no end."""
+    end = settings.get("to") if settings else None
+    if not end:
+        return None
+    year, month, day = (int(part) for part in end.split("-"))
+    try:
+        start = datetime.date(year - 1, month, day) + datetime.timedelta(days=1)
+    except ValueError:      # 29 February
+        start = datetime.date(year - 1, 3, 1)
+    first = max(start.isoformat(), settings.get("from") or "")
+    return first, end
+
+
+def charted_target(target_sql, settings, codes, concepts_read):
+    """The count of readings of each chosen code as a query over the OMOP tables, or None. The cohort comes first, as in the
+    target query, so that source_query can start from it; the chosen codes are a list of values, which the steps never
+    compare with, so that the comparison stays in the question."""
+    alias, conditions = _cohort_conditions(target_sql)
+    window = _last_year(settings)
+    if alias is None or window is None or not codes or not concepts_read:
+        return None
+    least = checking.MINIMUM_COUNT
+    where = list(conditions)
+    where.append(f"{alias}.{START_FIELD} >= CAST('{window[0]}' AS date)")
+    where.append(f"{alias}.{START_FIELD} < DATEADD(day, 1, CAST('{window[1]}' AS date))")
+    if settings.get("kinds"):
+        where.append(f"{alias}.{KIND_FIELD} IN ({', '.join(str(int(k)) for k in settings['kinds'])})")
+    chosen = ", ".join(f"({_quote(c)})" for c in sorted(codes))
+    return (f"WITH cohort AS (\n"
+            f"    SELECT {alias}.anaesthetic_id\n"
+            f"    FROM   omop.anaesthetic {alias}\n"
+            f"    WHERE  " + "\n      AND  ".join(where) + "\n)\n"
+            f"SELECT m.measurement_source_value AS code,\n"
+            f"       CASE WHEN COUNT(*) >= {least} THEN (COUNT(*) / 10) * 10 END AS readings,\n"
+            f"       CASE WHEN COUNT(DISTINCT c.anaesthetic_id) >= {least} THEN (COUNT(DISTINCT c.anaesthetic_id) / 10) * 10 END AS anaesthetics\n"
+            f"FROM   cohort c\n"
+            f"       JOIN omop.measurement m\n"
+            f"         ON m.measurement_event_id = c.anaesthetic_id\n"
+            f"        AND m.measurement_concept_id IN ({', '.join(str(int(c)) for c in sorted(concepts_read))})\n"
+            f"WHERE  m.measurement_source_value IN (SELECT chosen.code FROM (VALUES {chosen}) AS chosen(code))\n"
+            f"GROUP BY m.measurement_source_value\n"
+            f"ORDER BY code")
+
+
+def charted_codes(conversion, target_sql, held):
+    """The chosen codes whose meaning the target query reads from the measurement table, with the concepts that it reads:
+    (codes, concepts). held is a facts.Facts."""
+    target_read = read_target(target_sql, custom_fields(conversion))
+    concepts_read = {int(c) for (table, _), values in target_read["concepts"].items() if table == "measurement"
+                     for c in values if str(c).isdecimal()}
+    codes = sorted({code for fact in held.items if fact["kind"] == "codes" and fact.get("answer") != "unsure"
+                    and fact["concept"] in concepts_read for code in fact["codes"]})
+    return codes, concepts_read
+
+
+def charted_count(conversion, target_sql, catalogue, settings, held, name="the audit"):
+    """The optional count of how often each chosen code is charted, as {"sql", "from", "to", "codes"}, or None where the
+    name search has chosen no code, the study period has no end, or the count cannot be composed to start from the cohort."""
+    codes, concepts_read = charted_codes(conversion, target_sql, held)
+    count = charted_target(target_sql, settings, codes, concepts_read)
+    if count is None:
+        return None
+    try:
+        found = source_query(conversion, count, catalogue, target_name=name, blank=False)
+    except Exception:   # noqa: BLE001 - where the count cannot be composed, the page offers none
+        return None
+    if not found["restructured"]:
+        return None     # a count that cannot start from the cohort would read the whole table of readings
+    start, end = _last_year(settings)
+    body = found["sql"].split("\nWITH\n", 1)
+    if len(body) != 2:
+        return None
+    sentence = WORDING["query"]["charted"].format(start=start, end=end)
+    text = "\n".join(f"-- {line}" for line in textwrap_lines(sentence)) + "\nWITH\n" + body[1]
+    return {"sql": text, "from": start, "to": end, "codes": codes}

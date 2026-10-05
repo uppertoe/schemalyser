@@ -374,6 +374,15 @@ export const strings = {
   searchChoice: 'What it is',
   searchNeither: 'Neither',
   searchSave: 'Save the choices',
+  searchTooMany: (n: number, shown: number) =>
+    `The search returned ${n.toLocaleString('en-AU')} rows, which is more than this page can sensibly list, so Schemalyser shows only the first ${shown} below. Narrow the words above, write the search again, and run it once more, so that every row it returns can be seen and chosen.`,
+  chartedHeading: 'How often each chosen code is charted',
+  chartedWhat: (from: string, to: string) =>
+    `This query is optional. It counts, for the codes chosen in the name search only, how often each was charted on the audit's anaesthetics that started from ${from} to ${to}, the last year of the study period, and on how many of those anaesthetics. It starts from those anaesthetics and reads only the readings that belong to them, never the whole table of readings. Schemalyser carries the counts into the specification.`,
+  chartedPasteLabel: 'The result of the count, copied from the results grid with its headers:',
+  chartedRead: 'Keep the counts',
+  chartedNone: 'Schemalyser could not read any code in the pasted text. Each row needs the three columns that the count returns: code, readings and anaesthetics.',
+  chartedKept: 'Schemalyser has kept the counts for this period, and the specification lists them with the chosen codes. If the codes or the period change, Schemalyser offers the count again.',
   searchFound: (n: number) => `The search found ${n} ${n === 1 ? 'row' : 'rows'}. For each, choose what it is. Several rows may have the same meaning, and most will be neither.`,
   settingsHeading: 'The study period and the kinds of anaesthetic',
   settingsWhat: 'The study period applies to the start of each anaesthetic. Without a period, the audit counts every anaesthetic on record. Without a kind chosen, every kind counts. Both are carried into the specification and the reference query.',

@@ -58,11 +58,12 @@ interface Target {
   // The core profile's plain queries, which the central OMOP team runs, tier one first.
   profile?: Query[];
   // The audit query: the question as one query over the source tables, with what the page says about it.
-  draft?: { sql: string; countsOnly: boolean; restructured?: boolean; tables: { name: string; rows: number | null }[] } | null;
+  draft?: { sql: string; countsOnly: boolean; restructured?: boolean; tables: { name: string; rows: number | null }[]; waiting?: boolean } | null;
   stages?: { source: Target['counts']; release: Target['counts'] };
   stageVerdicts?: string[];
   questions?: string;
   specification?: string;
+  charted?: { sql: string; from: string; to: string; codes: string[]; kept?: boolean } | null;
   // The routes that the catalogue settled, where a step gave way to one of its alternatives, one sentence each.
   routes?: string[];
   settings?: { from?: string | null; to?: string | null; kinds?: number[]; pressures?: string | null; floor?: number | null;
@@ -585,7 +586,10 @@ function askElement(item: Item) {
     });
     code.dataset.search = ask.group;
     box.append(code, copyRow, words, rewrite, label, askButton(strings.searchRead, 'search-read', () => {
-      if (area.value.trim()) worker?.postMessage({ type: 'codes-search', group: ask.group, text: area.value });
+      if (!area.value.trim()) return;
+      // Two targets may share a search; the names are shown under the one whose button was pressed.
+      searchList = list;
+      worker?.postMessage({ type: 'codes-search', group: ask.group, text: area.value });
     }), list, el('p', strings.searchPrivate, 'note'));
     return box;
   }
@@ -600,11 +604,18 @@ function askElement(item: Item) {
   return box;
 }
 
+// The list under the name search whose result was last pasted.
+let searchList: HTMLElement | null = null;
+
+// The most rows of a name search that the page lists; a longer result is cut here, and the page says so.
+const SEARCH_SHOWN = 40;
+
 // The candidates that a name search found: every one is listed, and for each the two people choose what it is. Several rows
 // may have one meaning. The choices become the codes of each meaning; a row marked not sure stays open, and a row charted
 // as text with the mean in brackets is recorded as such.
 function showCandidates(group: string, columns: string[], candidates: { code: string; values: string[] }[]) {
-  const list = document.querySelector<HTMLElement>(`.candidates[data-group="${CSS.escape(group)}"]`);
+  const list = searchList?.isConnected && searchList.dataset.group === group ? searchList
+    : document.querySelector<HTMLElement>(`.candidates[data-group="${CSS.escape(group)}"]`);
   const meanings = searchGroups.get(group) ?? [];
   if (!list) return;
   if (!candidates.length) {
@@ -616,7 +627,9 @@ function showCandidates(group: string, columns: string[], candidates: { code: st
   head.append(el('th', strings.searchCode), ...(columns.length ? columns : [strings.searchName]).map((c) => el('th', c)), el('th', strings.searchChoice));
   table.append(head);
   const selects: [string, HTMLSelectElement][] = [];
-  for (const candidate of candidates) {
+  // Beyond SEARCH_SHOWN rows the list is cut, and the page says so and asks for narrower words, so nothing is dropped silently.
+  const shownCandidates = candidates.slice(0, SEARCH_SHOWN);
+  for (const candidate of shownCandidates) {
     const row = el('tr');
     const select = el('select', undefined, 'candidate-choice') as HTMLSelectElement;
     select.dataset.code = candidate.code;
@@ -644,7 +657,33 @@ function showCandidates(group: string, columns: string[], candidates: { code: st
     if (text.length && meanings[0]) facts.push({ kind: 'textbp', column: meanings[0].column, codes: text });
     sendFacts(list, facts);
   });
-  list.replaceChildren(el('p', strings.searchFound(candidates.length), 'note'), table, save);
+  const lead = el('p', strings.searchFound(shownCandidates.length), 'note');
+  if (candidates.length > SEARCH_SHOWN) list.replaceChildren(el('p', strings.searchTooMany(candidates.length, SEARCH_SHOWN), 'status problem search-too-many'), lead, table, save);
+  else list.replaceChildren(lead, table, save);
+}
+
+// The optional count of how often each chosen code is charted on the cohort's anaesthetics in the last year of the period.
+// Its result is pasted here and kept as a fact, which the specification reads.
+let chartedNow: Target['charted'] = null;
+function chartedElement(target: Target) {
+  const charted = target.charted!;
+  chartedNow = charted;
+  const box = el('div', undefined, 'sizes charted');
+  box.append(el('h4', strings.chartedHeading), el('p', strings.chartedWhat(charted.from, charted.to), 'sizes-reason'));
+  const [code, copy] = queryBlock(charted.sql, 'charted-query');
+  code.dataset.query = 'charted';
+  copy.dataset.query = 'charted';
+  const label = el('label', strings.chartedPasteLabel);
+  const area = el('textarea', undefined, 'charted-paste') as HTMLTextAreaElement;
+  area.rows = 4;
+  area.spellcheck = false;
+  label.append(area);
+  const shown = el('div', undefined, 'charted-result');
+  if (charted.kept) shown.append(el('p', strings.chartedKept, 'status good'));
+  box.append(code, copy, label, askButton(strings.chartedRead, 'charted-read', () => {
+    if (area.value.trim()) worker?.postMessage({ type: 'charted', text: area.value });
+  }), shown);
+  return box;
 }
 
 // The count by year: its result is pasted here, shown as a small table, and the two people say whether it looks right.
@@ -750,13 +789,16 @@ function queryBlock(sql: string, className: string) {
 // The queries that answer an item. A query that an earlier item on the page already shows is named
 // rather than shown again, so that each query appears once.
 function queryElements(item: Item, queries: Map<string, Query>, shown: Set<string>) {
-  if (item.status === 'answered' || !item.queryState) return [];
+  // The count by year has no query state of its own, and its query is shown whenever the item is open.
+  if (item.status === 'answered' || (!item.queryState && !item.queryIds?.includes('yearcount'))) return [];
   const parts: HTMLElement[] = [];
   // Where a colleague can answer from knowledge, the query is the alternative, so it says so first.
   if (item.ask) parts.push(el('p', strings.queryAlternative, 'note'));
-  const state = el('p', strings.queryStates[item.queryState] ?? '', 'query-state');
-  state.dataset.state = item.queryState;
-  parts.push(state);
+  if (item.queryState) {
+    const state = el('p', strings.queryStates[item.queryState] ?? '', 'query-state');
+    state.dataset.state = item.queryState;
+    parts.push(state);
+  }
   if (item.queryReason) parts.push(el('p', item.queryReason, 'query-reason'));
   // The core profile's queries are shown in the section for the central OMOP team, and named here.
   if ((item.queryIds ?? []).some((id) => id.startsWith('profile:'))) parts.push(el('p', strings.queryInProfile, 'note query-profile'));
@@ -968,6 +1010,7 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
     section.append(questions);
   }
   section.append(settingsElement(target));
+  if (target.charted) section.append(chartedElement(target));
 
   // The table sizes query comes first, because every other query waits for the sizes it gives.
   if (target.sizes) {
@@ -1055,7 +1098,7 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
   readiness.append(el('summary', strings.readinessInFull), el('pre', target.readiness, 'code'));
   section.append(readiness);
   // The reference query waits for a study period, because without one it reads every anaesthetic on record.
-  if (sourceReady && target.draft && target.settings?.from) section.append(auditSection(target));
+  if (sourceReady && target.draft && !target.draft.waiting && target.settings?.from) section.append(auditSection(target));
   else if (sourceReady && target.draft) section.append(el('p', strings.auditNeedsPeriod, 'note audit-waiting'));
 
   // Everything that only the later OMOP release needs, folded away under one heading.
@@ -1298,6 +1341,11 @@ function onMessage(event: MessageEvent) {
   } else if (message.type === 'search-sql') {
     const code = document.querySelector<HTMLElement>(`pre[data-search="${CSS.escape(message.group)}"]`);
     if (code && message.ok) code.textContent = message.sql;
+  } else if (message.type === 'charted') {
+    const shown = document.querySelector<HTMLElement>('.charted-result');
+    const charted = chartedNow;
+    if (!message.ok || !charted) shown?.replaceChildren(el('p', strings.chartedNone, 'status problem'));
+    else if (shown) sendFacts(shown, [{ kind: 'charted', from: charted.from, to: charted.to, codes: charted.codes, counts: message.rows }]);
   } else if (message.type === 'year-counted') {
     if (message.ok) showYearCount(message.years);
     else document.querySelector('.count-result')?.replaceChildren(el('p', strings.countNone, 'status problem'));

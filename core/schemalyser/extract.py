@@ -497,6 +497,15 @@ def decode(data):
 
 
 def analyse_request(sql, catalogue, held_back=frozenset(), dialect="tsql", confirmed=None):
+    """The findings of one request. Each request is read once for the same catalogue, rules and confirmed checks."""
+    from . import memo
+    key = (memo.digest(sql), memo.catalogue(catalogue), tuple(sorted(held_back)), dialect,
+           memo.digest(sorted((repr(k), repr(v)) for k, v in (confirmed or {}).items())))
+    kept = memo.remembered("request", key, lambda: _analyse_request(sql, catalogue, held_back, dialect, confirmed), copied=False)
+    return RequestResult(kept.statements, set(kept.findings), Counter(kept.unresolved), kept.parsed)
+
+
+def _analyse_request(sql, catalogue, held_back=frozenset(), dialect="tsql", confirmed=None):
     result = RequestResult()
     extractor = _Extractor(catalogue, held_back, result, dialect, confirmed or {})
     try:

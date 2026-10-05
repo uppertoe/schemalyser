@@ -175,6 +175,8 @@ self.onmessage = async (event) => {
       } else self.postMessage({ type: 'fact-added', ...reply });
     } else if (message.type === 'search-sql') {
       self.postMessage({ type: 'search-sql', group: message.group, ...JSON.parse(browser.codes_search_sql(message.request)) });
+    } else if (message.type === 'charted') {
+      self.postMessage({ type: 'charted', ...JSON.parse(browser.charted_read(message.text)) });
     } else if (message.type === 'year-count') {
       self.postMessage({ type: 'year-counted', ...JSON.parse(browser.year_count_read(message.text)) });
     } else if (message.type === 'codes-search') {

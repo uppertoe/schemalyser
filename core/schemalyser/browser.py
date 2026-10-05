@@ -295,8 +295,10 @@ def boundary_run(state_commit=None, requests_commit=None):
     if _facts:
         state_commit = None
     try:
+        # The reference query is composed only when the page will show it: once nothing remains and a study period is set.
         outputs, facts = boundary.produce(f"{BOUNDARY_ROOT}/state", f"{BOUNDARY_ROOT}/requests",
-                                          state_commit or None, requests_commit or None, refused=dict(_put_refused))
+                                          state_commit or None, requests_commit or None, refused=dict(_put_refused),
+                                          draft_when=lambda rows, settings: not _needs(rows)["remaining"] and bool(settings.get("from")))
     except boundary.BoundaryError as error:
         problem = next((key for key, text in boundary.WORDING.items() if text == str(error)), "other")
         return json.dumps({"ok": False, "problem": problem})
@@ -320,7 +322,8 @@ def boundary_run(state_commit=None, requests_commit=None):
         offered = t.get("queries") or {"sizes": None, "queries": []}
         # The source draft, which the page offers as the audit query once the first stage is ready. It stays
         # in this page, which runs inside the hospital, and is written to no file unless the user saves it.
-        draft = None
+        # A draft not yet composed is marked as waiting, so that the page can say what it waits for.
+        draft = {"sql": "", "countsOnly": False, "restructured": False, "tables": [], "waiting": True} if t.get("draft_pending") else None
         if t.get("draft"):
             from . import target as target_module
             facts_of = target_module.draft_facts(t["draft"], _reading()[0])
@@ -338,6 +341,8 @@ def boundary_run(state_commit=None, requests_commit=None):
                         # The routes that the catalogue settled, one sentence each, shown at the head of the checklist.
                         "routes": t.get("routes") or [],
                         "settings": t.get("settings") or {}, "kinds": [[k, n] for k, n in t.get("kinds") or []],
+                        # The optional count of how often each chosen code is charted, with what an earlier count gave.
+                        "charted": t.get("charted"),
                         "needs": _needs(t["rows"]),
                         "stageVerdicts": [line for line in t["readiness"].splitlines()
                                           if line.startswith(("The question is ready", "The question is not yet ready"))]})
@@ -625,6 +630,22 @@ def codes_search_read(text):
         seen.add(code)
         found.append({"code": code, "values": values})
     return json.dumps({"ok": bool(found), "columns": columns, "candidates": found})
+
+
+def charted_read(text):
+    """Reads the pasted result of the count of the chosen codes: {"ok", "rows": [[code, readings, anaesthetics]]}.
+
+    A count left blank, as NULL or empty, is under ten and is read as None. The header row is passed over."""
+    found = []
+    for line in str(text or "").replace("\r", "").split("\n"):
+        cells = [c.strip() for c in (line.split("\t") if "\t" in line else line.split(","))]
+        if len(cells) != 3 or cells[0].lower() == "code" or not cells[0] or "," in cells[0] or len(cells[0]) > 50:
+            continue
+        if not all(c.isdecimal() or c in ("", "NULL") for c in cells[1:]):
+            continue
+        found.append([cells[0]] + [int(c) if c.isdecimal() else None for c in cells[1:]])
+    headed = "readings" in str(text or "").lower()
+    return json.dumps({"ok": bool(found) or headed, "rows": found[:200]})
 
 
 def year_count_read(text):

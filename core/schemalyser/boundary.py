@@ -357,13 +357,15 @@ def tool_digest():
 
 # The run.
 
-def produce(state, requests, state_commit=None, requests_commit=None, refused=None):
+def produce(state, requests, state_commit=None, requests_commit=None, refused=None, draft_when=None):
     """Everything that the boundary writes, as ({relative path: text}, facts for the summary).
 
     Raises BoundaryError, before anything is written, when an input cannot be used. The run reads a
     copy of the state folder that leaves out every link that leads outside it. refused, which the page
     gives, counts the files of each kind, "state" and "requests", that it could not write, so that the
-    summary can count them as left out.
+    summary can count them as left out. draft_when, which the page gives, decides from a target's checklist rows and
+    settings whether its source draft is composed now; the page shows the draft only once nothing remains and a study
+    period is set, so it is not composed before then. Without it, every draft is composed.
     """
     state, requests = Path(state), Path(requests)
     commits = {"state": _commit(state_commit, "state"), "requests": _commit(requests_commit, "requests")}
@@ -373,7 +375,7 @@ def produce(state, requests, state_commit=None, requests_commit=None, refused=No
         raise BoundaryError(WORDING["no_requests"])
     with tempfile.TemporaryDirectory(prefix="schemalyser-state-") as copy:
         left_out = state_copy(state, Path(copy) / "state")
-        outputs, facts = _produce(Path(copy) / "state", requests, commits, left_out)
+        outputs, facts = _produce(Path(copy) / "state", requests, commits, left_out, draft_when)
     unusable = sum((refused or {}).values())
     if unusable:
         facts["unusable_paths"] = unusable
@@ -381,7 +383,7 @@ def produce(state, requests, state_commit=None, requests_commit=None, refused=No
     return outputs, facts
 
 
-def _produce(state, requests, commits, state_left_out):
+def _produce(state, requests, commits, state_left_out, draft_when=None):
     if not (state / CATALOGUE).is_file():
         raise BoundaryError(WORDING["no_catalogue"])
     options = _options(state / OPTIONS)
@@ -496,7 +498,10 @@ def _produce(state, requests, commits, state_left_out):
         try:
             target_text = target.with_settings(decode(path.read_bytes()), settings, conversion)
             rows, traced = target.checklist(world, conversion, target_text, checks_text, profile_text,
-                                            facts_text, name, evidence_text)
+                                            facts_text, name, evidence_text,
+                                            draft=draft_when is None or options["writeSourceDraft"])
+            if traced.get("draft_later") and draft_when(rows, settings):
+                traced["draft"], traced["draft_restructured"], traced["draft_reason"] = traced["draft_later"]()
         except target.TargetError as error:
             if "facts.json" in str(error):
                 raise BoundaryError(WORDING["bad_facts"]) from None
@@ -516,9 +521,24 @@ def _produce(state, requests, commits, state_left_out):
             spec = ""
         if options["writeSpecification"] and spec:
             outputs[f"targets/{name}/specification.txt"] = spec
+        # The optional count of how often each chosen code is charted, once codes are chosen and the study period has an end.
+        charted = None
+        if traced["steps"] and settings.get("to"):
+            from . import facts as facts_module
+            try:
+                held = facts_module.Facts.from_json(facts_text, first.catalogue) if facts_text else facts_module.Facts()
+                charted = target.charted_count(conversion, decode(path.read_bytes()), first.catalogue, settings, held, name)
+                kept = held.charted()
+                if charted is not None:
+                    charted["kept"] = bool(kept and (kept["from"], kept["to"], kept["codes"]) ==
+                                           (charted["from"], charted["to"], sorted(charted["codes"])))
+            except (facts_module.FactsError, target.TargetError):
+                charted = None
         targets.append({"name": name, "rows": rows, "counts": target.counts(rows), "steps": bool(traced["steps"]),
+                        "charted": charted,
                         "readiness": outputs[f"targets/{name}/readiness.txt"], "queries": traced["queries"],
                         "draft": traced.get("draft"), "draft_restructured": traced.get("draft_restructured", False),
+                        "draft_pending": bool(traced.get("draft_later")) and not traced.get("draft"),
                         "questions": traced.get("questions") or "", "specification": spec,
                         "routes": traced.get("routes") or [], "settings": settings, "year_count": traced.get("year_count"),
                         "kinds": target.kinds_offered(conversion),

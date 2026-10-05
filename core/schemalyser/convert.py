@@ -366,6 +366,17 @@ def as_request(steps, definitions=None, problems=None):
     A step that cannot be read as one SELECT is passed through as it stands, and when a list is
     given as problems, a line saying so is added to it.
     """
+    from . import memo
+    key = memo.digest([(str(table), str(sql)) for table, sql in steps], sorted((definitions or {}).items()))
+    text, unreadable = memo.remembered("as_request", key, lambda: _as_request(steps, definitions))
+    if problems is not None:
+        problems.extend(unreadable)
+    return text
+
+
+def _as_request(steps, definitions=None):
+    """as_request's text, with the lines that say which steps could not be read as one SELECT."""
+    problems = []
     stand_in = lambda name: exp.Table(this=exp.to_identifier(f"#omop_{name.lower()}"))  # noqa: E731
     parts, lookups = [], []
     for table, sql in steps:
@@ -374,8 +385,7 @@ def as_request(steps, definitions=None, problems=None):
         except sqlglot.errors.SqlglotError:
             tree = None
         if not isinstance(tree, exp.Select):
-            if problems is not None:
-                problems.append(WORDING["unreadable"].format(table=table))
+            problems.append(WORDING["unreadable"].format(table=table))
             parts.append(sql)
             continue
         for source_table, source_column in mapped_columns(tree):
@@ -393,7 +403,7 @@ def as_request(steps, definitions=None, problems=None):
                 found.replace(replacement)
         tree.set("into", exp.Into(this=stand_in(table)))
         parts.append(tree.sql(dialect="tsql", comments=False))
-    return ";\n".join(parts + list(dict.fromkeys(lookups))) + ";\n"
+    return ";\n".join(parts + list(dict.fromkeys(lookups))) + ";\n", problems
 
 
 def _definitions(custom=()):
@@ -880,6 +890,13 @@ def report_count(says, rows):
 
 def read_scenarios(folder):
     """The planted scenarios of a conversion folder, checked, in the order of their names, or [] when it has none."""
+    from . import memo
+    if not (Path(folder) / SCENARIOS).is_dir():
+        return []
+    return memo.remembered("scenarios", memo.folder(folder), lambda: _read_scenarios(folder))
+
+
+def _read_scenarios(folder):
     base = Path(folder) / SCENARIOS
     if not base.is_dir():
         return []
@@ -895,8 +912,12 @@ def read_scenarios(folder):
             rows = decode((path / "rows.sql").read_bytes())
         except (OSError, ValueError):
             raise ScenarioError(f"{where}: the folder holds scenario.json and rows.sql, and both can be read") from None
-        if not isinstance(data, dict) or not {"description", "expectations"} <= set(data) <= {"description", "expectations", "fails_gate"}:
-            raise ScenarioError(f"{where}: scenario.json holds a description, the expectations and, optionally, fails_gate")
+        if not isinstance(data, dict) or not {"description", "expectations"} <= set(data) <= {"description", "expectations", "fails_gate", "cases"}:
+            raise ScenarioError(f"{where}: scenario.json holds a description, the expectations and, optionally, fails_gate and cases")
+        # cases, where given, says for each planted case in one sentence what a query that follows the rules should give.
+        cases = data.get("cases", [])
+        if not isinstance(cases, list) or not all(isinstance(c, str) and c.strip() and "\n" not in c and len(c) <= 600 for c in cases):
+            raise ScenarioError(f"{where}: cases is a list of single sentences, one for each planted case")
         if not isinstance(data["description"], str) or not data["description"].strip():
             raise ScenarioError(f"{where}: the description is one sentence of text")
         if "fails_gate" in data and data["fails_gate"] not in gates:
@@ -913,6 +934,7 @@ def read_scenarios(folder):
             tree = check_expectation_query(item["query"], f"{where}, expectation {number}")
             reads.update(table.name.lower() for table in tree.find_all(exp.Table) if (table.db or "").upper() == OMOP_SCHEMA.upper())
         found.append({"name": path.name, "description": data["description"], "fails_gate": data.get("fails_gate"),
+                      "cases": [" ".join(c.split()) for c in cases],
                       "expectations": expectations, "reads": sorted(reads), "rows": rows, "tables": _scenario_tables(rows, where, codes)})
     return found
 
