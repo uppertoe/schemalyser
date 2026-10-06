@@ -53,3 +53,6 @@ load_postgresql.sql
 
 # The conversion to OMOP names Clarity tables, so it is kept out of the public repo.
 etl/
+
+# macOS folder settings.
+.DS_Store
