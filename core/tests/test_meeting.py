@@ -65,7 +65,7 @@ def test_not_sure_is_recorded_and_offers_a_match_query_that_settles_the_join(neo
     unsure = {"facts": [{"kind": "join", "left": names["left"], "right": names["right"], "answer": "unsure", "date": "2026-10-05"}]}
     found, traced = target.checklist(make_checks.WORLD, CONVERSION, NEONATAL, CHECKS, facts_text=json.dumps(unsure), name="n")
     row = {r["question_id"]: r for r in found}[join["question_id"]]
-    assert "was not sure" in row["evidence_in_hand"] and not row.get("_ask")
+    assert "were not sure" in row["evidence_in_hand"] and not row.get("_ask")
     assert row["query_state"] == "ready" and "matched" in row["_queries"][0] and "OUTER APPLY" in row["query"]
     # The match query's result settles the join where nearly every value finds its match.
     key = row["_queries"][0]

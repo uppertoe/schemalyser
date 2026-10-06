@@ -154,7 +154,10 @@ def test_the_statuses_follow_the_evidence_in_hand(situations, former):
     assert bare["relationship-ANAES_RECORD.ANAES_KEY=ANAES_STAFF.ANAES_KEY"]["blocking"] == "no"
     # The systolic concept has its mapping row, which is only assumed until the check results list its code.
     assert bare["codes-measurement.measurement_concept_id-3004249"]["status"] == "open"
-    assert both["codes-measurement.measurement_concept_id-3004249"]["status"] == "answered"
+    # Listed in the check results, the code still waits for a person to read its name and choose it.
+    systolic = both["codes-measurement.measurement_concept_id-3004249"]
+    assert systolic["status"] == "open" and target.WORDING["in_hand"]["codes_choose"] in systolic["evidence_in_hand"]
+    assert systolic["_choose"]
     kind = both["codes-procedure_occurrence.procedure_concept_id-4174669"]
     assert kind["status"] == "open" and "In ANAES_RECORD.ANAES_KIND_CAT, the code 1 is assumed to mean general" in kind["evidence_in_hand"]
     # The core rows follow the core profile.
@@ -318,9 +321,9 @@ def test_a_mapping_row_ticks_the_codes_row_off(tmp_path):
     path.write_text(path.read_text() + "\n".join(systolic) + "\n")
     rows, traced = checklist(checks=CHECKS, profile=PROFILE, conversion=folder)
     after = by_id(rows)["codes-measurement.measurement_concept_id-3004249"]
-    assert after["status"] == "answered"
+    # The mapping row brings the step back, and the code is offered for a person to choose; nothing is settled without one.
+    assert after["status"] == "open" and after["_choose"] and after["_ask"]["choose"] == after["_choose"]
     assert "measurement_blood_pressure_through_anaesthetic.sql" in files(traced)
-    assert target.counts(rows)["answered"] > counted["answered"]
 
 
 # Running the query.
@@ -385,6 +388,7 @@ def test_the_wording_is_calm_and_complete():
     texts += [line for value in target.DRAFT_WORDING.values() for line in (value if isinstance(value, list) else [value])]
     # The questions for a colleague are questions, and only they may end in a question mark.
     asked = {v for k, v in target.WORDING["facts"].items() if k in ("ask_join", "ask_join_plain", "ask_filter_keep", "ask_filter_leave", "ask_route")}
+    asked.add(target.WORDING["facts"]["filter_note"])
     for text in texts:
         assert ("?" not in text or text in asked) and "!" not in text and "  " not in text, text
 
@@ -907,8 +911,10 @@ def test_the_lookup_of_the_kinds_pastes_back_and_settles_the_kinds(tmp_path):
     assert "defined,ANAES_RECORD,ANAES_KIND_CAT,1,Kind one" in merged
     rows, traced = target.checklist(world, CONVERSION, AIRWAY, merged)
     kind = by_id(rows)[kind_id]
-    assert kind["status"] == "answered" and "is assumed to mean" not in kind["evidence_in_hand"]
+    # The lookup settles nothing by itself: the codes and their names are offered for the two of them to choose from.
+    assert kind["status"] == "open" and target.WORDING["in_hand"]["codes_choose"] in kind["evidence_in_hand"]
     assert "The lookup table of ANAES_RECORD.ANAES_KIND_CAT defines 4 local codes, and 1 of them has" in kind["evidence_in_hand"]
+    assert kind["_ask"]["choose"][0] == ["1", "Kind one"] and kind["_ask"]["group"] == "ANAES_RECORD.ANAES_KIND_CAT"
     assert not kind["_queries"] and "kinds:ANAES_RECORD.ANAES_KIND_CAT" not in {q["id"] for q in traced["queries"]["queries"]}
     # The names of the codes stay in the pasted result and are not repeated in the checklist.
     assert "Kind one" not in target.to_csv(rows) + target.readiness(rows, traced)

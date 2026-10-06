@@ -304,6 +304,9 @@ def listed_query(conversion, target_sql, catalogue, rules, column, year, kinds=(
     cohort_tables = sorted({t for t in re.findall(r"\b(?:FROM|JOIN)\s+\[?(?:dbo\]?\.\[?)?([A-Za-z_][A-Za-z0-9_]*)\]?", head)
                             if t not in cte_names and t.lower() not in ("values",)})
     path_tables = [nodes[a].name for a in path]
+    # The largest table that part 1, like the count by year, reads to find the anaesthetics, with its size.
+    sizes = sorted(((checking.size_of(t, checks) or 0, t) for t in cohort_tables), reverse=True) if checks is not None else []
+    largest = [sizes[0][1], sizes[0][0]] if sizes and sizes[0][0] else None
     sentence = WORDING["header"].format(column=column, year=year, definition=def_table, cohort=_join(sized(t) for t in cohort_tables),
                                         path=_join(sized(t) for t in path_tables), readings=nodes[reading].name)
     header = "\n".join(f"-- {line}" for line in target.textwrap_lines(sentence))
@@ -311,7 +314,7 @@ def listed_query(conversion, target_sql, catalogue, rules, column, year, kinds=(
     # The same list as one query, as it was written before it became a script, which the tests compare it with.
     single = header + "\nWITH\n" + ctes + "\n" + "\n".join(body).replace("FROM #cohort AS c", f"FROM {cohort} AS c", 1) + "\n"
     found = {"sql": "", "single": single, "year": year, "column": column, "step": file, "link": "", "matched": None,
-             "worst": None, "withheld": ""}
+             "worst": None, "withheld": "", "largest": largest}
     worst, reason = scripts.worst_case(count, f"{year}-01-01", f"{year}-12-31")
     try:
         if not keyed or re.search(r"\bc\.visit_detail_source_value\b(?!__key)", "\n".join(body)):
@@ -513,6 +516,24 @@ def _open_point(rows, base, row_id, sentence, query):
     rows.insert(0, row)
 
 
+LISTED_INSTEAD = ("Schemalyser needs the codes of {column} that mean {meaning}. Schemalyser finds these codes in the list of "
+                  "what is charted on the audit's anaesthetics, which it offers once you have seen the count by year. Expect "
+                  "several codes for one meaning.")
+
+
+def _search_replaced(rows, traced, column):
+    """Where the codes of a column are chosen from the list of what is charted, its codes questions no longer speak of a
+    name search that the page does not show, in the item or in the list of questions to send."""
+    for row in rows:
+        ask = row.get("_ask")
+        if not ask or ask.get("kind") != "codes" or not ask.get("search") or str(ask.get("column", "")).upper() != column.upper():
+            continue
+        text = LISTED_INSTEAD.format(column=ask["column"], meaning=ask.get("meaning") or "this meaning")
+        if traced.get("questions"):
+            traced["questions"] = traced["questions"].replace(ask["text"], text)
+        ask["text"] = text
+
+
 def attach(rows, traced, conversion, target_sql, catalogue, rules, held, settings, checks, name):
     """The list of what is charted on the cohort, for the page, as {"sql", "year", "column", "years", "rows", "link"} or None;
     and the open points that an empty cohort, an empty list or a count of none for the chosen codes raise, at the head of
@@ -528,10 +549,12 @@ def attach(rows, traced, conversion, target_sql, catalogue, rules, held, setting
         if column is None:
             return None
         try:
-            listed_query(conversion, target_sql, catalogue, rules, column, default_year([]), (), checks, name)
+            found = listed_query(conversion, target_sql, catalogue, rules, column, default_year([]), (), checks, name)
         except Unavailable:
             return None
-        return {"sql": "", "year": None, "column": column, "years": [], "rows": None, "link": "", "waiting": True}
+        _search_replaced(rows, traced, column)
+        return {"sql": "", "year": None, "column": column, "years": [], "rows": None, "link": "", "waiting": True,
+                "largest": found["largest"]}
     if not any(c for _, _, c, *_ in count["years"]):
         base["question"] = WORDING["no_cohort"]
         base["_top"] = True
@@ -546,6 +569,7 @@ def attach(rows, traced, conversion, target_sql, catalogue, rules, held, setting
                              checks, name, count)
     except Unavailable:
         return None
+    _search_replaced(rows, traced, column)
     # The match query is offered until its result is in the check results; after that, the point stays and says what to do.
     if found["matched"] and checks is not None and checks.matched:
         key = found["matched"]["id"].split(":", 1)[-1].replace("-", ".").upper()
@@ -567,4 +591,76 @@ def attach(rows, traced, conversion, target_sql, catalogue, rules, held, setting
                     found["matched"])
     years = sorted({int(y[0]) for y in count["years"]})
     return {"sql": found["sql"], "year": year, "column": column, "years": years, "rows": ran, "link": found["link"],
-            "worst": scripts.page(found["worst"]) if found["worst"] else "", "withheld": found["withheld"]}
+            "worst": scripts.page(found["worst"]) if found["worst"] else "", "withheld": found["withheld"],
+            "largest": found["largest"]}
+
+
+# The decisions that the reference query and the specification do not yet apply, each an open point with the one action
+# that would make it real.
+DECISION_POINTS = {
+    "bypass": ("Time on cardiopulmonary bypass is to be left out, and neither the reference query nor the specification "
+               "applies that yet. Run the name search with this point on {table}, which defines the events of the "
+               "anaesthetic record, to find the events that mark the start and the end of bypass.",
+               ["BYPASS", "CPB", "ON PUMP", "OFF PUMP"]),
+    "ecmo": ("Time on ECMO is to be left out, and neither the reference query nor the specification applies that yet. Run the "
+             "name search with this point on {table}, which defines the events of the anaesthetic record, to find the events "
+             "that mark the start and the end of ECMO.", ["ECMO", "ECLS", "EXTRACORPOREAL"]),
+    "isolated": ("A single isolated low reading is to be ignored, and the reference query does not apply that yet. Schemalyser "
+                 "takes an isolated low reading to be a single reading below 40 with the readings either side of it at 40 or "
+                 "above. The clinician adds that rule to the reference query after the meeting.", None),
+    "age": ("A limit on postmenstrual age is chosen, and the reference query does not apply it yet. It needs the column that "
+            "holds the gestational age at birth{gestation}, and the clinician adds the limit to the reference query after "
+            "the meeting.", None),
+}
+NO_EVENTS = ("The site rules name no table that defines the events of the anaesthetic record, so name it in the meeting and "
+             "add it to the site rules; Schemalyser then offers the search.")
+
+
+def _events_definition(catalogue, rules):
+    """(definition table, key column, name column, shown) of the events of the anaesthetic record, from the site rules: the
+    first definition key whose column or table names events, or None."""
+    from . import target
+    for key in getattr(rules, "definition_keys", None) or []:
+        column, table = str(key.get("column", "")), str(key.get("table", ""))
+        if "EVENT" not in (column + table).upper():
+            continue
+        for entry in ([catalogue.table(table)] if table else catalogue.tables()):
+            if entry is not None and entry.column(column) is not None:
+                found = target._definition(rules, catalogue, entry.name, column)
+                if found is not None:
+                    return found
+    return None
+
+
+def decision_points(rows, traced, settings, catalogue, rules):
+    """Adds to rows an open point for each decision that departs from the rule in force and that the reference query does
+    not yet apply, with the name search that finds the events of bypass or ECMO where the site rules allow one."""
+    from . import target
+    settings = settings or {}
+    base = next((r for r in rows if r["question_id"] == "count-by-year"), None)
+    if base is None:
+        return
+    offered = traced.setdefault("queries", {"sizes": None, "queries": []})
+    for key, (sentence, words) in DECISION_POINTS.items():
+        value = settings.get(key)
+        options = target.DECISIONS[key][0]
+        if value in (None, options[0]):
+            continue
+        query = None
+        if words is not None:
+            definition = _events_definition(catalogue, rules)
+            if definition is None:
+                sentence = sentence.split(" Run the name search")[0] + " " + NO_EVENTS
+            else:
+                sentence = sentence.format(table=definition[0])
+                query = {"id": f"search:events-{key}", "sql": target.code_search(catalogue, definition, words)}
+                if not any(q["id"] == query["id"] for q in offered["queries"]):
+                    offered["queries"].append({"id": query["id"], "sql": query["sql"], "state": "ready", "table": definition[0]})
+        elif "{gestation}" in sentence:
+            columns = sorted(f"{e.name}.{c.name}" for e in catalogue.tables() for c in e.columns.values() if "GEST" in c.name.upper())
+            sentence = sentence.format(gestation=f", which may be {target._join(columns)}" if columns else "")
+        row = dict(base, question_id=f"decision-{key}", question=sentence, status="open", blocking="yes", evidence_in_hand="",
+                   phase="source", query_state="ready" if query else "", query_reason="", query=query["sql"] if query else "",
+                   _queries=[query["id"]] if query else [], _count=None, _top=bool(query), intent="", route="", _fact="",
+                   _ask=None)
+        rows.append(row)

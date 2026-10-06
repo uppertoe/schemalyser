@@ -239,7 +239,7 @@ export const strings = {
   whoLabel: "Your name, if you would like it kept with your answers (it is kept only in the saved state):",
   factYes: 'Yes, this is right',
   factNo: "No",
-  factInstead: "If it is not right, the columns that do match:",
+  factInstead: "If you know the columns that do match, choose them here, then save the answer:",
   factSaveNo: 'Save the answer that this is not right',
   codesLabel: 'The local codes, separated by commas:',
   codesSave: 'Save the codes',
@@ -381,12 +381,19 @@ export const strings = {
     `The search returned ${n.toLocaleString('en-AU')} rows, which is more than this page can sensibly list, so Schemalyser shows only the first ${shown} below. Narrow the words above, write the search again, and run it once more, so that every row it returns can be seen and chosen.`,
   // Each query that reaches the table of readings is a short script that starts from a temporary table of the cohort.
   scriptTemporary: "The script creates one temporary table, #cohort, which holds only the keys of the audit's anaesthetics and of their records, exists only in your own session and goes when your SQL window closes, and it creates or changes nothing else.",
-  scriptTimeout: 'Before you run anything that reaches the readings, set a query time-out in your SQL window and look at the estimated plan. Run part 1 of the script on its own first, because SQL Server can show the plan of part 2 only once #cohort exists.',
-  scriptWorst: (n: string) => `The count by year shows at most about ${n} anaesthetics of the cohort in this period, so the script reads the readings of those anaesthetics and of no others.`,
+  scriptTimeout: 'SQL Server Management Studio has no query time-out unless one is set, so set one before you run anything here (Tools, Options, Query Execution). Run part 1 of the script on its own first, because SQL Server can show the estimated plan of part 2 only once #cohort exists.',
+  scriptPlan: 'In the estimated plan of part 2, the table of readings should be reached by a seek on its clustered key, through nested loops, from #cohort or a small table joined to it. A scan of the table of readings, or a hash join that takes the table of readings as an input, means stop: do not run part 2, and keep the plan for the clinician.',
+  scriptCostly: (table: string, rows: number) =>
+    `Part 1, like the count by year, reads ${table} (about ${rows.toLocaleString('en-AU')} rows) to find the anaesthetics, so it can be costly on its own; look at its estimated plan too before you run it.`,
+  scriptMonth: 'Where the period is long, run the script first for one month: change the two dates in part 1 to the first month of the period, and run the whole period only once that month has finished quickly.',
+  scriptWorst: (worst: string) => `The count by year shows ${worst}, and the script asks only for the readings of those anaesthetics.`,
+  countCostly: (table: string, rows: number) =>
+    `The count by year reads ${table} (about ${rows.toLocaleString('en-AU')} rows) to find the anaesthetics, so it can be costly on its own.`,
+  countPlan: 'This count does not ask for the table of readings. Before you run it, set a query time-out and look at its estimated plan: if the plan reads any table of readings, stop and do not run it.',
   auditReferenceOnly: 'This query is shown as a reference for the person who writes the audit query, and it should not be run on the production database.',
   listedHeading: 'What is charted on the audit\'s anaesthetics',
   listedWhat: (column: string, year: number) =>
-    `This script lists every code of ${column} that was charted on the audit's anaesthetics that started in ${year}, with its count and its names, most charted first. It puts those anaesthetics into a temporary table first and then reaches the readings only through their own records, by key; its first lines say which tables it reads. Run it, paste the result below, and mark the rows that matter. A row that you leave unmarked is simply not chosen.`,
+    `This script lists every code of ${column} that was charted on the audit's anaesthetics that started in ${year}, with its count and its names, most charted first. It puts those anaesthetics into a temporary table first and then asks for the readings only through their own records, by key; its first lines say which tables it reads. Run it, paste the result below, and mark the rows that matter. A row that you leave unmarked is simply not chosen. Codes retired in earlier years appear only in those years, so take the study period a year at a time: choose each year in turn, run the list again and mark it. Schemalyser remembers what you have marked in each year, and saving records the marks of every year.`,
   listedYear: 'The year to list:',
   listedPasteLabel: 'The result of the list, copied from the results grid with its headers:',
   listedRead: 'Show the list',
@@ -406,7 +413,7 @@ export const strings = {
   listedInstead: 'The codes for this meaning are chosen from the list of what is charted on the audit\'s anaesthetics, further down this section.',
   chartedHeading: 'How often each chosen code is charted',
   chartedWhat: (from: string, to: string) =>
-    `This script is optional. It counts, for the chosen codes only, how often each was charted on the audit's anaesthetics that started from ${from} to ${to}, the last year of the study period, and on how many of those anaesthetics. It puts those anaesthetics into a temporary table first and reads only the readings that belong to them, never the whole table of readings. Schemalyser carries the counts into the specification.`,
+    `This script is optional. It counts, for the chosen codes only, how often each was charted on the audit's anaesthetics that started from ${from} to ${to}, the last year of the study period, and on how many of those anaesthetics. It puts those anaesthetics into a temporary table first and then asks only for the readings that belong to them. Schemalyser carries the counts into the specification.`,
   chartedPasteLabel: 'The result of the count, copied from the results grid with its headers:',
   chartedRead: 'Keep the counts',
   chartedNone: 'Schemalyser could not read any code in the pasted text. Each row needs the three columns that the count returns: code, readings and anaesthetics.',
@@ -423,8 +430,11 @@ export const strings = {
   endingRemaining: 'These remain, grouped by who can settle them.',
   endingYouHeading: 'You can settle these now, in the meeting:',
   endingTeamHeading: 'The team that looks after the reporting database can settle these:',
-  endingClinicianHeading: 'The clinician settles these after the meeting, by changing the folder for this audit:',
+  endingClinicianHeading: 'The clinician settles these after the meeting, in the folder for this audit: by adding the mapping rows for the codes that the two of you could not choose, or by changing the conversion\'s steps or the reference query, as each point says:',
+  remainingRose: (n: number, added: string[]) =>
+    `That answer leaves ${n} more ${n === 1 ? 'thing' : 'things'} to settle than before, because Schemalyser has learned something new: ${added.join(' ')}`,
   endingByQuestion: 'You can answer the question with it above.',
+  endingChooseAgain: 'You can choose it again in the list of what is charted above, where its count stands beside it.',
   endingByQuery: 'Run the short query with it above, then paste its result.',
   endingCountSeen: 'The count has run. The clinician checks the joins and filters that it rests on after the meeting.',
   endingByTeam: 'The note to the team below asks about this.',
@@ -439,6 +449,9 @@ export const strings = {
   teamNoteRoute: (missing: string) =>
     `${missing} is not visible to our login. Please tell us whether it exists in the reporting database and, if it does, whether our login can be given the right to read it.`,
   teamNoteOther: (point: string) => `${point} We were not able to settle this in the meeting, and we would be grateful for what you know of it.`,
+  chooseAbove: 'The codes for this meaning are chosen in the table of the first meaning of this column, above.',
+  noName: 'no name in the definition table',
+  chooseNoNames: 'No code in the lookup has a name, so none can be confirmed from it. If you know the codes for this meaning, enter them here, separated by commas:',
   withdrawAnswer: 'Change this answer',
   withdrawn: 'Schemalyser has withdrawn the answer and worked out the checklist again, so the question is asked again.',
   newlyAnsweredNow: (n: number) =>
@@ -466,7 +479,7 @@ export const strings = {
   auditNeedsPeriod: 'Schemalyser will offer the reference query once a study period has been entered above, because without one it would read every anaesthetic on record.',
   searchWords: 'The words that the search looks for, separated by semicolons:',
   searchRewrite: 'Write the search again with these words',
-  searchText: 'A blood pressure charted as text, with the mean in brackets',
+  searchText: 'The blood pressure as text, from which the reference query does not read a mean',
   countPasteLabel: 'The result of the count, copied from the results grid with its headers:',
   countRead: 'Show the counts',
   countNone: 'Schemalyser could not read any year in the pasted text. Each row needs the three columns that the count returns.',
@@ -483,18 +496,21 @@ export const strings = {
   decisionsHeading: 'Decisions for the clinicians',
   decisionsWhat: 'The audit makes these choices. Make each one together, and add a short note if you wish; the notes are kept only in the saved file. Each decision is carried into the specification.',
   decisionNote: 'A short note, if you wish',
-  decisionRecorded: 'The specification records this decision, and the reference query does not yet apply it.',
+  decisionRecorded: 'The reference query does not yet apply this decision. If you choose a change, the list of what remains says what would make it real.',
   decisions: [
     { key: 'pressures', title: 'Which pressures count once an arterial line is running:', applied: true, options: [
-      ['preferred', 'The arterial reading is preferred only where an arterial and a cuff reading share a time (present rule)'],
+      ['preferred', 'The arterial reading is preferred only where an arterial and a cuff reading share a time (the rule in force)'],
       ['arterial_only', 'The arterial line alone, from its first reading to its last']] as [string, string][] },
-    { key: 'floor', title: 'A mean pressure below this is treated as an artefact of zeroing, flushing or sampling (leave empty for no floor):', applied: true, options: [] as [string, string][] },
-    { key: 'isolated', title: 'A single isolated low reading:', applied: false, options: [
-      ['counts', 'It counts (present rule)'], ['ignored', 'It is ignored']] as [string, string][] },
-    { key: 'bypass', title: 'Time on cardiopulmonary bypass or ECMO:', applied: false, options: [
-      ['counted', 'It is counted (present rule)'], ['left_out', 'It is left out']] as [string, string][] },
+    { key: 'floor', title: 'A mean pressure below this is treated as an artefact of zeroing or sampling and left out (leave empty for no floor):', applied: true, options: [] as [string, string][] },
+    { key: 'ceiling', title: 'A mean pressure above this is treated as an artefact of a flush and left out (leave empty for no ceiling):', applied: true, options: [] as [string, string][] },
+    { key: 'isolated', title: 'A single isolated low reading, that is, a single reading below 40 with the readings either side of it at 40 or above:', applied: false, options: [
+      ['counts', 'It counts (the rule in force)'], ['ignored', 'It is ignored']] as [string, string][] },
+    { key: 'bypass', title: 'Time on cardiopulmonary bypass:', applied: false, options: [
+      ['counted', 'It is counted (the rule in force)'], ['left_out', 'It is left out']] as [string, string][] },
+    { key: 'ecmo', title: 'Time on ECMO:', applied: false, options: [
+      ['counted', 'It is counted (the rule in force)'], ['left_out', 'It is left out']] as [string, string][] },
     { key: 'age', title: 'Age:', applied: false, options: [
-      ['postnatal', 'Under 28 days of postnatal age (present rule)'], ['postmenstrual', 'A limit on postmenstrual age']] as [string, string][] },
+      ['postnatal', 'Under 28 days of postnatal age (the rule in force)'], ['postmenstrual', 'A limit on postmenstrual age']] as [string, string][] },
   ],
   keepsNothing: 'Schemalyser keeps nothing after you close this page.',
   version: (version: string, checksum: string) => `Version ${version}. Checksum: ${checksum}`,

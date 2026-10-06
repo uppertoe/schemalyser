@@ -31,18 +31,19 @@ from . import checks as checking
 LIMIT = 5000
 
 WORDING = {
-    "timeout": "Set a query time-out in your SQL window before you run this script. Run part 1 on its own, then look at "
-               "the estimated plan of part 2 before you run it.",
+    "timeout": "Set a query time-out before you run this script; SQL Server Management Studio has none unless one is set "
+               "(Tools, Options, Query Execution). Run part 1 on its own, then look at the estimated plan of part 2: it should "
+               "reach the table of readings by a seek on its clustered key, through nested loops, from #cohort. A scan of the "
+               "table of readings, or a hash join that takes it as an input, means stop, and do not run part 2.",
     "temporary": "This script creates one temporary table, #cohort, which holds only the keys of the audit's anaesthetics "
                  "and of their records, with their start and end times. It exists only in your own session and goes when "
                  "the window closes. Nothing else is created or changed.",
-    "worst": "The count by year shows at most about {n} anaesthetics of the cohort in this period, so part 2 reads the "
-             "readings of those anaesthetics and of no others.",
+    "worst": "The count by year shows {worst}, and part 2 asks only for the readings of those anaesthetics.",
     "part1": "Part 1: the cohort's anaesthetics, found in the smaller tables and put into #cohort with a primary key.",
     "part2": "Part 2: the readings, reached from #cohort by key.",
     "unseen": "Schemalyser offers this query once you have seen the count by year, because the count shows how many "
               "anaesthetics it would read.",
-    "too_many": "The count by year shows about {n} anaesthetics of the cohort from {start} to {end}. Schemalyser offers a "
+    "too_many": "The count by year shows that the cohort may hold as many as {n} anaesthetics from {start} to {end}. Schemalyser offers a "
                 "script that reads the readings only where the period holds at most {limit} anaesthetics of the cohort, so "
                 "please choose a shorter period.",
     "unsafe": "Schemalyser does not offer this query to be run, because {reason}.",
@@ -53,39 +54,46 @@ class Unsafe(Exception):
     """The query cannot be written as a script that is safe by construction; the message says why, as a clause."""
 
 
-def _number(n):
-    return "ten" if n <= 10 else f"{n:,}"
+def _period(start, end):
+    """The period in words: "in 2025" for a whole year, otherwise "from START to END"."""
+    start, end = str(start), str(end)
+    if start[:4] == end[:4] and start[4:] in ("", "-01-01") and end[4:] in ("", "-12-31"):
+        return f"in {start[:4]}"
+    return f"from {start} to {end}"
 
 
 def worst_case(count, start, end):
-    """(the most anaesthetics of the cohort that a script for the period from start to end reads, or None, and the reason
-    in one sentence where no script is offered). start and end are ISO dates or years. count is held.count(), whose
-    years are [year, anaesthetics, in_the_cohort, ...] rounded down to tens, None meaning under ten."""
+    """(the anaesthetics of the cohort that the count by year shows for the period from start to end, in words, such as
+    "about 200 anaesthetics of the cohort in 2025", or None, and the reason in one sentence where no script is offered).
+    start and end are ISO dates or years. count is held.count(), whose years are [year, anaesthetics, in_the_cohort, ...]
+    rounded down to tens, None meaning under ten. The limit is tested on the most that the rounded counts allow, each
+    year's count with ten added."""
     if count is None:
         return None, WORDING["unseen"]
     first, last = int(str(start)[:4]), int(str(end)[:4])
-    total = 0
+    shown, most = 0, 0
     for item in count["years"]:
         if first <= int(item[0]) <= last:
-            total += int(item[2]) + 10 if item[2] else 10    # rounded down to tens, so each year may hold up to ten more
-    total = max(total, 10)
-    if total > LIMIT:
-        return None, WORDING["too_many"].format(n=f"{total:,}", start=start, end=end, limit=f"{LIMIT:,}")
-    return total, None
+            shown += int(item[2] or 0)
+            most += int(item[2] or 0) + 10    # rounded down to tens, so each year may hold up to ten more
+    if most > LIMIT:
+        return None, WORDING["too_many"].format(n=f"{most:,}", start=start, end=end, limit=f"{LIMIT:,}")
+    number = f"about {shown:,}" if shown >= 10 else "fewer than ten"
+    return f"{number} anaesthetics of the cohort {_period(start, end)}", None
 
 
 def header(worst):
     """The comment lines with which every script begins."""
     from .target import textwrap_lines
     lines = []
-    for sentence in (WORDING["timeout"], WORDING["temporary"], WORDING["worst"].format(n=_number(worst))):
+    for sentence in (WORDING["timeout"], WORDING["temporary"], WORDING["worst"].format(worst=worst)):
         lines += [f"-- {line}" for line in textwrap_lines(sentence)]
     return "\n".join(lines)
 
 
 def page(worst):
-    """The worst case as the page states it: the number of anaesthetics, in words where it is ten."""
-    return _number(worst)
+    """The worst case as the page states it."""
+    return worst
 
 
 # The steps that find the cohort.

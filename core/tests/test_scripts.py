@@ -77,10 +77,10 @@ def _shape(sql):
     """The script's shape: the comment lines that advise a time-out and say what it creates and reads, SET NOCOUNT ON,
     part 1, which puts the cohort into #cohort with its key and reads no table of readings, and part 2, which is returned."""
     comments = " ".join(line[3:] for line in sql.splitlines() if line.startswith("-- "))
-    assert sql.startswith("-- Set a query time-out in your SQL window before you run this script.")
+    assert sql.startswith("-- Set a query time-out before you run this script;")
     for sentence in (scripts.WORDING["timeout"], scripts.WORDING["temporary"], scripts.WORDING["part1"], scripts.WORDING["part2"]):
         assert sentence in comments
-    assert re.search(r"The count by year shows at most about [\d,]+ anaesthetics of the cohort in this period", comments)
+    assert re.search(r"The count by year shows (about [\d,]+|fewer than ten) anaesthetics of the cohort (in \d{4}|from [\d-]+ to [\d-]+), and part 2 asks only", comments)
     assert sql.count("\nSET NOCOUNT ON;\n") == 1 and sql.count(scripts.DROP) == 1
     assert sql.count("INTO #cohort") == 1 and sql.count("ALTER TABLE #cohort ADD PRIMARY KEY (anaesthetic_id);") == 1
     # Nothing but #cohort is created, and nothing is changed.
@@ -121,7 +121,7 @@ def test_the_count_of_the_chosen_codes_as_a_script_gives_the_same_rows(tmp_path,
 def test_the_reference_query_as_a_script_gives_the_same_answer(tmp_path, sandbox):
     found = _target(tmp_path)
     script = found["draft_script"]
-    assert found["draft_restructured"] and script["sql"] and not script["withheld"] and script["worst"] == "60"
+    assert found["draft_restructured"] and script["sql"] and not script["withheld"] and script["worst"] == "about 40 anaesthetics of the cohort from 2021-01-01 to 2024-06-30"
     rest = _shape(script["sql"])
     # The cohort's own common table expression reads #cohort, and the step that reads the readings starts from it by key.
     assert "q22_neonatal AS (\n  SELECT\n    anaesthetic_id,\n    person_id,\n    start_datetime,\n    end_datetime\n  FROM #cohort\n)" in rest
@@ -138,14 +138,15 @@ def test_the_reference_query_as_a_script_gives_the_same_answer(tmp_path, sandbox
 def test_a_script_is_offered_only_once_the_count_by_year_is_seen_and_within_the_limit(tmp_path):
     assert scripts.LIMIT == 5000
     assert scripts.worst_case(None, 2024, 2024) == (None, scripts.WORDING["unseen"])
-    assert scripts.worst_case({"years": [[2024, 900, None]]}, 2024, 2024) == (10, None)
+    assert scripts.worst_case({"years": [[2024, 900, None]]}, 2024, 2024) == ("fewer than ten anaesthetics of the cohort in 2024", None)
+    assert scripts.worst_case({"years": [[2025, 1730, 200]]}, "2025-01-01", "2025-12-31") == ("about 200 anaesthetics of the cohort in 2025", None)
     assert scripts.worst_case({"years": [[2023, 9000, 2400], [2024, 9000, 2600]]}, "2023-07-01", "2024-06-30")[1] == \
-        ("The count by year shows about 5,020 anaesthetics of the cohort from 2023-07-01 to 2024-06-30. Schemalyser offers a "
+        ("The count by year shows that the cohort may hold as many as 5,020 anaesthetics from 2023-07-01 to 2024-06-30. Schemalyser offers a "
          "script that reads the readings only where the period holds at most 5,000 anaesthetics of the cohort, so please "
          "choose a shorter period.")
     many = dict(COUNT, years=[[2023, 9000, 2400], [2024, 9000, 2600]])
     found = _target(tmp_path, given=(many, CODES))
-    assert found["listed"]["sql"] and found["listed"]["worst"] == "2,610"     # one year is within the limit
+    assert found["listed"]["sql"] and found["listed"]["worst"] == "about 2,600 anaesthetics of the cohort in 2024"     # one year is within the limit
     assert found["charted"]["sql"] == "" and "choose a shorter period" in found["charted"]["withheld"]
     assert found["draft_script"]["sql"] == "" and "choose a shorter period" in found["draft_script"]["withheld"]
 

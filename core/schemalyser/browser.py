@@ -1,6 +1,7 @@
 """The functions the page's worker calls. They take and return plain values only."""
 import io
 import json
+import re
 import os
 import shutil
 import zipfile
@@ -272,7 +273,14 @@ def _routes(rows):
             by_missing.setdefault(names["missing"], []).append(names)
     said = []
     for missing, group in by_missing.items():
-        parts = list(dict.fromkeys(f"{n.get('what', 'rows')} from {n.get('tables', 'other tables')}" for n in group))
+        # Two steps that give the same thing, such as the anaesthetics, are named once, with the tables of both.
+        tables = {}
+        for n in group:
+            for table in re.split(r", | and ", str(n.get("tables", "other tables"))):
+                tables.setdefault(n.get("what", "rows"), [])
+                if table and table not in tables[n.get("what", "rows")]:
+                    tables[n.get("what", "rows")].append(table)
+        parts = [f"{what} from {target._join(found)}" for what, found in tables.items()]
         sentence = template.replace("{what} from {tables}", ", and the ".join(parts)).format(missing=missing)
         effects = list(dict.fromkeys(n["effect"] for n in group if n.get("effect")))
         said.append(" ".join([sentence] + effects))
@@ -378,7 +386,7 @@ def boundary_run(state_commit=None, requests_commit=None):
                  "queryState": row.get("query_state") or "", "queryReason": row.get("query_reason") or "",
                  "queryIds": list(row.get("_queries") or []), "stage": row.get("phase") or "source",
                  # The question that a colleague can answer from knowledge, and the answer a person gave, if any.
-                 "ask": row.get("_ask"), "fact": row.get("_fact") or "",
+                 "ask": row.get("_ask"), "fact": row.get("_fact") or "", "note": row.get("_note") or "",
                  # The facts that a person gave about the item, which the page can withdraw, and the counts by year once seen.
                  "withdraw": _withdrawable(row, t["rows"]),
                  # Whether the item heads what remains, and, for a route, the name that is not visible, which the page

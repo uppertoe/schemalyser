@@ -240,11 +240,32 @@ test('each open item carries its query, and a pasted result ticks it and brings 
   await expect(page.locator('#t-paste-result')).toHaveText(strings.pasted(lines, lines), { timeout: 120_000 });
   await expect(page.locator('#t-changes')).toContainText('Schemalyser has worked out the checklist again with the pasted results');
   await expect(page.locator('#paste')).toHaveValue('');
-  // The items that the query answers have ticked, and the query that waited for the sizes has appeared.
-  const ticked = section.locator('ul[data-group="new"] li.item[data-status="answered"]');
-  await expect(ticked.first()).toBeVisible();
-  expect(await ticked.count()).toBe(needing);
+  // The result settles nothing by itself: the items that needed the query now show its codes with their names, for the
+  // two of them to choose from, and the query that waited for the sizes has appeared.
+  const choosing = section.locator('li.item[data-status="open"] .choose-table');
+  await expect(choosing.first()).toBeVisible({ timeout: 120_000 });
+  await expect(section.locator('li.item[data-status="answered"] .choose-table')).toHaveCount(0);
   await expect(section.locator(`pre[data-query="${KIND}"]`)).toHaveCount(0);
+  // A code whose name is only a number, or empty, is shown as such and cannot be chosen; where no code has a name, the
+  // codes are entered from what the two of them know, and the item ticks.
+  const rows = choosing.first().locator('tr:has(select)');
+  const nameless = choosing.first().locator('tr[data-nameless]');
+  expect(await nameless.count()).toBeGreaterThan(0);
+  await expect(nameless.first().locator('select')).toBeDisabled();
+  await expect(nameless.first()).toContainText(strings.noName);
+  const item = section.locator('li.item', { has: page.locator('.choose-table') }).first();
+  const id = await item.getAttribute('data-id');
+  const code = (await rows.first().locator('td').first().textContent()) ?? '';
+  if ((await nameless.count()) === (await rows.count())) {
+    await item.locator('input.fact-codes').fill(code);
+    await item.locator('button.fact-save-codes').click();
+  } else {
+    const firstChoice = choosing.first().locator('select.choose-choice:not([disabled])').first();
+    await firstChoice.selectOption({ index: 1 });
+    await section.locator('button.choose-save').first().click();
+  }
+  await expect(page.locator('#t-paste-result')).toHaveText(strings.factRecorded, { timeout: 120_000 });
+  await expect(section.locator(`li.item[data-id="${id}"][data-status="answered"]`).first()).toBeAttached();
   await expect(section.locator('pre[data-query="sizes"]')).toHaveCount(0);
   const next = section.locator('pre[data-query="values:AIRWAY_DEVICE.DEVICE_KIND_KEY"]');
   await expect(next).toHaveCount(1);
@@ -475,7 +496,14 @@ test('once the count by year is seen, the codes are chosen from the list of what
   // The list is a script that puts the cohort into a temporary table and reaches the readings from it by key.
   await expect(listed.locator('pre[data-query="listed"]')).toContainText('FROM #cohort AS c');
   await expect(listed.locator('pre[data-query="listed"]')).toContainText('ALTER TABLE #cohort ADD PRIMARY KEY (anaesthetic_id);');
-  await expect(listed.locator('.script-note')).toHaveText([strings.scriptTemporary, strings.scriptTimeout, strings.scriptWorst('30')]);
+  // Above the script, what it creates, the time-out, what the plan must show and what means stop, and what it asks for.
+  const notes = listed.locator('.script-note');
+  await expect(notes.first()).toHaveText(strings.scriptTemporary);
+  await expect(notes.filter({ hasText: strings.scriptTimeout })).toHaveCount(1);
+  await expect(notes.filter({ hasText: strings.scriptPlan })).toHaveCount(1);
+  await expect(notes.filter({ hasText: strings.scriptWorst('about 20 anaesthetics of the cohort in 2024') })).toHaveCount(1);
+  // The script itself says where the time-out is set.
+  await expect(listed.locator('pre[data-query="listed"]')).toContainText('Tools, Options, Query Execution');
   await expect(section.locator('textarea.search-paste')).toHaveCount(0);
   await expect(section.locator('li.item', { hasText: strings.listedInstead }).first()).toBeAttached();
 
@@ -489,7 +517,7 @@ test('once the count by year is seen, the codes are chosen from the list of what
   await expect(first).toHaveText(/^The list of what is charted on the audit's anaesthetics in/);
 
   // Forty-five rows: the names that hold a word for the meanings sought, as a whole word, are marked as likely.
-  const names = ['INVENTED ART MEAN', 'INVENTED NIBP MEAN', 'INVENTED MEANINGFUL NOTE', ...Array.from({ length: 42 }, (_, i) => `INVENTED ITEM ${i}`)];
+  const names = ['INVENTED ART MEAN', 'INVENTED NIBP MEAN', 'INVENTED MEANINGFUL NOTE', 'INVENTED PA MEAN', ...Array.from({ length: 41 }, (_, i) => `INVENTED ITEM ${i}`)];
   const many = [header, ...names.map((name, i) => `${i < 2 ? 52 - i : 100 + i}\t${1000 - i}\t${90 - i}\t${name}\tNULL`)].join('\n');
   await listed.locator('textarea.listed-paste').fill(many);
   await listed.locator('button.listed-read').click();
@@ -497,6 +525,8 @@ test('once the count by year is seen, the codes are chosen from the list of what
   await expect(table.locator('select.listed-choice')).toHaveCount(45, { timeout: 120_000 });
   await expect(table.locator('tr[data-likely]')).toHaveCount(2);
   await expect(table.locator('tr[data-likely]', { hasText: 'MEANINGFUL' })).toHaveCount(0);
+  // A pulmonary artery mean is never marked as likely for an arterial or cuff mean.
+  await expect(table.locator('tr[data-likely]', { hasText: 'PA MEAN' })).toHaveCount(0);
   // Typing in the filter shows only the rows that hold the words.
   const filter = listed.locator('input.listed-filter');
   await filter.fill('NIBP');
@@ -516,7 +546,7 @@ test('once the count by year is seen, the codes are chosen from the list of what
   const charted = section.locator('.charted');
   await expect(charted.locator('pre[data-query="charted"]')).toContainText('FROM #cohort AS c', { timeout: 120_000 });
   await expect(charted.locator('.script-note').first()).toHaveText(strings.scriptTemporary);
-  await expect(charted.locator('.sizes-reason').first()).toContainText('never the whole table of readings');
+  await expect(charted.locator('.sizes-reason').first()).toContainText('asks only for the readings that belong to them');
   await charted.locator('textarea.charted-paste').fill('code\treadings\tanaesthetics\n52\t1230\t40\n');
   await charted.locator('button.charted-read').click();
   await expect(section.locator('.charted .charted-result')).toHaveText(strings.chartedKept, { timeout: 120_000 });

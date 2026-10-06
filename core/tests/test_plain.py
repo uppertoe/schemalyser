@@ -388,7 +388,8 @@ def test_the_page_reads_a_pasted_result_merges_it_and_works_the_checklist_out_ag
     assert result["ok"] and result["pasted"]["accepted"] == result["pasted"]["read"] > 0
     again = next(t for t in result["boundary"]["targets"] if t["name"] == "airway_by_anaesthesia_type")
     after = {row["id"]: row for row in again["rows"]}
-    assert all(after[i]["status"] == "answered" and not after[i]["queryIds"] for i in kind_items)
+    # The values are in, so no query is needed for the kinds; a person still reads the codes and chooses them on the page.
+    assert all(after[i]["status"] == "open" and not after[i]["queryIds"] and after[i]["ask"]["choose"] for i in kind_items)
     # The size is in, so the query that waited for it is offered now.
     assert again["sizes"] is None and [q["id"] for q in again["queries"]] == ["values:AIRWAY_DEVICE.DEVICE_KIND_KEY"]
     merged = Checks.from_csv(result["boundary"]["checks"], browser._analysis.catalogue, browser._analysis.rules)

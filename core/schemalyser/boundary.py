@@ -500,6 +500,11 @@ def _produce(state, requests, commits, state_left_out, draft_when=None):
             rows, traced = target.checklist(world, conversion, target_text, checks_text, profile_text,
                                             facts_text, name, evidence_text,
                                             draft=draft_when is None or options["writeSourceDraft"])
+            # The joins that set the kind of anaesthetic, where only some kinds count, and the decisions that the reference
+            # query does not yet apply, are open points before anything else reads the rows.
+            from . import charted as charting
+            target.kind_joins(rows, traced, settings)
+            charting.decision_points(rows, traced, settings, first.catalogue, first.rules)
             if traced.get("draft_later") and draft_when(rows, settings):
                 traced["draft"], traced["draft_restructured"], traced["draft_reason"] = traced["draft_later"]()
         except target.TargetError as error:

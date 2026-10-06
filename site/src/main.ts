@@ -17,6 +17,8 @@ interface Summary {
 interface Item {
   id: string;
   kind: string;
+  // The question for the team that looks after the database, where the core words one for the item.
+  note?: string;
   status: 'answered' | 'partly' | 'open';
   blocking: boolean;
   question: string;
@@ -34,7 +36,7 @@ interface Item {
   stage?: 'source' | 'unneeded' | 'release';
   // The question that a colleague can answer from knowledge, and the answer a person gave.
   ask?: { kind: 'join' | 'filter' | 'codes' | 'route'; text: string; left?: string; right?: string; tables?: Record<string, string[]>;
-    column?: string; vocabulary?: string; concept?: string; meaning?: string; search?: string; group?: string; step?: string;
+    column?: string; vocabulary?: string; concept?: string; meaning?: string; search?: string; group?: string; choose?: string[][]; step?: string;
     steps?: string[]; words?: string[]; definition?: string[] } | null;
   fact?: string;
   // The answers that a person gave about the item, as the core names them for withdrawal; whether the item heads what
@@ -71,11 +73,11 @@ interface Target {
   questions?: string;
   specification?: string;
   charted?: { sql: string; from: string; to: string; codes: string[]; kept?: boolean; worst?: string; withheld?: string } | null;
-  listed?: { sql: string; year: number | null; column: string; years: number[]; rows: number | null; link: string; waiting?: boolean;
+  listed?: { sql: string; year: number | null; column: string; years: number[]; rows: number | null; link: string; waiting?: boolean; largest?: [string, number] | null;
     worst?: string; withheld?: string } | null;
   // The routes that the catalogue settled, where a step gave way to one of its alternatives, one sentence each.
   routes?: string[];
-  settings?: { from?: string | null; to?: string | null; kinds?: number[]; pressures?: string | null; floor?: number | null;
+  settings?: { from?: string | null; to?: string | null; kinds?: number[]; pressures?: string | null; floor?: number | null; ceiling?: number | null;
     isolated?: string | null; bypass?: string | null; age?: string | null; notes?: Record<string, string> };
   kinds?: [number, string][];
   // What choosing the kinds of anaesthetic costs, in one sentence from the core, shown above the ticks; it may be empty.
@@ -98,7 +100,7 @@ interface Boundary {
 
 // What the page remembers of a checklist, to show what the next analysis answers. It holds only the
 // items' identifiers and statuses, which name catalogue and conversion names, as the download does.
-type Snapshot = Map<string, { answered: number; statuses: Map<string, string> }>;
+type Snapshot = Map<string, { answered: number; statuses: Map<string, string>; points?: string[] }>;
 
 interface Result {
   boundary: Boundary;
@@ -578,9 +580,13 @@ function askElement(item: Item) {
     };
     const left = choose(leftTable);
     const right = choose(rightTable);
-    box.append(actions, el('p', strings.factInstead, 'note'), left, right);
-    box.append(askButton(strings.factSaveNo, 'secondary fact-no', () =>
+    // No opens a short list of the columns that could match instead; the answer is saved from there.
+    const instead = el('div', undefined, 'join-instead');
+    instead.hidden = true;
+    instead.append(el('p', strings.factInstead, 'note'), left, right, askButton(strings.factSaveNo, 'secondary fact-no', () =>
       send({ kind: 'join', left: ask.left, right: ask.right, answer: 'no', ...(left.value && right.value ? { instead: [left.value, right.value] } : {}) })));
+    actions.insertBefore(askButton(strings.factNo, 'secondary fact-open-no', () => { instead.hidden = false; }), actions.lastChild);
+    box.append(actions, instead);
     return box;
   }
   if (ask.kind === 'filter') {
@@ -591,6 +597,25 @@ function askElement(item: Item) {
     return box;
   }
   const unsure = { kind: 'codes', vocabulary: ask.vocabulary, concept: ask.concept, column: ask.column, codes: [], answer: 'unsure' };
+  // The codes of a pasted lookup or list of values, with their names: the two of them read each name and choose what it
+  // means, once for all the meanings of the column, and nothing is settled until they do.
+  if (ask.choose && ask.group) {
+    const group = searchGroups.get(ask.group) ?? [];
+    if (group[0]?.concept !== ask.concept) box.append(el('p', strings.chooseAbove, 'note'));
+    else box.append(chooseTable(group, ask.choose));
+    // Where no code has a name, nothing can be confirmed from the table, so the codes are entered from what the two know.
+    if (ask.choose.every(([, name]) => nameless(name))) {
+      const label = el('label', strings.chooseNoNames);
+      const input = el('input', undefined, 'fact-codes') as HTMLInputElement;
+      input.type = 'text';
+      label.append(input);
+      box.append(label, askButton(strings.codesSave, 'fact-save-codes', () => {
+        const codes = input.value.split(',').map((code) => code.trim()).filter(Boolean);
+        if (codes.length) send({ kind: 'codes', vocabulary: ask.vocabulary, concept: ask.concept, column: ask.column, codes });
+      }), askButton(strings.notSure, 'secondary fact-unsure', () => send(unsure)));
+    }
+    return box;
+  }
   // Where the list of what is charted on the cohort can be had, the codes are chosen from it, and the name search is not shown.
   if (ask.search && ask.group && listedNow && listedNow.column.toUpperCase() === (ask.column ?? '').toUpperCase()) {
     box.append(el('p', listedNow.waiting ? strings.listedAfterCount : strings.listedInstead, 'note'));
@@ -642,6 +667,50 @@ function askElement(item: Item) {
     const codes = input.value.split(',').map((code) => code.trim()).filter(Boolean);
     if (codes.length) send({ kind: 'codes', vocabulary: ask.vocabulary, concept: ask.concept, column: ask.column, codes });
   }), askButton(strings.notSure, 'secondary fact-unsure', () => send(unsure)));
+  return box;
+}
+
+// A name that is only a number, or empty, says nothing of what the code means, so it cannot confirm anything.
+const nameless = (name: string) => /^[\s\d.,-]*$/.test(name ?? '');
+
+function chooseTable(meanings: { concept: string; vocabulary: string; meaning: string; column: string }[], rows: string[][]) {
+  const box = el('div', undefined, 'candidates choose-list');
+  const table = el('table', undefined, 'candidate-table choose-table');
+  const head = el('tr');
+  head.append(el('th', strings.searchCode), el('th', strings.searchName), el('th', strings.searchChoice));
+  table.append(head);
+  const selects: [string, HTMLSelectElement][] = [];
+  const option = (value: string, label: string) => {
+    const o = el('option', label);
+    o.value = value;
+    return o;
+  };
+  for (const [code, name] of rows) {
+    const line = el('tr');
+    const select = el('select', undefined, 'candidate-choice choose-choice') as HTMLSelectElement;
+    select.dataset.code = code;
+    select.append(option('', strings.listedNotChosen), ...meanings.map((m) => option(m.concept, m.meaning)),
+      option('neither', strings.searchNeither), option('unsure', strings.notSure));
+    if (nameless(name)) {
+      select.disabled = true;
+      line.dataset.nameless = 'true';
+    }
+    const cell = el('td');
+    cell.append(select);
+    line.append(el('td', code), el('td', nameless(name) ? strings.noName : name), cell);
+    table.append(line);
+    selects.push([code, select]);
+  }
+  const save = askButton(strings.searchSave, 'search-save choose-save', () => {
+    const unsure = selects.filter(([, s]) => s.value === 'unsure').map(([code]) => code);
+    const facts: Record<string, unknown>[] = meanings.map((m) => {
+      const codes = selects.filter(([, s]) => s.value === m.concept).map(([code]) => code);
+      return codes.length ? { kind: 'codes', vocabulary: m.vocabulary, concept: m.concept, column: m.column, codes, ...(unsure.length ? { uncertain: unsure } : {}) }
+        : { kind: 'codes', vocabulary: m.vocabulary, concept: m.concept, column: m.column, codes: [], answer: 'unsure' };
+    });
+    sendFacts(box, facts);
+  });
+  box.append(table, save, el('p', strings.searchPrivate, 'note'));
   return box;
 }
 
@@ -708,16 +777,26 @@ function showCandidates(group: string, columns: string[], candidates: { code: st
 // More than one target may offer the list, so the block whose list was read is remembered, and the result is shown there
 // with that target's meanings.
 let listedNow: Target['listed'] = null;
+// The last list that was read, and what the two of them have marked in it and in the lists of earlier years, by code, so that
+// the list stays on the page after a save, a code marked not sure can be chosen again beside its count, and a code marked in
+// one year is kept when another year is listed.
+let listedShown: { column: string; year: number; columns: string[]; rows: { code: string; readings: number | null; anaesthetics: number | null; names: string[] }[] } | null = null;
+const listedMarks = new Map<string, string>();
 let listedTarget: Target | null = null;
 let listedBox: HTMLElement | null = null;
 // A query that reaches the table of readings is offered only as a script that starts from a temporary table of the cohort.
 // Above it, the page says what the script creates, what to set first and the most that it reads; where the core does not
 // offer it, the page says why instead.
 type Script = { sql: string; worst?: string; withheld?: string };
-function scriptNotes(script: Script) {
+// The largest table that the count by year and part 1 of each script read to find the anaesthetics, with its size.
+let cohortLargest: [string, number] | null = null;
+function scriptNotes(script: Script, long = false) {
   if (!script.sql) return script.withheld ? [el('p', script.withheld, 'sizes-reason status problem script-withheld')] : [];
   return [el('p', strings.scriptTemporary, 'sizes-reason script-note'), el('p', strings.scriptTimeout, 'sizes-reason script-note'),
-    ...(script.worst ? [el('p', strings.scriptWorst(script.worst), 'sizes-reason script-note')] : [])];
+    el('p', strings.scriptPlan, 'sizes-reason script-note'),
+    ...(cohortLargest ? [el('p', strings.scriptCostly(...cohortLargest), 'sizes-reason script-note')] : []),
+    ...(script.worst ? [el('p', strings.scriptWorst(script.worst), 'sizes-reason script-note')] : []),
+    ...(long ? [el('p', strings.scriptMonth, 'sizes-reason script-note')] : [])];
 }
 
 function listedElement(target: Target) {
@@ -772,6 +851,8 @@ function listedMeanings(target: Target, column: string) {
   return { meanings, words: [...words] };
 }
 
+const NOT_LIKELY = /(^|[^A-Z0-9])(PA|PAP|PULM[A-Z]*|CVP|CENTRAL VENOUS|AIRWAY|VENT[A-Z]*)($|[^A-Z0-9])/;
+
 function showListed(columns: string[], rows: { code: string; readings: number | null; anaesthetics: number | null; names: string[] }[]) {
   const shown = (listedBox?.isConnected ? listedBox : document).querySelector<HTMLElement>('.listed-result');
   const listed = listedNow;
@@ -799,18 +880,22 @@ function showListed(columns: string[], rows: { code: string; readings: number | 
   };
   for (const row of rows) {
     const line = el('tr');
-    const likely = whole.some((w) => row.names.some((n) => w.test(n.toUpperCase())));
+    // A pulmonary artery, central venous, airway or ventilator mean is never likely for an arterial or cuff mean.
+    const likely = whole.some((w) => row.names.some((n) => w.test(n.toUpperCase())))
+      && !row.names.some((n) => NOT_LIKELY.test(n.toUpperCase()));
     if (likely) line.dataset.likely = 'true';
     const select = el('select', undefined, 'candidate-choice listed-choice') as HTMLSelectElement;
     select.dataset.code = row.code;
     select.append(option('', strings.listedNotChosen), ...meanings.map((m) => option(m.concept, m.meaning)),
       option('text', strings.searchText), option('calculated', strings.listedCalculated), option('neither', strings.searchNeither),
       option('unsure', strings.notSure));
+    select.value = listedMarks.get(row.code) ?? '';
+    select.addEventListener('change', () => listedMarks.set(row.code, select.value));
     const cell = el('td');
     cell.append(select);
     const count = (n: number | null) => (n === null ? strings.countUnderTen : n.toLocaleString('en-AU'));
     line.append(el('td', row.code + (likely ? ` ${strings.listedLikely}` : '')), el('td', count(row.readings)), el('td', count(row.anaesthetics)),
-      ...row.names.map((n) => el('td', n)), cell);
+      ...(row.names.every(nameless) ? [el('td', strings.noName)] : row.names.map((n) => el('td', n))), cell);
     table.append(line);
     selects.push([row.code, select, line]);
   }
@@ -819,20 +904,26 @@ function showListed(columns: string[], rows: { code: string; readings: number | 
     for (const [, , line] of selects) line.hidden = !!text && !(line.textContent ?? '').toUpperCase().includes(text);
   });
   const save = askButton(strings.searchSave, 'search-save listed-save', () => {
-    const unsure = selects.filter(([, s]) => s.value === 'unsure').map(([c]) => c);
+    // The marks of every year listed so far are saved together, so that a code retired in an earlier year is kept.
+    for (const [code, s] of selects) listedMarks.set(code, s.value);
+    const marked = (value: string) => [...listedMarks].filter(([, v]) => v === value).map(([c]) => c);
+    const unsure = marked('unsure');
+    // A code marked not sure is one open point, on the first meaning that has codes, and not on every meaning.
+    const holder = meanings.find((m) => marked(m.concept).length);
     const facts: Record<string, unknown>[] = meanings.map((m) => {
-      const codes = selects.filter(([, s]) => s.value === m.concept).map(([c]) => c);
-      return codes.length ? { kind: 'codes', vocabulary: m.vocabulary, concept: m.concept, column: m.column, codes, ...(unsure.length ? { uncertain: unsure } : {}) }
+      const codes = marked(m.concept);
+      return codes.length ? { kind: 'codes', vocabulary: m.vocabulary, concept: m.concept, column: m.column, codes, ...(unsure.length && m === holder ? { uncertain: unsure } : {}) }
         : { kind: 'codes', vocabulary: m.vocabulary, concept: m.concept, column: m.column, codes: [], answer: 'unsure' };
     });
-    const text = selects.filter(([, s]) => s.value === 'text').map(([c]) => c);
+    const text = marked('text');
     if (text.length) facts.push({ kind: 'textbp', column: listed.column, codes: text });
-    const calculated = selects.filter(([, s]) => s.value === 'calculated').map(([c]) => c);
+    const calculated = marked('calculated');
     if (calculated.length) facts.push({ kind: 'calculated', column: listed.column, codes: calculated });
     facts.push({ kind: 'listed', column: listed.column, year: listed.year, rows: rows.length });
     sendFacts(shown, facts);
   });
   shown.replaceChildren(el('p', strings.listedFound(rows.length, rows.filter((_, i) => selects[i][2].dataset.likely).length), 'note'), filter, table, save);
+  listedShown = { column: listed.column, year: listed.year ?? 0, columns, rows };
 }
 
 // The optional count of how often each chosen code is charted on the cohort's anaesthetics in the last year of the period.
@@ -843,7 +934,7 @@ function chartedElement(target: Target) {
   chartedNow = charted;
   const box = el('div', undefined, 'sizes charted');
   box.append(el('h4', strings.chartedHeading), el('p', strings.chartedWhat(charted.from, charted.to), 'sizes-reason'),
-    ...scriptNotes(charted));
+    ...scriptNotes(charted, charted.from.slice(0, 7) !== charted.to.slice(0, 7)));
   if (!charted.sql) return box;
   const [code, copy] = queryBlock(charted.sql, 'charted-query');
   code.dataset.query = 'charted';
@@ -869,6 +960,8 @@ function yearCountBox() {
   area.rows = 5;
   label.append(area);
   const shown = el('div', undefined, 'count-result');
+  box.append(el('p', strings.countPlan, 'sizes-reason script-note'),
+    ...(cohortLargest ? [el('p', strings.countCostly(...cohortLargest), 'sizes-reason script-note')] : []));
   box.append(label, askButton(strings.countRead, 'count-read', () => {
     if (area.value.trim()) worker?.postMessage({ type: 'year-count', text: area.value });
   }), shown);
@@ -936,7 +1029,7 @@ function auditSection(target: Target) {
   const script = draft.script ?? { sql: '' };
   audit.dataset.script = String(!!script.sql);
   if (!script.sql) audit.append(el('p', strings.auditReferenceOnly, 'sizes-reason status problem'));
-  audit.append(...scriptNotes(script));
+  audit.append(...scriptNotes(script, !!target.settings?.from && target.settings.from.slice(0, 7) !== (target.settings.to ?? '').slice(0, 7)));
   const sql = script.sql || draft.sql;
   const [code, copy] = queryBlock(sql, 'audit-query');
   code.dataset.query = 'audit';
@@ -1016,7 +1109,7 @@ function itemElement(item: Item, previous?: string, queries?: Map<string, Query>
   body.append(el('span', strings.statusNames[item.status], 'visually-hidden'));
   // The question for the colleague, where there is one, is what he reads; the checklist's own account of the point is
   // folded beneath it, one click away.
-  const asking = item.status !== 'answered' && item.ask && item.stage === 'source' && !item.fact;
+  const asking = item.status !== 'answered' && item.ask && item.stage === 'source' && (!item.fact || !!item.ask.choose);
   // The visible line leaves out vocabulary names and concept numbers, which the folded detail keeps.
   const plain = plainLine(item.question);
   if (!asking) body.append(el('p', plain, 'question'));
@@ -1108,12 +1201,13 @@ function settingsElement(target: Target) {
     wrap.dataset.decision = decision.key;
     const label = el('label', decision.title);
     let input: HTMLSelectElement | HTMLInputElement;
-    if (decision.key === 'floor') {
-      input = el('input', undefined, 'decision-floor') as HTMLInputElement;
+    if (decision.key === 'floor' || decision.key === 'ceiling') {
+      const key = decision.key;
+      input = el('input', undefined, `decision-${key}`) as HTMLInputElement;
       input.type = 'number';
       input.min = '1';
-      input.max = '99';
-      input.value = chosenNow.floor ? String(chosenNow.floor) : '';
+      input.max = '299';
+      input.value = chosenNow[key] ? String(chosenNow[key]) : '';
     } else {
       input = el('select', undefined, 'decision-choice') as HTMLSelectElement;
       for (const [value, text] of decision.options) {
@@ -1139,7 +1233,7 @@ function settingsElement(target: Target) {
   box.append(askButton(strings.settingsApply, 'settings-apply', () => {
     const settings: Record<string, unknown> = { from: from.value || null, to: to.value || null, kinds: boxes.filter(([, t]) => t.checked).map(([c]) => c) };
     for (const [key, input] of pickers) {
-      if (key === 'floor') settings.floor = input.value ? Number(input.value) : null;
+      if (key === 'floor' || key === 'ceiling') settings[key] = input.value ? Number(input.value) : null;
       else settings[key] = input.value === (strings.decisions.find((d) => d.key === key)?.options[0][0]) ? null : input.value;
     }
     settings.notes = Object.fromEntries(notes.filter(([, n]) => n.value.trim()).map(([k, n]) => [k, n.value.trim()]));
@@ -1198,12 +1292,15 @@ function remainingPoints(target: Target, needs: NonNullable<Target['needs']>): P
       // A count that has run is not described as still to run.
       points.push(item.years ? { who: 'clinician', text: line(question, found, strings.endingCountSeen), ids: [id] }
         : { who: 'you', text: line(question, strings.endingByQuery), ids: [id] });
-    } else if (item.ask && !item.fact) {
+    } else if (item.ask && (!item.fact || item.ask.choose)) {
       points.push({ who: 'you', text: line(question, strings.endingByQuestion), ids: [id] });
+    } else if (item.kind === 'codes' && (item.fact === 'noted' || item.fact === 'unsure') && target.listed && !target.listed.waiting) {
+      // A code marked not sure is chosen again in the room, from the list with its count beside it.
+      points.push({ who: 'you', text: line(question, strings.endingChooseAgain), ids: [id] });
     } else if (item.queryState === 'ready' || (item.queryState === 'waiting' && item.queryIds?.length)) {
       points.push({ who: 'you', text: line(question, strings.endingByQuery), ids: [id] });
     } else if (item.queryState === 'large' || (item.fact === 'unsure' && !item.queryIds?.length)) {
-      points.push({ who: 'team', text: line(question, found, strings.endingByTeam), note: strings.teamNoteOther(question), ids: [id] });
+      points.push({ who: 'team', text: line(question, found, strings.endingByTeam), note: item.note || strings.teamNoteOther(question), ids: [id] });
     } else {
       points.push({ who: 'clinician', text: line(question, found, strings.endingClinician), ids: [id] });
     }
@@ -1242,9 +1339,10 @@ function endingElement(target: Target, needs: NonNullable<Target['needs']>, read
   return box;
 }
 
-function targetSection(target: Target, before?: { answered: number; statuses: Map<string, string> }) {
+function targetSection(target: Target, before?: { answered: number; statuses: Map<string, string>; points?: string[] }) {
   listedNow = target.listed ?? null;
   listedTarget = target;
+  cohortLargest = target.listed?.largest ?? null;
   const section = el('section', undefined, 'target');
   section.dataset.target = target.name;
   const heading = el('h3');
@@ -1258,6 +1356,11 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
   // The tally counts the points of the list at the end, by who can settle them, so that the two always agree.
   const points = target.needs ? remainingPoints(target, needs) : [];
   const count = (who: Point['who']) => points.filter((point) => point.who === who).length;
+  // Where an answer leaves more to settle than before, the page says what was learned that added to it.
+  if (before?.points && points.length > before.points.length) {
+    const added = points.filter((point) => !before.points!.includes(point.text)).map((point) => point.text);
+    if (added.length) section.append(el('p', strings.remainingRose(points.length - before.points.length, added), 'status problem remaining-rose'));
+  }
   section.append(el('p', target.needs ? strings.needs(count('you'), count('team'), count('clinician'))
     : strings.needs(needs.questions + needs.queries, 0, needs.other), 'tally'));
   section.append(el('p', sourceReady ? strings.readyNow(needs.lessCertain) : strings.notReadyYet, sourceReady ? 'status good stage-verdict' : 'status stage-verdict'));
@@ -1336,7 +1439,7 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
   const firstStage = (item: Item) => (item.stage ?? 'source') === 'source';
   const later = target.rows.filter((item) => item.stage === 'release' && !fresh.includes(item));
   // What needs the colleague now: a question not yet answered, or a short query ready to run.
-  const needsYou = (item: Item) => (item.ask && !item.fact) || item.queryState === 'ready' || !!item.queryIds?.includes('yearcount');
+  const needsYou = (item: Item) => (item.ask && (!item.fact || !!item.ask.choose)) || item.queryState === 'ready' || !!item.queryIds?.includes('yearcount');
   // The routes that rest on one name that is not visible are one point, so the page lists only the first of them.
   const missingShown = new Set<string>();
   const once = (item: Item) => {
@@ -1355,7 +1458,7 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
   // The answers that a person gave stay in view, each beside the button that changes it, and none is folded away: every
   // item that holds such an answer and is not already shown above is listed here.
   const given = (item: Item) => !!item.withdraw?.length && !fresh.includes(item) && !yours.includes(item);
-  const givenItems = target.rows.filter(given);
+  const givenItems = target.rows.filter(given).filter(once);
   if (givenItems.length) section.append(el('h4', strings.groupGiven), el('p', strings.groupGivenNote, 'note'),
     itemList('given', givenItems.map((item) => (item.status === 'answered' ? itemElement(item) : offered(item)))));
   const rest = open.filter((item) => !needsYou(item) && !given(item));
@@ -1431,6 +1534,15 @@ function renderChecklist(boundary: Boundary, afterPaste = false) {
   $('t-checklist-intro').hidden = targets.length === 0;
   $('boundary-notes').replaceChildren(...(boundary.notes ?? []).map((note) => el('p', note, 'status problem')));
   $('checklists').replaceChildren(...targets.map((target) => targetSection(target, previous?.get(target.name))));
+  // The list last read stays on the page, with what has been marked, for as long as its year is the one chosen.
+  if (listedShown && listedNow && listedNow.column === listedShown.column && listedNow.year === listedShown.year && listedNow.sql) {
+    const target = targets.find((t) => t.listed?.column === listedShown!.column);
+    if (target) {
+      listedTarget = target;
+      listedBox = document.querySelector<HTMLElement>(`section.target[data-target="${CSS.escape(target.name)}"] .listed`);
+      showListed(listedShown.columns, listedShown.rows);
+    }
+  }
 
   // What changed since the previous analysis, across the target queries that both have.
   let newly = 0;
@@ -1446,7 +1558,8 @@ function renderChecklist(boundary: Boundary, afterPaste = false) {
   snapshot = new Map(
     targets.map((target) => [
       target.name,
-      { answered: (target.stages?.source ?? target.counts).answered, statuses: new Map(target.rows.map((item) => [item.id, item.status])) },
+      { answered: (target.stages?.source ?? target.counts).answered, statuses: new Map(target.rows.map((item) => [item.id, item.status])),
+        points: target.needs ? remainingPoints(target, target.needs).map((point) => point.text) : [] },
     ]),
   );
   $('t-download-holds').hidden = !boundary.ok;

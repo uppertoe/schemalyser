@@ -1,5 +1,5 @@
 {
-  "description": "A neonate of 10 days has a general anaesthetic with an arterial line running from its start to its end, whose arterial means fall below 40 at 09:10, 09:11, 09:17 and 09:18, with a cuff mean of 60 at 09:12 in the middle of that run. Under the present rule, which keeps every reading and lets each stand until the next for no longer than five minutes, the cuff mean interrupts the low run and the readings below 40 stand for 4 minutes. When the arterial line alone is used once it is running, the query sets the cuff mean aside, the arterial mean of 36 at 09:11 then stands until 09:17 but for no longer than five minutes, and the readings below 40 stand for 8 minutes.",
+  "description": "A neonate of 10 days has a general anaesthetic with an arterial line running from its start to its end, whose arterial means fall below 40 at 09:10, 09:11, 09:17 and 09:18, with a cuff mean of 60 at 09:12 in the middle of that run. Where the arterial reading is preferred only at a shared time, which keeps every reading and lets each stand until the next for no longer than five minutes, the cuff mean interrupts the low run and the readings below 40 stand for 4 minutes. When the arterial line alone is used once it is running, the query sets the cuff mean aside, the arterial mean of 36 at 09:11 then stands until 09:17 but for no longer than five minutes, and the readings below 40 stand for 8 minutes.",
   "expectations": [
     {
       "says": "The child is a neonate of 10 days at the start and has no recorded death.",
@@ -10,7 +10,7 @@
       ]
     },
     {
-      "says": "Under the present rule the query keeps all eight readings, the cuff mean of 60 stands from 09:12 until the arterial mean at 09:17, and the four arterial means below 40 stand for one minute each, so the readings below 40 stand for 4 minutes.",
+      "says": "Where the arterial reading is preferred only at a shared time, the query keeps all eight readings, the cuff mean of 60 stands from 09:12 until the arterial mean at 09:17, and the four arterial means below 40 stand for one minute each, so the readings below 40 stand for 4 minutes.",
       "query": "WITH reading AS (SELECT a.anaesthetic_id, a.end_datetime, m.measurement_datetime, m.value_as_number, ROW_NUMBER() OVER (PARTITION BY a.anaesthetic_id, m.measurement_datetime ORDER BY CASE WHEN m.measurement_concept_id = 21490852 THEN 0 ELSE 1 END, m.measurement_id) AS kept_at_time FROM omop.anaesthetic a JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id JOIN omop.measurement m ON m.measurement_event_id = a.anaesthetic_id AND m.measurement_concept_id IN (21492241, 21490852) AND m.measurement_datetime >= a.start_datetime AND (a.end_datetime IS NULL OR m.measurement_datetime <= a.end_datetime) WHERE vd.visit_detail_source_value = '990004400'), stood AS (SELECT value_as_number, measurement_datetime, COALESCE(LEAD(measurement_datetime) OVER (ORDER BY measurement_datetime), end_datetime) AS until_datetime FROM reading WHERE kept_at_time = 1) SELECT COALESCE(SUM(CASE WHEN value_as_number < 40 AND until_datetime IS NOT NULL THEN CASE WHEN DATEDIFF(second, measurement_datetime, until_datetime) > 300 THEN 300 ELSE DATEDIFF(second, measurement_datetime, until_datetime) END ELSE 0 END), 0) / 60.0 AS minutes_below_40, COUNT(*) AS kept_readings FROM stood",
       "result": [
         4,
@@ -34,6 +34,6 @@
     }
   ],
   "cases": [
-    "A neonate of 10 days with no recorded death, whose arterial means fall below 40 at 09:10, 09:11, 09:17 and 09:18 with a cuff mean of 60 at 09:12 between them, should give 4 minutes below 40 under the present rule and 8 minutes when the arterial line alone is used once it is running, and no death within 90 days under either rule."
+    "A neonate of 10 days with no recorded death, whose arterial means fall below 40 at 09:10, 09:11, 09:17 and 09:18 with a cuff mean of 60 at 09:12 between them, should give 4 minutes below 40 where the arterial reading is preferred only at a shared time and 8 minutes where the arterial line alone is used once it is running, whichever the specification's decisions name as the rule in force, and no death within 90 days under either rule."
   ]
 }
