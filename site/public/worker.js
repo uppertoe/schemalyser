@@ -166,15 +166,19 @@ self.onmessage = async (event) => {
         const zip = browser.pack_zip().toJs();
         self.postMessage({ type: 'fact-added', ...reply, zip, checkScript: browser.check_script() }, [zip.buffer]);
       } else self.postMessage({ type: 'fact-added', ...reply });
-    } else if (message.type === 'facts' || message.type === 'settings') {
-      // Several answers at once, or the audit's settings: the core checks them and works the checklists out again.
-      const reply = JSON.parse(message.type === 'facts' ? browser.facts_add(message.facts) : browser.settings_set(message.settings));
+    } else if (message.type === 'facts' || message.type === 'settings' || message.type === 'fact-withdraw') {
+      // Several answers at once, the audit's settings, or an answer withdrawn: the core works the checklists out again.
+      const reply = JSON.parse(message.type === 'facts' ? browser.facts_add(message.facts)
+        : message.type === 'settings' ? browser.settings_set(message.settings) : browser.fact_withdraw(message.withdraw));
       if (reply.ok) {
         const zip = browser.pack_zip().toJs();
         self.postMessage({ type: 'fact-added', ...reply, zip, checkScript: browser.check_script() }, [zip.buffer]);
       } else self.postMessage({ type: 'fact-added', ...reply });
     } else if (message.type === 'search-sql') {
       self.postMessage({ type: 'search-sql', group: message.group, ...JSON.parse(browser.codes_search_sql(message.request)) });
+    } else if (message.type === 'listed') {
+      // The names that the list returns are shown on the page and written into no file.
+      self.postMessage({ type: 'listed', ...JSON.parse(browser.listed_read(message.text)) });
     } else if (message.type === 'charted') {
       self.postMessage({ type: 'charted', ...JSON.parse(browser.charted_read(message.text)) });
     } else if (message.type === 'year-count') {

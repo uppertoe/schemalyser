@@ -230,10 +230,70 @@ def _remains(row):
     return row["question_id"].startswith("route-")
 
 
+def _withdrawable(row, rows):
+    """The facts that a person gave and that settled or shaped an item, as patterns that fact_withdraw takes, or []."""
+    names = row.get("_names") or {}
+    if row["question_id"] == "count-by-year":
+        return [{"kind": "count"}] if row.get("_count") else []
+    if row.get("_fact") == "measure" and row["kind"] == "relationship":
+        # A match that a person gave in place of another: withdrawing it withdraws the answer about the match it replaced.
+        import re
+        found = re.search(r"in place of ([A-Za-z0-9_$#@]+\.[A-Za-z0-9_$#@]+) = ([A-Za-z0-9_$#@]+\.[A-Za-z0-9_$#@]+)", row.get("evidence_in_hand", ""))
+        return [{"kind": "join", "left": found.group(1), "right": found.group(2)}] if found else []
+    if not row.get("_fact") or row["_fact"] == "measure":
+        return []
+    if row["question_id"].startswith("route-"):
+        # The question about a name that is not visible was answered for every route that rests on it, so all go together.
+        return [{"kind": "route", "step": (r.get("_names") or {}).get("step", "")} for r in rows
+                if r["question_id"].startswith("route-") and (r.get("_names") or {}).get("missing") == names.get("missing")]
+    if row["kind"] == "relationship":
+        return [{"kind": "join", "left": names.get("left", ""), "right": names.get("right", "")}]
+    if row["kind"] == "filter":
+        return [{"kind": "filter", "column": names.get("column", "")}]
+    if row["kind"] == "codes":
+        if row.get("_wording") == "codes-concept":
+            return [{"kind": "codes", "vocabulary": v.strip(), "concept": names.get("concept")}
+                    for v in str(names.get("vocabularies", "")).replace(" and ", ",").split(",") if v.strip()]
+        if names.get("vocabulary"):
+            return [{"kind": "codes", "vocabulary": names["vocabulary"]}]
+    return []
+
+
+def _routes(rows):
+    """The routes that the catalogue settled, one sentence for each name that is not visible, however many steps rest on it."""
+    from . import target
+    template = target.WORDING["in_hand"].get("route_taken", "")
+    if "{what} from {tables}" not in template:
+        return []   # the checklist's own sentences, one for each step, are shown instead
+    by_missing = {}
+    for row in rows:
+        names = row.get("_names") or {}
+        if row["question_id"].startswith("route-") and names.get("missing"):
+            by_missing.setdefault(names["missing"], []).append(names)
+    said = []
+    for missing, group in by_missing.items():
+        parts = list(dict.fromkeys(f"{n.get('what', 'rows')} from {n.get('tables', 'other tables')}" for n in group))
+        sentence = template.replace("{what} from {tables}", ", and the ".join(parts)).format(missing=missing)
+        effects = list(dict.fromkeys(n["effect"] for n in group if n.get("effect")))
+        said.append(" ".join([sentence] + effects))
+    return said
+
+
+def _matches(fact, pattern):
+    """Whether a fact is the one that a withdrawal pattern names: the same kind, and the same value for each key it gives."""
+    if not isinstance(pattern, dict) or fact.get("kind") != pattern.get("kind"):
+        return False
+    if fact["kind"] == "join":
+        return frozenset({str(fact["left"]).upper(), str(fact["right"]).upper()}) == \
+            frozenset({str(pattern.get("left", "")).upper(), str(pattern.get("right", "")).upper()})
+    return all(str(fact.get(key, "")).upper() == str(value).upper() for key, value in pattern.items() if key != "kind")
+
+
 def _needs(rows):
     """What a person must still do for the first phase, by kind, and how many points are only less certain."""
     first = [r for r in rows if (r.get("phase") or "source") == "source"]
-    must = [r for r in first if _remains(r)]
+    # An empty cohort, an empty list of what is charted and a count of none for the chosen codes head the list.
+    must = sorted((r for r in first if _remains(r)), key=lambda r: not r.get("_top"))
     asked = [r for r in must if r.get("_ask") and not r.get("_fact")]
     queried = [r for r in must if r not in asked and r.get("_queries")]
     return {"questions": len(asked), "queries": len(queried), "other": len(must) - len(asked) - len(queried),
@@ -318,7 +378,14 @@ def boundary_run(state_commit=None, requests_commit=None):
                  "queryState": row.get("query_state") or "", "queryReason": row.get("query_reason") or "",
                  "queryIds": list(row.get("_queries") or []), "stage": row.get("phase") or "source",
                  # The question that a colleague can answer from knowledge, and the answer a person gave, if any.
-                 "ask": row.get("_ask"), "fact": row.get("_fact") or ""} for row in t["rows"]]
+                 "ask": row.get("_ask"), "fact": row.get("_fact") or "",
+                 # The facts that a person gave about the item, which the page can withdraw, and the counts by year once seen.
+                 "withdraw": _withdrawable(row, t["rows"]),
+                 # Whether the item heads what remains, and, for a route, the name that is not visible, which the page
+                 # uses to name each such table once.
+                 "top": bool(row.get("_top")), "missing": (row.get("_names") or {}).get("missing", "")
+                 if row["question_id"].startswith("route-") else "",
+                 **({"years": row["_count"]["years"]} if row.get("_count") else {})} for row in t["rows"]]
         offered = t.get("queries") or {"sizes": None, "queries": []}
         # The source draft, which the page offers as the audit query once the first stage is ready. It stays
         # in this page, which runs inside the hospital, and is written to no file unless the user saves it.
@@ -329,6 +396,8 @@ def boundary_run(state_commit=None, requests_commit=None):
             facts_of = target_module.draft_facts(t["draft"], _reading()[0])
             sizes = _checks.rows if _checks is not None else {}
             draft = {"sql": t["draft"], "countsOnly": facts_of["counts_only"], "restructured": bool(t.get("draft_restructured")),
+                     # The reference query as a script that is safe to run, or the reason that it is not offered to be run.
+                     "script": t.get("draft_script"),
                      "tables": [{"name": n, "rows": next((v for k, v in sizes.items() if k.upper() == n.upper()), None)}
                                 for n in facts_of["tables"]]}
         targets.append({"name": t["name"], "counts": t["counts"], "steps": t["steps"],
@@ -339,10 +408,14 @@ def boundary_run(state_commit=None, requests_commit=None):
                         "profile": offered.get("profile") or [], "draft": draft, "stages": t.get("stages"),
                         "questions": t.get("questions") or "", "specification": t.get("specification") or "",
                         # The routes that the catalogue settled, one sentence each, shown at the head of the checklist.
-                        "routes": t.get("routes") or [],
+                        "routes": _routes(t["rows"]) or t.get("routes") or [],
                         "settings": t.get("settings") or {}, "kinds": [[k, n] for k, n in t.get("kinds") or []],
+                        # What choosing the kinds of anaesthetic costs, in one sentence, shown above the ticks.
+                        "kinds_cost": t.get("kinds_cost") or "",
                         # The optional count of how often each chosen code is charted, with what an earlier count gave.
-                        "charted": t.get("charted"),
+                        "charted": {k: v for k, v in t["charted"].items() if k != "single"} if t.get("charted") else None,
+                        # The list of what is charted on the cohort in one year, from which the codes are chosen.
+                        "listed": t.get("listed"),
                         "needs": _needs(t["rows"]),
                         "stageVerdicts": [line for line in t["readiness"].splitlines()
                                           if line.startswith(("The question is ready", "The question is not yet ready"))]})
@@ -507,18 +580,24 @@ def first_ask_read(text, rules=None, checks=None):
     from .rules import SiteRules
     try:
         rules_text = decode(_bytes(rules)) if rules is not None else None
-        catalogue, checks_text, facts = first_ask.read(str(text), SiteRules.from_json(rules_text),
+        site_rules = SiteRules.from_json(rules_text)
+        catalogue, checks_text, facts = first_ask.read(str(text), site_rules,
                                                        decode(_bytes(checks)) if checks is not None else None)
     except (first_ask.FirstAskError, ValueError, TypeError, AttributeError):
         return json.dumps({"ok": False})
     # The tables that the first query asked about and that did not come back, which are not visible to this login. Their
-    # names come from the requests and the conversion, so they are shown only on the page.
-    missing = []
+    # names come from the requests and the conversion, so they are shown only on the page. Where most of them, or every
+    # lookup table that the site rules name, did not come back, "doubt" says so, because the SQL window may be connected
+    # to the wrong database or schema, or with a login whose rights are narrow.
+    missing, doubt = [], ""
     if _first_names is not None:
         from .catalogue import Catalogue
         held = {t.name.upper() for t in Catalogue.from_csv(catalogue).tables()}
-        missing = sorted(n for n in _first_names.chosen()[0] if n.upper() not in held)
-    return json.dumps({"ok": True, "catalogue": catalogue, "checks": checks_text, "facts": facts, "missing": missing})
+        asked = _first_names.chosen()[0]
+        missing = sorted(n for n in asked if n.upper() not in held)
+        doubt = first_ask.doubt(asked, held, site_rules)
+    return json.dumps({"ok": True, "catalogue": catalogue, "checks": checks_text, "facts": facts, "missing": missing,
+                       "doubt": doubt})
 
 
 def state_zip():
@@ -632,6 +711,25 @@ def codes_search_read(text):
     return json.dumps({"ok": bool(found), "columns": columns, "candidates": found})
 
 
+def listed_read(text):
+    """Reads the pasted list of what is charted on the cohort: {"ok", "columns", "rows": [{"code", "readings", "anaesthetics",
+    "names"}]}. The names are the hospital's own; they are returned to the page to show and written into no file."""
+    lines = [l for l in str(text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n") if l.strip()]
+    cells = [[c.strip() for c in (l.split("\t") if "\t" in l else l.split(","))] for l in lines]
+    cells = [r for r in cells if not all(set(c) <= {"-"} for c in r) and not (len(r) == 1 and "rows affected" in r[0])]
+    headed = bool(cells) and cells[0][0].lower() == "code"
+    columns = cells[0][3:] if headed else []
+    found, seen = [], set()
+    for row in cells[1 if headed else 0:]:
+        if len(row) < 3 or not row[0] or row[0] in seen or len(row[0]) > 50 or "," in row[0]:
+            continue
+        number = lambda v: int(v) if v.isdecimal() else None  # noqa: E731
+        seen.add(row[0])
+        found.append({"code": row[0], "readings": number(row[1]), "anaesthetics": number(row[2]),
+                      "names": [v if v != "NULL" else "" for v in row[3:]][:6]})
+    return json.dumps({"ok": bool(found) or headed, "columns": columns, "rows": found[:5000]})
+
+
 def charted_read(text):
     """Reads the pasted result of the count of the chosen codes: {"ok", "rows": [[code, readings, anaesthetics]]}.
 
@@ -649,11 +747,12 @@ def charted_read(text):
 
 
 def year_count_read(text):
-    """Reads the pasted result of the count by year: {"ok", "years": [[year, anaesthetics, in the cohort]]}."""
+    """Reads the pasted result of the count by year: {"ok", "years": [[year, anaesthetics, in the cohort, with no kind
+    recorded]]}. A result of the earlier count, without the last column, gives each year three values."""
     found = []
     for line in str(text or "").replace("\r", "").split("\n"):
         cells = [c.strip() for c in (line.split("\t") if "\t" in line else line.split(","))]
-        if len(cells) != 3 or not cells[0].isdecimal() or not 1900 <= int(cells[0]) <= 2200:
+        if len(cells) not in (3, 4) or not cells[0].isdecimal() or not 1900 <= int(cells[0]) <= 2200:
             continue
         values = [int(c) if c.isdecimal() else None for c in cells[1:]]
         found.append([int(cells[0])] + values)
@@ -672,6 +771,45 @@ def settings_set(text):
         return json.dumps({"ok": False})
     global _settings
     _settings = json.dumps({k: v for k, v in settings.items() if v}) + "\n"
+    return json.dumps({"ok": True, "boundary": json.loads(boundary_run(None, _requests_commit))})
+
+
+def fact_withdraw(text):
+    """Withdraws the facts that a person gave about one item, so that the question is asked again.
+
+    The text is JSON: one pattern, or a list of them, as the page's item gives under "withdraw". Each fact that a pattern
+    names is removed for its subject from the facts confirmed on this page and from the state's facts.json, the site's
+    mapping rows are written again, and the checklists are worked out again. Returns JSON as fact_add does.
+    """
+    global _facts
+    from . import boundary
+    from . import facts as facts_module
+    catalogue, _ = _reading()
+    try:
+        if catalogue is None:
+            raise facts_module.FactsError("no catalogue")
+        given = json.loads(str(text))
+        patterns = given if isinstance(given, list) else [given]
+        if not patterns or len(patterns) > 50 or not all(isinstance(p, dict) and p.get("kind") in facts_module.KINDS for p in patterns):
+            raise facts_module.FactsError("a list of facts to withdraw")
+        path = f"{BOUNDARY_ROOT}/state/{boundary.FACTS}"
+        held = facts_module.Facts()
+        if os.path.isfile(path):
+            with open(path, "rb") as f:
+                held = facts_module.Facts.from_json(decode(f.read()), catalogue)
+    except (facts_module.FactsError, ValueError, TypeError):
+        return json.dumps({"ok": False})
+    subjects = {facts_module._subject(f) for f in held.items + list(_facts or []) if any(_matches(f, p) for p in patterns)}
+    for subject in subjects:
+        held = held.without(subject)
+    _facts = [f for f in _facts or [] if facts_module._subject(f) not in subjects]
+    if subjects:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(held.to_json())
+        conversion = f"{BOUNDARY_ROOT}/state/{boundary.CONVERSION}"
+        if os.path.isdir(conversion):
+            with open(f"{conversion}/{facts_module.SITE_MAPPINGS}", "w", encoding="utf-8", newline="") as f:
+                f.write(held.site_mappings())
     return json.dumps({"ok": True, "boundary": json.loads(boundary_run(None, _requests_commit))})
 
 

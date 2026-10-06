@@ -109,7 +109,7 @@ export const strings = {
   boundaryProgress: 'Schemalyser has read the requests and is now working out the checklist for each target query.',
 
   // The checklist.
-  checklistIntro: "For each audit question, Schemalyser shows what it still needs, with a question for you or a short query beside each. The marks show what is settled, and you cannot tick them by hand.",
+  checklistIntro: "For each audit question, Schemalyser shows what it still needs, with a question for you or a short query beside each. Schemalyser sets each mark itself once an item is settled.",
   noChecklist:
     "To see a checklist for each target query, supply a state folder, or Schemalyser's repository on GitHub, that holds a conversion folder and a folder of target queries.",
   boundaryProblems: {
@@ -153,6 +153,8 @@ export const strings = {
   groupOther: 'Points for the clinician or the central team after the meeting',
   groupOtherNote: 'Nothing is needed from you for these in the meeting. Each says who settles it and how.',
   groupAnswered: (n: number) => `Show the ${n} answered ${items(n)}`,
+  groupGiven: 'The answers that you have given',
+  groupGivenNote: 'Each answer that you have given stands here beside the button that changes it. If an answer turns out to be wrong, change it, and Schemalyser asks the question again.',
   blocking: 'The audit query must rest on this.',
   notBlocking: 'This makes the answer more certain, and the audit query does not wait for it.',
   statusNames: { answered: 'Answered.', partly: 'Partly answered.', open: 'Open.' } as Record<string, string>,
@@ -345,13 +347,14 @@ export const strings = {
   policySummary: 'How this page checks that nothing can leave it',
   githubSummary: 'Fetch the files from GitHub instead (not needed in a meeting)',
   catalogueSummary: 'If your team already keeps the full list of tables and columns',
-  needs: (questions: number, queries: number, other: number) => {
-    const total = questions + queries + other;
+  // The tally at the head of a checklist, by who can settle each point, as the list at the end groups them.
+  needs: (you: number, team: number, clinician: number) => {
+    const total = you + team + clinician;
     if (!total) return 'Schemalyser needs nothing more for this audit question.';
     const parts = [
-      questions ? `${questions} ${questions === 1 ? 'question' : 'questions'} for you` : '',
-      queries ? `${queries} short ${queries === 1 ? 'query' : 'queries'}` : '',
-      other ? `${other} ${other === 1 ? 'point' : 'points'} for the clinician after the meeting` : '',
+      you ? `${you} for you now` : '',
+      team ? `${team} for the team that looks after the reporting database` : '',
+      clinician ? `${clinician} for the clinician after the meeting` : '',
     ].filter(Boolean);
     const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
     return `Schemalyser needs ${total} more ${total === 1 ? 'thing' : 'things'} for this audit question: ${list}.`;
@@ -376,9 +379,34 @@ export const strings = {
   searchSave: 'Save the choices',
   searchTooMany: (n: number, shown: number) =>
     `The search returned ${n.toLocaleString('en-AU')} rows, which is more than this page can sensibly list, so Schemalyser shows only the first ${shown} below. Narrow the words above, write the search again, and run it once more, so that every row it returns can be seen and chosen.`,
+  // Each query that reaches the table of readings is a short script that starts from a temporary table of the cohort.
+  scriptTemporary: "The script creates one temporary table, #cohort, which holds only the keys of the audit's anaesthetics and of their records, exists only in your own session and goes when your SQL window closes, and it creates or changes nothing else.",
+  scriptTimeout: 'Before you run anything that reaches the readings, set a query time-out in your SQL window and look at the estimated plan. Run part 1 of the script on its own first, because SQL Server can show the plan of part 2 only once #cohort exists.',
+  scriptWorst: (n: string) => `The count by year shows at most about ${n} anaesthetics of the cohort in this period, so the script reads the readings of those anaesthetics and of no others.`,
+  auditReferenceOnly: 'This query is shown as a reference for the person who writes the audit query, and it should not be run on the production database.',
+  listedHeading: 'What is charted on the audit\'s anaesthetics',
+  listedWhat: (column: string, year: number) =>
+    `This script lists every code of ${column} that was charted on the audit's anaesthetics that started in ${year}, with its count and its names, most charted first. It puts those anaesthetics into a temporary table first and then reaches the readings only through their own records, by key; its first lines say which tables it reads. Run it, paste the result below, and mark the rows that matter. A row that you leave unmarked is simply not chosen.`,
+  listedYear: 'The year to list:',
+  listedPasteLabel: 'The result of the list, copied from the results grid with its headers:',
+  listedRead: 'Show the list',
+  listedNone: 'Schemalyser could not read any code in the pasted text. Each row needs the code, the two counts and the names that the list returns.',
+  listedFilter: 'Type to show only the rows that hold these words',
+  listedReadings: 'Readings',
+  listedAnaesthetics: 'Anaesthetics',
+  listedNotChosen: 'Not chosen',
+  listedCalculated: 'A mean calculated from systolic and diastolic, which the audit leaves out',
+  listedLikely: '(likely)',
+  listedFound: (n: number, likely: number) =>
+    `The list holds ${n.toLocaleString('en-AU')} ${n === 1 ? 'code' : 'codes'}, and ${likely} of them ${likely === 1 ? 'has' : 'have'} a name that holds a word for the meanings sought, marked as likely. Mark each row that matters, then save the choices.`,
+  listedKept: (n: number, year: number) =>
+    n ? `Schemalyser has kept the choices from the list for ${year}, which held ${n.toLocaleString('en-AU')} ${n === 1 ? 'code' : 'codes'}.`
+      : `The list for ${year} came back empty. The list of what remains says what to check first.`,
+  listedAfterCount: 'Once you have seen the count by year, Schemalyser offers a list of the codes charted on the audit\'s anaesthetics in one year, with their counts and names, and the codes for this meaning are chosen from it.',
+  listedInstead: 'The codes for this meaning are chosen from the list of what is charted on the audit\'s anaesthetics, further down this section.',
   chartedHeading: 'How often each chosen code is charted',
   chartedWhat: (from: string, to: string) =>
-    `This query is optional. It counts, for the codes chosen in the name search only, how often each was charted on the audit's anaesthetics that started from ${from} to ${to}, the last year of the study period, and on how many of those anaesthetics. It starts from those anaesthetics and reads only the readings that belong to them, never the whole table of readings. Schemalyser carries the counts into the specification.`,
+    `This script is optional. It counts, for the chosen codes only, how often each was charted on the audit's anaesthetics that started from ${from} to ${to}, the last year of the study period, and on how many of those anaesthetics. It puts those anaesthetics into a temporary table first and reads only the readings that belong to them, never the whole table of readings. Schemalyser carries the counts into the specification.`,
   chartedPasteLabel: 'The result of the count, copied from the results grid with its headers:',
   chartedRead: 'Keep the counts',
   chartedNone: 'Schemalyser could not read any code in the pasted text. Each row needs the three columns that the count returns: code, readings and anaesthetics.',
@@ -392,11 +420,38 @@ export const strings = {
   settingsApply: 'Apply the period and the kinds',
   endingHeading: 'Where this audit question stands',
   endingSettled: (n: number) => `${n} ${n === 1 ? 'thing is' : 'things are'} settled.`,
-  endingRemaining: 'These remain, each with who can settle it:',
+  endingRemaining: 'These remain, grouped by who can settle them.',
+  endingYouHeading: 'You can settle these now, in the meeting:',
+  endingTeamHeading: 'The team that looks after the reporting database can settle these:',
+  endingClinicianHeading: 'The clinician settles these after the meeting, by changing the folder for this audit:',
   endingByQuestion: 'You can answer the question with it above.',
-  endingByQuery: 'The short query with it above settles it.',
+  endingByQuery: 'Run the short query with it above, then paste its result.',
+  endingCountSeen: 'The count has run. The clinician checks the joins and filters that it rests on after the meeting.',
+  endingByTeam: 'The note to the team below asks about this.',
+  endingTeamRoute: (missing: string) => `${missing} is not visible to this login. The note to the team below asks whether it exists here and, if it does, for a login that can read it.`,
   endingNothing: 'Nothing remains to be settled.',
   endingClinician: 'The clinician settles this after the meeting.',
+  teamNoteHeading: 'A note for the team that looks after the reporting database',
+  teamNoteWhat: 'These points can be settled only by the team that looks after the reporting database. The note gathers them, ready to copy and send.',
+  teamNoteCopy: 'Copy the note',
+  teamNote: (lines: string[]) =>
+    `Hello,\n\nWe are working through an approved anaesthesia audit on the reporting database, and a few points can be settled only by the team that looks after it. We would be grateful for your help with each of the following.\n\n${lines.map((line, i) => `${i + 1}. ${line}`).join('\n')}\n\nThank you for your help.`,
+  teamNoteRoute: (missing: string) =>
+    `${missing} is not visible to our login. Please tell us whether it exists in the reporting database and, if it does, whether our login can be given the right to read it.`,
+  teamNoteOther: (point: string) => `${point} We were not able to settle this in the meeting, and we would be grateful for what you know of it.`,
+  withdrawAnswer: 'Change this answer',
+  withdrawn: 'Schemalyser has withdrawn the answer and worked out the checklist again, so the question is asked again.',
+  newlyAnsweredNow: (n: number) =>
+    n === 1
+      ? 'What you have just entered settles 1 item, and Schemalyser lists it first.'
+      : `What you have just entered settles ${n} items, and Schemalyser lists them first.`,
+  groupNewNow: 'Settled just now',
+  settingsBeforeCount: (from: number, first: number) =>
+    `The study period begins in ${from}, but the count shows records only from ${first}. Anaesthetics before ${first} are not in this database, so the audit cannot count them.`,
+  firstDoubt: {
+    most: 'Most of the tables that the first query asked about did not come back. The SQL window may be connected to the wrong database or schema, or the login may have narrow rights. Before you go on, check which database the SQL window is connected to. If it is the wrong one, connect to the reporting database and run the first query again.',
+    lookups: 'None of the lookup tables that the site rules name came back from the first query. The SQL window may be connected to the wrong database or schema, or the login may have narrow rights. Before you go on, check which database the SQL window is connected to. If it is the wrong one, connect to the reporting database and run the first query again.',
+  } as Record<string, string>,
   endingLessCertain: (n: number) => `${n} further ${n === 1 ? 'point is' : 'points are'} less certain. The audit query does not wait for ${n === 1 ? 'it' : 'them'}, and the specification lists ${n === 1 ? 'it' : 'them'}.`,
   endingSave: "Save before you close the page, and keep the file in the clinician's folder for this audit, on the hospital's network. At the next meeting, choose that folder, and nothing will be asked twice.",
   specWhatOpen: 'This page is for the person who writes the audit query. Some points are not yet settled, and it shows each as an assumption. It names this hospital\'s tables and codes, so it is for use inside the hospital only.',
@@ -419,8 +474,9 @@ export const strings = {
   countAll: 'Anaesthetics',
   countCohort: 'In the cohort',
   countUnderTen: 'under 10',
-  countAsk: 'Do these numbers look right for this hospital?',
-  countEmpty: 'The count found no anaesthetic at all. Does that look right for this hospital?',
+  countAsk: "Compare these numbers with the hospital's usual workload, then choose one:",
+  countNoKind: 'No kind recorded',
+  countEmpty: "The count found no anaesthetic at all. Compare this with the hospital's usual workload, then choose one:",
   countRight: 'About right',
   countFew: 'Too few',
   countMany: 'Too many',

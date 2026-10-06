@@ -117,6 +117,16 @@ def test_the_result_becomes_the_catalogue_and_the_sizes():
     assert facts["sized"] == 1
 
 
+def test_a_result_that_lacks_most_tables_or_every_lookup_table_raises_a_doubt_about_the_database():
+    from schemalyser.rules import SiteRules
+    rules = SiteRules.from_json(json.dumps({"definitionKeys": [{"column": "KIND_C", "definitionTable": "ZC_KIND",
+                                                                "labelColumn": "NAME"}]}))
+    assert first_ask.doubt(["A", "B", "C"], ["a"], rules) == "most"
+    assert first_ask.doubt(["A", "B", "ZC_KIND"], ["A", "B"], rules) == "lookups"
+    assert first_ask.doubt(["A", "B", "ZC_KIND"], ["A", "zc_kind"], rules) == ""
+    assert first_ask.doubt(["A", "B"], ["A", "B"], rules) == "" and first_ask.doubt([], [], rules) == ""
+
+
 def test_the_first_query_is_never_written_into_any_output(monkeypatch, tmp_path):
     monkeypatch.setattr(browser, "BOUNDARY_ROOT", str(tmp_path / "worker"))
     browser.clear()

@@ -205,7 +205,8 @@ test('each open item carries its query, and a pasted result ticks it and brings 
   await expect(ready).toContainText('WITH (NOLOCK)');
   await expect(ready).toContainText('SELECT TOP (201)');
   const readyItem = section.locator('li.item', { has: page.locator(`pre[data-query="${KIND}"]`) });
-  await expect(readyItem).toHaveAttribute('data-status', 'partly');
+  // The kind of anaesthetic is only assumed from the conversion's own mapping, and the answer rests on it, so the item is open.
+  await expect(readyItem).toHaveAttribute('data-status', 'open');
   await expect(readyItem.locator('.query-state')).toHaveText(strings.queryStates.ready);
   await expect(readyItem.locator('.query-reason')).toContainText('The query lists each code that ANAES_RECORD.ANAES_KIND_CAT holds');
   const others = section.locator('li.item', { has: page.locator('.query-earlier') });
@@ -319,7 +320,7 @@ test('the core profile queries are shown for the central OMOP team, and a pasted
 
 test('without a catalogue, one first query of names and sizes starts the project, and a ready question offers its audit query', async ({ page, context, browserName }) => {
   test.setTimeout(300_000);
-  const state = seen(makeState(join(mkdtempSync(join(tmpdir(), 'schemalyser-first-')), 'state'), { catalogue: false, checks: false }));
+  const state = seen(makeState(join(mkdtempSync(join(tmpdir(), 'schemalyser-first-')), 'state'), { catalogue: false, checks: false }), true);
   await page.goto('./');
   await expect(page.getByText(strings.loaded)).toBeVisible({ timeout: 120_000 });
   await setOnline(page, context, browserName, false);
@@ -344,6 +345,8 @@ test('without a catalogue, one first query of names and sizes starts the project
   await page.locator('#first-paste').fill(lines.join('\n'));
   await page.locator('#first-read').click();
   await expect(page.locator('#t-first-result')).toContainText('You can now analyse the files.');
+  // Every table that the audit needs came back, so nothing suggests the wrong database.
+  await expect(page.locator('#t-first-doubt')).toBeHidden();
   await expect(page.locator('#analyse')).toBeEnabled();
   await page.locator('#analyse').click();
   await expect(page.locator('#checklists section.target')).toHaveCount(world.targets.length, { timeout: 120_000 });
@@ -373,7 +376,7 @@ test('a question that is ready to be answered from the source database offers th
   await page.goto('./');
   await expect(page.getByText(strings.loaded)).toBeVisible({ timeout: 120_000 });
   await setOnline(page, context, browserName, false);
-  await page.locator('#state-folder').setInputFiles(seen(makeState(join(mkdtempSync(join(tmpdir(), 'schemalyser-ready-')), 'state'))));
+  await page.locator('#state-folder').setInputFiles(seen(makeState(join(mkdtempSync(join(tmpdir(), 'schemalyser-ready-')), 'state')), true));
   await page.locator('#folder').setInputFiles(fixtures + 'requests');
   await page.locator('#analyse').click();
   await expect(page.locator('#checklists section.target')).toHaveCount(world.targets.length, { timeout: 120_000 });
@@ -422,6 +425,23 @@ test('a colleague answers a question from knowledge, and the item ticks without 
   const ticked = section.locator('li.item[data-id="relationship-OBS_SHEET.VISIT_KEY=VISIT.VISIT_KEY"]');
   await expect(ticked.first()).toHaveAttribute('data-status', 'answered');
   await expect(ticked.first()).toContainText('You confirmed on');
+  // The answer and the button that changes it stand in view beside each other, outside the folded account.
+  await expect(ticked.first().locator('.answer-given .answer-text')).toBeVisible();
+  await expect(ticked.first().locator('.answer-given .answer-text')).toContainText('You confirmed on');
+  await expect(ticked.first().locator('details button.withdraw-answer')).toHaveCount(0);
+  await expect(ticked.first().locator('.answer-given button.withdraw-answer')).toBeVisible();
+  // The answer can be changed: withdrawn, the question is asked again, and the note of what was settled goes with it.
+  await ticked.first().locator('button.withdraw-answer').click();
+  await expect(page.locator('#t-paste-result')).toHaveText(strings.withdrawn, { timeout: 120_000 });
+  await expect(section.locator('.fresh-note')).toHaveCount(0);
+  await expect(item.locator('.ask .ask-text')).toContainText('Is that right?');
+  await item.locator('button.fact-yes').click();
+  await expect(page.locator('#t-paste-result')).toHaveText(strings.factRecorded, { timeout: 120_000 });
+  await expect(ticked.first()).toHaveAttribute('data-status', 'answered');
+  // The ending groups what remains by who can settle it, and its tally agrees with the list.
+  const tally = (await section.locator('.tally').textContent()) ?? '';
+  const listed = await section.locator('.ending ul.remaining li').count();
+  if (listed) expect(tally).toContain(`needs ${listed} more`);
   await expect(section.locator('.questions pre')).not.toContainText('OBS_SHEET.VISIT_KEY = VISIT.VISIT_KEY');
   // The codes for a concept are found by the name search and chosen, and become the site's mapping rows.
   await chooseCodes(page, section);
@@ -432,9 +452,15 @@ test('a colleague answers a question from knowledge, and the item ticks without 
   expect(execFileSync('unzip', ['-p', await saved.path(), 'facts.json'], { encoding: 'utf8' })).toContain('A colleague');
   const [download] = await Promise.all([page.waitForEvent('download'), page.locator('#download').click()]);
   expect(execFileSync('unzip', ['-p', await download.path()], { encoding: 'utf8' })).not.toContain('A colleague');
+  // Once the answer is no longer new, it stays in view among the answers given, beside the button that changes it, and
+  // no folded part of the page holds that button.
+  await page.locator('#reanalyse').click();
+  const given = section.locator('ul.items[data-group="given"] li.item[data-id="relationship-OBS_SHEET.VISIT_KEY=VISIT.VISIT_KEY"]');
+  await expect(given.locator('.answer-given button.withdraw-answer')).toBeVisible({ timeout: 120_000 });
+  await expect(section.locator('details button.withdraw-answer')).toHaveCount(0);
 });
 
-test('a long name search is cut with a request to narrow it, and the chosen codes are counted on the cohort and reach the specification', async ({ page, context, browserName }) => {
+test('once the count by year is seen, the codes are chosen from the list of what is charted on the cohort, and are counted on the cohort and reach the specification', async ({ page, context, browserName }) => {
   test.setTimeout(300_000);
   await page.goto('./');
   await expect(page.getByText(strings.loaded)).toBeVisible({ timeout: 120_000 });
@@ -444,23 +470,57 @@ test('a long name search is cut with a request to narrow it, and the chosen code
   await page.locator('#analyse').click();
   await expect(page.locator('#checklists section.target')).toHaveCount(world.targets.length, { timeout: 120_000 });
   const section = page.locator('section.target[data-target="neonatal_low_mean_pressure"]');
-  const item = section.locator('li.item', { has: page.locator('textarea.search-paste') }).first();
-  // Forty-five rows are more than the page lists: it says how many came back, shows the first forty, and asks for narrower words.
-  const many = ['code\tname', ...Array.from({ length: 45 }, (_, i) => `${100 + i}\tINVENTED MEAN ${i}`)].join('\n');
-  await item.locator('textarea.search-paste').fill(many);
-  await item.locator('button.search-read').click();
-  await expect(item.locator('.search-too-many')).toHaveText(strings.searchTooMany(45, 40), { timeout: 120_000 });
-  await expect(item.locator('select.candidate-choice')).toHaveCount(40);
-  // Narrowed, the search returns two rows, and the first is chosen.
-  expect(await chooseCodes(page, section)).toBe(true);
+  // The count by year has been seen, so the list of what is charted on the cohort takes the place of the name search.
+  const listed = section.locator('.listed');
+  // The list is a script that puts the cohort into a temporary table and reaches the readings from it by key.
+  await expect(listed.locator('pre[data-query="listed"]')).toContainText('FROM #cohort AS c');
+  await expect(listed.locator('pre[data-query="listed"]')).toContainText('ALTER TABLE #cohort ADD PRIMARY KEY (anaesthetic_id);');
+  await expect(listed.locator('.script-note')).toHaveText([strings.scriptTemporary, strings.scriptTimeout, strings.scriptWorst('30')]);
+  await expect(section.locator('textarea.search-paste')).toHaveCount(0);
+  await expect(section.locator('li.item', { hasText: strings.listedInstead }).first()).toBeAttached();
+
+  // A list that came back empty is recorded at once, and is the first point of what remains.
+  const header = 'code\treadings\tanaesthetics\tOBS_LABEL\tUNIT_LABEL';
+  await listed.locator('textarea.listed-paste').fill(header + '\n');
+  await listed.locator('button.listed-read').click();
+  await expect(page.locator('#t-paste-result')).toHaveText(strings.factRecorded, { timeout: 120_000 });
+  const first = section.locator('.ending ul.remaining li').first();
+  await expect(first).toHaveAttribute('data-ids', /charted-empty/);
+  await expect(first).toHaveText(/^The list of what is charted on the audit's anaesthetics in/);
+
+  // Forty-five rows: the names that hold a word for the meanings sought, as a whole word, are marked as likely.
+  const names = ['INVENTED ART MEAN', 'INVENTED NIBP MEAN', 'INVENTED MEANINGFUL NOTE', ...Array.from({ length: 42 }, (_, i) => `INVENTED ITEM ${i}`)];
+  const many = [header, ...names.map((name, i) => `${i < 2 ? 52 - i : 100 + i}\t${1000 - i}\t${90 - i}\t${name}\tNULL`)].join('\n');
+  await listed.locator('textarea.listed-paste').fill(many);
+  await listed.locator('button.listed-read').click();
+  const table = listed.locator('.listed-table');
+  await expect(table.locator('select.listed-choice')).toHaveCount(45, { timeout: 120_000 });
+  await expect(table.locator('tr[data-likely]')).toHaveCount(2);
+  await expect(table.locator('tr[data-likely]', { hasText: 'MEANINGFUL' })).toHaveCount(0);
+  // Typing in the filter shows only the rows that hold the words.
+  const filter = listed.locator('input.listed-filter');
+  await filter.fill('NIBP');
+  await expect(table.locator('tr:not([hidden]) select.listed-choice')).toHaveCount(1);
+  await filter.fill('');
+  await expect(table.locator('tr:not([hidden]) select.listed-choice')).toHaveCount(45);
+  // The arterial line's code is chosen for the first meaning offered, and the choices are saved as the codes.
+  const choice = table.locator('select.listed-choice[data-code="52"]');
+  const values = await choice.locator('option').evaluateAll((options) => options.map((o) => (o as HTMLOptionElement).value));
+  await choice.selectOption(values[1]);
+  await listed.locator('button.listed-save').click();
+  await expect(section.locator('li.item', { hasText: 'You chose on' }).first()).toBeAttached({ timeout: 120_000 });
+  await expect(page.locator('#t-paste-result')).toHaveText(strings.factRecorded);
+  await expect(section.locator('.ending ul.remaining li[data-ids~="charted-empty"]')).toHaveCount(0);
+
   // With codes chosen and a study period set, the optional count is offered, and its result reaches the specification.
   const charted = section.locator('.charted');
-  await expect(charted.locator('pre[data-query="charted"]')).toContainText('FROM q22_cohort AS c', { timeout: 120_000 });
-  await expect(charted.locator('.sizes-reason')).toContainText('never the whole table of readings');
+  await expect(charted.locator('pre[data-query="charted"]')).toContainText('FROM #cohort AS c', { timeout: 120_000 });
+  await expect(charted.locator('.script-note').first()).toHaveText(strings.scriptTemporary);
+  await expect(charted.locator('.sizes-reason').first()).toContainText('never the whole table of readings');
   await charted.locator('textarea.charted-paste').fill('code\treadings\tanaesthetics\n52\t1230\t40\n');
   await charted.locator('button.charted-read').click();
-  await expect(page.locator('#t-paste-result')).toHaveText(strings.factRecorded, { timeout: 120_000 });
-  await expect(section.locator('.charted .charted-result')).toHaveText(strings.chartedKept);
+  await expect(section.locator('.charted .charted-result')).toHaveText(strings.chartedKept, { timeout: 120_000 });
+  await expect(page.locator('#t-paste-result')).toHaveText(strings.factRecorded);
   await expect(section.locator('.specification pre')).toContainText('the code 52 was charted 1,230 times on 40 of the audit\'s anaesthetics');
 });
 
@@ -486,9 +546,15 @@ async function chooseCodes(page: Page, section: ReturnType<Page['locator']>): Pr
 }
 
 // A state in which the count by year has been seen and judged about right, and a study period chosen, as a meeting leaves it.
-function seen(folder: string) {
+// With confirmed, a person has also confirmed the codes that the invented conversion maps to the general anaesthetic and
+// to the systolic pressure, which the infant questions compare with, so that those questions are ready.
+function seen(folder: string, confirmed = false) {
+  const codes = confirmed
+    ? [{ kind: 'codes', vocabulary: 'SITE_ANAES_KIND', concept: 4174669, codes: ['1'], date: '2026-10-05' },
+       { kind: 'codes', vocabulary: 'SITE_OBS_SYSTOLIC', concept: 3004249, codes: ['5'], date: '2026-10-05' }]
+    : [];
   writeFileSync(join(folder, 'facts.json'), JSON.stringify({ facts: [{ kind: 'count', answer: 'right', date: '2026-10-05',
-    years: [[2023, 120, 10], [2024, 130, 20]] }] }));
+    years: [[2023, 120, 10], [2024, 130, 20]] }, ...codes] }));
   writeFileSync(join(folder, 'audit.json'), JSON.stringify({ from: '2019-01-01', to: '2025-12-31' }));
   return folder;
 }

@@ -51,8 +51,8 @@ def test_codes_are_found_by_a_name_search_on_the_definition_table():
     search = [row["_ask"] for row in rows if row.get("_ask", {}).get("search")]
     assert search, "the neonatal codes are offered a name search"
     sql = search[0]["search"]
-    assert "FROM [dbo].[OBS_TYPE_DEF] AS d WITH (NOLOCK)" in sql and "LIKE N'%MEAN%'" in sql and "TOP" not in sql
-    assert "LIKE N'%UAC%'" in sql and "LIKE N'%A-LINE%'" in sql
+    assert "FROM [dbo].[OBS_TYPE_DEF] AS d WITH (NOLOCK)" in sql and "LIKE N'%[^A-Z0-9]MEAN[^A-Z0-9]%'" in sql and "TOP" not in sql
+    assert "LIKE N'%[^A-Z0-9]UAC[^A-Z0-9]%'" in sql and "LIKE N'%[^A-Z0-9]A-LINE[^A-Z0-9]%'" in sql
     assert "a mean arterial pressure measured through an arterial line" in " ".join(a["meaning"] for a in search)
     found = json.loads(browser.codes_search_read("code\tOBS_LABEL\tUNIT_LABEL\n52\tART MEAN\tmmHg\n51\tNIBP MEAN\tmmHg\n=1+1\tBAD\tx\n"))
     assert [c["code"] for c in found["candidates"]] == ["52", "51"] and found["columns"] == ["OBS_LABEL", "UNIT_LABEL"]
@@ -157,10 +157,18 @@ def test_the_count_by_year_reads_no_reading_and_stays_open_until_it_looks_right(
     rows, traced = neonatal
     sql = target.year_count(CONVERSION, NEONATAL, CATALOGUE)
     assert sql and "OBS_READING" not in sql and "start_year" in sql and "age_days < 28" in sql
+    # The header names the source tables that the count reads, and the fourth column counts the anaesthetics with no kind.
+    header = " ".join(line[3:] for line in sql.splitlines() if line.startswith("-- "))
+    assert "The query reads PERSON_MASTER" in header and "ANAES_RECORD" in header and "and no table of readings." in header
+    assert "no_kind_recorded" in sql
+    assert json.loads(browser.year_count_read("start_year\tanaesthetics\tin_the_cohort\tno_kind_recorded\n2023\t120\t10\tNULL\n"
+                                              "2024\t130\t20\n"))["years"] == [[2023, 120, 10, None], [2024, 130, 20]]
+    assert "how many anaesthetics have no kind recorded" in target.kinds_cost(traced, CATALOGUE)
     count = {r["question_id"]: r for r in rows}["count-by-year"]
     assert count["status"] == "open" and count["_queries"] == ["yearcount"] and count["phase"] == "source" and not count["query"]
     for answer, years, settled in (("right", [[2023, 120, 10], [2024, 130, 20]], True),
-                                   ("right", [[2022, 120, 10], [2024, 130, 20]], False),
+                                   ("right", [[2022, 120, 10, None], [2024, 130, 20, 10]], False),
+                                   ("right", [[2023, 120, 10, 30], [2024, 130, 20, None]], True),
                                    ("few", [[2023, 120, 10]], False), ("right", [[2023, 120, None]], False)):
         given = json.dumps({"facts": [{"kind": "count", "answer": answer, "years": years, "date": "2026-10-05"}]})
         found, _ = target.checklist(make_checks.WORLD, CONVERSION, NEONATAL, CHECKS, facts_text=given, name="n")

@@ -153,6 +153,10 @@ def test_the_specification_states_the_rules_what_the_answer_rests_on_and_the_cas
     assert "In OBS_READING.OBS_TYPE_KEY, the code 52 means a mean arterial pressure measured through an arterial line" in text
     assert "the code 8 means" not in text and "WARD_DEF" not in text.split("10. Cases")[0]
     assert "python -m" not in text and "for use inside the hospital only" in text
+    # What the audit cannot see from the database is always stated among what is not yet settled.
+    unsettled = text.split("8. What is not yet settled")[1].split("9. Decisions")[0]
+    assert "register of deaths" in unsettled and "gestational age in PERSON_MASTER_2.GEST_WEEKS" in unsettled
+    assert "reconcile ten to twenty anaesthetics against their charts" in unsettled
 
 
 def test_a_hand_written_query_is_checked_against_the_target_on_the_synthetic_rows():
@@ -243,6 +247,15 @@ def test_the_page_records_a_persons_answer_and_saves_it_with_the_state(monkeypat
     assert {"facts.json", "conversion/site_mappings.csv", "catalogue.csv", "checks.csv"} <= set(saved.namelist())
     assert "Zanzibar" in saved.read("facts.json").decode() and "52" in saved.read("conversion/site_mappings.csv").decode()
     assert "Zanzibar" not in json.dumps(result["boundary"])
+    # An answer can be withdrawn: the fact leaves the page's facts and facts.json, and the question is asked again.
+    answered = next(row for row in result["boundary"]["targets"][0]["rows"] if row["id"] == asked["id"])
+    assert answered["withdraw"] == [{"kind": "join", "left": asked["ask"]["left"], "right": asked["ask"]["right"]}]
+    withdrawn = json.loads(browser.fact_withdraw(json.dumps(answered["withdraw"])))
+    again = {row["id"]: row for row in withdrawn["boundary"]["targets"][0]["rows"]}
+    assert withdrawn["ok"] and again[asked["id"]]["status"] != "answered" and again[asked["id"]]["ask"]
+    saved = zipfile.ZipFile(io.BytesIO(browser.state_zip()))
+    assert "Zanzibar" not in saved.read("facts.json").decode() and "52" in saved.read("conversion/site_mappings.csv").decode()
+    assert json.loads(browser.fact_withdraw("[]")) == {"ok": False}
     browser.clear()
 
 

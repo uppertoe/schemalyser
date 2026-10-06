@@ -37,6 +37,12 @@ interface Item {
     column?: string; vocabulary?: string; concept?: string; meaning?: string; search?: string; group?: string; step?: string;
     steps?: string[]; words?: string[]; definition?: string[] } | null;
   fact?: string;
+  // The answers that a person gave about the item, as the core names them for withdrawal; whether the item heads what
+  // remains; for a route, the name that is not visible; and, for the count by year, the counts once seen.
+  withdraw?: Record<string, unknown>[];
+  top?: boolean;
+  missing?: string;
+  years?: (number | null)[][];
 }
 
 // One plain query that a checklist offers, written by the core. The page shows it and never changes it.
@@ -58,17 +64,22 @@ interface Target {
   // The core profile's plain queries, which the central OMOP team runs, tier one first.
   profile?: Query[];
   // The audit query: the question as one query over the source tables, with what the page says about it.
-  draft?: { sql: string; countsOnly: boolean; restructured?: boolean; tables: { name: string; rows: number | null }[]; waiting?: boolean } | null;
+  draft?: { sql: string; countsOnly: boolean; restructured?: boolean; tables: { name: string; rows: number | null }[]; waiting?: boolean;
+    script?: Script | null } | null;
   stages?: { source: Target['counts']; release: Target['counts'] };
   stageVerdicts?: string[];
   questions?: string;
   specification?: string;
-  charted?: { sql: string; from: string; to: string; codes: string[]; kept?: boolean } | null;
+  charted?: { sql: string; from: string; to: string; codes: string[]; kept?: boolean; worst?: string; withheld?: string } | null;
+  listed?: { sql: string; year: number | null; column: string; years: number[]; rows: number | null; link: string; waiting?: boolean;
+    worst?: string; withheld?: string } | null;
   // The routes that the catalogue settled, where a step gave way to one of its alternatives, one sentence each.
   routes?: string[];
   settings?: { from?: string | null; to?: string | null; kinds?: number[]; pressures?: string | null; floor?: number | null;
     isolated?: string | null; bypass?: string | null; age?: string | null; notes?: Record<string, string> };
   kinds?: [number, string][];
+  // What choosing the kinds of anaesthetic costs, in one sentence from the core, shown above the ticks; it may be empty.
+  kinds_cost?: string;
   needs?: { questions: number; queries: number; other: number; lessCertain: number; settled: number; remaining: string[] };
 }
 
@@ -384,6 +395,7 @@ function resetInputs() {
   $<HTMLTextAreaElement>('first-paste').value = '';
   $('b-first-query').hidden = true;
   $('t-first-result').hidden = true;
+  $('t-first-doubt').hidden = true;
   added = [];
   addedSinceAnalysis = 0;
   hideErrors();
@@ -418,6 +430,7 @@ function clearPaste() {
 
 function clearChecklist() {
   hasResult = false;
+  whoNow = '';
   checksText = '';
   profileText = '';
   clearPaste();
@@ -495,11 +508,34 @@ function grid(header: string[] | null, rows: (string | null)[][], wrap: string[]
 // question has three answers: yes; no, with what is true instead; and not sure.
 function sendFacts(box: Element, facts: Record<string, unknown>[]) {
   const section = box.closest('section.target');
-  const who = (section?.querySelector('input.fact-who') as HTMLInputElement | null)?.value.trim() ?? '';
+  const who = ((section?.querySelector('input.fact-who') as HTMLInputElement | null)?.value ?? whoNow).trim();
   const date = new Date().toISOString().slice(0, 10);
   const stamped = facts.map((fact) => ({ ...fact, date, ...(who ? { who } : {}) }));
+  if (stamped.length) clearStale();
   if (stamped.length === 1) worker?.postMessage({ type: 'fact', fact: JSON.stringify(stamped[0]) });
   else if (stamped.length) worker?.postMessage({ type: 'facts', facts: JSON.stringify(stamped) });
+}
+
+// The name of the person answering, kept while the page is open, as entered beside the questions.
+let whoNow = '';
+
+// Whether the answer that the worker is working on is one withdrawn, so that the page says so when the checklist returns.
+let withdrawing = false;
+
+// Withdraws the answers that a person gave about one item, so that the question is asked again.
+function withdrawFacts(item: Item) {
+  if (!worker || !item.withdraw?.length) return;
+  clearStale();
+  withdrawing = true;
+  worker.postMessage({ type: 'fact-withdraw', withdraw: JSON.stringify(item.withdraw) });
+}
+
+// What the last action settled is true only until the next one: the note of what it settled and the status of the paste
+// or answer are cleared as soon as another action begins.
+function clearStale() {
+  for (const node of document.querySelectorAll<HTMLElement>('.fresh-note')) node.remove();
+  $('t-paste-result').hidden = true;
+  $('t-changes').hidden = true;
 }
 
 function askButton(label: string, className: string, onClick: () => void) {
@@ -555,6 +591,11 @@ function askElement(item: Item) {
     return box;
   }
   const unsure = { kind: 'codes', vocabulary: ask.vocabulary, concept: ask.concept, column: ask.column, codes: [], answer: 'unsure' };
+  // Where the list of what is charted on the cohort can be had, the codes are chosen from it, and the name search is not shown.
+  if (ask.search && ask.group && listedNow && listedNow.column.toUpperCase() === (ask.column ?? '').toUpperCase()) {
+    box.append(el('p', listedNow.waiting ? strings.listedAfterCount : strings.listedInstead, 'note'));
+    return box;
+  }
   if (ask.search && ask.group) {
     const group = searchGroups.get(ask.group) ?? [];
     const first = group[0]?.concept === ask.concept;
@@ -662,6 +703,138 @@ function showCandidates(group: string, columns: string[], candidates: { code: st
   else list.replaceChildren(lead, table, save);
 }
 
+// The list of what is charted on the cohort's anaesthetics in one year: the query, its result as a table that can be
+// filtered, the rows that match the words for the meanings sought marked as likely, and a choice for each row.
+// More than one target may offer the list, so the block whose list was read is remembered, and the result is shown there
+// with that target's meanings.
+let listedNow: Target['listed'] = null;
+let listedTarget: Target | null = null;
+let listedBox: HTMLElement | null = null;
+// A query that reaches the table of readings is offered only as a script that starts from a temporary table of the cohort.
+// Above it, the page says what the script creates, what to set first and the most that it reads; where the core does not
+// offer it, the page says why instead.
+type Script = { sql: string; worst?: string; withheld?: string };
+function scriptNotes(script: Script) {
+  if (!script.sql) return script.withheld ? [el('p', script.withheld, 'sizes-reason status problem script-withheld')] : [];
+  return [el('p', strings.scriptTemporary, 'sizes-reason script-note'), el('p', strings.scriptTimeout, 'sizes-reason script-note'),
+    ...(script.worst ? [el('p', strings.scriptWorst(script.worst), 'sizes-reason script-note')] : [])];
+}
+
+function listedElement(target: Target) {
+  const listed = target.listed!;
+  const box = el('div', undefined, 'sizes listed');
+  box.append(el('h4', strings.listedHeading), el('p', strings.listedWhat(listed.column, listed.year ?? 0), 'sizes-reason'),
+    ...scriptNotes(listed));
+  const yearLabel = el('label', strings.listedYear);
+  const year = el('select', undefined, 'listed-year') as HTMLSelectElement;
+  for (const y of listed.years) {
+    const o = el('option', String(y));
+    o.value = String(y);
+    year.append(o);
+  }
+  year.value = String(listed.year);
+  year.addEventListener('change', () => sendFacts(box, [{ kind: 'listed', column: listed.column, year: Number(year.value), rows: null }]));
+  yearLabel.append(year);
+  if (!listed.sql) {
+    box.append(yearLabel);
+    return box;
+  }
+  const [code, copy] = queryBlock(listed.sql, 'listed-query');
+  code.dataset.query = 'listed';
+  copy.dataset.query = 'listed';
+  const label = el('label', strings.listedPasteLabel);
+  const area = el('textarea', undefined, 'listed-paste') as HTMLTextAreaElement;
+  area.rows = 5;
+  area.spellcheck = false;
+  label.append(area);
+  const shown = el('div', undefined, 'listed-result');
+  if (listed.rows !== null && listed.rows !== undefined) shown.append(el('p', strings.listedKept(listed.rows, listed.year ?? 0), listed.rows ? 'note' : 'status problem'));
+  box.append(yearLabel, code, copy, label, askButton(strings.listedRead, 'listed-read', () => {
+    if (!area.value.trim()) return;
+    listedNow = listed;
+    listedTarget = target;
+    listedBox = box;
+    worker?.postMessage({ type: 'listed', text: area.value });
+  }), shown, el('p', strings.searchPrivate, 'note'));
+  return box;
+}
+
+// The meanings sought in the listed column, and the words that name them, from the codes items of the target.
+function listedMeanings(target: Target, column: string) {
+  const meanings: { concept: string; vocabulary: string; meaning: string; column: string }[] = [];
+  const words = new Set<string>();
+  for (const item of target.rows) {
+    const ask = item.ask;
+    if (ask?.kind !== 'codes' || (ask.column ?? '').toUpperCase() !== column.toUpperCase() || !ask.concept) continue;
+    if (!meanings.some((m) => m.concept === ask.concept)) meanings.push({ concept: ask.concept, vocabulary: ask.vocabulary!, meaning: ask.meaning ?? ask.concept, column: ask.column! });
+    for (const w of ask.words ?? []) words.add(w.toUpperCase());
+  }
+  return { meanings, words: [...words] };
+}
+
+function showListed(columns: string[], rows: { code: string; readings: number | null; anaesthetics: number | null; names: string[] }[]) {
+  const shown = (listedBox?.isConnected ? listedBox : document).querySelector<HTMLElement>('.listed-result');
+  const listed = listedNow;
+  if (!shown || !listed || !listedTarget) return;
+  if (!rows.length) {
+    // An empty list is an open point at the head of what remains, so it is recorded at once.
+    sendFacts(shown, [{ kind: 'listed', column: listed.column, year: listed.year, rows: 0 }]);
+    return;
+  }
+  const { meanings, words } = listedMeanings(listedTarget, listed.column);
+  const whole = words.map((w) => new RegExp(`(^|[^A-Z0-9])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^A-Z0-9])`));
+  const filter = el('input', undefined, 'listed-filter') as HTMLInputElement;
+  filter.type = 'search';
+  filter.placeholder = strings.listedFilter;
+  const table = el('table', undefined, 'candidate-table listed-table');
+  const head = el('tr');
+  head.append(el('th', strings.searchCode), el('th', strings.listedReadings), el('th', strings.listedAnaesthetics),
+    ...(columns.length ? columns : [strings.searchName]).map((c) => el('th', c)), el('th', strings.searchChoice));
+  table.append(head);
+  const selects: [string, HTMLSelectElement, HTMLElement][] = [];
+  const option = (value: string, label: string) => {
+    const o = el('option', label);
+    o.value = value;
+    return o;
+  };
+  for (const row of rows) {
+    const line = el('tr');
+    const likely = whole.some((w) => row.names.some((n) => w.test(n.toUpperCase())));
+    if (likely) line.dataset.likely = 'true';
+    const select = el('select', undefined, 'candidate-choice listed-choice') as HTMLSelectElement;
+    select.dataset.code = row.code;
+    select.append(option('', strings.listedNotChosen), ...meanings.map((m) => option(m.concept, m.meaning)),
+      option('text', strings.searchText), option('calculated', strings.listedCalculated), option('neither', strings.searchNeither),
+      option('unsure', strings.notSure));
+    const cell = el('td');
+    cell.append(select);
+    const count = (n: number | null) => (n === null ? strings.countUnderTen : n.toLocaleString('en-AU'));
+    line.append(el('td', row.code + (likely ? ` ${strings.listedLikely}` : '')), el('td', count(row.readings)), el('td', count(row.anaesthetics)),
+      ...row.names.map((n) => el('td', n)), cell);
+    table.append(line);
+    selects.push([row.code, select, line]);
+  }
+  filter.addEventListener('input', () => {
+    const text = filter.value.trim().toUpperCase();
+    for (const [, , line] of selects) line.hidden = !!text && !(line.textContent ?? '').toUpperCase().includes(text);
+  });
+  const save = askButton(strings.searchSave, 'search-save listed-save', () => {
+    const unsure = selects.filter(([, s]) => s.value === 'unsure').map(([c]) => c);
+    const facts: Record<string, unknown>[] = meanings.map((m) => {
+      const codes = selects.filter(([, s]) => s.value === m.concept).map(([c]) => c);
+      return codes.length ? { kind: 'codes', vocabulary: m.vocabulary, concept: m.concept, column: m.column, codes, ...(unsure.length ? { uncertain: unsure } : {}) }
+        : { kind: 'codes', vocabulary: m.vocabulary, concept: m.concept, column: m.column, codes: [], answer: 'unsure' };
+    });
+    const text = selects.filter(([, s]) => s.value === 'text').map(([c]) => c);
+    if (text.length) facts.push({ kind: 'textbp', column: listed.column, codes: text });
+    const calculated = selects.filter(([, s]) => s.value === 'calculated').map(([c]) => c);
+    if (calculated.length) facts.push({ kind: 'calculated', column: listed.column, codes: calculated });
+    facts.push({ kind: 'listed', column: listed.column, year: listed.year, rows: rows.length });
+    sendFacts(shown, facts);
+  });
+  shown.replaceChildren(el('p', strings.listedFound(rows.length, rows.filter((_, i) => selects[i][2].dataset.likely).length), 'note'), filter, table, save);
+}
+
 // The optional count of how often each chosen code is charted on the cohort's anaesthetics in the last year of the period.
 // Its result is pasted here and kept as a fact, which the specification reads.
 let chartedNow: Target['charted'] = null;
@@ -669,7 +842,9 @@ function chartedElement(target: Target) {
   const charted = target.charted!;
   chartedNow = charted;
   const box = el('div', undefined, 'sizes charted');
-  box.append(el('h4', strings.chartedHeading), el('p', strings.chartedWhat(charted.from, charted.to), 'sizes-reason'));
+  box.append(el('h4', strings.chartedHeading), el('p', strings.chartedWhat(charted.from, charted.to), 'sizes-reason'),
+    ...scriptNotes(charted));
+  if (!charted.sql) return box;
   const [code, copy] = queryBlock(charted.sql, 'charted-query');
   code.dataset.query = 'charted';
   copy.dataset.query = 'charted';
@@ -700,17 +875,19 @@ function yearCountBox() {
   return box;
 }
 
-function showYearCount(years: [number, number | null, number | null][]) {
+function showYearCount(years: (number | null)[][]) {
   const shown = document.querySelector<HTMLElement>('.count-result');
   if (!shown) return;
   const table = el('table', undefined, 'count-table');
   const head = el('tr');
-  head.append(el('th', strings.countYear), el('th', strings.countAll), el('th', strings.countCohort));
+  // A fourth value, where the count gives one, is the number of anaesthetics with no kind recorded.
+  const noKind = years.some((row) => row.length > 3);
+  head.append(el('th', strings.countYear), el('th', strings.countAll), el('th', strings.countCohort), ...(noKind ? [el('th', strings.countNoKind)] : []));
   table.append(head);
-  for (const [year, all, cohort] of years) {
+  const cell = (value: number | null | undefined) => el('td', value === null || value === undefined ? strings.countUnderTen : value.toLocaleString('en-AU'));
+  for (const [year, all, cohort, none] of years) {
     const row = el('tr');
-    row.append(el('td', String(year)), el('td', all === null ? strings.countUnderTen : all.toLocaleString('en-AU')),
-      el('td', cohort === null ? strings.countUnderTen : cohort.toLocaleString('en-AU')));
+    row.append(el('td', String(year)), cell(all), cell(cohort), ...(noKind ? [cell(none)] : []));
     table.append(row);
   }
   const ask = el('p', years.length ? strings.countAsk : strings.countEmpty, 'ask-text');
@@ -755,14 +932,20 @@ function auditSection(target: Target) {
   if (draft.tables.length) audit.append(el('p', strings.auditTables(draft.tables), 'sizes-reason'));
   audit.append(el('p', strings.auditCost, 'sizes-reason'));
   audit.append(el('p', draft.countsOnly ? strings.auditCounts : strings.auditRows, draft.countsOnly ? 'sizes-reason' : 'sizes-reason status problem'));
-  const [code, copy] = queryBlock(draft.sql, 'audit-query');
+  // The query reaches the readings, so it may be run only as the script; otherwise it is shown as a reference only.
+  const script = draft.script ?? { sql: '' };
+  audit.dataset.script = String(!!script.sql);
+  if (!script.sql) audit.append(el('p', strings.auditReferenceOnly, 'sizes-reason status problem'));
+  audit.append(...scriptNotes(script));
+  const sql = script.sql || draft.sql;
+  const [code, copy] = queryBlock(sql, 'audit-query');
   code.dataset.query = 'audit';
   copy.dataset.query = 'audit';
   copy.textContent = strings.auditCopy;
   const keep = el('button', strings.auditSave, 'secondary');
   keep.type = 'button';
   keep.id = `save-audit-${target.name}`;
-  keep.addEventListener('click', () => save([draft.sql], 'text/plain', `${target.name}_source.sql`));
+  keep.addEventListener('click', () => save([sql], 'text/plain', `${target.name}_source.sql`));
   const actions = el('div', undefined, 'actions');
   actions.append(copy, keep);
   audit.append(code, actions);
@@ -834,7 +1017,21 @@ function itemElement(item: Item, previous?: string, queries?: Map<string, Query>
   // The question for the colleague, where there is one, is what he reads; the checklist's own account of the point is
   // folded beneath it, one click away.
   const asking = item.status !== 'answered' && item.ask && item.stage === 'source' && !item.fact;
-  if (!asking) body.append(el('p', item.question, 'question'));
+  // The visible line leaves out vocabulary names and concept numbers, which the folded detail keeps.
+  const plain = plainLine(item.question);
+  if (!asking) body.append(el('p', plain, 'question'));
+  // An answer that a person gave stays in view, with the button that withdraws it so that the question is asked again.
+  // The sentences that record the answer move out of the folded account and stand beside the button.
+  let inHand = item.inHand;
+  if (item.withdraw?.length) {
+    const sentences = item.inHand.split(/(?<=\.)\s+(?=[A-Z])/);
+    const given = sentences.filter((s) => /^(You|A person) /.test(s));
+    inHand = sentences.filter((s) => !given.includes(s)).join(' ');
+    const answer = el('div', undefined, 'answer-given');
+    if (given.length) answer.append(el('p', given.join(' '), 'answer-text'));
+    answer.append(askButton(strings.withdrawAnswer, 'secondary withdraw-answer', () => withdrawFacts(item)));
+    body.append(answer);
+  }
   if (item.status !== 'answered') {
     if (asking) body.append(askElement(item));
     if (queries && shown) body.append(...queryElements(item, queries, shown));
@@ -842,13 +1039,14 @@ function itemElement(item: Item, previous?: string, queries?: Map<string, Query>
   const more = el('details', undefined, 'item-more');
   more.append(el('summary', strings.itemMore));
   if (asking) more.append(el('p', item.question, 'question'));
+  else if (plain !== item.question) more.append(el('p', item.question, 'question-full'));
   if (item.intent) more.append(el('p', item.intent, 'intent'));
   if (item.status !== 'answered') {
     if (item.route && item.status === 'open') more.append(el('p', item.route, 'route'));
     more.append(el('p', item.needed, 'needed'));
     if (item.actor) more.append(el('p', item.actor, 'actor'));
   }
-  more.append(el('p', `${item.inHand} ${item.blocking ? strings.blocking : strings.notBlocking}`.trim(), 'in-hand'));
+  more.append(el('p', `${inHand} ${item.blocking ? strings.blocking : strings.notBlocking}`.trim(), 'in-hand'));
   body.append(more);
   line.append(mark, body);
   return line;
@@ -876,11 +1074,17 @@ function settingsElement(target: Target) {
   const [fromLabel, from] = date(strings.settingsFrom, target.settings?.from);
   const [toLabel, to] = date(strings.settingsTo, target.settings?.to);
   box.append(fromLabel, toLabel);
+  // Where the applied period begins before the first year in which the count by year shows records, the page says so.
+  const counted = target.rows.find((item) => item.id === 'count-by-year')?.years ?? [];
+  const firstYear = counted.find(([, all]) => all !== 0)?.[0];
+  const fromYear = target.settings?.from ? Number(target.settings.from.slice(0, 4)) : NaN;
+  if (firstYear && fromYear < firstYear) box.append(el('p', strings.settingsBeforeCount(fromYear, firstYear), 'status problem settings-before-count'));
   const chosen = new Set(target.settings?.kinds ?? []);
   const boxes: [number, HTMLInputElement][] = [];
   if (target.kinds?.length) {
     const kinds = el('fieldset', undefined, 'setting-kinds');
     kinds.append(el('legend', strings.settingsKinds));
+    if (target.kinds_cost) kinds.append(el('p', target.kinds_cost, 'note kinds-cost'));
     for (const [concept, name] of target.kinds) {
       const wrap = el('label', ` ${name}`);
       const tick = el('input') as HTMLInputElement;
@@ -939,6 +1143,7 @@ function settingsElement(target: Target) {
       else settings[key] = input.value === (strings.decisions.find((d) => d.key === key)?.options[0][0]) ? null : input.value;
     }
     settings.notes = Object.fromEntries(notes.filter(([, n]) => n.value.trim()).map(([k, n]) => [k, n.value.trim()]));
+    clearStale();
     worker?.postMessage({ type: 'settings', settings: JSON.stringify(settings) });
   }));
   return box;
@@ -950,20 +1155,86 @@ function lastSentence(text: string) {
   return sentences.slice(-2).join(' ');
 }
 
+// A line as the page shows it: the names of mapping vocabularies and the numbers of concepts are left to the folded detail.
+function plainLine(text: string) {
+  return text
+    .replace(/\s+under\s+[A-Z][A-Z0-9_]*_[A-Z0-9_]*(?:(?:,\s*|,?\s+and\s+)[A-Z][A-Z0-9_]*_[A-Z0-9_]*)*/g, '')
+    .replace(/\s*\([^()]*\bconcept \d+\)/g, '')
+    .replace(/\s+([,.])/g, '$1');
+}
+
+// One point that remains, with who can settle it, the line that the ending shows, and the line for the team's note.
+type Point = { who: 'you' | 'team' | 'clinician'; text: string; note?: string; ids: string[] };
+
+// What remains, in the order that the core gives, one point for each thing to settle: the routes that rest on one name
+// that is not visible are one point. Each point belongs to the colleague now, to the team that looks after the reporting
+// database, or to the clinician after the meeting, and says in one sentence what to do.
+function remainingPoints(target: Target, needs: NonNullable<Target['needs']>): Point[] {
+  const byId = new Map(target.rows.map((item) => [item.id, item]));
+  const points: Point[] = [];
+  const missingSeen = new Map<string, Point>();
+  const line = (...parts: string[]) => parts.join(' ').replace(/\s+/g, ' ').trim();
+  for (const id of needs.remaining) {
+    const item = byId.get(id);
+    if (!item) continue;
+    const question = plainLine(item.question);
+    const found = item.status === 'answered' ? '' : plainLine(lastSentence(item.inHand));
+    if (id.startsWith('route-')) {
+      const missing = item.missing ?? '';
+      const seen = missing ? missingSeen.get(missing) : undefined;
+      if (seen) {
+        seen.ids.push(id);
+        continue;
+      }
+      const point: Point = missing
+        ? { who: 'team', text: strings.endingTeamRoute(missing), note: strings.teamNoteRoute(missing), ids: [id] }
+        : { who: 'team', text: line(question, strings.endingByTeam), note: strings.teamNoteOther(question), ids: [id] };
+      if (missing) missingSeen.set(missing, point);
+      points.push(point);
+    } else if (item.top || id.startsWith('charted-')) {
+      const action = item.ask && !item.fact ? strings.endingByQuestion : item.queryState === 'ready' || item.queryIds?.length ? strings.endingByQuery : '';
+      points.push({ who: 'you', text: line(question, id === 'count-by-year' && item.years ? '' : action), ids: [id] });
+    } else if (id === 'count-by-year') {
+      // A count that has run is not described as still to run.
+      points.push(item.years ? { who: 'clinician', text: line(question, found, strings.endingCountSeen), ids: [id] }
+        : { who: 'you', text: line(question, strings.endingByQuery), ids: [id] });
+    } else if (item.ask && !item.fact) {
+      points.push({ who: 'you', text: line(question, strings.endingByQuestion), ids: [id] });
+    } else if (item.queryState === 'ready' || (item.queryState === 'waiting' && item.queryIds?.length)) {
+      points.push({ who: 'you', text: line(question, strings.endingByQuery), ids: [id] });
+    } else if (item.queryState === 'large' || (item.fact === 'unsure' && !item.queryIds?.length)) {
+      points.push({ who: 'team', text: line(question, found, strings.endingByTeam), note: strings.teamNoteOther(question), ids: [id] });
+    } else {
+      points.push({ who: 'clinician', text: line(question, found, strings.endingClinician), ids: [id] });
+    }
+  }
+  return points;
+}
+
 // Where the audit stands, in plain words, with what remains and who can settle each part, and where to keep the state.
-function endingElement(target: Target, needs: NonNullable<Target['needs']>, ready: boolean) {
+function endingElement(target: Target, needs: NonNullable<Target['needs']>, ready: boolean, points: Point[]) {
   const box = el('div', undefined, 'sizes ending');
   box.append(el('h4', strings.endingHeading));
   box.append(el('p', strings.endingSettled(needs.settled), 'note'));
-  const remaining = target.rows.filter((item) => needs.remaining.includes(item.id));
-  if (remaining.length) {
+  if (points.length) {
     box.append(el('p', strings.endingRemaining, 'note'));
-    const list = el('ul', undefined, 'remaining');
-    for (const item of remaining) {
-      const who = item.queryIds?.length ? strings.endingByQuery : item.ask && !item.fact ? strings.endingByQuestion : strings.endingClinician;
-      list.append(el('li', `${item.question} ${item.status === 'answered' ? '' : lastSentence(item.inHand)} ${who}`.replace(/\s+/g, ' ').trim()));
+    for (const [who, heading] of [['you', strings.endingYouHeading], ['team', strings.endingTeamHeading], ['clinician', strings.endingClinicianHeading]] as const) {
+      const mine = points.filter((point) => point.who === who);
+      if (!mine.length) continue;
+      const list = el('ul', undefined, 'remaining');
+      list.dataset.who = who;
+      for (const point of mine) {
+        const entry = el('li', point.text);
+        entry.dataset.ids = point.ids.join(' ');
+        list.append(entry);
+      }
+      box.append(el('p', heading, 'remaining-heading'), list);
+      // The team's questions, gathered into one note, ready to copy and send.
+      if (who === 'team') {
+        box.append(textBlock('team-note', strings.teamNoteHeading, strings.teamNoteWhat,
+          strings.teamNote(mine.map((point) => point.note ?? point.text)), strings.teamNoteCopy));
+      }
     }
-    box.append(list);
   } else box.append(el('p', ready ? strings.endingNothing : strings.notReadyYet, 'note'));
   if (needs.lessCertain) box.append(el('p', strings.endingLessCertain(needs.lessCertain), 'note'));
   box.append(el('p', strings.endingSave, 'note'));
@@ -972,6 +1243,8 @@ function endingElement(target: Target, needs: NonNullable<Target['needs']>, read
 }
 
 function targetSection(target: Target, before?: { answered: number; statuses: Map<string, string> }) {
+  listedNow = target.listed ?? null;
+  listedTarget = target;
   const section = el('section', undefined, 'target');
   section.dataset.target = target.name;
   const heading = el('h3');
@@ -982,7 +1255,11 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
   const needs = target.needs ?? { questions: 0, queries: 0, other: first.open, lessCertain: first.partly, settled: first.answered, remaining: [] };
   // Ready means that nothing remains: no open item, and no doubt that a person raised and nothing has yet settled.
   const sourceReady = needs.remaining.length === 0 && target.steps;
-  section.append(el('p', strings.needs(needs.questions, needs.queries, needs.other), 'tally'));
+  // The tally counts the points of the list at the end, by who can settle them, so that the two always agree.
+  const points = target.needs ? remainingPoints(target, needs) : [];
+  const count = (who: Point['who']) => points.filter((point) => point.who === who).length;
+  section.append(el('p', target.needs ? strings.needs(count('you'), count('team'), count('clinician'))
+    : strings.needs(needs.questions + needs.queries, 0, needs.other), 'tally'));
   section.append(el('p', sourceReady ? strings.readyNow(needs.lessCertain) : strings.notReadyYet, sourceReady ? 'status good stage-verdict' : 'status stage-verdict'));
   // Searches gather the meanings of the codes they look for, so that the candidates can be chosen among them.
   searchGroups = new Map();
@@ -1005,6 +1282,9 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
     const input = el('input', undefined, 'fact-who') as HTMLInputElement;
     input.type = 'text';
     input.maxLength = 80;
+    // The name stays from one render to the next, so that it is kept with every answer of the meeting.
+    input.value = whoNow;
+    input.addEventListener('input', () => (whoNow = input.value));
     who.append(input);
     questions.append(who);
     section.append(questions);
@@ -1041,9 +1321,11 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
   const offered = (item: Item) => itemElement(item, undefined, queries, shown);
 
   const previous = (item: Item) => before?.statuses.get(item.id);
+  // The items settled by the action just taken, compared with the render before it, so that the note is true only now.
   const fresh = target.rows.filter((item) => item.status === 'answered' && before && previous(item) !== undefined && previous(item) !== 'answered');
   if (fresh.length) {
-    section.append(el('p', strings.newlyAnswered(fresh.length), 'status good'), el('h4', strings.groupNew));
+    section.append(el('p', sinceAnalysis ? strings.newlyAnsweredNow(fresh.length) : strings.newlyAnswered(fresh.length), 'status good fresh-note'),
+      el('h4', sinceAnalysis ? strings.groupNewNow : strings.groupNew));
     section.append(itemList('new', fresh.map((item) => itemElement(item, previous(item)))));
   }
 
@@ -1055,12 +1337,28 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
   const later = target.rows.filter((item) => item.stage === 'release' && !fresh.includes(item));
   // What needs the colleague now: a question not yet answered, or a short query ready to run.
   const needsYou = (item: Item) => (item.ask && !item.fact) || item.queryState === 'ready' || !!item.queryIds?.includes('yearcount');
-  const open = target.rows.filter((item) => item.group !== 'answered' && firstStage(item));
+  // The routes that rest on one name that is not visible are one point, so the page lists only the first of them.
+  const missingShown = new Set<string>();
+  const once = (item: Item) => {
+    if (!item.id.startsWith('route-') || !item.missing) return true;
+    if (missingShown.has(item.missing)) return false;
+    missingShown.add(item.missing);
+    return true;
+  };
+  const open = target.rows.filter((item) => item.group !== 'answered' && firstStage(item)).filter(once);
   const yours = ordered(open.filter(needsYou));
   section.append(el('h4', strings.groupYou));
   if (yours.length) section.append(el('p', strings.groupYouNote, 'note'), itemList('you', yours.map(offered)));
   else section.append(el('p', strings.groupYouNone, 'note'));
-  const rest = open.filter((item) => !needsYou(item));
+  // Once the count by year has been seen, the codes are chosen from the list of what is charted on the cohort.
+  if (target.listed && !target.listed.waiting) section.append(listedElement(target));
+  // The answers that a person gave stay in view, each beside the button that changes it, and none is folded away: every
+  // item that holds such an answer and is not already shown above is listed here.
+  const given = (item: Item) => !!item.withdraw?.length && !fresh.includes(item) && !yours.includes(item);
+  const givenItems = target.rows.filter(given);
+  if (givenItems.length) section.append(el('h4', strings.groupGiven), el('p', strings.groupGivenNote, 'note'),
+    itemList('given', givenItems.map((item) => (item.status === 'answered' ? itemElement(item) : offered(item)))));
+  const rest = open.filter((item) => !needsYou(item) && !given(item));
   if (rest.length) {
     const folded = el('details', undefined, 'later');
     folded.append(el('summary', strings.groupLater(rest.length)));
@@ -1071,14 +1369,14 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
     section.append(folded);
   }
 
-  const answered = target.rows.filter((item) => item.group === 'answered' && !fresh.includes(item) && firstStage(item));
+  const answered = target.rows.filter((item) => item.group === 'answered' && !fresh.includes(item) && !given(item) && firstStage(item)).filter(once);
   if (answered.length) {
     const folded = el('details', undefined, 'answered');
     folded.append(el('summary', strings.groupAnswered(answered.length)), itemList('answered', answered.map((item) => itemElement(item))));
     section.append(folded);
   }
   // The items that the answer to this question does not depend on, which do not count against the first phase.
-  const unneeded = target.rows.filter((item) => item.stage === 'unneeded' && !fresh.includes(item));
+  const unneeded = target.rows.filter((item) => item.stage === 'unneeded' && !fresh.includes(item) && !given(item));
   if (unneeded.length) {
     const folded = el('details', undefined, 'unneeded');
     folded.append(el('summary', strings.groupUnneeded(unneeded.length)), el('p', strings.unneededWhat, 'note'),
@@ -1087,7 +1385,7 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
   }
   // The ending, whatever the state of the checklist: what is settled, what remains and who can settle it, the button
   // that saves the state, and the specification, in which each open point is an unsettled assumption.
-  section.append(endingElement(target, needs, sourceReady));
+  section.append(endingElement(target, needs, sourceReady, points));
   if (target.specification) {
     section.append(textBlock('specification', strings.specHeading, sourceReady ? strings.specWhat : strings.specWhatOpen,
       target.specification, strings.specCopy, strings.specSave, `${target.name}_specification.txt`));
@@ -1107,21 +1405,19 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
     release.append(el('summary', strings.releaseHeading), el('p', strings.releaseWhat, 'note'));
     if (target.stageVerdicts?.[1]) release.append(el('p', target.stageVerdicts[1], 'status'));
     if (profileSection) release.append(profileSection);
-    const open = ordered(later.filter((item) => item.status !== 'answered'));
+    const open = ordered(later.filter((item) => item.status !== 'answered' && !given(item)));
     if (open.length) release.append(itemList('release', open.map(offered)));
-    const done = later.filter((item) => item.status === 'answered');
+    const done = later.filter((item) => item.status === 'answered' && !given(item));
     if (done.length) release.append(itemList('release-answered', done.map((item) => itemElement(item))));
     section.append(release);
   }
   return section;
 }
 
-// The checklist as the last analysis of the requests left it, before any result was pasted or any answer given,
-// which the tally after a paste or an answer is compared with.
-let analysed: Snapshot | null = null;
-
 function renderChecklist(boundary: Boundary, afterPaste = false) {
-  const previous = afterPaste && analysed ? analysed : snapshot;
+  // After a paste or an answer, the checklist is compared with the render just before it, so that what is said to be newly
+  // settled is what that action settled, and nothing older stays on the page.
+  const previous = snapshot;
   sinceAnalysis = afterPaste;
   checksText = boundary.checks ?? '';
   profileText = boundary.profile ?? '';
@@ -1153,7 +1449,6 @@ function renderChecklist(boundary: Boundary, afterPaste = false) {
       { answered: (target.stages?.source ?? target.counts).answered, statuses: new Map(target.rows.map((item) => [item.id, item.status])) },
     ]),
   );
-  if (!afterPaste) analysed = snapshot;
   $('t-download-holds').hidden = !boundary.ok;
   $('d-summary').hidden = !boundary.ok;
   text('t-summary', boundary.summary ?? '');
@@ -1323,6 +1618,11 @@ function onMessage(event: MessageEvent) {
   } else if (message.type === 'first-read') {
     const result = $('t-first-result');
     result.hidden = false;
+    // Where most of the tables, or every lookup table, did not come back, the page says so first: the SQL window may be
+    // connected to the wrong database or schema, or with a login whose rights are narrow.
+    const doubt = message.ok ? strings.firstDoubt[message.doubt ?? ''] ?? '' : '';
+    $('t-first-doubt').hidden = !doubt;
+    text('t-first-doubt', doubt);
     if (!message.ok) {
       result.className = 'status problem';
       result.textContent = strings.firstUnreadable;
@@ -1341,6 +1641,9 @@ function onMessage(event: MessageEvent) {
   } else if (message.type === 'search-sql') {
     const code = document.querySelector<HTMLElement>(`pre[data-search="${CSS.escape(message.group)}"]`);
     if (code && message.ok) code.textContent = message.sql;
+  } else if (message.type === 'listed') {
+    if (message.ok) showListed(message.columns ?? [], message.rows ?? []);
+    else (listedBox?.isConnected ? listedBox : document).querySelector('.listed-result')?.replaceChildren(el('p', strings.listedNone, 'status problem'));
   } else if (message.type === 'charted') {
     const shown = document.querySelector<HTMLElement>('.charted-result');
     const charted = chartedNow;
@@ -1353,7 +1656,8 @@ function onMessage(event: MessageEvent) {
     const result = $('t-paste-result');
     result.hidden = false;
     result.className = message.ok ? 'status good' : 'status problem';
-    result.textContent = message.ok ? strings.factRecorded : strings.factUnreadable;
+    result.textContent = message.ok ? (withdrawing ? strings.withdrawn : strings.factRecorded) : strings.factUnreadable;
+    withdrawing = false;
     if (message.ok && message.boundary) {
       renderChecklist(message.boundary as Boundary, true);
       zip = message.zip;
@@ -1560,6 +1864,7 @@ function sendPaste(box: string, result: string, type: 'paste' | 'profile-paste')
   const pastedText = $<HTMLTextAreaElement>(box).value;
   if (!worker || state !== 'review' || pasting || !pastedText.trim()) return;
   pasting = true;
+  clearStale();
   $(result).hidden = false;
   $(result).className = 'status';
   text(result, strings.pasteReading);

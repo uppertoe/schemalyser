@@ -134,8 +134,9 @@ def test_the_checklist_is_produced_with_and_without_checks_and_profile(situation
         assert row["currently_from"] in target.SOURCES
     assert len({row["question_id"] for row in read}) == len(read)
     text = target.readiness(rows, traced)
-    # With the check results and the core profile, no blocking item of the infant query remains open.
-    assert ("not yet ready" in text) == (label != "both") and "measurement_blood_pressure_through_anaesthetic.sql" in text
+    # Even with the check results and the core profile, the kind of anaesthetic rests on a code that only the conversion's
+    # folder gives, and that no result lists, so that item remains open.
+    assert "not yet ready" in text and "measurement_blood_pressure_through_anaesthetic.sql" in text
 
 
 def test_the_statuses_follow_the_evidence_in_hand(situations, former):
@@ -151,10 +152,11 @@ def test_the_statuses_follow_the_evidence_in_hand(situations, former):
     assert bare["relationship-OBS_READING.SHEET_KEY=OBS_SHEET.SHEET_KEY"]["status"] == "answered"
     # An optional join does not block.
     assert bare["relationship-ANAES_RECORD.ANAES_KEY=ANAES_STAFF.ANAES_KEY"]["blocking"] == "no"
-    # The systolic concept has its mapping row; the check results then confirm the source holds its code.
-    assert bare["codes-measurement.measurement_concept_id-3004249"]["status"] == "partly"
+    # The systolic concept has its mapping row, which is only assumed until the check results list its code.
+    assert bare["codes-measurement.measurement_concept_id-3004249"]["status"] == "open"
     assert both["codes-measurement.measurement_concept_id-3004249"]["status"] == "answered"
-    assert both["codes-procedure_occurrence.procedure_concept_id-4174669"]["status"] == "partly"
+    kind = both["codes-procedure_occurrence.procedure_concept_id-4174669"]
+    assert kind["status"] == "open" and "In ANAES_RECORD.ANAES_KIND_CAT, the code 1 is assumed to mean general" in kind["evidence_in_hand"]
     # The core rows follow the core profile.
     assert bare["core-person.birth_datetime"]["status"] == "open"
     assert both["core-person.birth_datetime"]["status"] == "answered"
@@ -660,7 +662,9 @@ def test_the_neonatal_query_s_source_draft_and_published_form_hold_its_rules(neo
     assert read["concepts"][("measurement", "measurement_concept_id")] == ["21490852", "21492241"]
     rows, traced = checklist(NEONATAL)
     assert "measurement_mean_pressure_calculated.sql" not in files(traced) and "measurement.sql" in files(traced)
-    assert by_id(rows)["codes-measurement.measurement_concept_id-21490852"]["status"] in ("partly", "answered")
+    # Without check results the code 52 is only assumed, so the item stays open and says so.
+    item = by_id(rows)["codes-measurement.measurement_concept_id-21490852"]
+    assert item["status"] == "open" and "the code 52 is assumed to mean" in item["evidence_in_hand"]
 
 
 # What each join is meant to do, the routes that the sample queries take, and the alternatives of a step.
@@ -859,3 +863,57 @@ def test_the_review_advises_counting_people_and_warns_of_a_row_for_each_record()
     assert w["advise_people"] not in neonatal and w["advise_rows"] not in neonatal
     listing = target.review("SELECT p.person_id, p.year_of_birth FROM omop.person AS p", built, advice=True)
     assert w["advise_rows"] in listing and w["advise_people"] not in listing
+
+
+def _with_kinds_lookup(tmp_path):
+    """The invented world with an invented lookup table for the kinds of anaesthetic, which the site rules name."""
+    lines = (FIXTURES / "invented-catalogue.csv").read_text().rstrip("\n").splitlines()
+    lines += ["dbo,ANAES_KIND_DEF,ANAES_KIND_CAT,1,int,,10,0,NO", "dbo,ANAES_KIND_DEF,ANAES_KIND_NAME,2,varchar,80,,,YES"]
+    (tmp_path / "catalogue.csv").write_text("\n".join(lines) + "\n")
+    rules = json.loads(json.dumps(RULES))
+    rules["definitionKeys"].append({"table": "ANAES_RECORD", "column": "ANAES_KIND_CAT", "definitionTable": "ANAES_KIND_DEF",
+                                    "labelColumn": "ANAES_KIND_NAME"})
+    (tmp_path / "rules.json").write_text(json.dumps(rules))
+    return harness.World(tmp_path / "catalogue.csv", FIXTURES / "requests", tmp_path / "rules.json")
+
+
+def test_the_lookup_of_the_kinds_pastes_back_and_settles_the_kinds(tmp_path):
+    import sqlglot
+    from schemalyser import checks as checking
+    world = _with_kinds_lookup(tmp_path)
+    kind_id = "codes-procedure_occurrence.procedure_concept_id-4174669"
+    rows, traced = target.checklist(world, CONVERSION, AIRWAY, CHECKS)
+    kind = by_id(rows)[kind_id]
+    # The lookup query takes the place of the query that counts the kinds in use on the large table.
+    assert kind["status"] == "open" and kind["_queries"] == ["kinds:ANAES_RECORD.ANAES_KIND_CAT"]
+    offered = {q["id"]: q["sql"] for q in traced["queries"]["queries"]}
+    assert "values:ANAES_RECORD.ANAES_KIND_CAT" not in offered
+    sql = offered["kinds:ANAES_RECORD.ANAES_KIND_CAT"]
+    assert "ANAES_KIND_DEF" in sql and "[dbo].[ANAES_RECORD]" not in sql
+    # Its columns come back in the order and under the names that the paste box reads.
+    select = sqlglot.parse_one(sql, read="tsql")
+    assert tuple(e.alias_or_name for e in select.expressions) == checking.LAYOUT
+    # A results grid of its output, as SQL Server Management Studio copies it, pastes back.
+    grid = "\n".join("\t".join(["defined", "ANAES_RECORD", "ANAES_KIND_CAT", code, name, "NULL", "NULL", "NULL", "NULL"])
+                     for code, name in (("1", "Kind one"), ("2", "Kind two"), ("3", "Kind three"), ("4", "Kind four")))
+    analysis = world.analysis(CHECKS)
+    pasted = checking.Checks.from_pasted(grid, analysis.catalogue, analysis.rules)
+    assert pasted.accepted == 4 and pasted.defined[("ANAES_RECORD", "ANAES_KIND_CAT")][0] == ("1", "Kind one")
+    assert not pasted.values
+    # Without the lookup in the site rules, the same rows are not read.
+    plain = make_checks.WORLD.analysis(CHECKS)
+    assert not checking.Checks.from_pasted(grid, plain.catalogue, plain.rules).accepted
+    merged = analysis.checks.merged(pasted).to_csv()
+    assert "defined,ANAES_RECORD,ANAES_KIND_CAT,1,Kind one" in merged
+    rows, traced = target.checklist(world, CONVERSION, AIRWAY, merged)
+    kind = by_id(rows)[kind_id]
+    assert kind["status"] == "answered" and "is assumed to mean" not in kind["evidence_in_hand"]
+    assert "The lookup table of ANAES_RECORD.ANAES_KIND_CAT defines 4 local codes, and 1 of them has" in kind["evidence_in_hand"]
+    assert not kind["_queries"] and "kinds:ANAES_RECORD.ANAES_KIND_CAT" not in {q["id"] for q in traced["queries"]["queries"]}
+    # The names of the codes stay in the pasted result and are not repeated in the checklist.
+    assert "Kind one" not in target.to_csv(rows) + target.readiness(rows, traced)
+
+
+def test_without_a_lookup_the_kinds_are_left_to_the_values_query():
+    rows, traced = checklist(AIRWAY, CHECKS)
+    assert not any(q["id"].startswith("kinds:") for q in traced["queries"]["queries"])

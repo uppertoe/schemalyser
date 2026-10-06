@@ -23,7 +23,7 @@ from fnmatch import fnmatchcase
 
 LAYOUT = ("check_kind", "table_name", "column_name", "value", "label",
           "row_count", "distinct_count", "null_count", "is_unique")
-KINDS = ("column", "rows", "values", "years", "spans", "fanout", "skipped", "sampled", "ran", "error", "matched")
+KINDS = ("column", "rows", "values", "years", "spans", "fanout", "skipped", "sampled", "ran", "error", "matched", "defined")
 # How many distinct values of a column a match query takes before it looks each one up in the other table.
 MATCH_SAMPLE = 10_000
 # The kinds of check whose plain query can find nothing. Each such query adds one constant row of the kind ran,
@@ -366,6 +366,27 @@ class Check:
         return "\n".join(lines) + ";"
 
 
+def defined_plain(catalogue, table, column, definition, sentences=()):
+    """The plain query that reads only a column's lookup table and lists every code in it with its name, as rows of the
+    kind defined in the nine columns of LAYOUT, so that its result can be pasted back. Each row names the column whose
+    codes the lookup defines, not the lookup itself. It counts nothing and reads no row of the column's own table.
+
+    definition is (lookup table, key column, name column); sentences, if given, open the comment."""
+    lookup, key, label = definition
+    value = f"CAST(d.{_bracket(key)} AS nvarchar(200))"
+    entry = catalogue.table(lookup)
+    if entry is not None and entry.column(key) is not None and _kind(entry.column(key)) in TEXT_TYPES:
+        value = _cleaned(value)
+    given = {"check_kind": "'defined'", "table_name": _text(table), "column_name": _text(column), "value": value,
+             "label": _cleaned(f"CAST(d.{_bracket(label)} AS nvarchar(200))")}
+    comment = list(sentences) + [PLAIN_WORDING["defined"].format(lookup=lookup, column=f"{table}.{column}",
+                                                                 most=f"{MAXIMUM_DEFINITIONS:,}"), PLAIN_WORDING["safe"]]
+    body = [f"FROM {_name(catalogue, lookup)} AS d WITH (NOLOCK)",
+            f"WHERE d.{_bracket(key)} IS NOT NULL",
+            f"ORDER BY d.{_bracket(key)}"]
+    return "\n".join(_comment(comment) + _select(given, f"TOP ({MAXIMUM_DEFINITIONS + 1}) ") + body) + ";"
+
+
 def _name(catalogue, table):
     entry = catalogue.table(table)
     return f"{_bracket(entry.schema)}.{_bracket(entry.name)}" if entry.schema else _bracket(entry.name)
@@ -393,6 +414,9 @@ PLAIN_WORDING = {
                "to the rows of the sample, and the sampled row at the end records the percentage, rounded to a whole number.",
     "matched": "This query takes up to {most} distinct values of {column}, and counts how many of them have a row in "
                "{other} with the same value, each count rounded down to the nearest ten. It returns no value itself.",
+    "defined": "This query lists every code in {lookup}, the lookup table of {column}, with its name. Each row says "
+               "that the lookup defines the code, not that any row of {column} holds it. If the lookup holds more than "
+               "{most} codes, the results are not read.",
     "safe": "It only reads. WITH (NOLOCK) means that it takes no row locks, but it holds a schema lock while it runs, "
             "so it should not run during the nightly load.",
     "sizes": "This query reads from SQL Server's own records the number of rows in each table below, rounded down "
@@ -903,6 +927,8 @@ class Checks:
         self.skipped = []     # (kind of check, table, column or "", "time", "size" or "unrecorded")
         self.sampled = []     # (kind of check, table, column, the percentage of the table that was read)
         self.matched = {}     # (table, column, other table, other column) -> (values sampled, values found)
+        self.defined = {}     # (table, column) -> [(code, name)]: each code that the column's lookup table defines,
+                              # with its name, whether or not any row holds it; it says nothing of use
         self.ran = []         # (kind of check, table, column, second column or parent as TABLE.COLUMN, or ""), each a
                               # plain query that has run, whatever it found
         self.assumed_headers = False
@@ -988,6 +1014,17 @@ class Checks:
                     checks.accepted += 1
             elif field is None:
                 continue
+            elif kind == "defined":
+                # A code of the column's lookup table with its name, which the lookup query returns without a count.
+                # Only a column that the site rules give a lookup table may have them, and only as the values would be.
+                looked_up = (entry.name.upper(), field.name.upper()) in definitions or ("", field.name.upper()) in definitions
+                if (looked_up and entry.name.upper() not in people and _listable(field, never_listed)
+                        and _acceptable(value, MAXIMUM_TEXT_LENGTH)):
+                    label = "" if label == "NULL" or not _acceptable(label, MAXIMUM_LABEL_LENGTH) else label
+                    found = checks.defined.setdefault((entry.name, field.name), [])
+                    if value not in {code for code, _ in found}:
+                        found.append((value, label))
+                        checks.accepted += 1
             elif kind == "column":
                 checks.columns[(entry.name, field.name)] = {
                     "rows": count, "distinct": _number(distinct_count) or 0,
@@ -1036,6 +1073,10 @@ class Checks:
                 if len(checks.values[key]) > (MAXIMUM_DEFINITIONS if defined else MAXIMUM_VALUES):
                     checks.accepted -= len(checks.values[key])
                     del checks.values[key]
+            for key in list(checks.defined):
+                if len(checks.defined[key]) > MAXIMUM_DEFINITIONS:
+                    checks.accepted -= len(checks.defined[key])
+                    del checks.defined[key]
         return checks
 
     @classmethod
@@ -1079,7 +1120,7 @@ class Checks:
         answered |= {("spans",) + up(*k[:2]) for k in later.spans}
         answered |= {("fanout",) + up(*k[:2]) for k in later.fanout}
         answered |= {(kind,) + up(t, c) for kind, t, c, _ in later.sampled + later.skipped + later.ran}
-        for name in ("columns", "values", "years", "spans", "fanout", "matched"):
+        for name in ("columns", "values", "years", "spans", "fanout", "matched", "defined"):
             mine, theirs = getattr(self, name), getattr(later, name)
             later_keys = {up(*k) for k in theirs}
             combined = {k: v for k, v in mine.items() if up(*k) not in later_keys}
@@ -1130,6 +1171,9 @@ class Checks:
         for (table, column), listed in sorted(self.values.items()):
             for value, label, count in sorted(listed):
                 writer.writerow(["values", table, column, value, label, count, "", "", ""])
+        for (table, column), listed in sorted(self.defined.items()):
+            for code, label in sorted(listed):
+                writer.writerow(["defined", table, column, code, label, "", "", "", ""])
         for (table, column), listed in sorted(self.years.items()):
             for year, count in sorted(listed):
                 writer.writerow(["years", table, column, year, "", count, "", "", ""])

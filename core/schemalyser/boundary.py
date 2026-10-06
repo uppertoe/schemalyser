@@ -534,14 +534,44 @@ def _produce(state, requests, commits, state_left_out, draft_when=None):
                                            (charted["from"], charted["to"], sorted(charted["codes"])))
             except (facts_module.FactsError, target.TargetError):
                 charted = None
+        # The list of what is charted on the cohort in one year, once the count by year has been seen, and the open points that
+        # an empty cohort, an empty list or a count of none for the chosen codes raise.
+        listed = None
+        if traced["steps"]:
+            from . import charted as charting
+            from . import facts as facts_module
+            try:
+                held = facts_module.Facts.from_json(facts_text, first.catalogue) if facts_text else facts_module.Facts()
+                listed = charting.attach(rows, traced, conversion, target_text, first.catalogue, first.rules, held, settings,
+                                         planner.checks, name)
+            except (facts_module.FactsError, target.TargetError):
+                listed = None
+        # The reference query reaches the readings, so the page offers it to be run only as a script that is safe by
+        # construction; where it cannot be one, the page shows it as a reference only and says why.
+        draft_script = None
+        if traced.get("draft"):
+            from . import charted as charting
+            from . import facts as facts_module
+            try:
+                held = facts_module.Facts.from_json(facts_text, first.catalogue) if facts_text else facts_module.Facts()
+                draft_script = charting.reference_script(conversion, first.catalogue, traced["draft"], target_text, settings,
+                                                         held, name) if traced.get("draft_restructured") else \
+                    {"sql": "", "worst": "", "withheld": charting.scripts.WORDING["unsafe"].format(
+                        reason="it could not be written to start from the cohort"
+                        + (f": {traced['draft_reason']}" if traced.get("draft_reason") else ""))}
+            except (facts_module.FactsError, target.TargetError):
+                draft_script = None
         targets.append({"name": name, "rows": rows, "counts": target.counts(rows), "steps": bool(traced["steps"]),
+                        "listed": listed,
                         "charted": charted,
                         "readiness": outputs[f"targets/{name}/readiness.txt"], "queries": traced["queries"],
                         "draft": traced.get("draft"), "draft_restructured": traced.get("draft_restructured", False),
+                        "draft_script": draft_script,
                         "draft_pending": bool(traced.get("draft_later")) and not traced.get("draft"),
                         "questions": traced.get("questions") or "", "specification": spec,
                         "routes": traced.get("routes") or [], "settings": settings, "year_count": traced.get("year_count"),
                         "kinds": target.kinds_offered(conversion),
+                        "kinds_cost": target.kinds_cost(traced, first.catalogue),
                         "stages": {"source": target.stage_counts(rows, "source"), "release": target.stage_counts(rows)}})
 
     facts = {

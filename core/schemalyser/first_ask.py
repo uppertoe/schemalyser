@@ -91,6 +91,25 @@ class Names:
         return kept, max(0, len(ranked) - MAXIMUM_NAMES)
 
 
+def doubt(asked, held, rules=None):
+    """Whether the result suggests the wrong database, the wrong schema or a login with narrow rights.
+
+    "most" when more than half of the tables asked about did not come back; "lookups" when the site rules name
+    lookup tables among those asked about and none of them came back; otherwise "". Names are compared without case.
+    """
+    asked = {str(n).upper() for n in asked}
+    held = {str(n).upper() for n in held}
+    if not asked:
+        return ""
+    if len(asked - held) * 2 > len(asked):
+        return "most"
+    lookups = {str(k.get("definitionTable", "")).upper() for k in getattr(rules, "definition_keys", None) or []
+               if isinstance(k, dict)} & asked
+    if lookups and not lookups & held:
+        return "lookups"
+    return ""
+
+
 def query(names):
     """The first query, for a literal list of plain names, as T-SQL text. Any name that is not plain is dropped."""
     import textwrap

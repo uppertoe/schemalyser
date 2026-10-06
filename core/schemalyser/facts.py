@@ -39,7 +39,7 @@ from .checks import MAXIMUM_TEXT_LENGTH, _acceptable
 
 FILE = "facts.json"
 SITE_MAPPINGS = "site_mappings.csv"
-KINDS = ("join", "filter", "codes", "route", "count", "textbp", "charted")
+KINDS = ("join", "filter", "codes", "route", "count", "textbp", "charted", "listed", "calculated")
 COUNT_ANSWERS = ("right", "few", "many", "unsure")
 ROUTE_ANSWERS = ("absent", "hidden", "unsure")
 STEP_FILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\.sql")
@@ -88,9 +88,9 @@ def check(fact, catalogue):
             raise FactsError("a count fact gives the answer and the counts by year")
         years = []
         for item in fact["years"]:
-            if not (isinstance(item, list) and len(item) == 3 and isinstance(item[0], int) and 1900 <= item[0] <= 2200
+            if not (isinstance(item, list) and len(item) in (3, 4) and isinstance(item[0], int) and 1900 <= item[0] <= 2200
                     and all(v is None or (isinstance(v, int) and not isinstance(v, bool) and v >= 0) for v in item[1:])):
-                raise FactsError("each year of a count fact is a year and two counts")
+                raise FactsError("each year of a count fact is a year and two or three counts")
             years.append(list(item))
         found.update(answer=fact["answer"], years=years)
         return found
@@ -109,11 +109,19 @@ def check(fact, catalogue):
             kept.append([str(item[0]), item[1], item[2]])
         found.update({"from": fact["from"], "to": fact["to"], "codes": sorted({str(c) for c in codes}), "counts": kept})
         return found
-    if fact["kind"] == "textbp":
+    if fact["kind"] == "listed":
+        # The list of what is charted on the cohort in one year: the year chosen, and, once it has run, how many rows it gave.
+        found["column"] = _name(catalogue, fact.get("column"))
+        year, rows = fact.get("year"), fact.get("rows")
+        if not (isinstance(year, int) and 1900 <= year <= 2200) or not (rows is None or (isinstance(rows, int) and not isinstance(rows, bool) and rows >= 0)):
+            raise FactsError("a listed fact gives the year and the number of rows")
+        found.update(year=year, rows=rows)
+        return found
+    if fact["kind"] in ("textbp", "calculated"):
         found["column"] = _name(catalogue, fact.get("column"))
         codes = fact.get("codes")
         if not isinstance(codes, list) or not codes or not all(_acceptable(str(c), MAXIMUM_TEXT_LENGTH) and "," not in str(c) for c in codes):
-            raise FactsError("a textbp fact gives the codes charted as text")
+            raise FactsError("a textbp or calculated fact gives its codes")
         found["codes"] = sorted({str(c) for c in codes})
         return found
     if fact["kind"] == "route":
@@ -175,7 +183,7 @@ def _subject(fact):
         return ("filter", fact["column"].upper())
     if fact["kind"] == "route":
         return ("route", fact["step"].upper())
-    if fact["kind"] in ("count", "textbp", "charted"):
+    if fact["kind"] in ("count", "textbp", "charted", "listed", "calculated"):
         return (fact["kind"], fact.get("column", "").upper())
     return ("codes", fact["vocabulary"].upper(), fact["concept"])
 
@@ -204,6 +212,10 @@ class Facts:
         subject = _subject(fact)
         return Facts([f for f in self.items if _subject(f) != subject] + [fact])
 
+    def without(self, subject):
+        """The facts without the one about this subject, as _subject gives it, so that the question is asked again."""
+        return Facts([f for f in self.items if _subject(f) != subject])
+
     def to_json(self):
         return json.dumps({"facts": self.items}, indent=2, sort_keys=True) + "\n"
 
@@ -225,6 +237,12 @@ class Facts:
 
     def charted(self):
         return next((f for f in self.items if f["kind"] == "charted"), None)
+
+    def listed(self):
+        return next((f for f in self.items if f["kind"] == "listed"), None)
+
+    def calculated_codes(self):
+        return [f for f in self.items if f["kind"] == "calculated"]
 
     def text_codes(self):
         return [f for f in self.items if f["kind"] == "textbp"]

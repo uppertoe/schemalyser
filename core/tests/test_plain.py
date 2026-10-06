@@ -375,7 +375,8 @@ def test_the_page_reads_a_pasted_result_merges_it_and_works_the_checklist_out_ag
     assert [q["id"] for q in ready] == ["values:ANAES_RECORD.ANAES_KIND_CAT"]
     items = {row["id"]: row for row in airway["rows"]}
     kind_items = [i for i, row in items.items() if "values:ANAES_RECORD.ANAES_KIND_CAT" in row["queryIds"]]
-    assert kind_items and all(items[i]["status"] == "partly" and items[i]["queryState"] == "ready" for i in kind_items)
+    # Each kind rests on a code that only the conversion's folder gives, so it stays open until a result lists the code.
+    assert kind_items and all(items[i]["status"] == "open" and items[i]["queryState"] == "ready" for i in kind_items)
     assert first["checks"] == Checks.from_csv(CHECKS, browser._analysis.catalogue, browser._analysis.rules).to_csv()
     # Nothing that can be read is refused as a whole, and nothing is changed.
     assert json.loads(browser.checks_paste("just some words")) == {"ok": False}

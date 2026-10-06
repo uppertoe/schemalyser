@@ -114,10 +114,10 @@
     }
   ],
   "cases": [
-    "A child exactly 28 days old at the start by calendar date, with means below 40, should not be counted, because the child is not a neonate.",
-    "A child 27 days old at the start, whose arterial mean below 40 stands for three minutes, should be counted with 3 minutes below 40.",
-    "A neonate of 10 days whose charted pressure has no recorded mean should fall in the band for no mean pressure recorded.",
-    "A neonate of 10 days whose only mean below 40 the source marks as not accepted should give no minutes below 40.",
-    "A neonate with two anaesthetics, at 5 and 12 days, who died within 90 days of both, should give 3 and 5 minutes below 40 and count the death once for each anaesthetic."
+    "A child exactly 28 days old at the start by calendar date, with no recorded death, whose arterial means are 60 at 08:00, 35 at 08:10 and 60 at 08:13, should not be counted at all, because the child is not a neonate.",
+    "A child 27 days old at the start, with no recorded death, whose arterial means are 60 at 08:00, 35 at 08:10 and 60 at 08:13, should be counted, with 3 minutes below 40 and no death within 90 days.",
+    "A neonate of 10 days with no recorded death, whose only charted pressure is 50/30 with no recorded mean, should fall in the band for no mean pressure recorded, with no minutes below 40 and no death within 90 days.",
+    "A neonate of 10 days with no recorded death, whose arterial means are 60 at 09:00, 35 at 09:10, which the source marks as not accepted, and 60 at 09:20, should give no minutes below 40 and no death within 90 days.",
+    "A neonate who died within 90 days of both of two anaesthetics, the first at 5 days with cuff means of 60 at 09:00, 36 at 09:10 and 61 at 09:13, and the second at 12 days with arterial means of 60 at 09:00, 37 at 09:10 and 62 at 09:17, should give 3 minutes below 40 for the first and 5 minutes for the second, because a reading stands for no longer than five minutes, and count the death once for each anaesthetic."
   ]
 }
