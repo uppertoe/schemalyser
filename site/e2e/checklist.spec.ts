@@ -706,3 +706,51 @@ test('without a conversion or target queries the page says what to supply to see
   await expect(page.locator('#t-checklist-intro')).toBeHidden();
   await expect(page.locator('#t-files-sentence')).toHaveText('Schemalyser has read 15 files. It was not able to read 2 of them in full, because each holds a part that Schemalyser could not parse, SQL that is built as text when it runs, a call to a stored procedure, a statement of a kind that Schemalyser does not analyse, or a query whose columns Schemalyser could not match to their tables.');
 });
+
+test('on a training database the count by year is kept without judging it, and is to be asked again on the production copy', async ({ page, context, browserName }) => {
+  test.setTimeout(300_000);
+  await page.goto('./');
+  await expect(page.getByText(strings.loaded)).toBeVisible({ timeout: 120_000 });
+  await setOnline(page, context, browserName, false);
+  await page.locator('#state-folder').setInputFiles(makeState(join(mkdtempSync(join(tmpdir(), 'schemalyser-training-')), 'state')));
+  await page.locator('#folder').setInputFiles(fixtures + 'requests');
+  await page.locator('#analyse').click();
+  await expect(page.locator('#checklists section.target')).toHaveCount(world.targets.length, { timeout: 120_000 });
+  // The page shows a pasted count beside the first count on the page, so the checklist that holds it is the one followed.
+  const name = await page.locator('#checklists section.target').filter({ has: page.locator('textarea.count-paste') }).first().getAttribute('data-target');
+  const section = page.locator(`section.target[data-target="${name}"]`);
+
+  // The colleague says that the SQL window is connected to a training database, and the core works the checklist out again.
+  await section.locator('.database input[value="training"]').check();
+  await expect(page.locator('#t-paste-result')).toHaveText(strings.factRecorded, { timeout: 120_000 });
+  await expect(section.locator('.database input[value="training"]')).toBeChecked();
+
+  // The count by year is still offered. Once pasted, the page does not ask whether the numbers look right.
+  const item = section.locator('li.item[data-id="count-by-year"]').first();
+  await item.locator('textarea.count-paste').fill('start_year\tanaesthetics\tin_the_cohort\tno_kind_recorded\n2023\t120\t10\tNULL\n2024\t130\t20\t10\n');
+  await item.locator('button.count-read').click();
+  await expect(item.locator('.count-training')).toHaveText(strings.countTraining, { timeout: 120_000 });
+  await expect(item.locator('button.count-right')).toHaveCount(0);
+  await item.locator('button.count-keep').click();
+  await expect(page.locator('#t-paste-result')).toHaveText(strings.factRecorded, { timeout: 120_000 });
+
+  // The item is marked to be asked again on the production copy, rather than open or settled, and takes no paste here.
+  const marked = section.locator('li.item[data-id="count-by-year"][data-again="true"]').first();
+  await expect(marked.locator('.again-mark')).toHaveText(strings.againMark, { timeout: 120_000 });
+  await expect(marked.locator('textarea.count-paste')).toHaveCount(0);
+  // What remains gains a fourth group, and the tally at the head counts it apart.
+  const again = section.locator('.ending ul.remaining[data-who="again"]');
+  await expect(again.locator('li[data-ids~="count-by-year"]')).toHaveCount(1);
+  await expect(section.locator('.ending .remaining-heading', { hasText: strings.endingAgainHeading })).toHaveCount(1);
+  const tally = (await section.locator('p.tally').textContent()) ?? '';
+  const n = await again.locator('li').count();
+  expect(tally).toContain(`${n} to ask again on the production copy`);
+  await expect(section.locator('.ending .ending-database')).toHaveText(strings.databaseRecorded.training);
+  await expect(section.locator('.specification pre')).toContainText('a training database with fictional patients');
+
+  // The state saved at the end records the choice and the count kept without judgement.
+  const [saved] = await Promise.all([page.waitForEvent('download'), section.locator('button.ending-save').click()]);
+  expect(JSON.parse(execFileSync('unzip', ['-p', await saved.path(), 'audit.json'], { encoding: 'utf8' })).database).toBe('training');
+  const facts = JSON.parse(execFileSync('unzip', ['-p', await saved.path(), 'facts.json'], { encoding: 'utf8' })).facts;
+  expect(facts.find((fact: { kind: string }) => fact.kind === 'count').answer).toBe('training');
+});

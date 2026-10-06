@@ -223,6 +223,9 @@ def _remains(row):
     sure or a name whose visibility is not known."""
     if (row.get("phase") or "source") != "source" or row["status"] == "answered":
         return False
+    # A point that a training database could not settle is to be asked again on the production copy, and is counted apart.
+    if row.get("_again"):
+        return False
     if row["blocking"] == "yes" and row["status"] == "open":
         return True
     if row.get("_fact") in ("unsure", "measure", "noted", "no"):
@@ -305,8 +308,10 @@ def _needs(rows):
     asked = [r for r in must if r.get("_ask") and not r.get("_fact")]
     queried = [r for r in must if r not in asked and r.get("_queries")]
     return {"questions": len(asked), "queries": len(queried), "other": len(must) - len(asked) - len(queried),
-            "lessCertain": sum(1 for r in first if r["status"] == "partly" and not _remains(r)),
+            "lessCertain": sum(1 for r in first if r["status"] == "partly" and not _remains(r) and not r.get("_again")),
             "remaining": [r["question_id"] for r in must],
+            # What a training database could not settle, to be asked again on the production copy.
+            "again": [r["question_id"] for r in first if r.get("_again") and r["status"] != "answered"],
             "settled": sum(1 for r in first if r["status"] == "answered")}
 
 
@@ -391,7 +396,8 @@ def boundary_run(state_commit=None, requests_commit=None):
                  "withdraw": _withdrawable(row, t["rows"]),
                  # Whether the item heads what remains, and, for a route, the name that is not visible, which the page
                  # uses to name each such table once.
-                 "top": bool(row.get("_top")), "missing": (row.get("_names") or {}).get("missing", "")
+                 "top": bool(row.get("_top")), "again": bool(row.get("_again")) and row["status"] != "answered",
+                 "missing": (row.get("_names") or {}).get("missing", "")
                  if row["question_id"].startswith("route-") else "",
                  **({"years": row["_count"]["years"]} if row.get("_count") else {})} for row in t["rows"]]
         offered = t.get("queries") or {"sizes": None, "queries": []}

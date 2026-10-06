@@ -45,6 +45,17 @@ WORDING = {
                  "find no one here, or the anaesthetics are not reaching their patients, and the audit cannot proceed until "
                  "you find which.",
     "sized": "{table} (about {rows:,} rows)",
+    # On a training database with fictional patients, what is charted reflects training and not practice.
+    "empty_training": "The list of what is charted on the audit's anaesthetics in {year} came back empty on a training "
+                      "database, where nobody may have charted on the fictional patients in that year. The list is to be "
+                      "asked again on the production copy: run it there and paste the result.",
+    "listed_training": "The codes were chosen from the list of what is charted on the audit's anaesthetics in {year}, run on "
+                       "a training database. What is charted there reflects training and not practice, so rows may be "
+                       "missing or oddly frequent. The list is to be asked again on the production copy: run it there and "
+                       "confirm the choices against it.",
+    "counted_training": "The count of how often each chosen code is charted from {start} to {end} was run on a training "
+                        "database, so its numbers mean nothing for practice. The count is to be asked again on the production "
+                        "copy: run it there and paste the result.",
 }
 
 # The anaesthetic's own columns, which stand for the columns of the procedure row that the reading step reads.
@@ -516,6 +527,15 @@ def _open_point(rows, base, row_id, sentence, query):
     rows.insert(0, row)
 
 
+def _again_point(rows, base, row_id, sentence):
+    """A point that a result from a training database could not settle, to be asked again on the production copy. It does
+    not stop the audit, so it never heads the list of what remains."""
+    row = dict(base, question_id=row_id, question=sentence, status="partly", blocking="yes", evidence_in_hand="",
+               phase="source", query_state="", query_reason="", query="", _queries=[], _count=None, _top=False,
+               intent="", route="", _again=True, _fact="", _ask=None)
+    rows.append(row)
+
+
 LISTED_INSTEAD = ("Schemalyser needs the codes of {column} that mean {meaning}. Schemalyser finds these codes in the list of "
                   "what is charted on the audit's anaesthetics, which it offers once you have seen the count by year. Expect "
                   "several codes for one meaning.")
@@ -555,7 +575,10 @@ def attach(rows, traced, conversion, target_sql, catalogue, rules, held, setting
         _search_replaced(rows, traced, column)
         return {"sql": "", "year": None, "column": column, "years": [], "rows": None, "link": "", "waiting": True,
                 "largest": found["largest"]}
-    if not any(c for _, _, c, *_ in count["years"]):
+    from . import target
+    trained = target.training(settings)
+    # On a training database an empty cohort is noted on the count's own item, and the list is still offered.
+    if not any(c for _, _, c, *_ in count["years"]) and not trained:
         base["question"] = WORDING["no_cohort"]
         base["_top"] = True
         return None
@@ -579,13 +602,22 @@ def attach(rows, traced, conversion, target_sql, catalogue, rules, held, setting
     if found["matched"] and not any(q["id"] == found["matched"]["id"] for q in offered["queries"]):
         offered["queries"].append({"id": found["matched"]["id"], "sql": found["matched"]["sql"], "state": "exact", "table": ""})
     ran = listed["rows"] if listed and listed["year"] == year and listed.get("column", "").upper() == column.upper() else None
-    if ran == 0:
+    chosen = held.charted()
+    if trained:
+        # What a training database charts says nothing of practice: an empty list, the codes chosen from a list and the
+        # count of the chosen codes are each to be asked again on the production copy, and none of them stops the audit.
+        if ran == 0:
+            _again_point(rows, base, "charted-empty", WORDING["empty_training"].format(year=year))
+        elif ran:
+            _again_point(rows, base, "charted-listed", WORDING["listed_training"].format(year=year))
+        if chosen is not None:
+            _again_point(rows, base, "charted-counted", WORDING["counted_training"].format(start=chosen["from"], end=chosen["to"]))
+    elif ran == 0:
         _open_point(rows, base, "charted-empty", WORDING["empty"].format(year=year, link=found["link"] or "the match of a reading to its record"),
                     found["matched"])
-    chosen = held.charted()
     # A year in which the count by year shows fewer than ten anaesthetics of the cohort says little about the codes.
     cohort_in = {int(y[0]): y[2] for y in count["years"]}
-    if chosen is not None and not chosen["counts"] and cohort_in.get(int(chosen["to"][:4])):
+    if not trained and chosen is not None and not chosen["counts"] and cohort_in.get(int(chosen["to"][:4])):
         _open_point(rows, base, "charted-zero", WORDING["zero"].format(start=chosen["from"], end=chosen["to"],
                                                                          link=found["link"] or "the match of a reading to its record"),
                     found["matched"])

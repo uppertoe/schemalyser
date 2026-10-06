@@ -45,6 +45,8 @@ interface Item {
   top?: boolean;
   missing?: string;
   years?: (number | null)[][];
+  // Whether a result from a training database left the item to be asked again on the production copy.
+  again?: boolean;
 }
 
 // One plain query that a checklist offers, written by the core. The page shows it and never changes it.
@@ -78,11 +80,11 @@ interface Target {
   // The routes that the catalogue settled, where a step gave way to one of its alternatives, one sentence each.
   routes?: string[];
   settings?: { from?: string | null; to?: string | null; kinds?: number[]; pressures?: string | null; floor?: number | null; ceiling?: number | null;
-    isolated?: string | null; bypass?: string | null; age?: string | null; notes?: Record<string, string> };
+    isolated?: string | null; bypass?: string | null; age?: string | null; notes?: Record<string, string>; database?: string | null };
   kinds?: [number, string][];
   // What choosing the kinds of anaesthetic costs, in one sentence from the core, shown above the ticks; it may be empty.
   kinds_cost?: string;
-  needs?: { questions: number; queries: number; other: number; lessCertain: number; settled: number; remaining: string[] };
+  needs?: { questions: number; queries: number; other: number; lessCertain: number; settled: number; remaining: string[]; again?: string[] };
 }
 
 interface Boundary {
@@ -790,19 +792,69 @@ let listedBox: HTMLElement | null = null;
 type Script = { sql: string; worst?: string; withheld?: string };
 // The largest table that the count by year and part 1 of each script read to find the anaesthetics, with its size.
 let cohortLargest: [string, number] | null = null;
+// Whether the checklist on the page was worked out for a training database with fictional patients, as the core recorded it.
+let trainingNow = false;
+// The database chosen where the first query is offered, before any checklist exists; it is sent once the first one arrives.
+let databaseChoice: string | null = null;
+
+// The three answers about the database that the SQL window is connected to, as radio buttons, with the sentence for "not sure".
+function databaseOptions(name: string, current: string | null | undefined, onChoose: (value: string) => void) {
+  const box = el('div', undefined, 'database-options');
+  const unsure = el('p', strings.databaseUnsure, 'note database-unsure');
+  unsure.hidden = current !== 'unsure';
+  for (const [value, label] of strings.databaseOptions) {
+    const wrap = el('label', ` ${label}`, 'database-option');
+    const radio = el('input') as HTMLInputElement;
+    radio.type = 'radio';
+    radio.name = name;
+    radio.value = value;
+    radio.checked = current === value;
+    radio.addEventListener('change', () => {
+      if (!radio.checked) return;
+      unsure.hidden = value !== 'unsure';
+      onChoose(value);
+    });
+    wrap.prepend(radio);
+    box.append(wrap);
+  }
+  box.append(unsure);
+  return box;
+}
+
+// The database is kept with the audit's settings, so a change sends the settings as they stand with the new answer, and the
+// core works the checklist out again.
+function sendDatabase(target: Target, value: string) {
+  if (!worker) return;
+  clearStale();
+  worker.postMessage({ type: 'settings', settings: JSON.stringify({ ...(target.settings ?? {}), database: value }) });
+}
+
+function databaseElement(target: Target) {
+  const box = el('div', undefined, 'sizes database');
+  box.append(el('h4', strings.databaseHeading), el('p', strings.databaseWhat, 'sizes-reason'),
+    databaseOptions(`database-${target.name}`, target.settings?.database, (value) => {
+      databaseChoice = value;
+      sendDatabase(target, value);
+    }), el('p', strings.databaseChanged, 'note'));
+  return box;
+}
+
 function scriptNotes(script: Script, long = false) {
   if (!script.sql) return script.withheld ? [el('p', script.withheld, 'sizes-reason status problem script-withheld')] : [];
   return [el('p', strings.scriptTemporary, 'sizes-reason script-note'), el('p', strings.scriptTimeout, 'sizes-reason script-note'),
     el('p', strings.scriptPlan, 'sizes-reason script-note'),
     ...(cohortLargest ? [el('p', strings.scriptCostly(...cohortLargest), 'sizes-reason script-note')] : []),
     ...(script.worst ? [el('p', strings.scriptWorst(script.worst), 'sizes-reason script-note')] : []),
-    ...(long ? [el('p', strings.scriptMonth, 'sizes-reason script-note')] : [])];
+    ...(long ? [el('p', strings.scriptMonth, 'sizes-reason script-note')] : []),
+    // A script that is quick on a small training database can still misbehave on the production copy.
+    ...(trainingNow ? [el('p', strings.scriptTraining, 'sizes-reason script-note script-training')] : [])];
 }
 
 function listedElement(target: Target) {
   const listed = target.listed!;
   const box = el('div', undefined, 'sizes listed');
   box.append(el('h4', strings.listedHeading), el('p', strings.listedWhat(listed.column, listed.year ?? 0), 'sizes-reason'),
+    ...(trainingNow ? [el('p', strings.listedTraining, 'sizes-reason status problem listed-training')] : []),
     ...scriptNotes(listed));
   const yearLabel = el('label', strings.listedYear);
   const year = el('select', undefined, 'listed-year') as HTMLSelectElement;
@@ -869,7 +921,8 @@ function showListed(columns: string[], rows: { code: string; readings: number | 
   filter.placeholder = strings.listedFilter;
   const table = el('table', undefined, 'candidate-table listed-table');
   const head = el('tr');
-  head.append(el('th', strings.searchCode), el('th', strings.listedReadings), el('th', strings.listedAnaesthetics),
+  head.append(el('th', strings.searchCode), el('th', trainingNow ? strings.listedReadingsTraining : strings.listedReadings),
+    el('th', trainingNow ? strings.listedAnaestheticsTraining : strings.listedAnaesthetics),
     ...(columns.length ? columns : [strings.searchName]).map((c) => el('th', c)), el('th', strings.searchChoice));
   table.append(head);
   const selects: [string, HTMLSelectElement, HTMLElement][] = [];
@@ -983,9 +1036,12 @@ function showYearCount(years: (number | null)[][]) {
     row.append(el('td', String(year)), cell(all), cell(cohort), ...(noKind ? [cell(none)] : []));
     table.append(row);
   }
-  const ask = el('p', years.length ? strings.countAsk : strings.countEmpty, 'ask-text');
   const actions = el('div', undefined, 'actions');
-  for (const [answer, label] of [['right', strings.countRight], ['few', strings.countFew], ['many', strings.countMany], ['unsure', strings.notSure]] as const) {
+  // On a training database with fictional patients the numbers mean nothing, so the page keeps them without asking.
+  const ask = trainingNow ? el('p', strings.countTraining, 'ask-text count-training')
+    : el('p', years.length ? strings.countAsk : strings.countEmpty, 'ask-text');
+  if (trainingNow) actions.append(askButton(strings.countKeep, 'count-keep', () => sendFacts(shown, [{ kind: 'count', answer: 'training', years }])));
+  else for (const [answer, label] of [['right', strings.countRight], ['few', strings.countFew], ['many', strings.countMany], ['unsure', strings.notSure]] as const) {
     actions.append(askButton(label, `count-${answer}`, () => sendFacts(shown, [{ kind: 'count', answer, years }])));
   }
   // The earliest year with anaesthetics is offered as the start of the study period, where none has been entered.
@@ -1091,7 +1147,8 @@ function queryElements(item: Item, queries: Map<string, Query>, shown: Set<strin
     code.dataset.query = id;
     copy.dataset.query = id;
     parts.push(code, copy);
-    if (id === 'yearcount') parts.push(yearCountBox());
+    // A count to be asked again on the production copy keeps its query, to be run there, but takes no paste here.
+    if (id === 'yearcount' && !item.again) parts.push(yearCountBox());
   }
   return parts;
 }
@@ -1102,11 +1159,13 @@ function itemElement(item: Item, previous?: string, queries?: Map<string, Query>
   const line = el('li', undefined, 'item');
   line.dataset.id = item.id;
   line.dataset.status = item.status;
+  if (item.again) line.dataset.again = 'true';
   if (previous !== undefined && previous !== 'answered' && item.status === 'answered') line.dataset.new = 'true';
   const mark = el('span', undefined, 'mark');
   mark.setAttribute('aria-hidden', 'true');
   const body = el('div', undefined, 'item-body');
   body.append(el('span', strings.statusNames[item.status], 'visually-hidden'));
+  if (item.again) body.append(el('p', strings.againMark, 'status again-mark'));
   // The question for the colleague, where there is one, is what he reads; the checklist's own account of the point is
   // folded beneath it, one click away.
   const asking = item.status !== 'answered' && item.ask && item.stage === 'source' && (!item.fact || !!item.ask.choose);
@@ -1231,7 +1290,8 @@ function settingsElement(target: Target) {
   }
   box.append(decisions);
   box.append(askButton(strings.settingsApply, 'settings-apply', () => {
-    const settings: Record<string, unknown> = { from: from.value || null, to: to.value || null, kinds: boxes.filter(([, t]) => t.checked).map(([c]) => c) };
+    const settings: Record<string, unknown> = { from: from.value || null, to: to.value || null, kinds: boxes.filter(([, t]) => t.checked).map(([c]) => c),
+      database: target.settings?.database ?? null };
     for (const [key, input] of pickers) {
       if (key === 'floor' || key === 'ceiling') settings[key] = input.value ? Number(input.value) : null;
       else settings[key] = input.value === (strings.decisions.find((d) => d.key === key)?.options[0][0]) ? null : input.value;
@@ -1258,7 +1318,7 @@ function plainLine(text: string) {
 }
 
 // One point that remains, with who can settle it, the line that the ending shows, and the line for the team's note.
-type Point = { who: 'you' | 'team' | 'clinician'; text: string; note?: string; ids: string[] };
+type Point = { who: 'you' | 'team' | 'clinician' | 'again'; text: string; note?: string; ids: string[] };
 
 // What remains, in the order that the core gives, one point for each thing to settle: the routes that rest on one name
 // that is not visible are one point. Each point belongs to the colleague now, to the team that looks after the reporting
@@ -1305,6 +1365,11 @@ function remainingPoints(target: Target, needs: NonNullable<Target['needs']>): P
       points.push({ who: 'clinician', text: line(question, found, strings.endingClinician), ids: [id] });
     }
   }
+  // What a training database could not settle is to be asked again on the production copy, as a group of its own.
+  for (const id of needs.again ?? []) {
+    const item = byId.get(id);
+    if (item) points.push({ who: 'again', text: plainLine(item.question), ids: [id] });
+  }
   return points;
 }
 
@@ -1315,7 +1380,8 @@ function endingElement(target: Target, needs: NonNullable<Target['needs']>, read
   box.append(el('p', strings.endingSettled(needs.settled), 'note'));
   if (points.length) {
     box.append(el('p', strings.endingRemaining, 'note'));
-    for (const [who, heading] of [['you', strings.endingYouHeading], ['team', strings.endingTeamHeading], ['clinician', strings.endingClinicianHeading]] as const) {
+    for (const [who, heading] of [['you', strings.endingYouHeading], ['team', strings.endingTeamHeading], ['clinician', strings.endingClinicianHeading],
+      ['again', strings.endingAgainHeading]] as const) {
       const mine = points.filter((point) => point.who === who);
       if (!mine.length) continue;
       const list = el('ul', undefined, 'remaining');
@@ -1334,6 +1400,8 @@ function endingElement(target: Target, needs: NonNullable<Target['needs']>, read
     }
   } else box.append(el('p', ready ? strings.endingNothing : strings.notReadyYet, 'note'));
   if (needs.lessCertain) box.append(el('p', strings.endingLessCertain(needs.lessCertain), 'note'));
+  const database = target.settings?.database;
+  if (database && strings.databaseRecorded[database]) box.append(el('p', strings.databaseRecorded[database], 'note ending-database'));
   box.append(el('p', strings.endingSave, 'note'));
   box.append(askButton(strings.saveState, 'secondary ending-save', () => worker?.postMessage({ type: 'state-zip' })));
   return box;
@@ -1343,6 +1411,7 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
   listedNow = target.listed ?? null;
   listedTarget = target;
   cohortLargest = target.listed?.largest ?? null;
+  trainingNow = target.settings?.database === 'training';
   const section = el('section', undefined, 'target');
   section.dataset.target = target.name;
   const heading = el('h3');
@@ -1361,9 +1430,11 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
     const added = points.filter((point) => !before.points!.includes(point.text)).map((point) => point.text);
     if (added.length) section.append(el('p', strings.remainingRose(points.length - before.points.length, added), 'status problem remaining-rose'));
   }
-  section.append(el('p', target.needs ? strings.needs(count('you'), count('team'), count('clinician'))
+  section.append(el('p', target.needs ? strings.needs(count('you'), count('team'), count('clinician'), count('again'))
     : strings.needs(needs.questions + needs.queries, 0, needs.other), 'tally'));
-  section.append(el('p', sourceReady ? strings.readyNow(needs.lessCertain) : strings.notReadyYet, sourceReady ? 'status good stage-verdict' : 'status stage-verdict'));
+  section.append(el('p', sourceReady ? (count('again') ? strings.readyTraining(count('again')) : strings.readyNow(needs.lessCertain)) : strings.notReadyYet,
+    sourceReady ? 'status good stage-verdict' : 'status stage-verdict'));
+  section.append(databaseElement(target));
   // Searches gather the meanings of the codes they look for, so that the candidates can be chosen among them.
   searchGroups = new Map();
   for (const item of target.rows) {
@@ -1439,7 +1510,7 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
   const firstStage = (item: Item) => (item.stage ?? 'source') === 'source';
   const later = target.rows.filter((item) => item.stage === 'release' && !fresh.includes(item));
   // What needs the colleague now: a question not yet answered, or a short query ready to run.
-  const needsYou = (item: Item) => (item.ask && (!item.fact || !!item.ask.choose)) || item.queryState === 'ready' || !!item.queryIds?.includes('yearcount');
+  const needsYou = (item: Item) => !item.again && ((item.ask && (!item.fact || !!item.ask.choose)) || item.queryState === 'ready' || !!item.queryIds?.includes('yearcount'));
   // The routes that rest on one name that is not visible are one point, so the page lists only the first of them.
   const missingShown = new Set<string>();
   const once = (item: Item) => {
@@ -1671,6 +1742,8 @@ function onMessage(event: MessageEvent) {
     render(message as Result);
     addedSinceAnalysis = 0;
     state = 'review';
+    const first = (message as Result).boundary.targets?.[0];
+    if (first && databaseChoice && first.settings?.database !== databaseChoice) sendDatabase(first, databaseChoice);
   } else if (message.type === 'analysis-failed') {
     state = 'ready';
     clearResult();
@@ -2038,6 +2111,8 @@ $('clear').addEventListener('click', () => {
   clearResult();
   resetInputs();
   snapshot = null;
+  databaseChoice = null;
+  firstDatabase();
   state = 'ready';
   show();
 });
@@ -2263,6 +2338,8 @@ const fixed: Record<string, string> = {
   'h-first': strings.firstHeading,
   't-first-what': strings.firstWhat,
   'first-write': strings.firstWrite,
+  'l-database': strings.databaseLegend,
+  't-database-what': strings.databaseWhat,
   'first-copy': strings.firstCopy,
   'l-first-paste': strings.firstPasteLabel,
   'first-read': strings.firstRead,
@@ -2296,6 +2373,11 @@ const fixed: Record<string, string> = {
   't-keeps-nothing': strings.keepsNothing,
 };
 for (const [id, value] of Object.entries(fixed)) text(id, value);
+// The database is chosen where the first query is offered, before anything is run, and kept until the page is cleared.
+function firstDatabase() {
+  $('database-options').replaceChildren(databaseOptions('database-first', databaseChoice, (value) => (databaseChoice = value)));
+}
+firstDatabase();
 // The proposed GitHub wording is put on the page only when the GitHub path is asked for.
 if (github) {
   const g = githubStrings;

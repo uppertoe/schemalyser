@@ -2346,8 +2346,27 @@ def _apply_matches(rows, checks):
         good = matched >= 0.95 * sampled
         row["evidence_in_hand"] += " " + q["matched_good" if good else "matched_poor"].format(
             found=f"{matched:,}", sampled=f"{sampled:,}", left=f"{t}.{c}", right=f"{u}.{d}")
+        row["_matched"] = True
         if good:
             row["status"], row["currently_from"] = "answered", "check results"
+
+
+TRAINING_WORDING = {
+    "again": "This result came from a training database with fictional patients, so it does not settle the point. It is to "
+             "be asked again on the production copy: run the query there and paste the result.",
+}
+
+
+def _apply_training(rows):
+    """On a training database with fictional patients, a result that depends on the data rather than on the build settles
+    nothing: a match measured by a match query, and the values that a query listed for a filtered column. Each such item is
+    marked to be asked again on the production copy, with its result still shown. An answer that a person gave stands."""
+    for row in rows:
+        if row.get("currently_from") == "a person" or row.get("_fact") in ("yes", "no", "measure"):
+            continue
+        if row.get("_matched") or (row["kind"] == "filter" and row.get("currently_from") == "check results"):
+            row["status"], row["_again"] = "partly", True
+            row["evidence_in_hand"] = " ".join(p for p in (row["evidence_in_hand"], TRAINING_WORDING["again"]) if p)
 
 
 # What a column is, for the questions: whether it holds its own table's key, and whether a person may choose it.
@@ -2876,8 +2895,11 @@ def queries_file(name, offered):
 
 
 def checklist(world, conversion, target_sql, checks_csv=None, profile_text=None, facts_text=None, name=None, evidence_text=None,
-              draft=True):
+              draft=True, database=None):
     """The checklist for one target query, as (rows, trace). Each row is a dictionary in LAYOUT, with private keys that begin with _.
+
+    database is the setting of that name in audit.json. Where it is "training", a result that depends on the data rather
+    than on the build is marked to be asked again on the production copy (the private key _again) and settles nothing.
 
     evidence_text is sql_evidence.json, what the team's SQL showed in earlier runs, which settles an item
     that the request files to hand do not show.
@@ -2924,6 +2946,9 @@ def checklist(world, conversion, target_sql, checks_csv=None, profile_text=None,
         raise TargetError("facts.json could not be read") from error
     _apply_matches(rows, checks)
     _apply_facts(rows, confirmed, traced)
+    trained = database == "training"
+    if trained:
+        _apply_training(rows)
     for row in rows:
         row.update({"query_state": "", "query_reason": "", "query": "", "_queries": []})
     planned = _planned(world, analysis, traced)
@@ -2970,7 +2995,7 @@ def checklist(world, conversion, target_sql, checks_csv=None, profile_text=None,
     # the kinds; where the lookup exists, it takes the place of the query that counts the kind's column in use.
     _kinds_query(rows, traced, analysis.catalogue, analysis.rules, checks)
     traced["name"] = name
-    _count_row(rows, traced, conversion, target_sql, analysis.catalogue, confirmed, name, checks)
+    _count_row(rows, traced, conversion, target_sql, analysis.catalogue, confirmed, name, checks, trained)
     traced["questions"] = _questions(rows, traced, analysis.catalogue, analysis.rules)
     # A settled item says what settled it, and never that something is not yet known.
     for row in rows:
@@ -3543,6 +3568,19 @@ def source_draft(conversion, target_sql, catalogue=None, mappings=None, target_n
 SPECIFICATION_WORDING = {
     "title": "Specification of {name}, for the person who writes the audit query against this hospital's database",
     "inside": "This page names the tables and local codes of the hospital's database, so it is for use inside the hospital only.",
+    # Which database the meeting's queries ran against, stated at the top.
+    "database_production": "The meeting ran its queries against the production reporting database, or a refreshed copy of it.",
+    "database_training": "The meeting ran its queries against a training database with fictional patients. Its tables, joins, "
+                         "lookup tables and names of charted rows are the hospital's own, but its counts and its patterns of "
+                         "charting mean nothing, so every result that depends on them is to be asked again on the production copy.",
+    "database_unsure": "The colleague was not sure which database the meeting's queries ran against, so Schemalyser has treated "
+                       "it as the production reporting database.",
+    "h_again": "To be asked again on the production copy, because the meeting's result came from a training database:",
+    "again": "{item}: run the query again on the production copy and paste the result.",
+    "again_listed": "The list of what is charted on the audit's anaesthetics in {year}, from which the codes above were chosen: "
+                    "run the list again on the production copy and confirm the choices against it.",
+    "again_charted": "The count of how often each chosen code is charted from {start} to {end}, whose numbers came from the "
+                     "training database: run the count again on the production copy and paste the result.",
     "h_question": "1. The question",
     "h_settings": "2. The study period and the kinds of anaesthetic",
     "period": "The study period runs from {start} to {end}, and an anaesthetic counts when it starts within it.",
@@ -3608,7 +3646,14 @@ COUNT_WORDING = {
     "reason": "This count shows from which year records exist, and whether the numbers look right for this hospital. {reads}",
     "seen": "You looked at the count on {date} and said that {answer}.",
     "answers": {"right": "the numbers look about right", "few": "there are too few", "many": "there are too many",
-                "unsure": "you are not sure"},
+                "unsure": "you are not sure", "training": "the numbers came from a training database, so you did not judge them"},
+    # On a training database with fictional patients the count shows only that the route finds records.
+    "seen_training": "You ran the count on {date} on a training database with fictional patients.",
+    "training": "On a training database the numbers mean nothing, because its patients are fictional, so the count shows only "
+                "whether the audit's route finds any records. The count is to be asked again on the production copy: run it "
+                "there and paste the result.",
+    "question_training": "The count of anaesthetics by year has been run on a training database, where the numbers mean "
+                         "nothing, so it is to be asked again on the production copy.",
     "empty_years": "The count found no anaesthetic in {years}.",
     "no_cohort": "In every year the count found fewer than ten anaesthetics in the audit's cohort, or none, so it does not yet show that the audit finds its cohort.",
     "question_seen": "The count of anaesthetics by year, and of those in the audit's cohort, has been seen.",
@@ -3712,7 +3757,10 @@ def specification(conversion, target_sql, rows, traced, catalogue, name="the tar
     folder = Path(conversion)
     settings = settings or {"from": None, "to": None, "kinds": []}
     deps = traced.get("dependencies") or answer_dependencies(folder, target_sql, catalogue, traced)
-    lines = [w["title"].format(name=name), "", w["inside"], "", w["h_question"], ""]
+    lines = [w["title"].format(name=name), "", w["inside"], ""]
+    if settings.get("database") in DATABASES:
+        lines += [w[f"database_{settings['database']}"], ""]
+    lines += [w["h_question"], ""]
     lines += [line for line in _leading_comments(target_sql)]
 
     lines += ["", w["h_settings"], ""]
@@ -3833,7 +3881,7 @@ def specification(conversion, target_sql, rows, traced, catalogue, name="the tar
     lines.append(w["small"])
 
     lines += ["", w["h_open"], ""]
-    unsettled = [r for r in rows if r.get("phase") == "source" and r["status"] != "answered"
+    unsettled = [r for r in rows if r.get("phase") == "source" and r["status"] != "answered" and not r.get("_again")
                  and (r["blocking"] == "yes" or r["question_id"].startswith("route-"))
                  and not (r["kind"] in ("table", "column") and r["status"] == "partly")
                  # A codes item whose codes a person chose, with only some codes marked not sure, is said once, as those
@@ -3846,8 +3894,24 @@ def specification(conversion, target_sql, rows, traced, catalogue, name="the tar
             line += " " + KIND_JOIN
         if line not in lines:      # one table that is not visible gives several steps their route; it is said once
             lines.append(line)
-    if not unsettled:
+    # On a training database, what its results could not settle is listed under a heading of its own, each with one action.
+    again = []
+    if training(settings):
+        again = [w["again"].format(item=_plain_item(r, folder, words)[:1].upper() + _plain_item(r, folder, words)[1:])
+                 for r in rows if r.get("phase") == "source" and r.get("_again") and not r["question_id"].startswith("charted-")]
+        try:
+            kept = facts_module.Facts.from_json((folder / ".." / facts_module.FILE).read_text(), catalogue) \
+                if (folder / ".." / facts_module.FILE).is_file() else facts_module.Facts()
+        except facts_module.FactsError:
+            kept = facts_module.Facts()
+        if kept.listed() and kept.listed().get("rows"):
+            again.append(w["again_listed"].format(year=kept.listed()["year"]))
+        if kept.charted():
+            again.append(w["again_charted"].format(start=kept.charted()["from"], end=kept.charted()["to"]))
+    if not unsettled and not again:
         lines.append(w["settled"])
+    if again:
+        lines += ["", w["h_again"], ""] + [f"- {line}" for line in again] + [""]
     lines.append(w["death_register"])
     gestation = sorted(f"{entry.name}.{column.name}" for entry in catalogue.tables() for column in entry.columns.values()
                        if "GEST" in column.name.upper())
@@ -4495,6 +4559,13 @@ if __name__ == "__main__":
 
 SETTINGS_FILE = "audit.json"
 START_FIELD, KIND_FIELD = "start_datetime", "anaesthesia_type_concept_id"
+DATABASES = ("production", "training", "unsure")
+
+
+def training(settings):
+    """Whether the meeting's queries ran against a training database with fictional patients. A database that is not known
+    is treated as production, so that no result is set aside without cause."""
+    return (settings or {}).get("database") == "training"
 DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
@@ -4506,9 +4577,14 @@ def read_settings(text):
         data = json.loads(text)
     except ValueError as error:
         raise TargetError("audit.json is not valid JSON") from error
-    if not isinstance(data, dict) or set(data) - {"from", "to", "kinds"} - set(DECISIONS) - {"notes"}:
-        raise TargetError("audit.json may set only the period, the kinds, the decisions and their notes")
+    if not isinstance(data, dict) or set(data) - {"from", "to", "kinds", "database"} - set(DECISIONS) - {"notes"}:
+        raise TargetError("audit.json may set only the period, the kinds, the database, the decisions and their notes")
     found = {"from": data.get("from") or None, "to": data.get("to") or None, "kinds": data.get("kinds") or []}
+    # Which database the meeting's queries ran against: the production reporting database or a refreshed copy, a training
+    # database with fictional patients, or not known, which is treated as production.
+    if data.get("database") not in (None, *DATABASES):
+        raise TargetError("the database in audit.json is production, training or unsure")
+    found["database"] = data.get("database") or None
     for key, (options, _) in DECISIONS.items():
         value = data.get(key)
         if key in ("floor", "ceiling"):
@@ -4691,8 +4767,9 @@ def _cohort_conditions(target_sql):
     return None, []
 
 
-def _count_row(rows, traced, conversion, target_sql, catalogue, confirmed, name, checks=None):
-    """The item for the count by year: open until the two people have seen it and said that it looks right."""
+def _count_row(rows, traced, conversion, target_sql, catalogue, confirmed, name, checks=None, trained=False):
+    """The item for the count by year: open until the two people have seen it and said that it looks right. On a training
+    database with fictional patients, a count that has been seen is to be asked again on the production copy instead."""
     if not traced["steps"]:
         return
     sql = year_count(conversion, target_sql, catalogue, name or "the audit", checks)
@@ -4711,18 +4788,25 @@ def _count_row(rows, traced, conversion, target_sql, catalogue, confirmed, name,
         span = range(min(listed), max(listed) + 1) if listed else range(0)
         empty = [str(y) for y in span if y not in listed or listed[y] == 0]
         no_cohort = not any(item[2] for item in years)
-        in_hand.append(w["seen"].format(date=fact["date"], answer=w["answers"][fact["answer"]]))
+        in_hand.append(w["seen_training"].format(date=fact["date"]) if trained
+                       else w["seen"].format(date=fact["date"], answer=w["answers"][fact["answer"]]))
         if empty:
             in_hand.append(w["empty_years"].format(years=_join(empty)))
         if no_cohort:
             in_hand.append(w["no_cohort"])
-        if fact["answer"] == "right" and not empty and not no_cohort:
+        if trained:
+            # The numbers are noted, and an empty cohort with them, but neither settles nor stops anything here.
+            in_hand.append(w["training"])
+            status = "partly"
+        elif fact["answer"] == "right" and not empty and not no_cohort:
             status = "answered"
         else:
             in_hand.append(rests)
     row = _row("count-by-year", "meaning", True, "count", status, "check results" if fact else "a guess", in_hand)
     if fact is not None:
-        row["question"] = w["question_seen"]
+        row["question"] = w["question_training"] if trained else w["question_seen"]
+        if trained:
+            row["_again"] = True
     row["phase"] = "source"
     row.update({"query_state": "", "query_reason": w["reason"].format(reads=_count_reads(sql, conversion, catalogue, checks)), "query": "",
                 "intent": "", "route": "", "_queries": [] if status == "answered" else ["yearcount"]})

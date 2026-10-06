@@ -158,6 +158,7 @@ export const strings = {
   blocking: 'The audit query must rest on this.',
   notBlocking: 'This makes the answer more certain, and the audit query does not wait for it.',
   statusNames: { answered: 'Answered.', partly: 'Partly answered.', open: 'Open.' } as Record<string, string>,
+  againMark: 'To be asked again on the production copy.',
   readinessInFull: "Show the developer's detail",
 
   // The plain queries on the checklist, and the results pasted back.
@@ -227,6 +228,24 @@ export const strings = {
   firstUnreadable:
     'Schemalyser could not read the pasted text as the result of the first query. Each row needs the ten columns that the query returns, from TABLE_SCHEMA to TABLE_ROWS.',
   saveState: 'Save what has been settled today',
+  // Which database the SQL window is connected to for the meeting, asked before anything is run.
+  databaseLegend: 'Before you run anything, choose the database that your SQL window is connected to for this meeting:',
+  databaseWhat:
+    "Hospitals keep copies of the reporting database. A training database holds the hospital's real tables, lookup tables and names of charted rows, but its patients are fictional, so its counts and its patterns of charting mean nothing. On a training database, Schemalyser still settles what depends on the tables alone, and it marks every result that depends on the data as to be asked again on the production copy.",
+  databaseOptions: [
+    ['production', 'The production reporting database, or a refreshed copy of it'],
+    ['training', 'A training or play database with fictional patients'],
+    ['unsure', 'I am not sure'],
+  ] as [string, string][],
+  databaseUnsure:
+    'Because you are not sure, Schemalyser treats the database as the production reporting database, so that no result is set aside without cause. If you later find that it is a training database, change this answer.',
+  databaseHeading: 'The database for this meeting',
+  databaseChanged: 'If you change this answer, Schemalyser works out the checklist again.',
+  databaseRecorded: {
+    production: 'The meeting used the production reporting database, or a refreshed copy of it.',
+    training: 'The meeting used a training database with fictional patients.',
+    unsure: 'The meeting was not sure which database it used, so Schemalyser has treated it as the production reporting database.',
+  } as Record<string, string>,
   // The note to send with the first query, as docs/first-ask-note.md gives it.
   noteHeading: 'Show the note to send with the first query',
   noteCopy: 'Copy the note',
@@ -348,13 +367,14 @@ export const strings = {
   githubSummary: 'Fetch the files from GitHub instead (not needed in a meeting)',
   catalogueSummary: 'If your team already keeps the full list of tables and columns',
   // The tally at the head of a checklist, by who can settle each point, as the list at the end groups them.
-  needs: (you: number, team: number, clinician: number) => {
-    const total = you + team + clinician;
+  needs: (you: number, team: number, clinician: number, again = 0) => {
+    const total = you + team + clinician + again;
     if (!total) return 'Schemalyser needs nothing more for this audit question.';
     const parts = [
       you ? `${you} for you now` : '',
       team ? `${team} for the team that looks after the reporting database` : '',
       clinician ? `${clinician} for the clinician after the meeting` : '',
+      again ? `${again} to ask again on the production copy` : '',
     ].filter(Boolean);
     const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
     return `Schemalyser needs ${total} more ${total === 1 ? 'thing' : 'things'} for this audit question: ${list}.`;
@@ -363,6 +383,8 @@ export const strings = {
     `Everything that the audit query must rest on is settled, so the query can be written now.${
       lessCertain ? ` ${lessCertain === 1 ? 'One further point is' : `${lessCertain} further points are`} less certain; the query does not wait for ${lessCertain === 1 ? 'it' : 'them'}, and the specification lists ${lessCertain === 1 ? 'it' : 'them'}.` : ''
     }`,
+  readyTraining: (again: number) =>
+    `Everything that can be settled on a training database is settled, so the audit query can be drafted now. ${again === 1 ? 'One point is' : `${again} points are`} still to be asked again on the production copy, and nobody should rely on a result until ${again === 1 ? 'it has' : 'they have'} been.`,
   notReadyYet: 'Some of what the audit query must rest on is not yet settled. The list at the end says what remains and who can settle it.',
   notSure: 'Not sure',
   routeAbsent: 'It does not exist here',
@@ -387,6 +409,7 @@ export const strings = {
     `Part 1, like the count by year, reads ${table} (about ${rows.toLocaleString('en-AU')} rows) to find the anaesthetics, so it can be slow on its own. If part 1 reaches the time limit, it stops by itself; in that case, do not run it again, and tell the clinician leading the audit.`,
   scriptMonth: 'Where the period is longer than a month, run the script first for one month: change the two dates in part 1 to the first month of the period, and run the whole period only once that month has finished quickly.',
   scriptWorst: (worst: string) => `The count by year shows ${worst}, and the script asks only for the readings of those anaesthetics.`,
+  scriptTraining: 'A script that runs quickly on a small training database can still run slowly or read far too much on the production copy, so follow these notes there as well.',
   countCostly: (table: string, rows: number) =>
     `The count by year reads ${table} (about ${rows.toLocaleString('en-AU')} rows) to find the anaesthetics, so it can be slow. If it reaches the time limit, it stops by itself; in that case, do not run it again, and tell the clinician leading the audit.`,
   countPlan: 'This count does not read the table of readings, which is the very large table that holds every value charted during an anaesthetic. Before you run it, set a time limit: in SQL Server Management Studio, with your query window open, open the Query menu, choose Query Options, then Execution, and enter a number of seconds, such as 300, in Execution time-out. Then select the query and press Ctrl+L, which shows its estimated plan, SQL Server\'s description of how it intends to run the query, without running it. If any box in the plan names one of the tables of readings, do not run the count, and show the plan to the clinician leading the audit.',
@@ -401,6 +424,10 @@ export const strings = {
   listedFilter: 'Type to show only the rows that hold these words',
   listedReadings: 'Readings',
   listedAnaesthetics: 'Anaesthetics',
+  listedTraining:
+    "This list comes from a training database with fictional patients. What is charted there reflects training and not practice, so rows may be missing or oddly frequent. You can still choose the codes from it, because training uses the hospital's real rows, but the choices should be confirmed again on the production copy.",
+  listedReadingsTraining: 'Readings in training',
+  listedAnaestheticsTraining: 'Anaesthetics in training',
   listedNotChosen: 'Not chosen',
   listedCalculated: 'A mean calculated from systolic and diastolic, which the audit leaves out',
   listedLikely: '(likely)',
@@ -430,6 +457,8 @@ export const strings = {
   endingRemaining: 'These remain, grouped by who can settle them.',
   endingYouHeading: 'You can settle these now, in the meeting:',
   endingTeamHeading: 'The team that looks after the reporting database can settle these:',
+  endingAgainHeading:
+    'These are to be asked again on the production copy, because their results came from a training database. For each, run the query again on the production copy and paste the result:',
   endingClinicianHeading: 'The clinician settles these after the meeting, in the folder for this audit, as each point says: by recording what each code means where the two of you could not choose, or by changing the audit\'s steps or the reference query:',
   remainingRose: (n: number, added: string[]) =>
     `That answer leaves ${n} more ${n === 1 ? 'thing' : 'things'} to settle than before, because Schemalyser has learned something new: ${added.join(' ')}`,
@@ -490,6 +519,9 @@ export const strings = {
   countAsk: "Compare these numbers with the hospital's usual workload, then choose one:",
   countNoKind: 'No kind recorded',
   countEmpty: "The count found no anaesthetic at all. Compare this with the hospital's usual workload, then choose one:",
+  countTraining:
+    'This is a training database with fictional patients, so these numbers mean nothing, and Schemalyser does not ask whether they look right. The count shows only whether the audit finds any records at all. Keep the counts, and Schemalyser marks the count to be asked again on the production copy.',
+  countKeep: 'Keep the counts',
   countRight: 'About right',
   countFew: 'Too few',
   countMany: 'Too many',

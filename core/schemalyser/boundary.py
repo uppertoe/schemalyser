@@ -499,7 +499,8 @@ def _produce(state, requests, commits, state_left_out, draft_when=None):
             target_text = target.with_settings(decode(path.read_bytes()), settings, conversion)
             rows, traced = target.checklist(world, conversion, target_text, checks_text, profile_text,
                                             facts_text, name, evidence_text,
-                                            draft=draft_when is None or options["writeSourceDraft"])
+                                            draft=draft_when is None or options["writeSourceDraft"],
+                                            database=settings.get("database"))
             # The joins that set the kind of anaesthetic, where only some kinds count, and the decisions that the reference
             # query does not yet apply, are open points before anything else reads the rows.
             from . import charted as charting

@@ -22,7 +22,10 @@ cohort's anaesthetics in the last year of the study period and the number of tho
 the nearest ten, or empty under ten. A code that the count does not list was not charted on them.
 
 An answer of "unsure" records that a person was asked and could not say, with the date, so that the question is
-not asked again and a query can settle it instead.
+not asked again and a query can settle it instead. A count fact with the answer "training" records a count run on a
+training database with fictional patients, whose numbers nobody was asked to judge.
+
+Which database the meeting's queries ran against is not a fact: it is kept with the audit's settings in audit.json.
 
 The codes of a codes fact become mapping rows in site_mappings.csv, in the conversion folder beside the
 conversion's own source_to_concept_map.csv, so that the conversion, the checklist and the release load them
@@ -40,7 +43,8 @@ from .checks import MAXIMUM_TEXT_LENGTH, _acceptable
 FILE = "facts.json"
 SITE_MAPPINGS = "site_mappings.csv"
 KINDS = ("join", "filter", "codes", "route", "count", "textbp", "charted", "listed", "calculated")
-COUNT_ANSWERS = ("right", "few", "many", "unsure")
+# "training" records a count seen on a training database with fictional patients, whose numbers nobody judged.
+COUNT_ANSWERS = ("right", "few", "many", "unsure", "training")
 ROUTE_ANSWERS = ("absent", "hidden", "unsure")
 STEP_FILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\.sql")
 ANSWERS = ("yes", "no", "unsure")

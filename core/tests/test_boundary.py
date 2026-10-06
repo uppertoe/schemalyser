@@ -384,13 +384,17 @@ def test_everything_adds_the_provenance_to_the_outputs_as_write_does(invented):
 # What the module needs and what it reaches.
 
 def test_the_module_imports_without_duckdb_and_the_run_opens_no_network_module(invented, tmp_path):
+    # The interpreter's own start-up may import a network module on some systems (a site file on a
+    # build server, for example), so only what the import and the run add is counted.
     code = (
         "import sys\n"
+        "network = ('socket', 'ssl', 'http.client', 'urllib.request')\n"
+        "at_start = {m for m in network if m in sys.modules}\n"
         "import schemalyser.boundary as b\n"
         "assert 'duckdb' not in sys.modules, 'duckdb at import'\n"
         f"assert b.main(['--state', {str(invented['state'])!r}, '--requests', {str(invented['requests'])!r}, "
         f"'--out', {str(tmp_path / 'out')!r}]) == 0\n"
-        "print(sorted(m for m in ('socket', 'ssl', 'http.client', 'urllib.request') if m in sys.modules))\n"
+        "print(sorted(m for m in network if m in sys.modules and m not in at_start))\n"
     )
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
                             cwd=PACKAGE.parent, env={**os.environ, "PYTHONPATH": str(PACKAGE.parent)})
