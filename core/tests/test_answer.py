@@ -106,7 +106,7 @@ def test_a_persons_answer_settles_an_item_and_a_no_says_which_step_must_change(n
     rows, traced = neonatal
     questions = traced["questions"]
     assert questions.startswith("Questions about neonatal_low_mean_pressure for a colleague")
-    assert "by OBS_SHEET.VISIT_KEY = VISIT.VISIT_KEY. Is that right?" in questions
+    assert "by joining on OBS_SHEET.VISIT_KEY = VISIT.VISIT_KEY. Is that right?" in questions
     assert "!" not in questions
     given = {"facts": [
         {"kind": "join", "left": "OBS_SHEET.VISIT_KEY", "right": "VISIT.VISIT_KEY", "answer": "yes", "date": "2026-10-05",

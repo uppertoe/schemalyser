@@ -32,7 +32,7 @@ WORDING = {
     "header": "This query lists every code of {column} that was charted on the audit's anaesthetics that started in {year}, "
               "with the number of readings and of anaesthetics for each, each rounded down to the nearest ten and left blank "
               "under ten, and the names that {definition} gives each code, most charted first. To find those anaesthetics "
-              "it reads {cohort}. It then reaches {path} only through the records of those anaesthetics, by key, so that of "
+              "it reads {cohort}. It then reads {path} only through the records of those anaesthetics, so that of "
               "{readings} it reads only the readings on the cohort's own records in that year.",
     "empty": "The list of what is charted on the audit's anaesthetics in {year} came back empty. Either no anaesthetic of "
              "the cohort started in {year}, or the readings are not reaching their anaesthetic, and the audit cannot proceed "
@@ -599,11 +599,11 @@ def attach(rows, traced, conversion, target_sql, catalogue, rules, held, setting
 # that would make it real.
 DECISION_POINTS = {
     "bypass": ("Time on cardiopulmonary bypass is to be left out, and neither the reference query nor the specification "
-               "applies that yet. Run the name search with this point on {table}, which defines the events of the "
+               "applies that yet. Run the search with this point on {table}, the table that names the events of the "
                "anaesthetic record, to find the events that mark the start and the end of bypass.",
                ["BYPASS", "CPB", "ON PUMP", "OFF PUMP"]),
     "ecmo": ("Time on ECMO is to be left out, and neither the reference query nor the specification applies that yet. Run the "
-             "name search with this point on {table}, which defines the events of the anaesthetic record, to find the events "
+             "search with this point on {table}, the table that names the events of the anaesthetic record, to find the events "
              "that mark the start and the end of ECMO.", ["ECMO", "ECLS", "EXTRACORPOREAL"]),
     "isolated": ("A single isolated low reading is to be ignored, and the reference query does not apply that yet. Schemalyser "
                  "takes an isolated low reading to be a single reading below 40 with the readings either side of it at 40 or "
@@ -612,8 +612,8 @@ DECISION_POINTS = {
             "holds the gestational age at birth{gestation}, and the clinician adds the limit to the reference query after "
             "the meeting.", None),
 }
-NO_EVENTS = ("The site rules name no table that defines the events of the anaesthetic record, so name it in the meeting and "
-             "add it to the site rules; Schemalyser then offers the search.")
+NO_EVENTS = ("The site rules name no table that names the events of the anaesthetic record, so the clinician names it in "
+             "the meeting and adds it to the site rules; Schemalyser then offers the search.")
 
 
 def _events_definition(catalogue, rules):

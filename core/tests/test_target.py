@@ -298,7 +298,7 @@ def test_a_sample_query_that_makes_the_join_ticks_the_relationship_off(tmp_path,
     world = harness.World(FIXTURES / "invented-catalogue.csv", requests, FIXTURES / "invented-site-rules.json")
     rows, traced = checklist(world=world, conversion=former)
     after = by_id(rows)["relationship-ANAES_RECORD.VISIT_KEY=VISIT.VISIT_KEY"]
-    assert after["status"] == "answered" and "1 of the 16 sample queries" in after["evidence_in_hand"]
+    assert after["status"] == "answered" and "1 of the 16 SQL files from your team" in after["evidence_in_hand"]
     assert target.counts(rows)["answered"] > counted["answered"]
     assert target.counts(rows)["open"] == counted["open"] - 1
 
@@ -736,14 +736,14 @@ def test_an_open_join_gives_the_route_that_the_sample_queries_take(former):
     visit = found[VISIT_JOIN]
     assert visit["status"] == "open"
     assert visit["route"] == "ANAES_RECORD.CASE_KEY = THEATRE_CASE.CASE_KEY (6); THEATRE_CASE.VISIT_KEY = VISIT.VISIT_KEY (1)"
-    assert ("The sample queries reach VISIT from ANAES_RECORD through THEATRE_CASE, by ANAES_RECORD.CASE_KEY = "
+    assert ("Your team's SQL files reach VISIT from ANAES_RECORD through THEATRE_CASE, by ANAES_RECORD.CASE_KEY = "
             "THEATRE_CASE.CASE_KEY (6 queries) and THEATRE_CASE.VISIT_KEY = VISIT.VISIT_KEY (1 query).") in visit["evidence_in_hand"]
     assert found[SHEET_JOIN]["route"] == "OBS_SHEET.VISIT_KEY = THEATRE_CASE.VISIT_KEY (1); THEATRE_CASE.VISIT_KEY = VISIT.VISIT_KEY (1)"
     # Where the sample queries do not connect the two tables, the item says so, and how many requests were not read in full.
     staff = found["relationship-ANAES_RECORD.ANAES_KEY=ANAES_STAFF.ANAES_KEY"]
     assert staff["route"] == ""
-    assert "The sample queries do not connect ANAES_RECORD and ANAES_STAFF at all, through any route of up to 3 joins." in staff["evidence_in_hand"]
-    assert "2 of the 15 sample queries could not be read in full" in staff["evidence_in_hand"]
+    assert "Your team's SQL files do not connect ANAES_RECORD and ANAES_STAFF at all, through any route of up to 3 joins." in staff["evidence_in_hand"]
+    assert "2 of the 15 SQL files from your team could not be read in full" in staff["evidence_in_hand"]
     # An answered join has no route.
     assert all(row["route"] == "" for row in rows if row["status"] == "answered")
 
@@ -913,7 +913,7 @@ def test_the_lookup_of_the_kinds_pastes_back_and_settles_the_kinds(tmp_path):
     kind = by_id(rows)[kind_id]
     # The lookup settles nothing by itself: the codes and their names are offered for the two of them to choose from.
     assert kind["status"] == "open" and target.WORDING["in_hand"]["codes_choose"] in kind["evidence_in_hand"]
-    assert "The lookup table of ANAES_RECORD.ANAES_KIND_CAT defines 4 local codes, and 1 of them has" in kind["evidence_in_hand"]
+    assert "The table that names the codes of ANAES_RECORD.ANAES_KIND_CAT defines 4 local codes, and 1 of them has" in kind["evidence_in_hand"]
     assert kind["_ask"]["choose"][0] == ["1", "Kind one"] and kind["_ask"]["group"] == "ANAES_RECORD.ANAES_KIND_CAT"
     assert not kind["_queries"] and "kinds:ANAES_RECORD.ANAES_KIND_CAT" not in {q["id"] for q in traced["queries"]["queries"]}
     # The names of the codes stay in the pasted result and are not repeated in the checklist.

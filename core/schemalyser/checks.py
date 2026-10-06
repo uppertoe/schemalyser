@@ -409,16 +409,18 @@ PLAIN_WORDING = {
     "fanout": "This query counts the values of {column} by the number of rows that hold each one, in fixed bands, "
               "rounded down to the nearest ten. It never returns a value itself, and it leaves out any band that "
               "fewer than {least} values fall in.",
-    "sampled": "Because {table} is large, the query reads about {percent} per cent of its pages, a sample of about "
-               "{rows} rows, and its counts are estimates scaled up from that sample. The least count of ten applies "
-               "to the rows of the sample, and the sampled row at the end records the percentage, rounded to a whole number.",
+    "sampled": "Because {table} is large, the query reads a random sample of about {percent} per cent of it, about "
+               "{rows} rows, and scales its counts up from that sample, so they are estimates. The rule that leaves out "
+               "anything fewer than ten rows hold applies to the rows of the sample, and the last row of the result, "
+               "marked sampled, records the percentage, rounded to a whole number.",
     "matched": "This query takes up to {most} distinct values of {column}, and counts how many of them have a row in "
                "{other} with the same value, each count rounded down to the nearest ten. It returns no value itself.",
-    "defined": "This query lists every code in {lookup}, the lookup table of {column}, with its name. Each row says "
-               "that the lookup defines the code, not that any row of {column} holds it. If the lookup holds more than "
+    "defined": "This query lists every code in {lookup}, the table that names the codes of {column}, with its name. "
+               "Each row says that the code exists, not that any row of {column} holds it. If the lookup holds more than "
                "{most} codes, the results are not read.",
-    "safe": "It only reads. WITH (NOLOCK) means that it takes no row locks, but it holds a schema lock while it runs, "
-            "so it should not run during the nightly load.",
+    "safe": "It only reads. WITH (NOLOCK) means that it neither waits for nor holds up other people's work on the same "
+            "rows, but SQL Server still stops anyone changing the design of the tables while it runs, so do not run it "
+            "during the nightly load, when the reporting database is refreshed.",
     "sizes": "This query reads from SQL Server's own records the number of rows in each table below, rounded down "
              "to the nearest ten, without reading any of the tables. A name for which the server keeps no record, "
              "such as a view, comes back as skipped and unrecorded.",

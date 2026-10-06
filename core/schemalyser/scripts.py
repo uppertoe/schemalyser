@@ -31,16 +31,18 @@ from . import checks as checking
 LIMIT = 5000
 
 WORDING = {
-    "timeout": "Set a query time-out before you run this script; SQL Server Management Studio has none unless one is set "
-               "(Tools, Options, Query Execution). Run part 1 on its own, then look at the estimated plan of part 2: it should "
-               "reach the table of readings by a seek on its clustered key, through nested loops, from #cohort. A scan of the "
-               "table of readings, or a hash join that takes it as an input, means stop, and do not run part 2.",
-    "temporary": "This script creates one temporary table, #cohort, which holds only the keys of the audit's anaesthetics "
-                 "and of their records, with their start and end times. It exists only in your own session and goes when "
-                 "the window closes. Nothing else is created or changed.",
+    "timeout": "Set a time limit before you run this script, because SQL Server Management Studio sets none unless you "
+               "enter one: open the Query menu, choose Query Options, then Execution, and enter a number of seconds in "
+               "Execution time-out. Run part 1 on its own, then select part 2 and press Ctrl+L to see its estimated plan without "
+               "running it. If a box that names the table of readings reads Scan, or a box that reads Hash Match has an "
+               "arrow coming in from it, do not run part 2, and show the plan to the clinician leading the audit. If the "
+               "table of readings appears only in boxes that read Seek, you can run part 2.",
+    "temporary": "This script makes one temporary table, #cohort, which is a small table that exists only in your own SQL "
+                 "window and disappears when you close that window. #cohort holds only the identifying numbers of the "
+                 "audit's anaesthetics and of their records, with their start and end times. Nothing else is made or changed.",
     "worst": "The count by year shows {worst}, and part 2 asks only for the readings of those anaesthetics.",
-    "part1": "Part 1: the cohort's anaesthetics, found in the smaller tables and put into #cohort with a primary key.",
-    "part2": "Part 2: the readings, reached from #cohort by key.",
+    "part1": "Part 1 finds the audit's anaesthetics in the smaller tables and puts them into #cohort, one row for each anaesthetic.",
+    "part2": "Part 2 fetches the readings of only the anaesthetics in #cohort.",
     "unseen": "Schemalyser offers this query once you have seen the count by year, because the count shows how many "
               "anaesthetics it would read.",
     "too_many": "The count by year shows that the cohort may hold as many as {n} anaesthetics from {start} to {end}. Schemalyser offers a "

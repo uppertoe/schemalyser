@@ -79,11 +79,11 @@ test('the checklist matches the boundary command, and an added request ticks off
   const section = page.locator(`section.target[data-target="${TARGET}"]`);
   const join = section.locator(`ul[data-group="you"] li[data-id="${JOIN}"]`);
   await expect(join).toHaveAttribute('data-status', 'open');
-  await expect(join).toContainText('sample queries from the data team that join AIRWAY_DEVICE.ANAES_KEY to ANAES_RECORD.ANAES_KEY');
+  await expect(join).toContainText('SQL files of their own that join AIRWAY_DEVICE.ANAES_KEY to ANAES_RECORD.ANAES_KEY');
   await expect(join).toContainText(strings.blocking);
   // The items that need something else say who must act.
   // Each item's own account, folded beneath it, says who must act.
-  expect(await section.locator('li.item .actor').first().textContent()).toMatch(/The (clinical lead|analytics team|central OMOP team)/);
+  expect(await section.locator('li.item .actor').first().textContent()).toMatch(/The (clinician leading the audit|team that looks after the reporting database|central OMOP team)/);
   // The answered items are folded away until asked for.
   await expect(section.locator('details.answered ul')).toBeHidden();
   await expect(page.locator('#t-changes')).toBeHidden();
@@ -431,7 +431,7 @@ test('a colleague answers a question from knowledge, and the item ticks without 
   const section = page.locator('section.target[data-target="neonatal_low_mean_pressure"]');
   // The questions come first, as one list to send.
   const questions = section.locator('.questions pre');
-  await expect(questions).toContainText('by OBS_SHEET.VISIT_KEY = VISIT.VISIT_KEY. Is that right?');
+  await expect(questions).toContainText('by joining on OBS_SHEET.VISIT_KEY = VISIT.VISIT_KEY. Is that right?');
   const copy = section.locator('.questions button', { hasText: strings.questionsCopy });
   await copy.click();
   await expect(copy).toHaveAttribute('data-copied', 'true');
@@ -503,7 +503,7 @@ test('once the count by year is seen, the codes are chosen from the list of what
   await expect(notes.filter({ hasText: strings.scriptPlan })).toHaveCount(1);
   await expect(notes.filter({ hasText: strings.scriptWorst('about 20 anaesthetics of the cohort in 2024') })).toHaveCount(1);
   // The script itself says where the time-out is set.
-  await expect(listed.locator('pre[data-query="listed"]')).toContainText('Tools, Options, Query Execution');
+  await expect(listed.locator('pre[data-query="listed"]')).toContainText('open the Query menu, choose Query Options, then Execution');
   await expect(section.locator('textarea.search-paste')).toHaveCount(0);
   await expect(section.locator('li.item', { hasText: strings.listedInstead }).first()).toBeAttached();
 
@@ -546,7 +546,7 @@ test('once the count by year is seen, the codes are chosen from the list of what
   const charted = section.locator('.charted');
   await expect(charted.locator('pre[data-query="charted"]')).toContainText('FROM #cohort AS c', { timeout: 120_000 });
   await expect(charted.locator('.script-note').first()).toHaveText(strings.scriptTemporary);
-  await expect(charted.locator('.sizes-reason').first()).toContainText('asks only for the readings that belong to them');
+  await expect(charted.locator('.sizes-reason').first()).toContainText('fetches only the readings of those anaesthetics');
   await charted.locator('textarea.charted-paste').fill('code\treadings\tanaesthetics\n52\t1230\t40\n');
   await charted.locator('button.charted-read').click();
   await expect(section.locator('.charted .charted-result')).toHaveText(strings.chartedKept, { timeout: 120_000 });

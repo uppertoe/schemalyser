@@ -347,7 +347,7 @@ def test_an_item_with_a_large_table_says_how_to_answer_instead():
     # The durations can be counted from a sample.
     duration = found["B-tuning-anaesthetic_duration"]
     assert duration["query_state"] == "ready" and "TABLESAMPLE SYSTEM (16.67 PERCENT) REPEATABLE (20261005) WITH (NOLOCK)" in duration["query"]
-    assert "reads a sample of its pages" in duration["query_reason"]
+    assert "reads only a random sample of it" in duration["query_reason"]
     assert "column:PERSON_MASTER_2.DEATH_TS" not in {q["id"] for q in traced["queries"]["queries"]}
 
 
