@@ -1,0 +1,12 @@
+Table Name	Field	Type	PK	Definition
+PERSON_MASTER				The PERSON_MASTER table contains one record for each patient known to the system.
+PERSON_MASTER	PERSON_KEY	VARCHAR	Y	The unique ID of the patient record for this row.
+PERSON_MASTER	BIRTH_TS	DATETIME	N	The date and time on which the patient was born.
+PERSON_MASTER	TEST_PERSON_FLAG	VARCHAR	N	Indicates whether this is a test patient and not a real patient.
+PERSON_MASTER	BAD;NAME	VARCHAR	N	A row whose column name is not a plain name, which the loader leaves out.
+ANAES_RECORD				This table stores one record for each anesthesia episode.
+ANAES_RECORD	ANAES_KEY	VARCHAR	Y	The unique ID of the anesthesia episode record.
+ANAES_RECORD	ANAES_START_TS	DATETIME	N	The instant at which anesthesia started for this record.
+
+ANAES_RECORD	ANAES_STOP_TS	DATETIME	N	"The instant at which anesthesia stopped for this record,
+written over two lines."

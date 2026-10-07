@@ -1,0 +1,99 @@
+TABLE_NAME,COLUMN_NAME,DATA_TYPE,IS_PRIMARY_KEY,DESCRIPTION
+PERSON_MASTER,PERSON_KEY,VARCHAR,YES,The unique ID of the patient record for this row. Other tables use this column to link to PERSON_MASTER.
+PERSON_MASTER,RECORD_NO,VARCHAR,NO,The patient's medical record number at the hospital.
+PERSON_MASTER,GIVEN_NAME,VARCHAR,NO,The patient's given name.
+PERSON_MASTER,FAMILY_NAME,VARCHAR,NO,The patient's family name.
+PERSON_MASTER,BIRTH_TS,DATETIME,NO,The date and time on which the patient was born.
+PERSON_MASTER,SEX_CAT,INTEGER,NO,The category number for the patient's sex assigned at birth.
+PERSON_MASTER,TEST_PERSON_FLAG,VARCHAR,NO,"Indicates whether this is a test patient used for training or for testing the system, and not a real patient. Y means a test patient."
+PERSON_MASTER_2,PERSON_KEY,VARCHAR,YES,The unique ID of the patient record for this row.
+PERSON_MASTER_2,GEST_WEEKS,INTEGER,NO,The gestational age of the patient at birth in completed weeks.
+PERSON_MASTER_2,BIRTH_WEIGHT_G,NUMERIC,NO,The patient's weight at birth in grams.
+PERSON_MASTER_2,DEATH_TS,DATETIME,NO,The date and time of death of the patient.
+VISIT,VISIT_KEY,NUMERIC,YES,The unique ID of the hospital encounter.
+VISIT,PERSON_KEY,VARCHAR,NO,The unique ID of the patient for this encounter.
+VISIT,ADMIT_TS,DATETIME,NO,The date and time at which the patient was admitted to the hospital for this encounter.
+VISIT,DISCH_TS,DATETIME,NO,The hospital discharge date and time for this encounter.
+VISIT,WARD_KEY,NUMERIC,NO,The ward or unit to which the patient was admitted.
+VISIT,VISIT_KIND_CAT,INTEGER,NO,"The category number for the admission type of the encounter, such as elective or emergency."
+WARD_DEF,WARD_KEY,NUMERIC,YES,The unique ID of the ward.
+WARD_DEF,WARD_LABEL,VARCHAR,NO,The display name of the ward or unit.
+THEATRE_CASE,CASE_KEY,VARCHAR,YES,The unique ID of the surgical case.
+THEATRE_CASE,VISIT_KEY,NUMERIC,NO,The hospital encounter during which the surgical case took place.
+THEATRE_CASE,PERSON_KEY,VARCHAR,NO,The unique ID of the patient for this surgical case.
+THEATRE_CASE,CASE_DATE,DATETIME,NO,The date of the surgical case.
+THEATRE_CASE,CASE_STATUS_CAT,INTEGER,NO,"The category number for the status of the case, such as scheduled, completed or cancelled."
+THEATRE_CASE,ROOM_KEY,VARCHAR,NO,The operating room in which the case took place.
+THEATRE_CASE,SERVICE_CAT,INTEGER,NO,The category number for the surgical service or specialty of the case.
+THEATRE_CASE,EMERGENCY_FLAG,VARCHAR,NO,Indicates whether the case has an emergency status.
+CASE_PROC,CASE_KEY,VARCHAR,YES,The unique ID of the surgical case.
+CASE_PROC,SEQ,INTEGER,YES,The line number of the procedure within the case.
+CASE_PROC,PROC_KEY,VARCHAR,NO,The unique ID of the procedure performed.
+PROC_DEF,PROC_KEY,VARCHAR,YES,The unique ID of the procedure.
+PROC_DEF,PROC_LABEL,VARCHAR,NO,The name of the procedure.
+ANAES_RECORD,ANAES_KEY,VARCHAR,YES,The unique ID of the anesthesia episode record. Other tables use this column to link to the anesthesia record.
+ANAES_RECORD,CASE_KEY,VARCHAR,NO,The surgical case for which the anesthesia was given.
+ANAES_RECORD,VISIT_KEY,NUMERIC,NO,The hospital encounter during which the anesthesia was given.
+ANAES_RECORD,RISK_GRADE_CAT,INTEGER,NO,The category number for the ASA physical status rating of the patient.
+ANAES_RECORD,ANAES_KIND_CAT,INTEGER,NO,"The category number for the type of anesthesia, such as general, regional or sedation."
+ANAES_RECORD,ANAES_START_TS,DATETIME,NO,The instant at which anesthesia started for this record.
+ANAES_RECORD,ANAES_STOP_TS,DATETIME,NO,The instant at which anesthesia stopped for this record.
+ANAES_STAFF,ANAES_KEY,VARCHAR,YES,The unique ID of the anesthesia episode record.
+ANAES_STAFF,SEQ,INTEGER,YES,The line number of the staff member.
+ANAES_STAFF,STAFF_KEY,VARCHAR,NO,The staff member who took part in the anesthesia.
+ANAES_STAFF,ROLE_CAT,INTEGER,NO,The category number for the staff member's role.
+ANAES_STAFF,START_TS,DATETIME,NO,The instant at which the staff member took over the care of the patient.
+ANAES_STAFF,END_TS,DATETIME,NO,The instant at which the staff member handed over the care of the patient.
+STAFF_MASTER,STAFF_KEY,VARCHAR,YES,The unique ID of the staff member.
+STAFF_MASTER,STAFF_LABEL,VARCHAR,NO,The name of the staff member.
+ANAES_EVENT,ANAES_KEY,VARCHAR,YES,The unique ID of the anesthesia episode record.
+ANAES_EVENT,SEQ,INTEGER,YES,The line number of the event.
+ANAES_EVENT,EVENT_TYPE_KEY,VARCHAR,NO,"The type of event, such as induction, incision or extubation."
+ANAES_EVENT,EVENT_TS,DATETIME,NO,The instant at which the event occurred.
+EVENT_TYPE_DEF,EVENT_TYPE_KEY,VARCHAR,YES,The unique ID of the event type.
+EVENT_TYPE_DEF,EVENT_LABEL,VARCHAR,NO,The display name of the event type.
+OBS_SHEET,SHEET_KEY,VARCHAR,YES,The unique ID of the observation sheet.
+OBS_SHEET,VISIT_KEY,NUMERIC,NO,The hospital encounter for which the sheet was charted.
+OBS_SHEET,ANAES_KEY,VARCHAR,NO,"The anesthesia episode record for which the sheet was charted, where the sheet belongs to an anesthesia record."
+OBS_READING,SHEET_KEY,VARCHAR,YES,The unique ID of the observation sheet on which the reading was charted.
+OBS_READING,SEQ,INTEGER,YES,The line number of the reading on the sheet.
+OBS_READING,OBS_TYPE_KEY,VARCHAR,NO,The unique ID of the observation type associated with this reading.
+OBS_READING,READ_TS,DATETIME,NO,The instant the reading was taken.
+OBS_READING,READ_VALUE,VARCHAR,NO,"The value of the reading as charted, as text."
+OBS_READING,ACCEPTED_FLAG,VARCHAR,NO,Indicates whether this reading has been accepted. N means that the reading was marked as an artefact.
+OBS_TYPE_DEF,OBS_TYPE_KEY,VARCHAR,YES,The unique ID of the observation type.
+OBS_TYPE_DEF,OBS_LABEL,VARCHAR,NO,The display name of the observation type.
+OBS_TYPE_DEF,UNIT_LABEL,VARCHAR,NO,The unit in which the observation type is charted.
+DRUG_GIVEN,GIVEN_KEY,NUMERIC,YES,The unique ID of the medication administration.
+DRUG_GIVEN,VISIT_KEY,NUMERIC,NO,The hospital encounter during which the medication was given.
+DRUG_GIVEN,ANAES_KEY,VARCHAR,NO,"The anesthesia episode record during which the medication was given, where it was given during an anesthesia."
+DRUG_GIVEN,DRUG_KEY,VARCHAR,NO,The unique ID of the medication given.
+DRUG_GIVEN,GIVEN_TS,DATETIME,NO,The time that the administration action took place.
+DRUG_GIVEN,DOSE_AMT,NUMERIC,NO,The dose value of the administration.
+DRUG_GIVEN,DOSE_UNIT_CAT,INTEGER,NO,The category number for the unit associated with the dose.
+DRUG_GIVEN,ROUTE_CAT,INTEGER,NO,The category number for the route of administration.
+DRUG_GIVEN,ACTION_CAT,INTEGER,NO,"The category number for the administration action, such as given, new bag, rate change or stopped."
+DRUG_DEF,DRUG_KEY,VARCHAR,YES,The unique ID of the medication.
+DRUG_DEF,DRUG_LABEL,VARCHAR,NO,The name of the medication.
+LK_RISK_GRADE,RISK_GRADE_CAT,INTEGER,YES,The category number.
+LK_RISK_GRADE,LABEL,VARCHAR,NO,The name of the category.
+LK_CASE_STATUS,CASE_STATUS_CAT,INTEGER,YES,The category number.
+LK_CASE_STATUS,LABEL,VARCHAR,NO,The name of the category.
+LK_SEX,SEX_CAT,INTEGER,YES,The category number.
+LK_SEX,LABEL,VARCHAR,NO,The name of the category.
+LK_ROUTE,ROUTE_CAT,INTEGER,YES,The category number.
+LK_ROUTE,LABEL,VARCHAR,NO,The name of the category.
+LK_SERVICE,SERVICE_CAT,INTEGER,YES,The category number.
+LK_SERVICE,LABEL,VARCHAR,NO,The name of the category.
+AIRWAY_DEVICE,DEVICE_KEY,NUMERIC,YES,The unique ID of the device record.
+AIRWAY_DEVICE,ANAES_KEY,VARCHAR,NO,The anesthesia episode record for which the device was placed.
+AIRWAY_DEVICE,DEVICE_KIND_KEY,VARCHAR,NO,"The type of device, such as an endotracheal tube, a laryngeal mask or an arterial line."
+AIRWAY_DEVICE,PLACED_TS,DATETIME,NO,The date and time at which the device was placed.
+AIRWAY_DEVICE,REMOVED_TS,DATETIME,NO,The date and time at which the device was removed.
+VISIT_DIAGNOSIS,VISIT_KEY,NUMERIC,YES,The unique ID of the hospital encounter.
+VISIT_DIAGNOSIS,SEQ,INTEGER,YES,The line number of the diagnosis.
+VISIT_DIAGNOSIS,DIAG_KEY,VARCHAR,NO,The unique ID of the diagnosis.
+VISIT_DIAGNOSIS,PRIMARY_FLAG,VARCHAR,NO,Indicates whether this is the primary diagnosis of the encounter.
+DIAG_DEF,DIAG_KEY,VARCHAR,YES,The unique ID of the diagnosis.
+DIAG_DEF,DIAG_LABEL,VARCHAR,NO,The name of the diagnosis.
+DIAG_DEF,ICD_CODE,VARCHAR,NO,The diagnosis code in the national classification.

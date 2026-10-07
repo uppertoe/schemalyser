@@ -1,0 +1,26 @@
+TABLE_NAME,PRIMARY_KEY,DESCRIPTION
+PERSON_MASTER,PERSON_KEY,"The PERSON_MASTER table contains one record for each patient known to the system, with demographic and registration details."
+PERSON_MASTER_2,PERSON_KEY,"This table holds further demographic details of each patient, including the birth history and the date of death where it is known."
+VISIT,VISIT_KEY,"This table contains one record for each hospital encounter, from admission to discharge, including day stays."
+WARD_DEF,WARD_KEY,The list of wards and units of the hospital.
+THEATRE_CASE,CASE_KEY,"This table contains one record for each surgical case booked in the operating theatre, with its status, room, service and urgency."
+CASE_PROC,CASE_KEY SEQ,This table lists the procedures performed during a surgical case.
+PROC_DEF,PROC_KEY,The list of procedures that can be booked for a surgical case.
+ANAES_RECORD,ANAES_KEY,This table stores one record for each anesthesia episode documented by the anesthesia team.
+ANAES_STAFF,ANAES_KEY SEQ,This table lists the staff who took part in an anesthesia episode and their roles.
+STAFF_MASTER,STAFF_KEY,The list of staff members who can be assigned to a case.
+ANAES_EVENT,ANAES_KEY SEQ,This table contains the timed events documented during an anesthesia episode.
+EVENT_TYPE_DEF,EVENT_TYPE_KEY,The list of event types that can be documented on the anesthesia record.
+OBS_SHEET,SHEET_KEY,"This table contains one record for each observation sheet, which groups the observations charted for an encounter or an anesthesia episode."
+OBS_READING,SHEET_KEY SEQ,This table contains the patient-specific observations and measurements charted on an observation sheet.
+OBS_TYPE_DEF,OBS_TYPE_KEY,The list of observation types that can be charted.
+DRUG_GIVEN,GIVEN_KEY,This table contains one record for each medication administration charted for a patient.
+DRUG_DEF,DRUG_KEY,The list of medications in the hospital's formulary.
+LK_RISK_GRADE,RISK_GRADE_CAT,The category list of physical status grades.
+LK_CASE_STATUS,CASE_STATUS_CAT,The category list of case statuses.
+LK_SEX,SEX_CAT,The category list of sexes.
+LK_ROUTE,ROUTE_CAT,The category list of routes of administration.
+LK_SERVICE,SERVICE_CAT,The category list of surgical services.
+AIRWAY_DEVICE,DEVICE_KEY,"This table contains one record for each airway device, line or catheter placed for a patient."
+VISIT_DIAGNOSIS,VISIT_KEY SEQ,This table lists the diagnoses recorded for a hospital encounter.
+DIAG_DEF,DIAG_KEY,The list of diagnoses.

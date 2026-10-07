@@ -40,6 +40,11 @@ nothing was recorded.
     python -m schemalyser.rolemap rehearse [--audit AUDIT.sql] [--seed 1] [--no-planted]
     python -m schemalyser.rolemap shadow WORLD CONVERSION MAP [--audit AUDIT.sql] [--rows 500] [--target TARGET.sql]
     python -m schemalyser.rolemap open MAP
+    python -m schemalyser.rolemap propose DICTIONARY.csv --catalogue CATALOGUE.csv --out FOLDER [--tables TABLES.csv]
+                                          [--model contract.json] [--heading FIELD=HEADING] [--base VIEW=TABLE]
+    python -m schemalyser.rolemap confirm MAP CONFIRMATIONS.csv [--catalogue CATALOGUE.csv] [--dictionary DICTIONARY.csv]
+
+propose and confirm are written in propose.py, and the dictionary is read by datadict.py.
 """
 import argparse
 import datetime as dt
@@ -62,6 +67,10 @@ PLANTED = MODEL / "planted_neonates.json"
 MAP_FILE = "map.json"
 STATUSES = ("proposed", "seen", "person", "count")
 CONFIRMED = ("person", "count")
+# The further fields that a draft map from the proposer carries in its evidence: the binding as data, from which the
+# view's SQL is written again after a confirmation, the confidence and the other candidates of the proposal, and the
+# person's answer with its date.
+PROPOSAL_FIELDS = ("binding", "confidence", "candidates", "confirmation")
 MEAN_KINDS = ("map_arterial", "map_cuff")
 # The project's least count and the step to which every count is rounded down, as for the check script.
 MINIMUM_COUNT = 10
@@ -124,7 +133,13 @@ def contract():
 
 
 def views():
-    """The role views of the contract, as {name: [column, ...]}, in the contract's order."""
+    """The role views that every map supplies, as {name: [column, ...]}, in the contract's order. These are the
+    three views that the neonatal audit reads."""
+    return {view["name"]: [column["name"] for column in view["columns"]] for view in contract()["views"] if view.get("required")}
+
+
+def all_views():
+    """Every role view of the contract, the further views that a map may supply included, as {name: [column, ...]}."""
     return {view["name"]: [column["name"] for column in view["columns"]] for view in contract()["views"]}
 
 
@@ -142,7 +157,7 @@ def _sentence(value, where, field):
 
 
 def _evidence(item, where):
-    if not isinstance(item, dict) or not {"status", "from", "says"} <= set(item) <= {"status", "from", "says", "question", "codes"}:
+    if not isinstance(item, dict) or not {"status", "from", "says"} <= set(item) <= {"status", "from", "says", "question", "codes", *PROPOSAL_FIELDS}:
         raise MapError(WORDING["map_shape"].format(where=where, problem="evidence holds a status, from, says and, unless a person "
                                                                          "or a count confirmed it, a question"))
     if item["status"] not in STATUSES:
@@ -169,10 +184,13 @@ def read_map_json(folder):
         raise MapError(WORDING["map_shape"].format(where=MAP_FILE, problem="the map holds world, description, roles, kinds and, "
                                                                            "optionally, eras and questions"))
     _sentence(data["description"], MAP_FILE, "the description")
-    wanted = views()
-    if not isinstance(data["roles"], dict) or set(data["roles"]) != set(wanted):
-        raise MapError(WORDING["map_shape"].format(where=MAP_FILE, problem=f"roles holds exactly {', '.join(wanted)}"))
+    required, wanted = views(), all_views()
+    if not isinstance(data["roles"], dict) or not set(required) <= set(data["roles"]) <= set(wanted):
+        raise MapError(WORDING["map_shape"].format(where=MAP_FILE, problem=f"roles holds {', '.join(required)} and, optionally, "
+                                                                           f"the further role views of the contract"))
     for view, columns in wanted.items():
+        if view not in data["roles"]:
+            continue
         role = data["roles"][view]
         where = f"{MAP_FILE}, {view}"
         if not isinstance(role, dict) or set(role) != {"file", "rows", "columns"} or role["file"] != f"{view}.sql":
@@ -221,7 +239,7 @@ def check_view(sql, view, catalogue=None):
     the SELECT that names it reads one table only. Raises MapError on anything else.
     """
     where = f"{view}.sql"
-    wanted = views().get(view)
+    wanted = all_views().get(view)
     if wanted is None:
         raise MapError(WORDING["map_shape"].format(where=where, problem=f"{view} is not a role view of the contract"))
     tree = _single_select(sql, where)
@@ -234,7 +252,7 @@ def check_view(sql, view, catalogue=None):
     for table in tree.find_all(exp.Table):
         if table.db or table.catalog:
             raise MapError(WORDING["table_part"].format(where=where, table=table.sql(dialect="tsql")))
-        if table.name.lower() in views():
+        if table.name.lower() in all_views():
             raise MapError(WORDING["role_name"].format(where=where, table=table.name))
         known = catalogue.table(table.name) if catalogue is not None else None
         if catalogue is not None and known is None:
@@ -282,7 +300,7 @@ def read_map(folder, catalogue=None):
         catalogue = Catalogue.from_csv(catalogue)
     data = read_map_json(folder)
     found, tables = {}, {}
-    for view in views():
+    for view in [name for name in all_views() if name in data["roles"]]:
         try:
             sql = decode((folder / data["roles"][view]["file"]).read_bytes())
         except OSError:
@@ -316,7 +334,7 @@ def check_audit(sql, where="audit"):
     tree = _single_select(sql, where)
     named = {cte.alias.lower() for cte in tree.find_all(exp.CTE)}
     for table in tree.find_all(exp.Table):
-        if table.db or table.catalog or table.name.lower() not in set(views()) | named:
+        if table.db or table.catalog or table.name.lower() not in set(all_views()) | named:
             raise MapError(WORDING["audit_reads"].format(where=where, table=table.sql(dialect="tsql")))
     return tree
 
@@ -391,8 +409,14 @@ def compile_query(sql, roles_map, blank=False, nolock=True):
     if blank:
         body = _blanked(body, tree)
     data = roles_map["data"]
+    # The three views that every map supplies come always, and a further view only where the query reads it.
+    read = {table.name.lower() for table in tree.find_all(exp.Table)}
+    chosen = [view for view in all_views() if view in views() or view in read]
+    missing = [view for view in chosen if view not in roles_map["views"]]
+    if missing:
+        raise MapError(WORDING["map_shape"].format(where="the query", problem=f"it reads {', '.join(missing)}, which the map does not supply"))
     parts = []
-    for view in views():
+    for view in chosen:
         text = view_sql(roles_map["views"][view], nolock)
         indented = "\n".join("  " + line for line in text.splitlines())
         parts.append((WORDING["view"].format(view=view, says=data["roles"][view]["rows"]["says"]), f"{view} AS (\n{indented}\n)"))
@@ -689,7 +713,8 @@ def result(run, audit_sql=None, least=MINIMUM_COUNT, step=MINIMUM_COUNT, blank=F
 
 # The role-level shadow.
 
-ROLE_TYPES = {"key": "VARCHAR", "date": "DATE", "datetime": "TIMESTAMP", "number": "DOUBLE", "flag": "INTEGER", "kind": "VARCHAR"}
+ROLE_TYPES = {"key": "VARCHAR", "date": "DATE", "datetime": "TIMESTAMP", "number": "DOUBLE", "whole": "INTEGER", "flag": "INTEGER",
+              "flag_or_empty": "INTEGER", "kind": "VARCHAR", "text": "VARCHAR"}
 
 
 def planted():
@@ -751,18 +776,22 @@ def generated_rows(seed=1, anaesthetics=400, first_year=2019, last_year=2025):
 
 
 def role_shadow(seed=1, anaesthetics=400, with_planted=True, extra=None):
-    """A DuckDB database that holds just the three role views as tables, filled from a seed and, with_planted, with
-    the planted neonates. extra, when given, is {view: [row, ...]} of further rows. Returns the connection."""
+    """A DuckDB database that holds the role views as tables, the three that every map supplies filled from a seed
+    and, with_planted, with the planted neonates, and the further views empty. extra, when given, is
+    {view: [row, ...]} of further rows for any view. Returns the connection."""
     import duckdb
     con = duckdb.connect()
     shape = {view["name"]: view["columns"] for view in contract()["views"]}
     for name, columns in shape.items():
         con.execute(f"CREATE TABLE {name} (" + ", ".join(f"{c['name']} {ROLE_TYPES[c['type']]}" for c in columns) + ")")
-    rows = generated_rows(seed, anaesthetics) if anaesthetics else {name: [] for name in shape}
+    rows = {name: [] for name in shape}
+    if anaesthetics:
+        rows.update(generated_rows(seed, anaesthetics))
     if with_planted:
         cases = planted()
         for name in shape:
-            rows[name] = rows[name] + cases[name]["rows"]
+            if name in cases:
+                rows[name] = rows[name] + cases[name]["rows"]
     for name, more in (extra or {}).items():
         rows[name] = rows[name] + more
     for name, columns in shape.items():
@@ -860,6 +889,38 @@ def main(argv=None):
     shadow.add_argument("--target", type=Path, help="an OMOP target query to run through the conversion on the same rows")
     listing = commands.add_parser("open", help="list a map's open items")
     listing.add_argument("map", type=Path)
+    proposing = commands.add_parser(
+        "propose", help="propose a draft map from a data dictionary, a catalogue and the role model",
+        description="Schemalyser reads the data dictionary, keeps only the tables and columns that the catalogue holds, and "
+                    "proposes for each role the table and column that play it. It writes the draft map to the folder that "
+                    "you name, where every binding awaits a person's confirmation. The draft quotes the dictionary, so "
+                    "Schemalyser writes it only to a private folder, and it prints names and counts only.")
+    proposing.add_argument("dictionary", type=Path, help="the data dictionary, as a CSV or tab-separated file with headings")
+    proposing.add_argument("--catalogue", type=Path, required=True, help="the catalogue of the hospital's database")
+    proposing.add_argument("--out", type=Path, required=True, help="the private folder for the draft map")
+    proposing.add_argument("--tables", type=Path, help="a second file that gives each table's description and primary key")
+    proposing.add_argument("--model", type=Path, help="a role model other than the one in rolemodel/contract.json")
+    proposing.add_argument("--heading", action="append", default=[], metavar="FIELD=HEADING",
+                           help="the dictionary's own heading for a field: table, column, description, data_type or key")
+    proposing.add_argument("--base", action="append", default=[], metavar="VIEW=TABLE",
+                           help="the table whose rows a person has chosen for a view")
+    proposing.add_argument("--world", default="the hospital", help="the name of the hospital or world, for map.json")
+    proposing.add_argument("--invented", action="store_true",
+                           help="say that the dictionary is invented, so that its draft may be written into a published folder")
+    confirming = commands.add_parser(
+        "confirm", help="apply a person's answers to a draft map",
+        description="Each row of the file of confirmations names a binding, such as role_patient.birth_date, role_patient "
+                    "rows or kind map_cuff, and gives the answer yes, no or not sure. With no, the row may give the "
+                    "replacement as TABLE.COLUMN, with its link as via TABLE.COLUMN = TABLE.COLUMN where the view does not "
+                    "already reach that table, or the local codes of a kind. Schemalyser records each answer with its "
+                    "date and writes the views that changed again.")
+    confirming.add_argument("map", type=Path)
+    confirming.add_argument("confirmations", type=Path, help="a CSV or tab-separated file with the headings attribute and "
+                                                             "answer, and optionally replacement, by, date and note")
+    confirming.add_argument("--catalogue", type=Path, help="the catalogue, against which the map is checked again")
+    confirming.add_argument("--dictionary", type=Path, help="the data dictionary, to find the link to a replacement and quote it")
+    confirming.add_argument("--tables", type=Path)
+    confirming.add_argument("--heading", action="append", default=[], metavar="FIELD=HEADING")
     args = parser.parse_args(argv)
     try:
         if args.command == "check":
@@ -891,9 +952,53 @@ def main(argv=None):
         elif args.command == "open":
             for item in open_items(read_map(args.map)):
                 print(f"{item['about']} ({item['status']}): {item['question']}")
+        elif args.command in ("propose", "confirm"):
+            _propose_or_confirm(args)
     except MapError as error:
         raise SystemExit(f"schemalyser.rolemap: {error}")
     return 0
+
+
+def _pairs(items, what):
+    pairs = {}
+    for item in items:
+        name, _, value = item.partition("=")
+        if not name or not value:
+            raise SystemExit(f"schemalyser.rolemap: {what} is written as NAME=VALUE, and not {item}.")
+        pairs[name.strip()] = value.strip()
+    return pairs
+
+
+def _propose_or_confirm(args):
+    from . import datadict, propose
+    try:
+        headings = _pairs(args.heading, "--heading")
+        catalogue = Catalogue.from_csv(decode(args.catalogue.read_bytes())) if args.catalogue else None
+        if args.command == "propose":
+            model = json.loads(decode(args.model.read_bytes())) if args.model else None
+            dictionary = datadict.load(args.dictionary, args.tables, headings)
+            proposal, found, missing = propose.propose_map(dictionary, catalogue, args.out, model, world=args.world,
+                                                           bases=_pairs(args.base, "--base"), invented=args.invented)
+            if missing:
+                print(propose.WORDING["missing"].format(count=missing))
+            for view, item in proposal.items():
+                if item is None:
+                    print(propose.WORDING["summary_none"].format(view=view))
+                    continue
+                levels = [c["confidence"] for c in item["columns"].values()]
+                shown = ", ".join(f"{levels.count(level)} {level}" for level in ("high", "medium", "low") if levels.count(level))
+                none = levels.count("none")
+                shown += (", and " if shown else "") + f"{none} with nothing that fits" if none else ""
+                print(propose.WORDING["summary"].format(view=view, table=item["rows"]["table"], bound=len(levels) - none,
+                                                        total=len(levels), confidence=shown or "none"))
+            print(propose.WORDING["written"].format(folder=args.out, items=len(open_items(found))))
+        else:
+            dictionary = datadict.load(args.dictionary, args.tables, headings) if args.dictionary else None
+            counts, found = propose.confirm(args.map, args.confirmations, catalogue, dictionary)
+            detail = ", ".join(f"{counts[a]} {a}" for a in ("yes", "no", "not sure") if counts[a]) or "none"
+            print(propose.WORDING["answers"].format(count=sum(counts.values()), detail=detail, items=len(open_items(found))))
+    except (datadict.DictionaryError, propose.ProposeError) as error:
+        raise SystemExit(f"schemalyser.rolemap: {error}")
 
 
 if __name__ == "__main__":
