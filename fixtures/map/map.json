@@ -1,6 +1,6 @@
 {
   "world": "the invented world",
-  "description": "This map supplies the three role views from the invented catalogue, and it follows the existing invented conversion wherever that affects the neonatal audit, so that the two answers can be compared.",
+  "description": "This map supplies the three role views, and the staff and the diagnoses, from the invented catalogue, and it follows the existing invented conversion wherever that affects the neonatal audit, so that the two answers can be compared.",
   "roles": {
     "role_patient": {
       "file": "role_patient.sql",
@@ -63,6 +63,61 @@
         "accepted": {"status": "seen", "from": "OBS_READING.ACCEPTED_FLAG",
                      "says": "A reading flagged N was not accepted, and an empty flag counts as accepted, as the team's queries treat it.",
                      "question": "Please confirm whether an empty ACCEPTED_FLAG means that the value was accepted."}
+      }
+    },
+    "role_staff": {
+      "file": "role_staff.sql",
+      "rows": {"status": "proposed", "from": "ANAES_STAFF",
+               "says": "One line of the anaesthetic's staff list is one period in which one person took part, so that a handover gives two lines.",
+               "question": "Please confirm whether the staff list records every person present, including the surgeon and the anaesthetic assistant, and whether a line can repeat."},
+      "columns": {
+        "anaesthetic_key": {"status": "proposed", "from": "ANAES_STAFF.ANAES_KEY",
+                            "says": "The staff list carries the key of the anaesthetic record.",
+                            "question": "Please confirm whether ANAES_STAFF.ANAES_KEY is always filled."},
+        "person_key": {"status": "proposed", "from": "ANAES_STAFF.STAFF_KEY",
+                       "says": "The staff key points at the list of staff, and the view gives the key and never the name.",
+                       "question": "Please confirm whether one person keeps the same STAFF_KEY across the years."},
+        "role": {"status": "proposed", "from": "ANAES_STAFF.ROLE_CAT",
+                 "says": "The team's handover query reads only the staff role 1, which the map takes to be the anaesthetist, and the other roles are other until their meaning is known.",
+                 "question": "Please confirm whether the staff role 1 is the anaesthetist, and say what the roles 2 and 3 mean."},
+        "grade": {"status": "proposed", "from": "nothing in the invented world",
+                  "says": "The invented world records no grade for a member of staff, so the view gives it empty.",
+                  "question": "Please confirm whether the list of staff, or any other table, records a grade."},
+        "present_from": {"status": "proposed", "from": "ANAES_STAFF.START_TS",
+                         "says": "The start is the time at which the person took over the care of the patient.",
+                         "question": "Please confirm whether START_TS is in local time."},
+        "present_to": {"status": "proposed", "from": "ANAES_STAFF.END_TS",
+                       "says": "The end is the time at which the person handed over the care of the patient.",
+                       "question": "Please confirm whether an empty END_TS means that the person stayed until the end of the anaesthetic."}
+      }
+    },
+    "role_diagnosis": {
+      "file": "role_diagnosis.sql",
+      "rows": {"status": "proposed", "from": "VISIT_DIAGNOSIS through VISIT and DIAG_DEF",
+               "says": "One line of a visit's diagnoses is one coded diagnosis of that stay, with its code and name from the list of diagnoses.",
+               "question": "Please confirm whether the visit's diagnoses are those coded at discharge, and whether a code can appear twice for one visit."},
+      "columns": {
+        "patient_key": {"status": "proposed", "from": "VISIT.PERSON_KEY, through VISIT_DIAGNOSIS.VISIT_KEY",
+                        "says": "The patient is the patient of the visit for which the diagnosis was recorded.",
+                        "question": "Please confirm whether every visit carries its patient."},
+        "stay_key": {"status": "proposed", "from": "VISIT_DIAGNOSIS.VISIT_KEY",
+                     "says": "The diagnosis carries the key of the hospital visit, which is the stay.",
+                     "question": "Please confirm whether VISIT_DIAGNOSIS.VISIT_KEY is the same key that role_stay gives."},
+        "code": {"status": "proposed", "from": "DIAG_DEF.ICD_CODE, through VISIT_DIAGNOSIS.DIAG_KEY",
+                 "says": "The code is the diagnosis's code in the national classification, from the list of diagnoses.",
+                 "question": "Please confirm whether ICD_CODE is filled for every diagnosis in the list."},
+        "code_system": {"status": "proposed", "from": "a fixed value",
+                        "says": "The list of diagnoses holds its codes in one national classification, so the view names it as a fixed value.",
+                        "question": "Please confirm whether the list has ever held codes from more than one classification or edition."},
+        "name": {"status": "proposed", "from": "DIAG_DEF.DIAG_LABEL, through VISIT_DIAGNOSIS.DIAG_KEY",
+                 "says": "The name is the diagnosis's name in the list of diagnoses.",
+                 "question": "Please confirm whether DIAG_LABEL is the name of the diagnosis and not a local abbreviation."},
+        "is_principal": {"status": "proposed", "from": "VISIT_DIAGNOSIS.PRIMARY_FLAG",
+                         "says": "A diagnosis flagged Y is the principal diagnosis of the visit, and one flagged N is another.",
+                         "question": "Please confirm whether exactly one diagnosis of each visit is flagged Y."},
+        "recorded_time": {"status": "proposed", "from": "nothing in the invented world",
+                          "says": "The invented world records no time at which a diagnosis was noted or coded, so the view gives it empty.",
+                          "question": "Please confirm whether any table records when a diagnosis was coded."}
       }
     }
   },

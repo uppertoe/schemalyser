@@ -75,7 +75,8 @@ def test_the_role_model_keeps_the_audit_views_and_describes_every_further_view_i
         "role_reading": ["anaesthetic_key", "kind", "reading_time", "value", "accepted"]}
     further = set(rolemap.all_views()) - set(rolemap.views())
     assert {"role_stay", "role_anaesthetic_detail", "role_operation", "role_unit_stay", "role_patient_detail",
-            "role_event", "role_drug", "role_device"} == further
+            "role_event", "role_drug", "role_device", "role_staff", "role_fluid", "role_lab", "role_diagnosis",
+            "role_note", "role_finding"} == further
     text = ROLES.read_text()
     names = {view["name"]: view for view in contract["views"]}
     for view in contract["views"]:
@@ -110,8 +111,17 @@ def test_a_map_may_supply_further_views_and_an_audit_may_read_them(drafted):
             "d.anaesthetic_key = a.anaesthetic_key JOIN role_stay s ON s.stay_key = d.stay_key"
     compiled = rolemap.compile_query(audit, found)
     assert "role_stay AS (" in compiled and "role_anaesthetic_detail AS (" in compiled and "role_drug AS (" not in compiled
+    hand = rolemap.read_map(MAP, CATALOGUE_FILE.read_text())
     with pytest.raises(rolemap.MapError, match="does not supply"):
-        rolemap.compile_query(audit, rolemap.read_map(MAP, CATALOGUE_FILE.read_text()))
+        rolemap.compile_query(audit, hand)
+    # The invented map supplies the staff, so an audit of whether a consultant anaesthetist was present compiles with it,
+    # and it supplies no fluids, so an audit of transfusion is refused.
+    consultant = "SELECT a.anaesthetic_key, MAX(CASE WHEN s.role = 'anaesthetist' AND s.grade = 'consultant' THEN 1 ELSE 0 END) " \
+                 "AS consultant_present FROM role_anaesthetic a LEFT JOIN role_staff s ON s.anaesthetic_key = a.anaesthetic_key " \
+                 "GROUP BY a.anaesthetic_key"
+    assert "role_staff AS (" in rolemap.compile_query(consultant, hand)
+    with pytest.raises(rolemap.MapError, match="role_fluid, which the map does not supply"):
+        rolemap.compile_query("SELECT f.anaesthetic_key FROM role_fluid f WHERE f.kind = 'red_cells'", hand)
 
 
 # The loader.
@@ -189,11 +199,23 @@ def test_the_proposer_finds_the_invented_map_s_bindings_for_the_audit_views(draf
     # its sheet, each by a key that is the whole primary key of the table it joins.
     assert proposal["role_anaesthetic"]["columns"]["patient_key"]["best"]["path"] == [["ANAES_RECORD", "VISIT_KEY", "VISIT", "VISIT_KEY"]]
     assert proposal["role_reading"]["columns"]["anaesthetic_key"]["best"]["path"] == [["OBS_READING", "SHEET_KEY", "OBS_SHEET", "SHEET_KEY"]]
-    # Of the further views, the invented world has no movements between units, and says nothing of planned intensive
-    # care, a return to theatre, a cardiac operation or the weight at the anaesthetic.
-    assert proposal["role_unit_stay"] is None
+    # Of the further views, the invented world has no movements between units, no fluids, no laboratory results and no
+    # notes, and it says nothing of planned intensive care, a return to theatre, a cardiac operation or the weight and
+    # height at the anaesthetic.
+    assert all(proposal[view] is None for view in ("role_unit_stay", "role_fluid", "role_lab", "role_note", "role_finding"))
     detail = proposal["role_anaesthetic_detail"]["columns"]
-    assert [c for c, p in detail.items() if p["best"] is None] == ["weight_kg", "planned_icu", "unplanned_return"]
+    assert [c for c, p in detail.items() if p["best"] is None] == ["weight_kg", "planned_icu", "unplanned_return", "height_cm"]
+    assert detail["location"]["best"]["column"] == "ROOM_KEY"
+    # The staff and the diagnoses are found where the hand-written map finds them, and a column that the invented
+    # world does not record, such as a grade or the time of a diagnosis, is given empty rather than guessed.
+    for view in ("role_staff", "role_diagnosis"):
+        assert proposal[view]["rows"]["table"] == hand["roles"][view]["rows"]["from"].split()[0], view
+    staff = {c: p["best"] and p["best"]["column"] for c, p in proposal["role_staff"]["columns"].items()}
+    assert staff == {"anaesthetic_key": "ANAES_KEY", "person_key": "STAFF_KEY", "role": "ROLE_CAT", "grade": None,
+                     "present_from": "START_TS", "present_to": "END_TS"}
+    diagnosis = {c: p["best"] and p["best"]["column"] for c, p in proposal["role_diagnosis"]["columns"].items()}
+    assert diagnosis == {"patient_key": "PERSON_KEY", "stay_key": "VISIT_KEY", "code": "ICD_CODE", "code_system": None,
+                         "name": "DIAG_LABEL", "is_principal": "PRIMARY_FLAG", "recorded_time": None}
     assert detail["asa_grade"]["best"]["column"] == "RISK_GRADE_CAT" and detail["stay_key"]["best"]["column"] == "VISIT_KEY"
     assert proposal["role_operation"]["columns"]["is_cardiac"]["best"] is None
     # A procedure reaches its anaesthetic only from the anaesthetic's side, so the proposal says so with low confidence.

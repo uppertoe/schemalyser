@@ -95,8 +95,11 @@ def test_the_invented_map_is_checked_against_the_catalogue_and_lists_its_open_it
     assert roles_map["tables"]["role_reading"] == ["OBS_READING", "OBS_SHEET"]
     items = rolemap.open_items(roles_map)
     assert items and all(item["question"].startswith("Please confirm whether") for item in items)
-    # Nothing in the invented map is confirmed yet, so every binding is open, and so is the map's own question.
-    assert len(items) == 3 + 13 + 2 + 1
+    # Nothing in the invented map is confirmed yet, so every binding is open, and so is the map's own question. The map
+    # supplies the staff and the diagnoses as well, and leaves the fluids and the laboratory results unsupplied, because
+    # the invented world records neither.
+    assert len(items) == 3 + 13 + 2 + 1 + 7 + 8
+    assert {"role_staff", "role_diagnosis"} <= set(roles_map["views"]) and not {"role_fluid", "role_lab"} & set(roles_map["views"])
     assert {"kind map_arterial", "role_anaesthetic.patient_key"} <= {item["about"] for item in items}
 
 
@@ -271,5 +274,5 @@ def test_the_command_line_checks_a_map_lists_its_open_items_and_compiles_the_aud
         rolemap.main(["open", str(MAP)])
         rolemap.main(["compile", str(MAP)])
     text = out.getvalue()
-    assert "role_reading: one SELECT over OBS_READING, OBS_SHEET" in text and "The map has 19 open items." in text
+    assert "role_reading: one SELECT over OBS_READING, OBS_SHEET" in text and "The map has 34 open items." in text
     assert "kind map_cuff (proposed): Please confirm whether" in text and "WITH (NOLOCK)" in text
