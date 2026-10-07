@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en-AU">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Nothing may be loaded from, or sent to, any other site. The worker is started from a
+         blob so that it inherits this policy. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; worker-src blob:; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <title>Describe the record</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body class="describe">
+    <header class="masthead">
+      <h1 id="title"></h1>
+      <p id="intro" class="intro"></p>
+      <p id="t-private"></p>
+      <p><span id="t-back"></span> <a href="./index.html" id="a-back"></a></p>
+    </header>
+
+    <div class="layout">
+      <main>
+        <ol class="steps">
+          <li class="step" id="step-1">
+            <h2 id="h-step-1"></h2>
+            <div class="body">
+              <p id="t-offline-what"></p>
+              <p id="t-loading" class="status"></p>
+              <p id="t-load-failed" class="status problem" hidden></p>
+              <div id="b-loaded" hidden>
+                <p id="t-loaded" class="status"></p>
+                <details>
+                  <summary id="s-offline-how"></summary>
+                  <ul id="t-offline-how" class="offline-how"></ul>
+                </details>
+                <p id="t-no-files"></p>
+              </div>
+              <p id="t-offline-done" class="status good" hidden></p>
+              <p id="t-locked" class="status problem" hidden></p>
+              <details>
+                <summary id="s-policy"></summary>
+                <p id="t-policy-held" class="note"></p>
+              </details>
+            </div>
+          </li>
+
+          <li class="step" id="step-2">
+            <h2 id="h-step-2"></h2>
+            <div class="body">
+              <p id="t-dictionary-what"></p>
+              <p id="t-dictionary-private"></p>
+              <p id="t-dictionary-headings" class="note"></p>
+              <div class="field">
+                <label for="dictionary" id="l-dictionary"></label>
+                <input type="file" id="dictionary" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain" />
+              </div>
+              <div class="field">
+                <label for="dictionary-tables" id="l-dictionary-tables"></label>
+                <input type="file" id="dictionary-tables" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain" />
+                <p id="t-tables-note" class="note"></p>
+              </div>
+              <details id="d-headings">
+                <summary id="s-headings"></summary>
+                <p id="t-headings-what" class="note"></p>
+                <div id="headings"></div>
+              </details>
+              <div class="actions"><button type="button" id="dictionary-load" disabled></button></div>
+              <p id="t-dictionary-status" class="status" hidden role="status"></p>
+            </div>
+          </li>
+
+          <li class="step" id="step-3">
+            <h2 id="h-step-3"></h2>
+            <div class="body">
+              <p id="t-folder-what"></p>
+              <div class="field">
+                <label for="hospital-folder" id="l-hospital-folder"></label>
+                <input type="file" id="hospital-folder" webkitdirectory />
+                <p id="t-folder-note" class="note"></p>
+              </div>
+              <p id="t-folder-status" class="status" hidden role="status"></p>
+              <p id="t-folder-no-dictionary" class="note" hidden></p>
+              <section id="b-check" class="add" hidden>
+                <h3 id="h-check"></h3>
+                <p id="t-check-what"></p>
+                <div class="actions"><button type="button" id="check" class="secondary"></button></div>
+                <div id="check-result"></div>
+              </section>
+            </div>
+          </li>
+
+          <li class="step" id="step-4">
+            <h2 id="h-step-4"></h2>
+            <div class="body">
+              <p id="t-propose-what"></p>
+              <p id="t-propose-waiting" class="note"></p>
+              <div class="actions"><button type="button" id="propose" hidden></button></div>
+              <progress id="propose-progress" hidden></progress>
+              <p id="t-propose-status" class="status" hidden role="status"></p>
+              <div id="proposal"></div>
+            </div>
+          </li>
+
+          <li class="step" id="step-5">
+            <h2 id="h-step-5"></h2>
+            <div class="body">
+              <p id="t-tables-what"></p>
+              <p id="t-tables-waiting" class="note"></p>
+              <div id="b-tables" hidden>
+                <fieldset class="database">
+                  <legend id="l-database"></legend>
+                  <p id="t-database-what" class="note"></p>
+                  <div id="database-options"></div>
+                  <p id="t-database-unsure" class="note" hidden></p>
+                </fieldset>
+                <div class="actions"><button type="button" id="tables-write"></button></div>
+                <div id="b-tables-query" hidden>
+                  <p id="t-tables-names"></p>
+                  <ol id="t-tables-how" class="guide-steps"></ol>
+                  <pre id="tables-query" class="code"></pre>
+                  <div class="actions"><button type="button" id="tables-copy" class="secondary"></button></div>
+                  <p id="t-query-safe" class="note"></p>
+                  <label for="tables-paste" id="l-tables-paste"></label>
+                  <textarea id="tables-paste" rows="5" spellcheck="false" autocomplete="off"></textarea>
+                  <div class="actions"><button type="button" id="tables-read"></button></div>
+                </div>
+                <p id="t-tables-status" class="status" hidden role="status"></p>
+              </div>
+            </div>
+          </li>
+
+          <li class="step" id="step-6">
+            <h2 id="h-step-6"></h2>
+            <div class="body">
+              <p id="t-confirm-what"></p>
+              <p id="t-confirm-waiting" class="note"></p>
+              <p id="t-tally" class="count" hidden></p>
+              <div id="confirm"></div>
+              <section id="b-questions" class="add" hidden>
+                <h3 id="h-questions"></h3>
+                <p id="t-questions-what"></p>
+                <p id="t-questions-none" class="note"></p>
+                <pre id="questions" class="code wrap-text" hidden></pre>
+                <div class="actions"><button type="button" id="questions-copy" class="secondary" hidden></button></div>
+              </section>
+            </div>
+          </li>
+
+          <li class="step" id="step-7">
+            <h2 id="h-step-7"></h2>
+            <div class="body">
+              <p id="t-codes-what"></p>
+              <p id="t-codes-waiting" class="note"></p>
+              <div id="b-codes" hidden>
+                <div class="field">
+                  <label for="year" id="l-year"></label>
+                  <input type="number" id="year" min="1990" max="2100" step="1" />
+                  <p id="t-year-note" class="note"></p>
+                </div>
+                <p id="t-codes-safe" class="note"></p>
+                <div id="vocabularies"></div>
+              </div>
+            </div>
+          </li>
+
+          <li class="step" id="step-8">
+            <h2 id="h-step-8"></h2>
+            <div class="body">
+              <p id="t-counts-what"></p>
+              <p id="t-counts-waiting" class="note"></p>
+              <div id="b-counts" hidden>
+                <div class="actions"><button type="button" id="counts-write"></button></div>
+                <p id="t-counts-again" class="note"></p>
+                <div id="counts"></div>
+              </div>
+            </div>
+          </li>
+
+          <li class="step" id="step-9">
+            <h2 id="h-step-9"></h2>
+            <div class="body">
+              <p id="t-write-what"></p>
+              <p id="t-write-waiting" class="note"></p>
+              <div id="b-write" hidden>
+                <div class="field">
+                  <label><input type="checkbox" id="keep-dictionary" /> <span id="l-keep"></span></label>
+                  <p id="t-keep-note" class="note"></p>
+                </div>
+                <div class="actions">
+                  <button type="button" id="write-folder" hidden></button>
+                  <button type="button" id="write-zip" class="secondary"></button>
+                </div>
+                <p id="t-write-folder-note" class="note" hidden></p>
+                <p id="t-write-zip-note" class="note"></p>
+                <p id="t-write-status" class="status" hidden role="status"></p>
+              </div>
+            </div>
+          </li>
+        </ol>
+      </main>
+      <aside>
+        <p id="t-connection" class="connection"></p>
+      </aside>
+    </div>
+    <footer>
+      <p id="t-version"></p>
+    </footer>
+    <script type="module" src="./src/describe.ts"></script>
+  </body>
+</html>

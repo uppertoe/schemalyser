@@ -895,3 +895,142 @@ def fact_add(text):
         return json.dumps({"ok": False})
     _facts = (_facts or []) + [fact]
     return json.dumps({"ok": True, "boundary": json.loads(boundary_run(None, _requests_commit))})
+
+
+# Screen 1, describing the record (describe.html). The dictionary, the map and everything pasted are held by one
+# describe.Describe in this worker's memory, and leave it only as the hospital folder that the page writes where the
+# person chooses. A message returned here never holds a description from the dictionary, except the model that the
+# page shows beside each binding, which stays in the page.
+
+_describe = None
+
+
+def _describing():
+    global _describe
+    if _describe is None:
+        from .describe import Describe
+        _describe = Describe()
+    return _describe
+
+
+def _reply(work):
+    """Runs work and returns its JSON, or {"ok": false, "problem": sentence} where a person's input cannot be used."""
+    from .describe import DescribeError
+    try:
+        found = work()
+    except DescribeError as error:
+        return json.dumps({"ok": False, "problem": str(error)})
+    return json.dumps({"ok": True, **(found or {}), "model": _describing().view()})
+
+
+def describe_begin(version):
+    global _describe
+    _describe = None
+    _describing().version = str(version or "")
+    return "ok"
+
+
+def describe_dictionary(data, tables, headings, name, tables_name, step):
+    d = _describing()
+    return _reply(lambda: {"receipt": d.load_dictionary(
+        _bytes(data), _bytes(tables) if tables is not None else None, json.loads(headings or "{}"), name,
+        tables_name or "tables.csv", step)})
+
+
+def describe_folder_begin():
+    _describing()._incoming = {}
+    return "ok"
+
+
+def describe_folder_put(path, data):
+    """One file of a chosen hospital folder, with its path inside the folder. Only the files that the folder holds are
+    taken; anything else in the chosen folder is let go of at once."""
+    if re.fullmatch(r"(settings\.json|journal\.json|confirmations\.csv|map/map\.json|codes/role_\w+\.\w+\.json|"
+                    r"counts/judgements\.json|queries/\d\d-[\w.-]+\.sql|results/\d\d-[\w.-]+\.tsv|"
+                    r"dictionary/[\w .()-]+\.(json|csv|tsv|txt))", path or ""):
+        _describing()._incoming[path] = _bytes(data)
+    return "ok"
+
+
+def describe_folder_end():
+    d = _describing()
+    files = getattr(d, "_incoming", {})
+    d._incoming = {}
+    return _reply(lambda: {"restored": d.restore(files)})
+
+
+def describe_propose(progress):
+    d = _describing()
+    return _reply(lambda: (d.propose(progress=lambda done, total: progress(done, total)), {})[1])
+
+
+def describe_model():
+    return _reply(lambda: {})
+
+
+def describe_tables_query(step):
+    return _reply(lambda: _describing().tables_query(step))
+
+
+def describe_tables_read(text):
+    return _reply(lambda: {"receipt": _describing().read_tables(text)})
+
+
+def describe_confirm(request):
+    r = json.loads(request)
+    return _reply(lambda: _describing().confirm(r["about"], r["answer"], r.get("replacement") or "", r.get("note") or ""))
+
+
+def describe_settings(request):
+    r = json.loads(request)
+    return _reply(lambda: _describing().set_settings(r.get("database"), r.get("year")))
+
+
+def describe_charted_query(request):
+    r = json.loads(request)
+    return _reply(lambda: _describing().charted_query(r["key"], r["year"], r.get("step") or ""))
+
+
+def describe_charted_read(request):
+    r = json.loads(request)
+    return _reply(lambda: {"receipt": _describing().read_charted(r["key"], r["text"], r["year"])})
+
+
+def describe_codes(request):
+    r = json.loads(request)
+    return _reply(lambda: _describing().choose_codes(r["key"], r["chosen"]))
+
+
+def describe_counts(request):
+    r = json.loads(request)
+    return _reply(lambda: {"queries": _describing().count_queries(r.get("year"), r.get("step") or "")})
+
+
+def describe_count_read(request):
+    r = json.loads(request)
+    return _reply(lambda: {"receipt": _describing().read_count(r["name"], r["text"])})
+
+
+def describe_count_judge(request):
+    r = json.loads(request)
+    return _reply(lambda: _describing().judge_count(r["name"], r["looksRight"], r.get("note") or ""))
+
+
+def describe_folder_files(keep):
+    """The hospital folder as a JSON list of [path, base64 of the bytes], for the page to write into a chosen folder."""
+    import base64
+    files = _describing().folder_files(bool(keep))
+    return json.dumps([[path, base64.b64encode(data).decode("ascii")] for path, data in sorted(files.items())])
+
+
+def describe_folder_zip(keep):
+    return _describing().folder_zip(bool(keep))
+
+
+def describe_check():
+    return _reply(lambda: {"check": _describing().check()})
+
+
+def describe_compare(request):
+    r = json.loads(request)
+    return _reply(lambda: {"compared": _describing().compare(r["name"], r["text"])})

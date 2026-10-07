@@ -189,6 +189,27 @@ self.onmessage = async (event) => {
     } else if (message.type === 'state-zip') {
       const zip = browser.state_zip().toJs();
       self.postMessage({ type: 'state-zip', zip }, [zip.buffer]);
+    } else if (message.type === 'describe') {
+      // Screen 1 (describe.html): one call of a describe_ function of the bridge. Files are read here into bytes, and
+      // the dictionary and the folder stay in this worker's memory.
+      if (!/^describe_[a-z_]+$/.test(message.call) || typeof browser[message.call] !== 'function') throw new Error('call');
+      let reply;
+      if (message.call === 'describe_propose') {
+        reply = browser.describe_propose((done, total) => self.postMessage({ type: 'describe-progress', id: message.id, done, total }));
+      } else if (message.call === 'describe_folder_end') {
+        browser.describe_folder_begin();
+        for (const { path, file } of message.files ?? []) browser.describe_folder_put(path, await bytes(file));
+        reply = browser.describe_folder_end();
+      } else if (message.call === 'describe_folder_zip') {
+        const zip = browser.describe_folder_zip(message.args?.[0] ?? false).toJs();
+        self.postMessage({ type: 'describe-reply', id: message.id, zip }, [zip.buffer]);
+        return;
+      } else {
+        const args = [];
+        for (const arg of message.args ?? []) args.push(arg instanceof Blob ? await bytes(arg) : arg);
+        reply = browser[message.call](...args);
+      }
+      self.postMessage({ type: 'describe-reply', id: message.id, reply });
     } else if (message.type === 'paste' || message.type === 'profile-paste') {
       // The pasted results are read, and the checklists worked out again, by the core, as the boundary does.
       const reply = JSON.parse(
@@ -204,6 +225,6 @@ self.onmessage = async (event) => {
   } catch (error) {
     // The error itself is never passed on: its text can quote a request.
     const failed = { load: 'load-failed', analyse: 'analysis-failed' }[message.type] ?? `${message.type}-failed`;
-    self.postMessage({ type: failed });
+    self.postMessage({ type: failed, id: message.id });
   }
 };

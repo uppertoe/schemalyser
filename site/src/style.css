@@ -952,3 +952,82 @@ h3.part {
   font-size: 0.85em;
   color: var(--muted);
 }
+
+/* The page Describe the record (describe.html). Every step stays open once the page is offline, a finished one too. */
+
+.describe .step[data-state='done'] .body {
+  display: block;
+}
+
+.describe .role {
+  margin: 0 0 1.5rem;
+}
+
+.describe .role h3 {
+  margin: 1.2rem 0 0.3rem;
+  font: 600 1rem var(--mono);
+}
+
+.describe .bindings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-width: 50rem;
+}
+
+.describe .binding {
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.describe .binding p {
+  margin: 0 0 0.25rem;
+}
+
+.describe .binding .attribute {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.describe .binding .label {
+  color: var(--muted);
+}
+
+.describe .definition {
+  margin: 0.2rem 0 0.5rem;
+  padding-left: 0.85rem;
+  border-left: 3px solid var(--line);
+  color: var(--muted);
+}
+
+.describe .presence.missing {
+  color: var(--problem);
+}
+
+.describe .presence.large {
+  color: var(--caution);
+}
+
+.describe .answered {
+  color: var(--good);
+}
+
+.describe .another {
+  margin: 0.5rem 0;
+}
+
+.describe .another select,
+.describe .another input[type='text'] {
+  max-width: 100%;
+  margin: 0.3rem 0.5rem 0.3rem 0;
+}
+
+.describe fieldset {
+  margin: 0 0 1rem;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.describe fieldset label {
+  display: block;
+}

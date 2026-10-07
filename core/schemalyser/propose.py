@@ -922,8 +922,10 @@ def _empty(column):
     return "NULL"
 
 
-def view_sql(name, role, kinds=None, model=None):
-    """The SQL of one view of a draft map, written from the bindings in its evidence."""
+def view_sql(name, role, kinds=None, model=None, vocabularies=None):
+    """The SQL of one view of a draft map, written from the bindings in its evidence. vocabularies, when given, is
+    {column: {kind: [code, ...]}} for any column of a kind other than the readings' whose local codes a person has
+    chosen, and the view then translates those codes as it translates the readings' kinds."""
     model = model or rolemap.contract()
     view = next(v for v in model["views"] if v["name"] == name)
     base = role["rows"]["binding"]["table"]
@@ -950,6 +952,8 @@ def view_sql(name, role, kinds=None, model=None):
         codes = None
         if name == "role_reading" and column["name"] == "kind":
             codes = {k: item.get("codes", []) for k, item in (kinds or {}).items()}
+        elif column["type"] == "kind" and (vocabularies or {}).get(column["name"]) is not None:
+            codes = vocabularies[column["name"]]
         elif column["type"] == "kind" or (column["type"] in ("flag", "flag_or_empty") and _category(binding["column"])):
             vocabulary.append(column["name"])
         lines.append(f"{_expression(column, ref, binding.get('data_type', ''), codes)} AS {column['name']}")
