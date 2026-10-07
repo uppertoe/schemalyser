@@ -66,7 +66,8 @@ def test_every_word_written_is_on_the_allowlist(analysis, pack):
     allowed |= {w.upper() for w in HEADER_WORDS | set(v.ROLES) | set(v.JOIN_KINDS) | set(v.VALUE_KINDS) | set(v.UNRESOLVED)}
     allowed |= {t.upper() for t in analysis.catalogue.data_types()}
     allowed |= {w.strip("<>").upper() for w in v.PLACEHOLDERS.values()}
-    wording = " ".join([*v.UNRESOLVED_LABELS.values(), v.NOTHING_UNREAD, v.files_sentence(2, 1), v.found_sentence(2, 2, 2, 2, 2)])
+    wording = " ".join([*v.UNRESOLVED_LABELS.values(), v.NOTHING_UNREAD, v.files_sentence(2, 1), v.files_sentence(2, 2, {k: 1 for k in v.HIDES_SQL}),
+                        v.files_sentence(2, 2, {k: 2 for k in v.HIDES_SQL}), v.found_sentence(2, 2, 2, 2, 2)])
     allowed |= {w.upper() for w in re.findall(r"[A-Za-z_]+", wording)}
     for name, text in pack.items():
         for word in re.findall(r"[A-Za-z_][A-Za-z_0-9]*", text):
@@ -146,7 +147,11 @@ def test_the_browser_functions_give_the_same_pack_and_refuse_a_bad_catalogue(pac
     result = json.loads(browser.finish())
     assert result["pack"] == pack
     assert result["summary"]["files"] == 15 and result["summary"]["notFullyRead"] == 2
-    assert result["summary"]["sentences"][0] == "Schemalyser has read 15 files. It was not able to read 2 of them in full, because each holds a part that Schemalyser could not parse, SQL that is built as text when it runs, a call to a stored procedure, a statement of a kind that Schemalyser does not analyse, or a query whose columns Schemalyser could not match to their tables."
+    # The coverage says the reason that it knows for each file, and not every reason that there could be.
+    assert result["summary"]["sentences"][0] == ("Schemalyser has read 15 files. It was not able to read 2 of them in full. "
+                                                 "In 1 file, part of the SQL could not be parsed, that is, Schemalyser could not "
+                                                 "read it as SQL. In 1 file, part of the SQL is built as text when it runs, so "
+                                                 "Schemalyser cannot see the tables inside it.")
     assert pack["coverage.txt"].splitlines()[:2] == result["summary"]["sentences"]
     archive = zipfile.ZipFile(io.BytesIO(browser.pack_zip()))
     assert {n: archive.read(n).decode() for n in archive.namelist()} == pack

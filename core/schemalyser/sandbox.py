@@ -540,6 +540,13 @@ class Sandbox:
         sizes = self._sizes(rows)
         self.date_columns = frozenset(c.name.upper() for t in self.tables for c in self.catalogue.table(t).columns.values()
                                       if typed(c) in ("TIMESTAMP", "DATE"))
+        # The columns that SQL Server holds as whole numbers in every table that has them, so that a query that divides
+        # them gives a whole number here as it does there.
+        whole, other = set(), set()
+        for t in self.tables:
+            for c in self.catalogue.table(t).columns.values():
+                (whole if c.data_type.strip().upper() in ("INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT") else other).add(c.name.upper())
+        self.whole_columns = frozenset(whole - other)
         text_domains = {d for (table, column), d in domains.items()
                         if typed(self.catalogue.table(table).column(column)) == "VARCHAR"}
 
@@ -689,7 +696,8 @@ class Sandbox:
         from the text that was run stays in the database.
         """
         try:
-            statements = to_duckdb(sql, self.date_columns)
+            # The practice database answers as SQL Server would, so a division of whole numbers gives a whole number.
+            statements = to_duckdb(sql, self.date_columns, getattr(self, "whole_columns", frozenset()))
         except Unreadable:
             return {"status": "unreadable"}
         except Unsupported:

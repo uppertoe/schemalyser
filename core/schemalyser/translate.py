@@ -188,11 +188,71 @@ def _assigns_in_select(statement):
                for select in statement.find_all(exp.Select) for projection in select.expressions)
 
 
-def to_duckdb(sql, date_columns=frozenset()):
+WHOLE_TYPES = {exp.DataType.Type.INT, exp.DataType.Type.BIGINT, exp.DataType.Type.SMALLINT, exp.DataType.Type.TINYINT}
+WHOLE_FUNCTIONS = (exp.Count, exp.Year, exp.Month, exp.Day, exp.DateDiff, exp.IntDiv)
+
+
+def _whole(node, statement, whole_columns, depth=0):
+    """Whether SQL Server would give a whole number for an expression: a whole literal, a count, a date part, a cast to a
+    whole type, arithmetic on whole numbers, or a column that is one, through a common table expression or a derived
+    table of the same statement. Where it cannot tell, it says no, so that the division stays as it is."""
+    if node is None or depth > 12:
+        return False
+    if isinstance(node, (exp.Paren, exp.Neg, exp.Alias)):
+        return _whole(node.this, statement, whole_columns, depth + 1)
+    if isinstance(node, exp.Null):
+        return True
+    if isinstance(node, exp.Literal):
+        return not node.is_string and str(node.this).isdecimal()
+    if isinstance(node, WHOLE_FUNCTIONS):
+        return True
+    if isinstance(node, (exp.Cast, exp.TryCast)):
+        return node.to.this in WHOLE_TYPES
+    if isinstance(node, (exp.Sum, exp.Min, exp.Max)):
+        return _whole(node.this, statement, whole_columns, depth + 1)
+    if isinstance(node, (exp.Add, exp.Sub, exp.Mul, exp.Mod, exp.Div)):
+        return _whole(node.this, statement, whole_columns, depth + 1) and \
+            _whole(node.expression, statement, whole_columns, depth + 1)
+    if isinstance(node, exp.Coalesce):
+        return all(_whole(e, statement, whole_columns, depth + 1) for e in [node.this, *node.expressions])
+    if isinstance(node, exp.Case):
+        branches = [i.args.get("true") for i in node.args.get("ifs") or []] + [node.args.get("default") or exp.Null()]
+        return all(_whole(b, statement, whole_columns, depth + 1) for b in branches)
+    if isinstance(node, exp.Column):
+        derived = {cte.alias.upper(): cte.this for cte in statement.find_all(exp.CTE)}
+        derived.update({s.alias.upper(): s.this for s in statement.find_all(exp.Subquery) if s.alias})
+        source = derived.get(node.table.upper()) if node.table else None
+        if source is None and not node.table:
+            select = node.find_ancestor(exp.Select)
+            from_ = select.args.get("from_") or select.args.get("from") if select is not None else None
+            sources = ([from_.this] if from_ is not None else []) + [j.this for j in select.args.get("joins") or []]
+            if len(sources) == 1 and isinstance(sources[0], exp.Subquery):
+                source = sources[0].this
+            elif len(sources) == 1 and isinstance(sources[0], exp.Table):
+                source = derived.get(sources[0].name.upper())
+        if isinstance(source, exp.Select):
+            found = next((p for p in source.expressions if p.alias_or_name.upper() == node.name.upper()), None)
+            return found is not None and _whole(found.unalias(), statement, whole_columns, depth + 1)
+        return node.name.upper() in whole_columns
+    return False
+
+
+def _whole_division(statement, whole_columns):
+    """SQL Server divides a whole number by a whole number to give a whole number, so that (COUNT(*) / 10) * 10 rounds a
+    count down to the nearest ten. DuckDB's / gives a fraction, so each such division becomes DuckDB's //."""
+    for division in reversed(list(statement.find_all(exp.Div))):
+        if _whole(division.this, statement, whole_columns) and _whole(division.expression, statement, whole_columns):
+            division.replace(exp.IntDiv(this=division.this, expression=division.expression))
+    return statement
+
+
+def to_duckdb(sql, date_columns=frozenset(), whole_columns=None):
     """Returns the DuckDB statements for a piece of T-SQL, in order.
 
     date_columns holds the names of the columns that hold dates, so that a string compared with one
-    of them can be read as a date.
+    of them can be read as a date. Where whole_columns is given, as the names of the columns that hold
+    whole numbers, a division of whole numbers gives a whole number, as it does in SQL Server; the
+    practice database asks for this, so that it returns what SQL Server would.
     """
     sql = drop_old_hints(sql.lstrip("\ufeff"))
     sql = DROP_IF_EXISTS.sub(lambda m: f"DROP TABLE IF EXISTS {m.group(1)};", sql)
@@ -225,5 +285,8 @@ def to_duckdb(sql, date_columns=frozenset()):
             elif isinstance(statement, exp.Set):
                 out.extend(_set(statement))
             else:
-                out.append(_sql(_rewrite(statement, date_columns)))
+                rewritten = _rewrite(statement, date_columns)
+                if whole_columns is not None:
+                    rewritten = _whole_division(rewritten, whole_columns)
+                out.append(_sql(rewritten))
     return out

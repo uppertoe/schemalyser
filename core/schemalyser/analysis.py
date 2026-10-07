@@ -79,6 +79,9 @@ class Analysis:
             per_request.append([number, result.statements, sum(result.unresolved.values()), " ".join(elements)])
             totals["files"] += 1
             totals["files_not_fully_read"] += v.not_fully_read(result.unresolved)
+            # The files that each reason applies to, so that the coverage says the reason that it knows.
+            for kind in v.HIDES_SQL:
+                totals[f"files_{kind}"] += bool(result.unresolved.get(kind))
             totals["statements"] += result.statements
             totals.update(result.unresolved)
 
@@ -106,7 +109,8 @@ class Analysis:
             "unread": [[v.UNRESOLVED_LABELS[c], totals[c]] for c in v.UNRESOLVED if totals[c]],
         }
         self.summary["sentences"] = [
-            v.files_sentence(self.summary["files"], self.summary["notFullyRead"]),
+            v.files_sentence(self.summary["files"], self.summary["notFullyRead"],
+                             {kind: totals[f"files_{kind}"] for kind in v.HIDES_SQL}),
             v.found_sentence(*(self.summary[k] for k in ("tables", "columns", "joins", "filters", "derivations"))),
         ]
         coverage = list(self.summary["sentences"])

@@ -56,6 +56,15 @@ HIDES_SQL = ("parse_error", "dynamic_sql", "opaque_statement", "qualify_error")
 NOT_FULLY_READ = ("each holds a part that Schemalyser could not parse, SQL that is built as text when it runs, a call to "
                   "a stored procedure, a statement of a kind that Schemalyser does not analyse, or a query whose columns "
                   "Schemalyser could not match to their tables")
+# Each reason that a file was not read in full, as the clause that follows "In 1 file" or "In 2 files", so that the page
+# says the reason that it knows rather than every reason that there could be. Each explains its term where it is met.
+NOT_FULLY_READ_BECAUSE = {
+    "parse_error": "part of the SQL could not be parsed, that is, Schemalyser could not read it as SQL",
+    "dynamic_sql": "part of the SQL is built as text when it runs, so Schemalyser cannot see the tables inside it",
+    "opaque_statement": ("a statement is of a kind that Schemalyser does not analyse, such as a call to a stored procedure, "
+                         "which is a program saved on the server and run by its name"),
+    "qualify_error": "a query uses columns that Schemalyser could not match to their tables",
+}
 
 
 def not_fully_read(unresolved):
@@ -70,10 +79,18 @@ def _count(n, singular, plural=None):
     return f"{n} {singular if n == 1 else (plural or singular + 's')}"
 
 
-def files_sentence(files, not_fully_read):
+def files_sentence(files, not_fully_read, reasons=None):
+    """How many files Schemalyser read and how many it could not read in full. With reasons, as {kind: files}, it says the
+    reason for each, with the number of files that it applies to; without them, it says only that it cannot tell which."""
     sentence = f"Schemalyser has read {_count(files, 'file')}."
-    if not_fully_read:
-        sentence += f" It was not able to read {not_fully_read} of them in full, because {NOT_FULLY_READ}."
+    if not not_fully_read:
+        return sentence
+    sentence += f" It was not able to read {not_fully_read} of them in full."
+    known = [(kind, reasons[kind]) for kind in HIDES_SQL if reasons and reasons.get(kind)]
+    if known:
+        sentence += "".join(f" In {_count(n, 'file')}, {NOT_FULLY_READ_BECAUSE[kind]}." for kind, n in known)
+    else:
+        sentence += f" {NOT_FULLY_READ[0].upper()}{NOT_FULLY_READ[1:]}, and Schemalyser cannot tell which."
     return sentence
 
 

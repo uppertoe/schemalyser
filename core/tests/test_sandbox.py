@@ -60,6 +60,23 @@ def test_tsql_habits_are_translated(built):
     assert json.loads(browser.sandbox_run(sql))["status"] == "ok"
 
 
+def test_a_division_of_whole_numbers_gives_a_whole_number_as_sql_server_does(built):
+    # The practice database answers as SQL Server would, so a count rounded down to ten is a whole number ending in 0.
+    result = json.loads(browser.sandbox_run(
+        "SELECT (COUNT(*) / 10) * 10 AS n, CASE WHEN COUNT_BIG(*) >= 10 THEN (COUNT_BIG(*) / 10) * 10 END AS m, "
+        "COUNT(*) / 2.0 AS half FROM (SELECT TOP 156 CASE_KEY FROM THEATRE_CASE) AS t"))
+    assert result["status"] == "ok" and result["rows"] == [["150", "150", "78.0"]], result
+    # The count by year, as the page offers it, comes back in whole numbers that a paste reads as they are.
+    from schemalyser import target
+    from schemalyser.catalogue import Catalogue
+    sql = target.year_count(FIXTURES / "conversion", (FIXTURES / "targets" / "neonatal_low_mean_pressure.sql").read_text(),
+                            Catalogue.from_csv(CATALOGUE.decode()))
+    counted = json.loads(browser.sandbox_run(sql))
+    assert counted["status"] == "ok" and counted["rows"], counted
+    for row in counted["rows"]:
+        assert all(value is None or (value.isdecimal() and int(value) % 10 == 0) for value in row[1:]), row
+
+
 def test_what_cannot_be_run_is_reported_by_kind(built):
     assert json.loads(browser.sandbox_run("CREATE PROCEDURE p AS BEGIN SELECT 1 END"))["status"] == "unsupported"
     assert json.loads(browser.sandbox_run("EXEC sp_executesql N'SELECT 1'"))["status"] == "unsupported"

@@ -37,7 +37,9 @@ interface Item {
   // The question that a colleague can answer from knowledge, and the answer a person gave.
   ask?: { kind: 'join' | 'filter' | 'codes' | 'route'; text: string; left?: string; right?: string; tables?: Record<string, string[]>;
     column?: string; vocabulary?: string; concept?: string; meaning?: string; search?: string; group?: string; choose?: string[][]; step?: string;
-    steps?: string[]; words?: string[]; definition?: string[] } | null;
+    steps?: string[]; words?: string[]; definition?: string[];
+    // What the folder for this audit assumes that each code to choose from means, where nobody here has confirmed it.
+    assumed?: Record<string, string> } | null;
   fact?: string;
   // The answers that a person gave about the item, as the core names them for withdrawal; whether the item heads what
   // remains; for a route, the name that is not visible; and, for the count by year, the counts once seen.
@@ -58,6 +60,9 @@ interface Query {
 
 interface Target {
   name: string;
+  // The audit question in plain words, from the header comment of its file, and the decisions that can change its answer.
+  title?: string;
+  decisions?: string[];
   counts: { total: number; answered: number; partly: number; open: number };
   steps: boolean;
   verdict: string;
@@ -76,6 +81,7 @@ interface Target {
   specification?: string;
   charted?: { sql: string; from: string; to: string; codes: string[]; kept?: boolean; worst?: string; withheld?: string } | null;
   listed?: { sql: string; year: number | null; column: string; years: number[]; rows: number | null; link: string; waiting?: boolean; largest?: [string, number] | null;
+    readings?: [string, number | null] | null;
     worst?: string; withheld?: string } | null;
   // The routes that the catalogue settled, where a step gave way to one of its alternatives, one sentence each.
   routes?: string[];
@@ -268,8 +274,9 @@ function show() {
   );
   const chosen = chosenFiles();
   analyse.disabled = !canAnalyse(chosen) || fetchWindow !== null;
-  // Without a catalogue, the first query is offered, once the requests are chosen and the computer is offline.
-  $('b-first').hidden = !(state === 'ready' && !online && chosen.requests.length && (!chosen.catalogue || firstCatalogue));
+  // Without a catalogue, the first query is offered once the folder for this audit or the requests are chosen and the computer
+  // is offline: the audit's steps name the tables, so a colleague with no SQL files can still start.
+  $('b-first').hidden = !(state === 'ready' && !online && (chosen.requests.length || stepFiles(chosen).length) && (!chosen.catalogue || firstCatalogue));
   $<HTMLButtonElement>('first-write').disabled = !worker || online;
   $('b-save-state').hidden = state !== 'review';
   $('b-example').hidden = state !== 'ready';
@@ -344,6 +351,11 @@ function requestFiles() {
 // whose saved evidence and answers stand without the request files.
 function canAnalyse(chosen: ReturnType<typeof chosenFiles>) {
   return Boolean(chosen.catalogue && (chosen.requests.length || [...chosen.state.keys()].some((path) => path.startsWith('targets/'))));
+}
+
+// The audit's steps in the folder for this audit, whose table names the first query asks about.
+function stepFiles(chosen: { state: Map<string, File> }) {
+  return [...chosen.state].filter(([path]) => path.startsWith('conversion/') && path.endsWith('.sql')).map(([, file]) => file);
 }
 
 function chosenFiles() {
@@ -515,7 +527,10 @@ function sendFacts(box: Element, facts: Record<string, unknown>[]) {
   const who = ((section?.querySelector('input.fact-who') as HTMLInputElement | null)?.value ?? whoNow).trim();
   const date = new Date().toISOString().slice(0, 10);
   const stamped = facts.map((fact) => ({ ...fact, date, ...(who ? { who } : {}) }));
-  if (stamped.length) clearStale();
+  if (stamped.length) {
+    clearStale();
+    beginWorking(box);
+  }
   if (stamped.length === 1) worker?.postMessage({ type: 'fact', fact: JSON.stringify(stamped[0]) });
   else if (stamped.length) worker?.postMessage({ type: 'facts', facts: JSON.stringify(stamped) });
 }
@@ -527,9 +542,10 @@ let whoNow = '';
 let withdrawing = false;
 
 // Withdraws the answers that a person gave about one item, so that the question is asked again.
-function withdrawFacts(item: Item) {
+function withdrawFacts(item: Item, button?: Element) {
   if (!worker || !item.withdraw?.length) return;
   clearStale();
+  if (button?.parentElement) beginWorking(button.parentElement);
   withdrawing = true;
   worker.postMessage({ type: 'fact-withdraw', withdraw: JSON.stringify(item.withdraw) });
 }
@@ -537,9 +553,69 @@ function withdrawFacts(item: Item) {
 // What the last action settled is true only until the next one: the note of what it settled and the status of the paste
 // or answer are cleared as soon as another action begins.
 function clearStale() {
-  for (const node of document.querySelectorAll<HTMLElement>('.fresh-note')) node.remove();
+  for (const node of document.querySelectorAll<HTMLElement>('.fresh-note, .answer-confirmation')) node.remove();
   $('t-paste-result').hidden = true;
   $('t-changes').hidden = true;
+}
+
+// Where the person acted, so that the confirmation can stand beside it once the checklist has been worked out again: the
+// audit question, the point by its identifier, or the part of the checklist, such as the settings.
+let pendingAnchor: { target: string; id: string | null; part: string | null } | null = null;
+let workingBox: HTMLElement | null = null;
+const PARTS = ['listed', 'settings', 'database', 'charted'];
+
+// While Schemalyser works the checklist out again, the place where the person acted says so, and its controls wait.
+function beginWorking(from: Element) {
+  endWorking();
+  const section = from.closest<HTMLElement>('section.target');
+  const item = from.closest<HTMLElement>('li.item');
+  const part = from.closest<HTMLElement>('.sizes');
+  pendingAnchor = { target: section?.dataset.target ?? '', id: item?.dataset.id ?? null,
+    part: part ? PARTS.find((name) => part.classList.contains(name)) ?? null : null };
+  const holder = (item?.querySelector<HTMLElement>('.item-body') ?? part ?? (from as HTMLElement));
+  holder.dataset.working = 'true';
+  for (const control of holder.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLSelectElement>('button, input, select')) {
+    if (!control.disabled) {
+      control.disabled = true;
+      control.dataset.waiting = 'true';
+    }
+  }
+  const note = el('p', strings.working, 'status working-note');
+  note.setAttribute('role', 'status');
+  (from as HTMLElement).append(note);
+  workingBox = holder;
+}
+
+// The controls come back where nothing was re-drawn, as when an answer could not be recorded.
+function endWorking() {
+  for (const note of document.querySelectorAll('.working-note')) note.remove();
+  if (workingBox) {
+    delete workingBox.dataset.working;
+    for (const control of workingBox.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLSelectElement>('[data-waiting]')) {
+      control.disabled = false;
+      delete control.dataset.waiting;
+    }
+  }
+  workingBox = null;
+}
+
+// The confirmation of an answer, beside the point that was answered, wherever the point now stands, or at the head of the
+// part in which the person acted.
+function confirmBeside(said: string, kind: 'good' | 'problem') {
+  const anchor = pendingAnchor;
+  pendingAnchor = null;
+  // A change that the page sent by itself, such as the database chosen before the checklist existed, needs no confirmation.
+  if (!anchor && kind === 'good') return;
+  const section = anchor ? document.querySelector<HTMLElement>(`section.target[data-target="${CSS.escape(anchor.target)}"]`) : null;
+  const note = el('p', said, `status ${kind} answer-confirmation`);
+  note.setAttribute('role', 'status');
+  const item = anchor?.id && section ? section.querySelector<HTMLElement>(`li.item[data-id="${CSS.escape(anchor.id)}"] .item-body`) : null;
+  const part = !item && anchor?.part && section ? section.querySelector<HTMLElement>(`.sizes.${anchor.part}`) : null;
+  if (item) item.prepend(note);
+  else if (part) (part.querySelector('h4') ?? part.firstChild)?.after(note) ?? part.prepend(note);
+  else if (section) section.querySelector('h3')?.after(note);
+  else $('checklists').prepend(note);
+  note.scrollIntoView({ block: 'center' });
 }
 
 function askButton(label: string, className: string, onClick: () => void) {
@@ -606,7 +682,7 @@ function askElement(item: Item) {
   if (ask.choose && ask.group) {
     const group = searchGroups.get(ask.group) ?? [];
     if (group[0]?.concept !== ask.concept) box.append(el('p', strings.chooseAbove, 'note'));
-    else box.append(chooseTable(group, ask.choose));
+    else box.append(chooseTable(group, ask.choose, ask.assumed ?? {}));
     // Where no code has a name, nothing can be confirmed from the table, so the codes are entered from what the two know.
     if (ask.choose.every(([, name]) => nameless(name))) {
       const label = el('label', strings.chooseNoNames);
@@ -677,7 +753,14 @@ function askElement(item: Item) {
 // A name that is only a number, or empty, says nothing of what the code means, so it cannot confirm anything.
 const nameless = (name: string) => /^[\s\d.,-]*$/.test(name ?? '');
 
-function chooseTable(meanings: { concept: string; vocabulary: string; meaning: string; column: string }[], rows: string[][]) {
+// A code that the folder for this audit gives a meaning, and that nobody here has confirmed, says so beside it, as the
+// specification does, so that an assumption is called an assumption wherever the code is shown.
+function assumedNote(meaning: string | undefined) {
+  return meaning ? [el('span', ` ${strings.codeAssumed(meaning)}`, 'note code-assumed')] : [];
+}
+
+function chooseTable(meanings: { concept: string; vocabulary: string; meaning: string; column: string }[], rows: string[][],
+  assumed: Record<string, string> = {}) {
   const box = el('div', undefined, 'candidates choose-list');
   const table = el('table', undefined, 'candidate-table choose-table');
   const head = el('tr');
@@ -701,7 +784,9 @@ function chooseTable(meanings: { concept: string; vocabulary: string; meaning: s
     }
     const cell = el('td');
     cell.append(select);
-    line.append(el('td', code), el('td', nameless(name) ? strings.noName : name), cell);
+    const named = el('td', nameless(name) ? strings.noName : name);
+    named.append(...assumedNote(assumed[code]));
+    line.append(el('td', code), named, cell);
     table.append(line);
     selects.push([code, select]);
   }
@@ -794,6 +879,8 @@ let listedBox: HTMLElement | null = null;
 type Script = { sql: string; worst?: string; withheld?: string };
 // The largest table that the count by year and part 1 of each script read to find the anaesthetics, with its size.
 let cohortLargest: [string, number] | null = null;
+// The table of readings, with its size where the query results give it, so that the page says how large it is.
+let readingsNow: [string, number | null] | null = null;
 // Whether the checklist on the page was worked out for a training database with fictional patients, as the core recorded it.
 let trainingNow = false;
 // The database chosen where the first query is offered, before any checklist exists; it is sent once the first one arrives.
@@ -825,9 +912,10 @@ function databaseOptions(name: string, current: string | null | undefined, onCho
 
 // The database is kept with the audit's settings, so a change sends the settings as they stand with the new answer, and the
 // core works the checklist out again.
-function sendDatabase(target: Target, value: string) {
+function sendDatabase(target: Target, value: string, from?: Element) {
   if (!worker) return;
   clearStale();
+  if (from) beginWorking(from);
   worker.postMessage({ type: 'settings', settings: JSON.stringify({ ...(target.settings ?? {}), database: value }) });
 }
 
@@ -836,7 +924,7 @@ function databaseElement(target: Target) {
   box.append(el('h4', strings.databaseHeading), el('p', strings.databaseWhat, 'sizes-reason'),
     databaseOptions(`database-${target.name}`, target.settings?.database, (value) => {
       databaseChoice = value;
-      sendDatabase(target, value);
+      sendDatabase(target, value, box);
     }), el('p', strings.databaseChanged, 'note'));
   return box;
 }
@@ -844,7 +932,7 @@ function databaseElement(target: Target) {
 function scriptNotes(script: Script, long = false) {
   if (!script.sql) return script.withheld ? [el('p', script.withheld, 'sizes-reason status problem script-withheld')] : [];
   return [el('p', strings.scriptTemporary, 'sizes-reason script-note'), el('p', strings.scriptTimeout, 'sizes-reason script-note'),
-    el('p', strings.scriptPlan, 'sizes-reason script-note'),
+    el('p', strings.scriptPlan(readingsNow), 'sizes-reason script-note'),
     ...(cohortLargest ? [el('p', strings.scriptCostly(...cohortLargest), 'sizes-reason script-note')] : []),
     ...(script.worst ? [el('p', strings.scriptWorst(script.worst), 'sizes-reason script-note')] : []),
     ...(long ? [el('p', strings.scriptMonth, 'sizes-reason script-note')] : []),
@@ -896,13 +984,15 @@ function listedElement(target: Target) {
 function listedMeanings(target: Target, column: string) {
   const meanings: { concept: string; vocabulary: string; meaning: string; column: string }[] = [];
   const words = new Set<string>();
+  const assumed: Record<string, string> = {};
   for (const item of target.rows) {
     const ask = item.ask;
     if (ask?.kind !== 'codes' || (ask.column ?? '').toUpperCase() !== column.toUpperCase() || !ask.concept) continue;
     if (!meanings.some((m) => m.concept === ask.concept)) meanings.push({ concept: ask.concept, vocabulary: ask.vocabulary!, meaning: ask.meaning ?? ask.concept, column: ask.column! });
     for (const w of ask.words ?? []) words.add(w.toUpperCase());
+    Object.assign(assumed, ask.assumed ?? {});
   }
-  return { meanings, words: [...words] };
+  return { meanings, words: [...words], assumed };
 }
 
 const NOT_LIKELY = /(^|[^A-Z0-9])(PA|PAP|PULM[A-Z]*|CVP|CENTRAL VENOUS|AIRWAY|VENT[A-Z]*)($|[^A-Z0-9])/;
@@ -916,7 +1006,7 @@ function showListed(columns: string[], rows: { code: string; readings: number | 
     sendFacts(shown, [{ kind: 'listed', column: listed.column, year: listed.year, rows: 0 }]);
     return;
   }
-  const { meanings, words } = listedMeanings(listedTarget, listed.column);
+  const { meanings, words, assumed } = listedMeanings(listedTarget, listed.column);
   const whole = words.map((w) => new RegExp(`(^|[^A-Z0-9])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^A-Z0-9])`));
   const filter = el('input', undefined, 'listed-filter') as HTMLInputElement;
   filter.type = 'search';
@@ -949,7 +1039,9 @@ function showListed(columns: string[], rows: { code: string; readings: number | 
     const cell = el('td');
     cell.append(select);
     const count = (n: number | null) => (n === null ? strings.countUnderTen : n.toLocaleString('en-AU'));
-    line.append(el('td', row.code + (likely ? ` ${strings.listedLikely}` : '')), el('td', count(row.readings)), el('td', count(row.anaesthetics)),
+    const coded = el('td', row.code + (likely ? ` ${strings.listedLikely}` : ''));
+    coded.append(...assumedNote(assumed[row.code]));
+    line.append(coded, el('td', count(row.readings)), el('td', count(row.anaesthetics)),
       ...(row.names.every(nameless) ? [el('td', strings.noName)] : row.names.map((n) => el('td', n))), cell);
     table.append(line);
     selects.push([row.code, select, line]);
@@ -1008,7 +1100,9 @@ function chartedElement(target: Target) {
   return box;
 }
 
-// The count by year: its result is pasted here, shown as a small table, and the two people say whether it looks right.
+// The count by year: its result is pasted here, shown as a small table, and the two people say whether it looks right. Each
+// audit question has a box of its own, so the result is shown in the box whose button was pressed.
+let countBox: HTMLElement | null = null;
 function yearCountBox() {
   const box = el('div', undefined, 'year-count');
   const label = el('label', strings.countPasteLabel);
@@ -1016,17 +1110,19 @@ function yearCountBox() {
   area.rows = 5;
   label.append(area);
   const shown = el('div', undefined, 'count-result');
-  box.append(el('p', strings.countPlan, 'sizes-reason script-note'),
+  box.append(el('p', strings.countPlan(readingsNow), 'sizes-reason script-note'),
     ...(cohortLargest ? [el('p', strings.countCostly(...cohortLargest), 'sizes-reason script-note')] : []),
     el('p', strings.countHow, 'note count-how'));
   box.append(label, askButton(strings.countRead, 'count-read', () => {
-    if (area.value.trim()) worker?.postMessage({ type: 'year-count', text: area.value });
+    if (!area.value.trim()) return;
+    countBox = shown;
+    worker?.postMessage({ type: 'year-count', text: area.value });
   }), shown);
   return box;
 }
 
 function showYearCount(years: (number | null)[][]) {
-  const shown = document.querySelector<HTMLElement>('.count-result');
+  const shown = countBox?.isConnected ? countBox : document.querySelector<HTMLElement>('.count-result');
   if (!shown) return;
   const table = el('table', undefined, 'count-table');
   const head = el('tr');
@@ -1049,7 +1145,7 @@ function showYearCount(years: (number | null)[][]) {
     actions.append(askButton(label, `count-${answer}`, () => sendFacts(shown, [{ kind: 'count', answer, years }])));
   }
   // The earliest year with anaesthetics is offered as the start of the study period, where none has been entered.
-  const from = document.querySelector<HTMLInputElement>('input.setting-date');
+  const from = (shown.closest('section.target') ?? document).querySelector<HTMLInputElement>('input.setting-date');
   if (from && !from.value && years.length) from.value = `${years[0][0]}-01-01`;
   const received = years.length
     ? [el('p', strings.countReceived(years.length, Number(years[0][0]), Number(years[years.length - 1][0])), 'status good count-received')] : [];
@@ -1187,7 +1283,8 @@ function itemElement(item: Item, previous?: string, queries?: Map<string, Query>
     inHand = sentences.filter((s) => !given.includes(s)).join(' ');
     const answer = el('div', undefined, 'answer-given');
     if (given.length) answer.append(el('p', given.join(' '), 'answer-text'));
-    answer.append(askButton(strings.withdrawAnswer, 'secondary withdraw-answer', () => withdrawFacts(item)));
+    const withdraw: HTMLButtonElement = askButton(strings.withdrawAnswer, 'secondary withdraw-answer', () => withdrawFacts(item, withdraw));
+    answer.append(withdraw);
     body.append(answer);
   }
   if (item.status !== 'answered') {
@@ -1255,13 +1352,19 @@ function settingsElement(target: Target) {
     }
     box.append(kinds);
   }
-  // The decisions that the two clinicians make together, each with its options, the present choice and a short note.
+  // The decisions that the two clinicians make together, each with its options, the present choice and a short note. Only
+  // the decisions that can change the answer to this question are offered, and the page says which it leaves out.
   const decisions = el('div', undefined, 'decisions');
-  decisions.append(el('h4', strings.decisionsHeading), el('p', strings.decisionsWhat, 'sizes-reason'));
+  const bearing = target.decisions ?? strings.decisions.map((d) => d.key);
+  const leftOut = strings.decisions.filter((d) => !bearing.includes(d.key)).map((d) => strings.decisionTopics[d.key] ?? d.key);
+  decisions.append(el('h4', strings.decisionsHeading));
+  if (bearing.length) decisions.append(el('p', strings.decisionsWhat, 'sizes-reason'));
+  if (!bearing.length) decisions.append(el('p', strings.decisionsNone, 'note decisions-none'));
+  else if (leftOut.length) decisions.append(el('p', strings.decisionsLeftOut(leftOut), 'note decisions-left-out'));
   const chosenNow = target.settings ?? {};
   const pickers: [string, HTMLSelectElement | HTMLInputElement][] = [];
   const notes: [string, HTMLInputElement][] = [];
-  for (const decision of strings.decisions) {
+  for (const decision of strings.decisions.filter((d) => bearing.includes(d.key))) {
     const wrap = el('div', undefined, 'decision');
     wrap.dataset.decision = decision.key;
     const label = el('label', decision.title);
@@ -1296,14 +1399,19 @@ function settingsElement(target: Target) {
   }
   box.append(decisions);
   box.append(askButton(strings.settingsApply, 'settings-apply', () => {
+    // The settings are shared by every audit question, so a decision that this question does not offer keeps its value.
+    const kept = target.settings ?? {};
     const settings: Record<string, unknown> = { from: from.value || null, to: to.value || null, kinds: boxes.filter(([, t]) => t.checked).map(([c]) => c),
-      database: target.settings?.database ?? null };
+      database: kept.database ?? null,
+      ...Object.fromEntries(strings.decisions.filter((d) => !bearing.includes(d.key)).map((d) => [d.key, (kept as Record<string, unknown>)[d.key] ?? null])) };
     for (const [key, input] of pickers) {
       if (key === 'floor' || key === 'ceiling') settings[key] = input.value ? Number(input.value) : null;
       else settings[key] = input.value === (strings.decisions.find((d) => d.key === key)?.options[0][0]) ? null : input.value;
     }
-    settings.notes = Object.fromEntries(notes.filter(([, n]) => n.value.trim()).map(([k, n]) => [k, n.value.trim()]));
+    settings.notes = { ...Object.fromEntries(Object.entries(kept.notes ?? {}).filter(([k]) => !bearing.includes(k))),
+      ...Object.fromEntries(notes.filter(([, n]) => n.value.trim()).map(([k, n]) => [k, n.value.trim()])) };
     clearStale();
+    beginWorking(box);
     worker?.postMessage({ type: 'settings', settings: JSON.stringify(settings) });
   }));
   return box;
@@ -1417,11 +1525,14 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
   listedNow = target.listed ?? null;
   listedTarget = target;
   cohortLargest = target.listed?.largest ?? null;
+  readingsNow = target.listed?.readings ?? null;
   trainingNow = target.settings?.database === 'training';
   const section = el('section', undefined, 'target');
   section.dataset.target = target.name;
+  // The audit question in plain words heads its checklist, with the name of its file after it in smaller type.
   const heading = el('h3');
-  heading.append(el('span', target.name, 'target-name'));
+  if (target.title) heading.append(el('span', target.title, 'target-title'), document.createTextNode(' '));
+  heading.append(el('span', `${target.name}.sql`, 'target-name'));
   section.append(heading);
   // The first stage leads: what a person still needs to do before the audit query can be written.
   const first = target.stages?.source ?? target.counts;
@@ -1499,13 +1610,9 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
   const offered = (item: Item) => itemElement(item, undefined, queries, shown);
 
   const previous = (item: Item) => before?.statuses.get(item.id);
-  // The items settled by the action just taken, compared with the render before it, so that the note is true only now.
+  // The items settled by the action just taken, compared with the render before it, so that the note is true only now. They
+  // are listed first within 4.4, the part to which they belong.
   const fresh = target.rows.filter((item) => item.status === 'answered' && before && previous(item) !== undefined && previous(item) !== 'answered');
-  if (fresh.length) {
-    section.append(el('p', sinceAnalysis ? strings.newlyAnsweredNow(fresh.length) : strings.newlyAnswered(fresh.length), 'status good fresh-note'),
-      el('h4', sinceAnalysis ? strings.groupNewNow : strings.groupNew));
-    section.append(itemList('new', fresh.map((item) => itemElement(item, previous(item)))));
-  }
 
   // Within a group, the open items come before those partly answered, and blocking items first, so
   // that what stops the simulation is read first. The order is otherwise the checklist's own.
@@ -1527,6 +1634,11 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
   const open = target.rows.filter((item) => item.group !== 'answered' && firstStage(item)).filter(once);
   const yours = ordered(open.filter(needsYou));
   section.append(el('h4', strings.groupYou));
+  if (fresh.length) {
+    section.append(el('p', sinceAnalysis ? strings.newlyAnsweredNow(fresh.length) : strings.newlyAnswered(fresh.length), 'status good fresh-note'),
+      el('h5', sinceAnalysis ? strings.groupNewNow : strings.groupNew));
+    section.append(itemList('new', fresh.map((item) => itemElement(item, previous(item)))));
+  }
   if (yours.length) section.append(el('p', strings.groupYouNote, 'note'), itemList('you', yours.map(offered)));
   else section.append(el('p', strings.groupYouNone, 'note'));
   // The answers that a person gave stay in view, each beside the button that changes it, and none is folded away: every
@@ -1596,11 +1708,14 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
   return section;
 }
 
-function renderChecklist(boundary: Boundary, afterPaste = false) {
+// What led to the checklist on the page: an analysis, a pasted result, or an answer given on the page.
+type Cause = 'analysis' | 'paste' | 'answer';
+
+function renderChecklist(boundary: Boundary, cause: Cause = 'analysis') {
   // After a paste or an answer, the checklist is compared with the render just before it, so that what is said to be newly
   // settled is what that action settled, and nothing older stays on the page.
   const previous = snapshot;
-  sinceAnalysis = afterPaste;
+  sinceAnalysis = cause !== 'analysis';
   checksText = boundary.checks ?? '';
   profileText = boundary.profile ?? '';
   hasResult = true;
@@ -1631,8 +1746,10 @@ function renderChecklist(boundary: Boundary, afterPaste = false) {
     newly += target.rows.filter((item) => item.status === 'answered' && before.statuses.has(item.id) && before.statuses.get(item.id) !== 'answered').length;
   }
   const compared = targets.filter((target) => previous?.has(target.name)).length;
-  $('t-changes').hidden = !previous || compared === 0;
-  text('t-changes', afterPaste ? strings.changesAfterPaste(newly) : strings.changes(newly, compared));
+  // After an answer the confirmation stands beside the button that was pressed, so the line at the top is for an analysis or a
+  // paste only, and it says what actually happened.
+  $('t-changes').hidden = !previous || compared === 0 || cause === 'answer';
+  text('t-changes', cause === 'paste' ? strings.changesAfterPaste(newly) : strings.changes(newly, compared));
 
   snapshot = new Map(
     targets.map((target) => [
@@ -1798,7 +1915,7 @@ function onMessage(event: MessageEvent) {
       result.textContent = strings.pasted(message.pasted.read, message.pasted.accepted);
       if (message.boundary) {
         $<HTMLTextAreaElement>(profile ? 'profile-paste' : 'paste').value = '';
-        renderChecklist(message.boundary as Boundary, true);
+        renderChecklist(message.boundary as Boundary, 'paste');
         zip = message.zip;
         checkScript = message.checkScript;
       }
@@ -1845,18 +1962,25 @@ function onMessage(event: MessageEvent) {
     else if (shown) sendFacts(shown, [{ kind: 'charted', from: charted.from, to: charted.to, codes: charted.codes, counts: message.rows }]);
   } else if (message.type === 'year-counted') {
     if (message.ok) showYearCount(message.years);
-    else document.querySelector('.count-result')?.replaceChildren(el('p', strings.countNone, 'status problem'));
+    else (countBox?.isConnected ? countBox : document.querySelector('.count-result'))?.replaceChildren(el('p', strings.countNone, 'status problem'));
   } else if (message.type === 'fact-added') {
-    const result = $('t-paste-result');
-    result.hidden = false;
-    result.className = message.ok ? 'status good' : 'status problem';
-    result.textContent = message.ok ? (withdrawing ? strings.withdrawn : strings.factRecorded) : strings.factUnreadable;
+    // The confirmation, or the reason that nothing was recorded, stands beside the button that was pressed.
+    const said = message.ok ? (withdrawing ? strings.withdrawn : pendingAnchor?.part === 'settings' ? strings.settingsRecorded : strings.factRecorded)
+      : strings.factUnreadable;
     withdrawing = false;
     if (message.ok && message.boundary) {
-      renderChecklist(message.boundary as Boundary, true);
+      renderChecklist(message.boundary as Boundary, 'answer');
       zip = message.zip;
       checkScript = message.checkScript;
+      confirmBeside(said, 'good');
+    } else {
+      endWorking();
+      confirmBeside(said, message.ok ? 'good' : 'problem');
     }
+  } else if (['fact-failed', 'facts-failed', 'settings-failed', 'fact-withdraw-failed'].includes(message.type)) {
+    withdrawing = false;
+    endWorking();
+    confirmBeside(strings.factFailed, 'problem');
   } else if (message.type === 'paste-failed' || message.type === 'profile-paste-failed') {
     pasting = false;
     const id = message.type === 'paste-failed' ? 't-paste-result' : 't-profile-paste-result';
@@ -2070,9 +2194,9 @@ $('read-profile-paste').addEventListener('click', () => sendPaste('profile-paste
 // The first query is written in the worker, which reads the chosen files; the page shows it and never changes it.
 $('first-write').addEventListener('click', () => {
   const chosen = chosenFiles();
-  if (!worker || navigator.onLine || !chosen.requests.length) return;
+  const steps = stepFiles(chosen);
+  if (!worker || navigator.onLine || !(chosen.requests.length || steps.length)) return;
   workerHasFiles = true;
-  const steps = [...chosen.state].filter(([path]) => path.startsWith('conversion/') && path.endsWith('.sql')).map(([, file]) => file);
   worker.postMessage({ type: 'first-ask', requests: chosen.requests, steps });
 });
 $('first-copy').addEventListener('click', async () => {

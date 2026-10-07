@@ -568,6 +568,9 @@ def _produce(state, requests, commits, state_left_out, draft_when=None):
             except (facts_module.FactsError, target.TargetError):
                 draft_script = None
         targets.append({"name": name, "rows": rows, "counts": target.counts(rows), "steps": bool(traced["steps"]),
+                        # The audit question in plain words, from the header comment, and the decisions that bear on it.
+                        "title": target.question_title(target_text),
+                        "decisions": target.decisions_for(target_text, conversion),
                         "listed": listed,
                         "charted": charted,
                         "readiness": outputs[f"targets/{name}/readiness.txt"], "queries": traced["queries"],

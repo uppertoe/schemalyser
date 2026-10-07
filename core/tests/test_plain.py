@@ -371,6 +371,17 @@ def test_the_page_reads_a_pasted_result_merges_it_and_works_the_checklist_out_ag
     first = json.loads(browser.boundary_run())
     airway = next(t for t in first["targets"] if t["name"] == "airway_by_anaesthesia_type")
     assert airway["sizes"]["tables"] == ["AIRWAY_DEVICE"]
+    # Each checklist is headed by its question in plain words, and offers only the decisions that can change its answer.
+    assert airway["title"] == "Which airway devices are placed during each type of anaesthetic?" and airway["decisions"] == []
+    neonatal = next(t for t in first["targets"] if t["name"] == "neonatal_low_mean_pressure")
+    assert neonatal["decisions"] == ["pressures", "floor", "ceiling", "isolated", "bypass", "ecmo", "age"]
+    # Codes that came with the folder for this audit are said to have come with it, in the order of their numbers, and an
+    # unconfirmed meaning is shown as the folder's assumption.
+    chosen = next(row["ask"] for row in neonatal["rows"] if (row.get("ask") or {}).get("choose"))
+    assert "came with the folder for this audit" in chosen["text"] and "you pasted" not in chosen["text"]
+    codes = [code for code, _ in chosen["choose"]]
+    assert codes == sorted(codes, key=lambda c: (not c.isdecimal(), int(c) if c.isdecimal() else 0, c))
+    assert "Invasive Mean blood pressure" in chosen["assumed"]["52"]
     ready = [q for q in airway["queries"] if q["state"] == "exact"]
     assert [q["id"] for q in ready] == ["values:ANAES_RECORD.ANAES_KIND_CAT"]
     items = {row["id"]: row for row in airway["rows"]}
@@ -390,6 +401,8 @@ def test_the_page_reads_a_pasted_result_merges_it_and_works_the_checklist_out_ag
     after = {row["id"]: row for row in again["rows"]}
     # The values are in, so no query is needed for the kinds; a person still reads the codes and chooses them on the page.
     assert all(after[i]["status"] == "open" and not after[i]["queryIds"] and after[i]["ask"]["choose"] for i in kind_items)
+    # The codes of the kinds came from the result that was pasted, and the question says so.
+    assert all("The result that you pasted lists the codes" in after[i]["ask"]["text"] for i in kind_items)
     # The size is in, so the query that waited for it is offered now.
     assert again["sizes"] is None and [q["id"] for q in again["queries"]] == ["values:AIRWAY_DEVICE.DEVICE_KIND_KEY"]
     merged = Checks.from_csv(result["boundary"]["checks"], browser._analysis.catalogue, browser._analysis.rules)

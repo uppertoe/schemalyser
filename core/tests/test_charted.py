@@ -120,6 +120,8 @@ COUNT = {"kind": "count", "answer": "right", "date": "2026-10-05", "years": [[20
 def test_the_codes_are_chosen_from_a_list_of_what_is_charted_on_the_cohort(tmp_path):
     from schemalyser import charted
     assert charted.default_year([[2023, 1, 1], [2024, 1, 1], [2026, 1, 1]], today=__import__("datetime").date(2026, 10, 6)) == 2024
+    # The list starts from the latest year in which the cohort holds ten or more anaesthetics, not from a year with too few.
+    assert charted.default_year([[2023, 150, 30], [2024, 170, None], [2025, 160, None]], today=__import__("datetime").date(2026, 10, 6)) == 2023
     waiting = _target(_state(tmp_path / "a"))["listed"]      # before the count by year, the list is only promised
     assert waiting["waiting"] and not waiting["sql"]
     listed = _target(_state(tmp_path / "b", given=[COUNT]))["listed"]

@@ -264,7 +264,7 @@ test('each open item carries its query, and a pasted result ticks it and brings 
     await firstChoice.selectOption({ index: 1 });
     await section.locator('button.choose-save').first().click();
   }
-  await expect(page.locator('#t-paste-result')).toHaveText(strings.factRecorded, { timeout: 120_000 });
+  await expect(page.locator('.answer-confirmation')).toHaveText(strings.factRecorded, { timeout: 120_000 });
   await expect(section.locator(`li.item[data-id="${id}"][data-status="answered"]`).first()).toBeAttached();
   await expect(section.locator('pre[data-query="sizes"]')).toHaveCount(0);
   const next = section.locator('pre[data-query="values:AIRWAY_DEVICE.DEVICE_KIND_KEY"]');
@@ -442,7 +442,7 @@ test('a colleague answers a question from knowledge, and the item ticks without 
   await expect(item.locator('button.fact-unsure')).toHaveText(strings.notSure);
   await section.locator('input.fact-who').fill('A colleague');
   await item.locator('button.fact-yes').click();
-  await expect(page.locator('#t-paste-result')).toHaveText(strings.factRecorded, { timeout: 120_000 });
+  await expect(page.locator('.answer-confirmation')).toHaveText(strings.factRecorded, { timeout: 120_000 });
   const ticked = section.locator('li.item[data-id="relationship-OBS_SHEET.VISIT_KEY=VISIT.VISIT_KEY"]');
   await expect(ticked.first()).toHaveAttribute('data-status', 'answered');
   await expect(ticked.first()).toContainText('You confirmed on');
@@ -453,11 +453,11 @@ test('a colleague answers a question from knowledge, and the item ticks without 
   await expect(ticked.first().locator('.answer-given button.withdraw-answer')).toBeVisible();
   // The answer can be changed: withdrawn, the question is asked again, and the note of what was settled goes with it.
   await ticked.first().locator('button.withdraw-answer').click();
-  await expect(page.locator('#t-paste-result')).toHaveText(strings.withdrawn, { timeout: 120_000 });
+  await expect(page.locator('.answer-confirmation')).toHaveText(strings.withdrawn, { timeout: 120_000 });
   await expect(section.locator('.fresh-note')).toHaveCount(0);
   await expect(item.locator('.ask .ask-text')).toContainText('Is that right?');
   await item.locator('button.fact-yes').click();
-  await expect(page.locator('#t-paste-result')).toHaveText(strings.factRecorded, { timeout: 120_000 });
+  await expect(page.locator('.answer-confirmation')).toHaveText(strings.factRecorded, { timeout: 120_000 });
   await expect(ticked.first()).toHaveAttribute('data-status', 'answered');
   // The ending groups what remains by who can settle it, and its tally agrees with the list.
   const tally = (await section.locator('.tally').textContent()) ?? '';
@@ -500,7 +500,7 @@ test('once the count by year is seen, the codes are chosen from the list of what
   const notes = listed.locator('.script-note');
   await expect(notes.first()).toHaveText(strings.scriptTemporary);
   await expect(notes.filter({ hasText: strings.scriptTimeout })).toHaveCount(1);
-  await expect(notes.filter({ hasText: strings.scriptPlan })).toHaveCount(1);
+  await expect(notes.filter({ hasText: 'These instructions are for the colleague who runs the SQL.' })).toHaveCount(1);
   await expect(notes.filter({ hasText: strings.scriptWorst('about 20 anaesthetics of the cohort in 2024') })).toHaveCount(1);
   // The script itself says where the time-out is set.
   await expect(listed.locator('pre[data-query="listed"]')).toContainText('open the Query menu, choose Query Options, then Execution');
@@ -511,7 +511,7 @@ test('once the count by year is seen, the codes are chosen from the list of what
   const header = 'code\treadings\tanaesthetics\tOBS_LABEL\tUNIT_LABEL';
   await listed.locator('textarea.listed-paste').fill(header + '\n');
   await listed.locator('button.listed-read').click();
-  await expect(page.locator('#t-paste-result')).toHaveText(strings.factRecorded, { timeout: 120_000 });
+  await expect(page.locator('.answer-confirmation')).toHaveText(strings.factRecorded, { timeout: 120_000 });
   const first = section.locator('.ending ul.remaining li').first();
   await expect(first).toHaveAttribute('data-ids', /charted-empty/);
   await expect(first).toHaveText(/^The list of what is charted on the audit's anaesthetics in/);
@@ -539,7 +539,7 @@ test('once the count by year is seen, the codes are chosen from the list of what
   await choice.selectOption(values[1]);
   await listed.locator('button.listed-save').click();
   await expect(section.locator('li.item', { hasText: 'You chose on' }).first()).toBeAttached({ timeout: 120_000 });
-  await expect(page.locator('#t-paste-result')).toHaveText(strings.factRecorded);
+  await expect(page.locator('.answer-confirmation')).toHaveText(strings.factRecorded);
   await expect(section.locator('.ending ul.remaining li[data-ids~="charted-empty"]')).toHaveCount(0);
 
   // With codes chosen and a study period set, the optional count is offered, and its result reaches the specification.
@@ -550,7 +550,7 @@ test('once the count by year is seen, the codes are chosen from the list of what
   await charted.locator('textarea.charted-paste').fill('code\treadings\tanaesthetics\n52\t1230\t40\n');
   await charted.locator('button.charted-read').click();
   await expect(section.locator('.charted .charted-result')).toHaveText(strings.chartedKept, { timeout: 120_000 });
-  await expect(page.locator('#t-paste-result')).toHaveText(strings.factRecorded);
+  await expect(page.locator('.answer-confirmation')).toHaveText(strings.factRecorded);
   await expect(section.locator('.specification pre')).toContainText('the code 52 was charted 1,230 times on 40 of the audit\'s anaesthetics');
 });
 
@@ -570,7 +570,7 @@ async function chooseCodes(page: Page, section: ReturnType<Page['locator']>): Pr
   const values = await choices.first().locator('option').evaluateAll((options) => options.map((o) => (o as HTMLOptionElement).value));
   await choices.first().selectOption(values[1]);
   await item.locator('button.search-save').click();
-  await expect(page.locator('#t-paste-result')).toHaveText(strings.factRecorded, { timeout: 120_000 });
+  await expect(page.locator('.answer-confirmation')).toHaveText(strings.factRecorded, { timeout: 120_000 });
   await expect(page.locator('#checklists li.item', { hasText: 'You chose on' }).first()).toBeAttached();
   return true;
 }
@@ -637,7 +637,7 @@ test('a state saved part of the way loads on a fresh page without the request fi
   const JOINED = 'relationship-OBS_SHEET.VISIT_KEY=VISIT.VISIT_KEY';
   await section.locator('input.fact-who').fill('A colleague');
   await section.locator(`li.item[data-id="${JOINED}"] button.fact-yes`).click();
-  await expect(page.locator('#t-paste-result')).toHaveText(strings.factRecorded, { timeout: 120_000 });
+  await expect(page.locator('.answer-confirmation')).toHaveText(strings.factRecorded, { timeout: 120_000 });
   await expect(section.locator(`li.item[data-id="${JOINED}"]`).first()).toHaveAttribute('data-status', 'answered');
   // The codes found by the name search and chosen.
   await chooseCodes(page, section);
@@ -704,7 +704,7 @@ test('without a conversion or target queries the page says what to supply to see
   await expect(page.getByText(strings.noChecklist)).toBeVisible({ timeout: 120_000 });
   await expect(page.locator('#checklists section')).toHaveCount(0);
   await expect(page.locator('#t-checklist-intro')).toBeHidden();
-  await expect(page.locator('#t-files-sentence')).toHaveText('Schemalyser has read 15 files. It was not able to read 2 of them in full, because each holds a part that Schemalyser could not parse, SQL that is built as text when it runs, a call to a stored procedure, a statement of a kind that Schemalyser does not analyse, or a query whose columns Schemalyser could not match to their tables.');
+  await expect(page.locator('#t-files-sentence')).toHaveText('Schemalyser has read 15 files. It was not able to read 2 of them in full. In 1 file, part of the SQL could not be parsed, that is, Schemalyser could not read it as SQL. In 1 file, part of the SQL is built as text when it runs, so Schemalyser cannot see the tables inside it.');
 });
 
 test('on a training database the count by year is kept without judging it, and is to be asked again on the production copy', async ({ page, context, browserName }) => {
@@ -722,7 +722,7 @@ test('on a training database the count by year is kept without judging it, and i
 
   // The colleague says that the SQL window is connected to a training database, and the core works the checklist out again.
   await section.locator('.database input[value="training"]').check();
-  await expect(page.locator('#t-paste-result')).toHaveText(strings.factRecorded, { timeout: 120_000 });
+  await expect(page.locator('.answer-confirmation')).toHaveText(strings.factRecorded, { timeout: 120_000 });
   await expect(section.locator('.database input[value="training"]')).toBeChecked();
 
   // The count by year is still offered. Once pasted, the page does not ask whether the numbers look right.
@@ -732,7 +732,7 @@ test('on a training database the count by year is kept without judging it, and i
   await expect(item.locator('.count-training')).toHaveText(strings.countTraining, { timeout: 120_000 });
   await expect(item.locator('button.count-right')).toHaveCount(0);
   await item.locator('button.count-keep').click();
-  await expect(page.locator('#t-paste-result')).toHaveText(strings.factRecorded, { timeout: 120_000 });
+  await expect(page.locator('.answer-confirmation')).toHaveText(strings.factRecorded, { timeout: 120_000 });
 
   // The item is marked to be asked again on the production copy, rather than open or settled, and takes no paste here.
   const marked = section.locator('li.item[data-id="count-by-year"][data-again="true"]').first();

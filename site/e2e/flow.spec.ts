@@ -11,7 +11,7 @@ const shots = process.env.SCREENSHOTS;
 // WebKit does not report the content security policy to a worker started from a blob, so the page
 // cannot confirm that the policy holds there and refuses to start. See webkit.spec.ts.
 test.skip(({ browserName }) => browserName === 'webkit', 'The page refuses to start in WebKit.');
-const SUMMARY = 'Schemalyser has read 15 files. It was not able to read 2 of them in full, because each holds a part that Schemalyser could not parse, SQL that is built as text when it runs, a call to a stored procedure, a statement of a kind that Schemalyser does not analyse, or a query whose columns Schemalyser could not match to their tables.';
+const SUMMARY = 'Schemalyser has read 15 files. It was not able to read 2 of them in full. In 1 file, part of the SQL could not be parsed, that is, Schemalyser could not read it as SQL. In 1 file, part of the SQL is built as text when it runs, so Schemalyser cannot see the tables inside it.';
 const planted = readFileSync(fixtures + 'planted-values.txt', 'utf8').split('\n').filter(Boolean);
 
 test('the page loads, waits for the network to be off, analyses, and locks when the network returns', async ({ page, context, browserName }) => {

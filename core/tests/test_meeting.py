@@ -163,6 +163,9 @@ def test_the_count_by_year_reads_no_reading_and_stays_open_until_it_looks_right(
     assert "no_kind_recorded" in sql
     assert json.loads(browser.year_count_read("start_year\tanaesthetics\tin_the_cohort\tno_kind_recorded\n2023\t120\t10\tNULL\n"
                                               "2024\t130\t20\n"))["years"] == [[2023, 120, 10, None], [2024, 130, 20]]
+    # A count that the results grid shows with a decimal point, as the practice database once did, is the number it is.
+    assert json.loads(browser.year_count_read("start_year\tanaesthetics\tin_the_cohort\tno_kind_recorded\n2023\t150.0\t30.0\t80.0\n"
+                                              "2024.0\t170\tNULL\t80.00\n"))["years"] == [[2023, 150, 30, 80], [2024, 170, None, 80]]
     assert "how many anaesthetics have no kind recorded" in target.kinds_cost(traced, CATALOGUE)
     count = {r["question_id"]: r for r in rows}["count-by-year"]
     assert count["status"] == "open" and count["_queries"] == ["yearcount"] and count["phase"] == "source" and not count["query"]

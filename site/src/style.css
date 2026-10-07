@@ -633,8 +633,52 @@ a:focus-visible {
 }
 
 .target h3 {
-  font: 600 1rem/1.4 var(--mono);
+  font: 600 1.05rem/1.4 var(--sans);
   overflow-wrap: anywhere;
+}
+
+/* The audit question in plain words heads its checklist, with its file's name after it in smaller type. */
+.target h3 .target-name {
+  display: block;
+  margin-top: 0.15rem;
+  font: 400 0.85rem/1.4 var(--mono);
+  color: var(--muted);
+}
+
+.target h5 {
+  margin: 0.75rem 0 0.35rem;
+  font-size: 0.93rem;
+  font-weight: 600;
+}
+
+/* While Schemalyser works the checklist out again, the point that was answered says so, beside the button pressed. */
+.working-note::before {
+  content: '';
+  display: inline-block;
+  width: 0.8rem;
+  height: 0.8rem;
+  margin-right: 0.5rem;
+  vertical-align: -0.1rem;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: working 0.9s linear infinite;
+}
+
+@keyframes working {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .working-note::before {
+    animation: none;
+  }
+}
+
+[data-working='true'] {
+  opacity: 0.85;
 }
 
 .target .tally {
@@ -881,4 +925,11 @@ h3.part {
 .glossary dd {
   margin: 0.15rem 0 0;
   max-width: 44rem;
+}
+
+/* What the folder for this audit assumes that a code means stands on its own line beside the code. */
+.code-assumed {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.85rem;
 }

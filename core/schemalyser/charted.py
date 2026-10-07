@@ -75,9 +75,14 @@ def _join(items):
 
 
 def default_year(years, today=None):
-    """The latest complete year in the count by year: the latest year before this one, or the latest year where none is."""
+    """The year that the list of what is charted starts from: the latest year in which the count by year shows ten or more
+    anaesthetics of the cohort, preferring a complete year before this one, so that the list has enough anaesthetics to say
+    something; where no year has, the latest complete year, or the latest year where none is complete."""
     today = today or datetime.date.today()
     listed = sorted({int(y[0]) for y in years or []})
+    enough = sorted({int(y[0]) for y in years or [] if len(y) > 2 and isinstance(y[2], int) and y[2] >= 10})
+    if enough:
+        return ([y for y in enough if y < today.year] or enough)[-1]
     earlier = [y for y in listed if y < today.year]
     return (earlier or listed or [today.year - 1])[-1]
 
@@ -318,6 +323,9 @@ def listed_query(conversion, target_sql, catalogue, rules, column, year, kinds=(
     # The largest table that part 1, like the count by year, reads to find the anaesthetics, with its size.
     sizes = sorted(((checking.size_of(t, checks) or 0, t) for t in cohort_tables), reverse=True) if checks is not None else []
     largest = [sizes[0][1], sizes[0][0]] if sizes and sizes[0][0] else None
+    # The table of readings, with its size where the check results give it, so that the page says how large it is.
+    readings_size = checking.size_of(nodes[reading].name, checks) if checks is not None else None
+    readings = [nodes[reading].name, readings_size or None]
     sentence = WORDING["header"].format(column=column, year=year, definition=def_table, cohort=_join(sized(t) for t in cohort_tables),
                                         path=_join(sized(t) for t in path_tables), readings=nodes[reading].name)
     header = "\n".join(f"-- {line}" for line in target.textwrap_lines(sentence))
@@ -325,7 +333,7 @@ def listed_query(conversion, target_sql, catalogue, rules, column, year, kinds=(
     # The same list as one query, as it was written before it became a script, which the tests compare it with.
     single = header + "\nWITH\n" + ctes + "\n" + "\n".join(body).replace("FROM #cohort AS c", f"FROM {cohort} AS c", 1) + "\n"
     found = {"sql": "", "single": single, "year": year, "column": column, "step": file, "link": "", "matched": None,
-             "worst": None, "withheld": "", "largest": largest}
+             "worst": None, "withheld": "", "largest": largest, "readings": readings}
     worst, reason = scripts.worst_case(count, f"{year}-01-01", f"{year}-12-31")
     try:
         if not keyed or re.search(r"\bc\.visit_detail_source_value\b(?!__key)", "\n".join(body)):
@@ -574,7 +582,7 @@ def attach(rows, traced, conversion, target_sql, catalogue, rules, held, setting
             return None
         _search_replaced(rows, traced, column)
         return {"sql": "", "year": None, "column": column, "years": [], "rows": None, "link": "", "waiting": True,
-                "largest": found["largest"]}
+                "largest": found["largest"], "readings": found["readings"]}
     from . import target
     trained = target.training(settings)
     # On a training database an empty cohort is noted on the count's own item, and the list is still offered.
@@ -624,7 +632,7 @@ def attach(rows, traced, conversion, target_sql, catalogue, rules, held, setting
     years = sorted({int(y[0]) for y in count["years"]})
     return {"sql": found["sql"], "year": year, "column": column, "years": years, "rows": ran, "link": found["link"],
             "worst": scripts.page(found["worst"]) if found["worst"] else "", "withheld": found["withheld"],
-            "largest": found["largest"]}
+            "largest": found["largest"], "readings": found["readings"]}
 
 
 # The decisions that the reference query and the specification do not yet apply, each an open point with the one action

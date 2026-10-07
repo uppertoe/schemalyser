@@ -315,6 +315,25 @@ def _needs(rows):
             "settled": sum(1 for r in first if r["status"] == "answered")}
 
 
+def _say_where_codes_came_from(t):
+    """The question that offers codes to choose from says that the query results came with the folder for this audit; where
+    the codes of its column are in a result pasted on this page, it says that the result was pasted instead."""
+    from . import target
+    q = target.WORDING["facts"]
+    for row in t["rows"]:
+        ask = row.get("_ask") or {}
+        if not ask.get("choose") or _pasted is None:
+            continue
+        table, _, column = str(ask.get("column") or "").partition(".")
+        if not (target._listed(_pasted, table, column) or target._defined(_pasted, table, column)):
+            continue
+        folder_text = ask["text"]
+        before, after = (q["ask_codes_choose"].split("{meaning}.")[1].strip(), q["ask_codes_choose_pasted"].split("{meaning}.")[1].strip())
+        ask["text"] = folder_text.replace(before, after)
+        if t.get("questions"):
+            t["questions"] = t["questions"].replace(folder_text, ask["text"])
+
+
 def boundary_run(state_commit=None, requests_commit=None):
     """Runs the boundary over what boundary_put wrote. Returns JSON for the page.
 
@@ -380,6 +399,7 @@ def boundary_run(state_commit=None, requests_commit=None):
     total = facts["summary"]["files"]
     targets = []
     for t in facts["targets"]:
+        _say_where_codes_came_from(t)
         rows = [{"id": row["question_id"], "kind": row["kind"], "status": row["status"],
                  "blocking": row["blocking"] == "yes", "question": row["question"],
                  "needed": row["evidence_needed"], "inHand": row["evidence_in_hand"],
@@ -414,7 +434,8 @@ def boundary_run(state_commit=None, requests_commit=None):
                      "script": t.get("draft_script"),
                      "tables": [{"name": n, "rows": next((v for k, v in sizes.items() if k.upper() == n.upper()), None)}
                                 for n in facts_of["tables"]]}
-        targets.append({"name": t["name"], "counts": t["counts"], "steps": t["steps"],
+        targets.append({"name": t["name"], "title": t.get("title") or "", "decisions": t.get("decisions") or [],
+                        "counts": t["counts"], "steps": t["steps"],
                         "verdict": boundary.verdict(t), "readiness": t["readiness"], "rows": rows,
                         "sizes": offered["sizes"],
                         "queries": offered["queries"] + ([{"id": "yearcount", "sql": t["year_count"], "state": "ready", "table": ""}]
@@ -725,6 +746,25 @@ def codes_search_read(text):
     return json.dumps({"ok": bool(found), "columns": columns, "candidates": found})
 
 
+WHOLE = re.compile(r"\d+(?:\.0*)?")
+NUMBER = re.compile(r"\d+(?:\.\d*)?")
+
+
+def _count_cell(value):
+    """A count as a results grid shows it, read as the number it is: 156, 156.0 and 156.00 are all 156. A count left blank,
+    as NULL or empty, is under ten and is read as None, as is anything that is not a number."""
+    value = str(value or "").strip()
+    if not NUMBER.fullmatch(value):
+        return None
+    return int(value.split(".")[0])
+
+
+def _is_count(value):
+    """Whether a cell holds a count, or a count left blank."""
+    value = str(value or "").strip()
+    return value in ("", "NULL") or bool(NUMBER.fullmatch(value))
+
+
 def listed_read(text):
     """Reads the pasted list of what is charted on the cohort: {"ok", "columns", "rows": [{"code", "readings", "anaesthetics",
     "names"}]}. The names are the hospital's own; they are returned to the page to show and written into no file."""
@@ -737,9 +777,8 @@ def listed_read(text):
     for row in cells[1 if headed else 0:]:
         if len(row) < 3 or not row[0] or row[0] in seen or len(row[0]) > 50 or "," in row[0]:
             continue
-        number = lambda v: int(v) if v.isdecimal() else None  # noqa: E731
         seen.add(row[0])
-        found.append({"code": row[0], "readings": number(row[1]), "anaesthetics": number(row[2]),
+        found.append({"code": row[0], "readings": _count_cell(row[1]), "anaesthetics": _count_cell(row[2]),
                       "names": [v if v != "NULL" else "" for v in row[3:]][:6]})
     return json.dumps({"ok": bool(found) or headed, "columns": columns, "rows": found[:5000]})
 
@@ -753,9 +792,9 @@ def charted_read(text):
         cells = [c.strip() for c in (line.split("\t") if "\t" in line else line.split(","))]
         if len(cells) != 3 or cells[0].lower() == "code" or not cells[0] or "," in cells[0] or len(cells[0]) > 50:
             continue
-        if not all(c.isdecimal() or c in ("", "NULL") for c in cells[1:]):
+        if not all(_is_count(c) for c in cells[1:]):
             continue
-        found.append([cells[0]] + [int(c) if c.isdecimal() else None for c in cells[1:]])
+        found.append([cells[0]] + [_count_cell(c) for c in cells[1:]])
     headed = "readings" in str(text or "").lower()
     return json.dumps({"ok": bool(found) or headed, "rows": found[:200]})
 
@@ -766,10 +805,11 @@ def year_count_read(text):
     found = []
     for line in str(text or "").replace("\r", "").split("\n"):
         cells = [c.strip() for c in (line.split("\t") if "\t" in line else line.split(","))]
-        if len(cells) not in (3, 4) or not cells[0].isdecimal() or not 1900 <= int(cells[0]) <= 2200:
+        # A year or a count that the results grid shows with a decimal point, such as 2023.0 or 156.0, is the number it is.
+        if len(cells) not in (3, 4) or not WHOLE.fullmatch(cells[0]) or not 1900 <= _count_cell(cells[0]) <= 2200:
             continue
-        values = [int(c) if c.isdecimal() else None for c in cells[1:]]
-        found.append([int(cells[0])] + values)
+        values = [_count_cell(c) for c in cells[1:]]
+        found.append([_count_cell(cells[0])] + values)
     headed = "start_year" in str(text or "").lower()
     return json.dumps({"ok": bool(found) or headed, "years": sorted(found)[:200]})
 

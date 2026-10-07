@@ -150,13 +150,34 @@ def test_the_specification_states_the_rules_what_the_answer_rests_on_and_the_cas
     assert "OBS_READING.SHEET_KEY matches OBS_SHEET.SHEET_KEY" in text
     assert "OBS_SHEET.VISIT_KEY matches VISIT.VISIT_KEY" in text and ": not yet confirmed." in text
     assert "COALESCE(OBS_READING.ACCEPTED_FLAG, 'Y') <> 'N'" in text
-    assert "In OBS_READING.OBS_TYPE_KEY, the code 52 means a mean arterial pressure measured through an arterial line" in text
+    # A pasted result lists code 52, but nobody has chosen it, so what it means is still the folder's assumption, as the
+    # checklist says.
+    assert "In OBS_READING.OBS_TYPE_KEY, the code 52 is assumed to mean a mean arterial pressure measured through an arterial line" in text
     assert "the code 8 means" not in text and "WARD_DEF" not in text.split("10. Cases")[0]
     assert "python -m" not in text and "for use inside the hospital only" in text
     # What the audit cannot see from the database is always stated among what is not yet settled.
     unsettled = text.split("8. What is not yet settled")[1].split("9. Decisions")[0]
     assert "register of deaths" in unsettled and "gestational age in PERSON_MASTER_2.GEST_WEEKS" in unsettled
     assert "reconcile ten to twenty anaesthetics against their charts" in unsettled
+
+
+def test_each_specification_carries_only_what_its_own_question_depends_on():
+    airway_sql = (FIXTURES / "targets" / "airway_by_anaesthesia_type.sql").read_text()
+    rows, traced = target.checklist(make_checks.WORLD, CONVERSION, airway_sql, CHECKS, name="airway_by_anaesthesia_type")
+    text = target.specification(CONVERSION, airway_sql, rows, traced, CATALOGUE, "airway_by_anaesthesia_type")
+    sections = {heading: text.split(heading)[1].split("\n\n", 2)[1] for heading in
+                ("1. The question", "3. Where each part", "8. What is not yet settled", "9. Decisions for the clinicians")}
+    # The question is stated in plain words and in this database's terms, and names nothing of the shared model.
+    assert sections["1. The question"].startswith("Which airway devices are placed during each type of anaesthetic?")
+    assert "PROCEDURE_OCCURRENCE" not in text and "DEVICE_EXPOSURE" not in text and "AIRWAY_DEVICE" in sections["1. The question"]
+    # No section is empty.
+    assert "The kind of device comes from AIRWAY_DEVICE.DEVICE_KIND_KEY." in sections["3. Where each part"]
+    # Deaths, gestation and the pressure decisions belong to the pressure questions.
+    assert "register of deaths" not in text and "gestational age" not in text and "arterial line" not in text
+    assert sections["9. Decisions for the clinicians"].startswith("None of the decisions for the clinicians can change the answer")
+    assert target.decisions_for(airway_sql, CONVERSION) == []
+    assert target.decisions_for(NEONATAL, CONVERSION) == list(target.DECISIONS)
+    assert target.question_title(airway_sql) == "Which airway devices are placed during each type of anaesthetic?"
 
 
 def test_a_hand_written_query_is_checked_against_the_target_on_the_synthetic_rows():
