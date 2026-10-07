@@ -1,10 +1,10 @@
-"""Screen 1, describing the record: the hospital folder from the invented dictionary and the invented world.
+"""Screen 1, describing the record: the saved hospital schema from the invented dictionary and the invented world.
 
 The sitting is walked through as the page walks it: the dictionary is loaded, the map proposed, the tables and columns
 query read, bindings confirmed, the codes chosen from the list of what is charted, and the counts read. The queries
 that the screen writes are run on the invented world's shadow in DuckDB, so that they are known to run and to give
-what the page expects. The folder is then written, read back into a new sitting, and checked. No description from the
-dictionary may appear in any query, and the dictionary's own files go into the folder only when a person asks.
+what the page expects. The saved schema is then written, read back into a new sitting, and checked. No description from the
+dictionary may appear in any query, and the dictionary's own files always go into the saved schema.
 """
 import csv
 import io
@@ -190,12 +190,12 @@ def test_the_counts_run_and_the_readings_count_sees_the_chosen_codes(sitting, wo
     assert sitting.counts["coverage_by_year"]["looks_right"] == "yes"
 
 
-def test_the_folder_records_everything_and_a_new_sitting_restores_and_checks_it(sitting):
-    files = sitting.folder_files(keep_dictionary=False, date=DATE)
+def test_the_saved_schema_records_everything_and_a_new_sitting_restores_and_checks_it(sitting):
+    files = sitting.folder_files(date=DATE)
     names = set(files)
     assert {"settings.json", "journal.json", "confirmations.csv", "README.md", "map/map.json", "map/role_patient.sql",
-            "codes/role_reading.kind.json", "counts/judgements.json"} <= names
-    assert not any(n.startswith("dictionary/") for n in names)
+            "codes/role_reading.kind.json", "counts/judgements.json", "dictionary/invented-dictionary.csv"} <= names
+    assert "must stay on the hospital's own storage" in files["README.md"].decode()
     queries = sorted(n for n in names if n.startswith("queries/"))
     assert queries[0] == "queries/01-tables-and-columns.sql"
     assert {n.replace("queries/", "results/").replace(".sql", ".tsv") for n in queries} == {n for n in names if n.startswith("results/")}
@@ -215,6 +215,8 @@ def test_the_folder_records_everything_and_a_new_sitting_restores_and_checks_it(
     # date of the proposal, and the dictionary's own files.
     for name, data in files.items():
         text = data.decode()
+        if name.startswith("dictionary/") and name != "dictionary/dictionary.json":
+            continue
         if name == "map/map.json":
             assert DATE in json.loads(text)["description"]
         elif name.endswith(".json"):
@@ -223,31 +225,33 @@ def test_the_folder_records_everything_and_a_new_sitting_restores_and_checks_it(
             assert all(r["version"] == "test" for r in rows)
         else:
             assert "Schemalyser test" in text.split("\n", 1)[0] or "Schemalyser test" in text[:400], name
-    # Nothing but map.json, which quotes the dictionary as its evidence, holds a description.
+    # Nothing but map.json, which quotes the dictionary as its evidence, and the dictionary itself holds a description.
     for name, data in files.items():
-        if name != "map/map.json":
+        if name != "map/map.json" and not name.startswith("dictionary/"):
             assert not leaks(data.decode()), name
-    # A new sitting restores the folder, and with the dictionary the check rebuilds the same map.
+    # A saved schema that holds no copy of the dictionary is not restored until a dictionary is loaded, and nothing of
+    # it is taken meanwhile.
+    files = {k: v for k, v in files.items() if not k.startswith("dictionary/")}
     again = describe.Describe()
     again.version = "test"
+    refused = again.restore(files)
+    assert refused["needs_dictionary"] and not refused["map"] and again.data is None and again.restored is None
+    # Once the dictionary is loaded, a new sitting restores the saved schema, and the check rebuilds the same schema.
+    again.load_dictionary(DICTIONARY.read_bytes(), TABLES.read_bytes(), {}, "invented-dictionary.csv", "invented-tables.csv")
     restored = again.restore(files)
     assert restored["map"] and restored["tables"] and restored["codes"] == 2 and restored["counts"] == 3
     assert again.tally() == sitting.tally() and again.data == sitting.data
-    # Without the dictionary the page cannot name the lookup of a vocabulary whose codes nobody has chosen yet, so the
-    # vocabularies are compared by their codes.
     chosen = lambda s: [(v["key"], v["chosen"], v["rows"], v["lookup"] if v["chosen"] else None) for v in s.view()["vocabularies"]]  # noqa: E731
     assert chosen(again) == chosen(sitting)
-    assert again.check()["rebuilt"] is False
-    again.load_dictionary(DICTIONARY.read_bytes(), TABLES.read_bytes(), {}, "invented-dictionary.csv", "invented-tables.csv")
     checked = again.check()
     assert checked["rebuilt"] and checked["same"], checked["differences"]
     assert [q["name"] for q in checked["queries"]][0] == "tables-and-columns"
-    # A folder that is no longer right says where.
+    # A saved schema that is no longer right says where.
     edited = json.loads(files["map/map.json"])
     edited["roles"]["role_patient"]["columns"]["death_date"]["binding"]["column"] = "BIRTH_WEIGHT_G"
     other = describe.Describe()
-    other.restore({**files, "map/map.json": json.dumps(edited).encode()})
     other.load_dictionary(DICTIONARY.read_bytes(), TABLES.read_bytes())
+    other.restore({**files, "map/map.json": json.dumps(edited).encode()})
     found = other.check()
     assert not found["same"] and any(d.startswith("The date of death in Patients differs") for d in found["differences"])
     # The new result of a query is compared with the earlier one.
@@ -261,12 +265,28 @@ def test_the_folder_records_everything_and_a_new_sitting_restores_and_checks_it(
     assert found and "anaesthetics of the row" in found[0]
 
 
-def test_the_dictionary_is_kept_only_when_asked_and_is_restored_from_the_folder(sitting):
-    files = sitting.folder_files(keep_dictionary=True, date=DATE)
+def test_the_dictionary_is_always_in_the_saved_schema_and_is_restored_from_it(sitting):
+    files = sitting.folder_files(date=DATE)
     assert files["dictionary/invented-dictionary.csv"] == DICTIONARY.read_bytes()
-    assert "a person ticked the box" in files["README.md"].decode()
+    assert "This file holds a copy of it in dictionary/" in files["README.md"].decode()
     again = describe.Describe()
     assert again.restore(files)["dictionary"] and again.dictionary.column_count() == 98
+    assert again.view()["dictionary"]["source"] == "saved" and not again.invented
+
+
+def test_a_schema_made_with_the_invented_dictionary_says_so_everywhere_and_keeps_saying_so():
+    s = describe.Describe()
+    s.load_dictionary(DICTIONARY.read_bytes(), TABLES.read_bytes(), {}, "invented-dictionary.csv", "invented-tables.csv",
+                      invented=True)
+    files = s.folder_files(date=DATE)
+    first = "This file was made with the invented dictionary, for practice, and describes no hospital."
+    assert files["README.md"].decode().split("\n", 1)[0] == first
+    settings = json.loads(files["settings.json"])
+    assert settings["invented"] and settings["dictionary"]["invented"]
+    assert json.loads(files["journal.json"])["entries"][0]["invented"]
+    again = describe.Describe()
+    again.restore(files)
+    assert again.invented and again.folder_files(date=DATE)["README.md"].decode().startswith(first)
 
 
 def test_a_dictionary_without_known_headings_asks_for_them_and_names_none_of_its_descriptions():
@@ -287,7 +307,7 @@ def fresh():
     return s
 
 
-def test_a_yes_on_a_column_that_holds_codes_leaves_it_to_translate_and_the_folder_a_draft():
+def test_a_yes_on_a_column_that_holds_codes_leaves_it_to_translate_and_the_schema_a_draft():
     s = fresh()
     items = {i["about"]: i for r in s.view()["roles"] for i in r["items"]}
     # A flag bound to text, whose values the proposer guessed, says what it assumes before Yes.
@@ -310,7 +330,7 @@ def test_a_yes_on_a_column_that_holds_codes_leaves_it_to_translate_and_the_folde
     assert settings["complete"] is False
     assert settings["draft"].startswith("draft: ") and settings["draft"].endswith(" unanswered and 2 still to translate")
     readme = files["README.md"].decode()
-    assert "## This folder is a draft" in readme and "The test patient in Patients (`PERSON_MASTER.TEST_PERSON_FLAG`)" in readme
+    assert "## This hospital schema is a draft" in readme and "The test patient in Patients (`PERSON_MASTER.TEST_PERSON_FLAG`)" in readme
     # The 1-or-0 form on the proposed column translates it, and step 7's codes translate the kind.
     s.correction_keep({"form": "derived", "about": "role_patient.is_test", "table": "PERSON_MASTER",
                        "column": "TEST_PERSON_FLAG", "derive": {"form": "flag", "values": ["Y"]}}, date=DATE)

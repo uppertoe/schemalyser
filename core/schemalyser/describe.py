@@ -48,7 +48,7 @@ LEAST = 10
 FOLDER_FORMAT = 1
 DICTIONARY_FOLDER = "dictionary"
 SAFE_COUNTS = ("coverage_by_year", "repeated_keys")
-CONFIRMATION_FIELDS = ("attribute", "answer", "replacement", "date", "note", "version", "correction", "check", "reason")
+CONFIRMATION_FIELDS = ("attribute", "answer", "replacement", "date", "note", "version", "correction", "test", "reason")
 # The most distinct values that the query of values returns.
 MOST_VALUES = 50
 PROBE_COLUMNS = {"link": ("anaesthetics", "with_rows", "without_rows"), "filter": ("rows_read", "passing"),
@@ -73,13 +73,13 @@ WORDING = {
                             "of rows and of anaesthetics for each, rounded down to ten and left empty under ten, most "
                             "charted first. It reaches {path} from #cohort by their keys, so that it reads only the rows "
                             "of those anaesthetics.",
-    "readings_comment": "Part 2 counts the readings of the anaesthetics in #cohort by their kind, as the map translates "
-                        "them, with how many were accepted and hold a number, rounded down to ten and left empty under "
+    "readings_comment": "Part 2 counts the readings of the anaesthetics in #cohort by their kind, as the hospital schema "
+                        "translates them, with how many were accepted and hold a number, rounded down to ten and left empty under "
                         "ten. It reaches {path} from #cohort by their keys, so that it reads only those readings.",
     "safe_comment": "This count reads {tables} and no table of readings. Each count is rounded down to ten. A year or a "
                     "group with fewer than ten is left out, and a figure under ten within it is left empty, which the "
                     "page shows as under 10.",
-    "names": "The map names the tables and local codes of the hospital's database, so this query is for use inside the "
+    "names": "The hospital schema names the tables and local codes of the hospital's database, so this query is for use inside the "
              "hospital only.",
     "codes_says": "A person chose {count} local {codes} for this kind from the list of what is charted on {date}.",
     "codes_none": "No local code has been chosen for this kind yet.",
@@ -93,7 +93,7 @@ WORDING = {
     "unknown_count": "Schemalyser does not know a count named {name}.",
     "grid_columns": "The pasted text does not have the columns that the query returns ({wanted}). Please copy the whole results grid with Copy with Headers, and paste it again.",
     "grid_empty": "The pasted text holds no rows. If the query returned no rows, the grid is empty; otherwise please copy the whole results grid with Copy with Headers, and paste it again.",
-    "folder_unreadable": "Schemalyser could not read map.json in the chosen folder as a map, so it has started a new hospital folder instead.",
+    "folder_unreadable": "Schemalyser could not read the hospital schema in this file, so it has started a new hospital schema instead.",
     "cliff": "In {year}, {count} of {total} anaesthetics {what}, against {best_count} of {best_total} in {best_year}. A fall as sharp as this usually means that the data is held differently in that year.",
     "repeated": "In {view}, {count} values of the column that identifies a row are held by more than one row.",
     "stamp_query": "Written by Schemalyser {version} on {date}.",
@@ -101,9 +101,9 @@ WORDING = {
     "stamp_result": "Pasted into Schemalyser {version} on {date}. The lines below are the result exactly as it was pasted.",
     "check_confirmation": "Schemalyser could not apply the recorded answer for {about} again: {problem}",
     "check_codes": "Schemalyser could not apply the recorded codes of {key} again.",
-    "differs": "{about} differs: the folder holds {before}, and the rebuilt map holds {after}.",
-    "only_folder": "The folder's map holds {about}, and the rebuilt map does not.",
-    "only_rebuilt": "The rebuilt map holds {about}, and the folder's map does not.",
+    "differs": "{about} differs: the saved schema holds {before}, and the schema proposed again holds {after}.",
+    "only_folder": "The saved schema holds {about}, and the schema proposed again does not.",
+    "only_rebuilt": "The schema proposed again holds {about}, and the saved schema does not.",
     "training": "These queries were run on a training database, whose patients are fictional, so their figures say nothing about the real record. Run each of them again on the production database before the figures are used:",
     "table_gone": "The table {table} was in the earlier result and is not in the new one.",
     "column_gone": "The column {column} was in the earlier result and is not in the new one.",
@@ -112,16 +112,16 @@ WORDING = {
     "row_gone": "The row {key} was in the earlier result and is not in the new one.",
     "row_new": "The row {key} is in the new result and was not in the earlier one.",
     "count_changed": "{column} of the row {key} was {before} and is now {after}, a change of more than a tenth.",
-    "keep_failing": "This change fails the check, so Schemalyser keeps it only if you tick Keep it although the check fails and give the reason.",
-    "no_probe": "Schemalyser offers no probe for this kind of correction.",
+    "keep_failing": "This change fails the test on made-up rows, so Schemalyser keeps it only if you tick Keep it although the test fails and give the reason.",
+    "no_probe": "Schemalyser offers no test query for this kind of change.",
     "values_comment": "Part 2 lists the commonest values of {column} among the rows of the anaesthetics in #cohort, at most {most}, with the number of rows that hold each, rounded down to ten and left empty under ten.",
     "values_safe": "This query lists the commonest values of {column}, at most {most}, with the number of rows that hold each, rounded down to ten and left empty under ten. It returns at most {most} rows and reads no table of readings. It reads each of these tables once: {tables}.",
     "probe_link_comment": "Part 2 counts how many of the anaesthetics in #cohort have at least one row through the link that {about} now makes, and how many have none, rounded down to ten and left empty under ten.",
-    "probe_filter_comment": "This probe counts the rows of {view} that are read and how many of them pass the filter on {column}, rounded down to ten and left empty under ten.",
-    "probe_flag_comment": "This probe counts the rows in which {about} is 1, 0 and empty, rounded down to ten and left empty under ten.",
+    "probe_filter_comment": "This test query counts the rows of {view} that are read and how many of them pass the filter on {column}, rounded down to ten and left empty under ten.",
+    "probe_flag_comment": "This test query counts the rows in which {about} is 1, 0 and empty, rounded down to ten and left empty under ten.",
     "probe_cohort": "It reads only the rows of the anaesthetics in #cohort, which part 1 makes.",
     "probe_small": "It reads no table of readings, and it reads each of these tables once: {tables}.",
-    "probe_flag_two_comment": "This probe counts the rows in which {about} is 1 and 0, rounded down to ten and left empty under ten.",
+    "probe_flag_two_comment": "This test query counts the rows in which {about} is 1 and 0, rounded down to ten and left empty under ten.",
     "probe_flag_two": "The flag is 1 in {ones} rows and 0 in {zeros}.",
     "sized": "{table}, which holds about {rows} rows",
     "sized_unknown": "{table}, whose size is not known",
@@ -131,17 +131,17 @@ WORDING = {
     "assumed_plain": "The page assumes that {subject} is 1 where {source} holds {yes}, and 0 where it holds anything else or is empty. Confirm or change it in the form that opens after Yes.",
     "assumed_if_empty": "The page assumes that {subject} is 0 where {source} holds {no}, and 1 where it holds anything else or is empty. Confirm or change it in the form that opens after Yes.",
     "assumed_or_empty": "The page assumes that {subject} is 1 where {source} holds {yes}, 0 where it holds {no}, and empty otherwise. Confirm or change it in the form that opens after Yes.",
-    "described_none": "Schemalyser proposed this draft map from a data dictionary on {date}, and no person has yet answered for any of its columns or tables.",
-    "described_some": "Schemalyser proposed this draft map from a data dictionary on {date}. A person has since answered for {answered} of its {total} columns and tables, and {left} still to be answered.",
-    "described_all": "Schemalyser proposed this draft map from a data dictionary on {date}. A person has since answered for every one of its {total} columns and tables.",
+    "described_none": "Schemalyser proposed this draft hospital schema from a data dictionary on {date}, and no person has yet answered for any of its columns or tables.",
+    "described_some": "Schemalyser proposed this draft hospital schema from a data dictionary on {date}. A person has since answered for {answered} of its {total} columns and tables, and {left} still to be answered.",
+    "described_all": "Schemalyser proposed this draft hospital schema from a data dictionary on {date}. A person has since answered for every one of its {total} columns and tables.",
     "described_codes": " {count} still {hold} codes that a person has not yet translated.",
     "draft": "draft: {parts}",
-    "probe_few": "Fewer than ten anaesthetics came back, so the probe says too little to judge the link.",
+    "probe_few": "Fewer than ten anaesthetics came back, so the test query says too little to judge the link.",
     "probe_link": "Of {total} anaesthetics of the year, {linked} have at least one row through this link and {none} have none.",
     "probe_filter": "Of {total} rows read, {passing} pass the filter.",
     "probe_flag": "The flag is 1 in {ones} rows, 0 in {zeros} and empty in {empty}.",
 }
-FIGURES = {"with_patient": "have a patient whom the map finds", "with_birth_date": "have a patient with a date of birth",
+FIGURES = {"with_patient": "have a patient whom the hospital schema finds", "with_birth_date": "have a patient with a date of birth",
            "with_stop": "have a recorded stop"}
 COUNT_COLUMNS = {
     "coverage_by_year": ("start_year", "anaesthetics", "with_patient", "with_birth_date", "with_death_date", "test_patients",
@@ -277,6 +277,11 @@ class Describe:
         self.views = {view["name"]: view for view in self.model["views"]}
         self.dictionary = None
         self.dictionary_files = None
+        # Whether the dictionary is the invented one, which a person loads to try the page; the folder then says so.
+        self.invented = False
+        # Where the dictionary came from: "file" when a person chose it, "invented", or "saved" when a saved hospital
+        # schema held it.
+        self.dictionary_source = None
         self.proposer = None
         self.data = None
         self.catalogue = None
@@ -305,7 +310,8 @@ class Describe:
 
     # The dictionary.
 
-    def load_dictionary(self, data, tables=None, headings=None, name="dictionary.csv", tables_name="tables.csv", step=""):
+    def load_dictionary(self, data, tables=None, headings=None, name="dictionary.csv", tables_name="tables.csv", step="",
+                        invented=False, source=None):
         own = {k: v for k, v in (headings or {}).items() if v}
         try:
             dictionary = datadict.load(bytes(data), bytes(tables) if tables is not None else None, own)
@@ -322,6 +328,8 @@ class Describe:
                 message = message + " Please check the heading's spelling, then load the file again."
             raise DescribeError(message) from None
         self.dictionary = dictionary
+        self.invented = bool(invented)
+        self.dictionary_source = source or ("invented" if invented else "file")
         self.proposer = None
         self._lookups = {}
         self.dictionary_files = {"name": _safe_file(name, "dictionary.csv"), "data": bytes(data),
@@ -336,6 +344,8 @@ class Describe:
                                  "tables_sha256": hashlib.sha256(bytes(tables)).hexdigest() if tables is not None else None,
                                  "tables": receipt["tables"], "columns": receipt["columns"], "loaded": _now(),
                                  "version": self.version}
+        if self.invented:
+            self.dictionary_entry["invented"] = True
         return receipt
 
     def dictionary_receipt(self):
@@ -347,7 +357,8 @@ class Describe:
         return {"tables": len([t for t in tables if t.columns]), "columns": self.dictionary.column_count(),
                 "described": described, "keyed": keyed, "skipped": self.dictionary.skipped,
                 "file": self.dictionary_files["name"] if self.dictionary_files else "",
-                "tablesFile": (self.dictionary_files or {}).get("tables_name")}
+                "tablesFile": (self.dictionary_files or {}).get("tables_name"),
+                "invented": self.invented, "source": self.dictionary_source}
 
     # The proposal.
 
@@ -726,9 +737,9 @@ class Describe:
         self.settings["updated"] = date
         self.confirmations.append({"attribute": built["about"], "answer": answer, "replacement": built["source"], "date": date,
                                    "note": "", "version": self.version, "correction": json.dumps(correction, sort_keys=True),
-                                   "check": result, "reason": reason if not found["passed"] else ""})
+                                   "test": result, "reason": reason if not found["passed"] else ""})
         self.corrections.append({"name": "correction", "about": built["about"], "form": built["form"], "says": built["sentence"],
-                                 "check": result, "passed": found["passed"], "reason": reason if not found["passed"] else "",
+                                 "test": result, "passed": found["passed"], "reason": reason if not found["passed"] else "",
                                  "date": date, "version": self.version})
         self._checked.pop(key, None)
         return {"kept": built["about"], "probe": self.probe_kind(built["about"])}
@@ -1076,7 +1087,7 @@ class Describe:
     def _vocabulary(self, key):
         entry = next((v for v in self.vocabularies() if v["key"] == key), None)
         if entry is None:
-            raise DescribeError(f"The map binds no column {key}.")
+            raise DescribeError(f"The hospital schema holds no column {key}.")
         return entry
 
     def _reached(self, view_name, link, cohort_column, columns, raw=(), extra=None, filters=True):
@@ -1431,7 +1442,7 @@ ORDER  BY g.kind;"""
     def _log_confirmation(self, about, answer, replacement, note, date):
         self.confirmations.append({"attribute": about, "answer": answer, "replacement": replacement, "date": date,
                                    "note": " ".join((note or "").split())[:400], "version": self.version,
-                                   "correction": "", "check": "", "reason": ""})
+                                   "correction": "", "test": "", "reason": ""})
 
     # The hospital folder.
 
@@ -1481,8 +1492,9 @@ ORDER  BY g.kind;"""
         return (json.dumps({"tool": "Schemalyser", "version": self.version, "written": date, **value}, indent=2,
                            ensure_ascii=False) + "\n").encode("utf-8")
 
-    def folder_files(self, keep_dictionary=False, date=None):
-        """The hospital folder, as {path: bytes}. Every file names the tool's version and the date it was written,
+    def folder_files(self, date=None):
+        """The saved hospital schema, as {path: bytes} inside the one file that the page saves. The dictionary is
+        always inside it, so that opening the file needs nothing else. Every file names the tool's version and the date it was written,
         except map.json, whose format the map checker fixes and whose description gives the date of the proposal,
         the pasted results, whose first line does, and the dictionary's own files, which are kept exactly as given."""
         date = date or _today()
@@ -1509,14 +1521,15 @@ ORDER  BY g.kind;"""
         writer.writerow(list(CONFIRMATION_FIELDS))
         writer.writerows([c.get(k) or "" for k in CONFIRMATION_FIELDS] for c in self.confirmations)
         files["confirmations.csv"] = out.getvalue().encode("utf-8")
-        kept = bool(keep_dictionary and self.dictionary_files)
+        kept = bool(self.dictionary_files)
         if kept:
             meta = self.dictionary_files
             files[f"{DICTIONARY_FOLDER}/{meta['name']}"] = meta["data"]
             if meta.get("tables_data") is not None:
                 files[f"{DICTIONARY_FOLDER}/{meta['tables_name']}"] = meta["tables_data"]
             files[f"{DICTIONARY_FOLDER}/dictionary.json"] = self._json(
-                {"file": meta["name"], "tables": meta.get("tables_name"), "headings": meta.get("headings") or {}}, date)
+                {"file": meta["name"], "tables": meta.get("tables_name"), "headings": meta.get("headings") or {},
+                 **({"invented": True} if self.invented else {})}, date)
         entries = sorted(self.journal.values(), key=lambda e: e["number"])
         journal = []
         if self.dictionary_entry:
@@ -1535,39 +1548,55 @@ ORDER  BY g.kind;"""
             settings["draft"] = WORDING["draft"].format(parts=unfinished)
         settings.update({"dictionary": {"kept": kept, **({k: v for k, v in (self.dictionary_receipt() or {}).items()
                                                           if k in ("tables", "columns", "file", "tablesFile")})}})
+        if self.invented:
+            settings["invented"] = True
+            settings["dictionary"]["invented"] = True
         files["settings.json"] = self._json(settings, date)
         training = [self._file(e["name"], "queries", "sql") for e in entries if e.get("database") == "training"]
         files["README.md"] = readme(sorted(files), self.version, date, kept, training, unfinished,
-                                    self.untranslated() if self.data is not None else []).encode("utf-8")
+                                    self.untranslated() if self.data is not None else [], self.invented).encode("utf-8")
         return files
 
-    def folder_zip(self, keep_dictionary=False, date=None):
+    def folder_zip(self, date=None):
+        """The saved hospital schema as the bytes of the one file that the page saves."""
         out = io.BytesIO()
         with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
-            for name, data in sorted(self.folder_files(keep_dictionary, date).items()):
+            for name, data in sorted(self.folder_files(date).items()):
                 archive.writestr(zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0)), data)
         return out.getvalue()
 
     def restore(self, files):
         """Reads a hospital folder that this screen wrote, as {path: bytes} relative to the folder, and returns what
-        it held. A folder without map/map.json starts a new hospital folder."""
+        it held. A folder without map/map.json starts a new hospital folder. A folder that holds no copy of the
+        dictionary is restored only once a dictionary is loaded; until then nothing of it is taken, and the answer says
+        that the dictionary is needed."""
         files = dict(files)
-        self.folder = files
         found = {"map": False, "tables": False, "codes": 0, "counts": 0, "dictionary": False, "confirmations": 0,
-                 "queries": 0, "problem": ""}
+                 "queries": 0, "problem": "", "needs_dictionary": False}
+        info = _json_of(files.get(f"{DICTIONARY_FOLDER}/dictionary.json"))
+        has_dictionary = bool(info.get("file") and f"{DICTIONARY_FOLDER}/{info['file']}" in files)
+        if files and not has_dictionary and self.dictionary is None:
+            found["needs_dictionary"] = True
+            return found
+        self.folder = files
         held = _json_of(files.get("settings.json"))
         for key in ("made", "updated", "database", "year"):
             if key in held:
                 self.settings[key] = held[key]
-        info = _json_of(files.get(f"{DICTIONARY_FOLDER}/dictionary.json"))
-        if info.get("file") and f"{DICTIONARY_FOLDER}/{info['file']}" in files:
+        if has_dictionary:
             tables = files.get(f"{DICTIONARY_FOLDER}/{info['tables']}") if info.get("tables") else None
             try:
                 self.load_dictionary(files[f"{DICTIONARY_FOLDER}/{info['file']}"], tables, info.get("headings") or {},
-                                     info["file"], info.get("tables") or "tables.csv")
+                                     info["file"], info.get("tables") or "tables.csv",
+                                     invented=bool(info.get("invented") or held.get("invented")), source="saved")
                 found["dictionary"] = True
             except DescribeError:
                 pass
+        # A folder made with the invented dictionary stays marked as such, whatever dictionary is loaded beside it.
+        if held.get("invented"):
+            self.invented = True
+            if self.dictionary_entry:
+                self.dictionary_entry["invented"] = True
         if "map/map.json" in files:
             folder = self._work_folder("restore")
             (folder / rolemap.MAP_FILE).write_bytes(bytes(files["map/map.json"]))
@@ -1645,7 +1674,7 @@ ORDER  BY g.kind;"""
             for row in self.confirmations:
                 try:
                     if row.get("correction"):
-                        fresh.replay_correction(json.loads(row["correction"]), row.get("date") or None, row.get("check") or "",
+                        fresh.replay_correction(json.loads(row["correction"]), row.get("date") or None, row.get("test") or "",
                                                 row.get("reason") or "")
                     else:
                         fresh.confirm(row["attribute"], row["answer"], row.get("replacement") or "", row.get("note") or "", row.get("date") or None)
@@ -1674,8 +1703,8 @@ ORDER  BY g.kind;"""
             queries.append({"name": name, "number": entry["number"], "step": entry.get("step"), "sql": self.queries.get(name, ""),
                             "file": self._file(name, "queries", "sql"), "pasted": entry.get("pasted"),
                             "database": entry.get("database"), "columns": columns, "rows": rows[:200], "more": max(0, len(rows) - 200)})
-        failing = [{"about": row["attribute"], "check": row.get("check") or "", "reason": row.get("reason") or "", "date": row.get("date") or ""}
-                   for row in self.confirmations if (row.get("check") or "").startswith("failed")]
+        failing = [{"about": row["attribute"], "check": row.get("test") or "", "reason": row.get("reason") or "", "date": row.get("date") or ""}
+                   for row in self.confirmations if (row.get("test") or "").startswith("failed")]
         return {**rebuilt, "queries": queries, "failing": failing}
 
     def compare(self, name, text):
@@ -1881,52 +1910,56 @@ def _grid_differences(columns, before, after):
 
 
 README = {
-    "title": "# The hospital folder",
-    "stamp": "Schemalyser {version} wrote this folder on {date}.",
-    "intro": "This folder describes how the hospital's reporting database holds the anaesthetic record. A clinician and "
-             "a colleague who runs SQL against that database made it together with Schemalyser's page Describe the "
-             "record. The page proposed which tables and columns hold each part of the record, the colleague confirmed "
-             "or corrected each one, and the queries that the colleague ran settled the local codes and the counts. "
-             "The folder names the hospital's own tables and codes, so it stays on the hospital's own storage.",
-    "files": "## What each file holds",
+    "invented": "This file was made with the invented dictionary, for practice, and describes no hospital.",
+    "title": "# The saved hospital schema",
+    "stamp": "Schemalyser {version} saved this file on {date}.",
+    "intro": "This file holds the hospital schema: where the hospital's database keeps each part of the anaesthetic "
+             "record. A clinician and a colleague who runs SQL against that database made it together with "
+             "Schemalyser's page Describe the record. The page proposed the schema from the data dictionary, the "
+             "colleague confirmed or corrected each column, and the queries that the colleague ran settled the "
+             "hospital's codes and the counts.",
+    "storage": "This file contains the hospital's data dictionary and the hospital schema, which name the hospital's own "
+               "tables and codes. It must stay on the hospital's own storage.",
+    "files": "## What each part of the file holds",
     "rerun": "## Queries to run again on production",
-    "draft": "## This folder is a draft",
-    "draft_text": "The folder is not yet complete ({parts}). To finish it, open the page Describe the record, choose this "
-                  "folder in step 3 and carry on from step 6.",
+    "draft": "## This hospital schema is a draft",
+    "draft_text": "The hospital schema is not yet complete ({parts}). To finish it, open the page Describe the record, "
+                  "open this file at step 3 and carry on from step 6.",
     "draft_codes": "These columns are answered, but the codes that they hold are not yet translated, so their views give "
                    "nothing useful until a person translates them:",
-    "remake": "## How to check or remake the folder",
+    "remake": "## How to check or remake the hospital schema",
     "remake_text": [
-        "Open the page Describe the record, take it offline, load the data dictionary in step 2 and choose this folder "
-        "in step 3. The page then restores everything below, and you can carry on from where the folder was left.",
-        "To check that the folder is still right, for example after a change to the database or a new release of the "
-        "vendor's system, choose Check this folder under Check a saved folder. Schemalyser proposes the map again from the "
-        "dictionary, applies the answers in confirmations.csv in their order, and says whether the result is the same "
-        "as map/map.json. It then lists every query in queries/ with its earlier result from results/. The colleague "
-        "runs each query again and pastes the new result, and the page lists what has changed: a table or column that "
-        "has gone, a row that has gone or come, or a count that has changed by more than a tenth.",
-        "Without the page, the folder can still be checked by hand. Each file in queries/ is the exact text that the "
-        "colleague ran, and the file of the same number in results/ is what came back. journal.json says which step "
-        "offered each query, which database it was run on and when the result was pasted.",
+        "Open the page Describe the record, take it offline and open this file at step 3. The page then reads the data "
+        "dictionary and everything below from the file, and you can carry on from where you left off.",
+        "To check that the hospital schema is still right, for example after a change to the database or a new release "
+        "of the vendor's system, choose Check against the database under Check a saved schema against the database. "
+        "Schemalyser proposes the schema again from the dictionary, applies the answers in confirmations.csv in their "
+        "order, and says whether the result is the same as map/map.json. It then lists every query in queries/ with its "
+        "earlier result from results/. The colleague runs each query again and pastes the new result, and the page "
+        "lists what has changed: a table or column that has gone, a row that has gone or come, or a count that has "
+        "changed by more than a tenth.",
+        "Without the page, the hospital schema can still be checked by hand. Each file in queries/ is the exact text "
+        "that the colleague ran, and the file of the same number in results/ is what came back. journal.json says "
+        "which step offered each query, which database it was run on and when the result was pasted.",
     ],
-    "licence": "The data dictionary is licensed. The folder holds a copy of it in dictionary/ only because a person "
-               "ticked the box to keep it, and map/map.json quotes it as the evidence for each column.",
-    "no_licence": "The data dictionary is licensed, so the folder holds no copy of it. map/map.json quotes it only as the "
-                  "evidence for each column, and the dictionary must be loaded again to check the folder.",
+    "licence": "The data dictionary is licensed. This file holds a copy of it in dictionary/, so that the page can open "
+               "the hospital schema without anything else, and map/map.json quotes it as the evidence for each column.",
+    "no_licence": "The data dictionary is licensed. This file holds no copy of it, so the dictionary must be loaded again "
+                  "at step 2 before the file is opened.",
 }
 README_FILES = [
-    ("settings.json", "The tool's version, the dates on which the folder was made and last changed, the database that "
+    ("settings.json", "The tool's version, the dates on which the hospital schema was made and last changed, the database that "
                       "the queries were run on, production or training, and the year of the lists."),
     ("journal.json", "One entry for each step that took something in: the step's heading, the query file, the result "
                      "file, the database, when the result was pasted and the tool's version. For the dictionary, it "
                      "gives the file's name, its size, its numbers of tables and columns and a fingerprint of its "
                      "contents (a SHA-256 hash), and never its contents. Each correction kept has an entry of its own, "
-                     "with the sentence that it means, the outcome of its check and any reason for keeping it."),
+                     "with the sentence that it means, the outcome of its test on made-up rows and any reason for keeping it."),
     ("confirmations.csv", "Every answer that the colleague gave, in order: the part and column, the answer (yes, no "
                           "or not sure), the replacement where the answer was no, the date and any note. For a correction "
-                          "made in one of the page's forms, it also gives the correction as data, the outcome of the check "
-                          "that Schemalyser ran on invented rows before it was kept, and, where it was kept although the "
-                          "check failed, the reason that was given."),
+                          "made in one of the page's forms, it also gives the correction as data, the outcome of the test on "
+                          "made-up rows that Schemalyser ran before it was kept (the column headed test), and, where it "
+                          "was kept although the test failed, the reason that was given."),
     ("map/map.json", "Every column of every part of the record: the table and column that hold it, the links "
                      "that reach them, the dictionary's description that supports it, the answer and its date. Its "
                      "description gives the date of the proposal and how many columns a person has answered for."),
@@ -1944,10 +1977,12 @@ README_FILES = [
 ]
 
 
-def readme(paths, version, date, kept, training=(), unfinished="", untranslated=()):
+def readme(paths, version, date, kept, training=(), unfinished="", untranslated=(), invented=False):
     """README.md of the hospital folder, which says what each file is, how it was made and how to remake it. training
     lists the queries whose results came from a training database, which are to be run again on production."""
-    lines = [README["title"], "", README["stamp"].format(version=version or "unknown", date=date), "", README["intro"], ""]
+    lines = [README["invented"], ""] if invented else []
+    lines += [README["title"], "", README["stamp"].format(version=version or "unknown", date=date), "", README["intro"], "",
+              README["storage"], ""]
     if unfinished:
         lines += [README["draft"], "", README["draft_text"].format(parts=unfinished), ""]
         if untranslated:

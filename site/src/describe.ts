@@ -1,4 +1,4 @@
-// The page Describe the record: screen 1, which makes the hospital folder. It shares the worker, the bridge, the style
+// The page Describe the record: screen 1, which makes the saved hospital schema. It shares the worker, the bridge, the style
 // and the offline gate with the existing page. Everything that is loaded or pasted goes to the worker, which holds it;
 // the page holds only what it shows.
 import { describeStrings as d } from './describe-strings';
@@ -33,7 +33,7 @@ interface Tally {
   tables: number; tables_remaining: number;
 }
 interface Model {
-  dictionary: { tables: number; columns: number; described: number; keyed: number; skipped: number } | null;
+  dictionary: { tables: number; columns: number; described: number; keyed: number; skipped: number; invented: boolean; source: string | null } | null;
   proposed: boolean; roles: Role[]; tally: Tally;
   untranslated: { about: string; title: string; from: string }[]; unfinished: string; counts_offered: string[];
   questions: { about: string; title: string; question: string; meaning: string }[]; catalogue: boolean; vocabularies: Vocabulary[]; counts: Record<string, CountHeld>;
@@ -78,13 +78,15 @@ const changing = new Set<string>();
 const opened = new Set<string>();
 const hidden = new Set<string>();
 let written = false;
-// Whether the folder last saved was a draft, which leaves step 9 to be done again.
+// The name of the one file that holds the saved hospital schema.
+const SCHEMA_FILE = 'hospital-schema.schemalyser.zip';
+// Whether the hospital schema last saved was a draft, which leaves step 9 to be done again.
 let writtenDraft = false;
 // The text of a finding of a check, shown at the row that its link leads to.
 const landed = new Map<string, string>();
-// Whether something has changed since the folder was saved, which makes step 9 to be done again.
+// Whether something has changed since the hospital schema was saved, which makes step 9 to be done again.
 let changedSinceWritten = false;
-// The calls that change nothing that the hospital folder holds.
+// The calls that change nothing that the saved hospital schema holds.
 const READING = new Set(['describe_model', 'describe_check', 'describe_compare']);
 // The sentence that says why an answer could not be recorded, beside the binding it was given for.
 const problems = new Map<string, string>();
@@ -240,6 +242,8 @@ function stepStates() {
     proposed && vocabulariesDone(m!), proposed && countsDone(m!), written && !writtenDraft];
   const waits = STEPS.map((_, i) => {
     if (i === 0) return '';
+    // Step 2 is open while the tab is still online, for the invented dictionary; its file controls wait for offline.
+    if (i === 1 && state === 'ready') return '';
     if (!ready) return d.waitingFor.offline;
     if (i === 3) return m?.dictionary || proposed ? '' : d.waitingFor.dictionary;
     if (i >= 4) return proposed ? '' : d.waitingFor.map;
@@ -250,7 +254,7 @@ function stepStates() {
     return waits[i] ? 'waiting' : done[i] ? 'done' : 'available';
   });
   const first = states.findIndex((value, i) => value === 'available' && !OPTIONAL.has(STEPS[i]));
-  if (first >= 0) states[first] = 'current';
+  if (first >= 0 && !states.includes('current')) states[first] = 'current';
   const statusText = (id: string) => ($(id).hidden ? '' : $(id).textContent ?? '');
   const receipts = [
     d.offlineDone,
@@ -362,6 +366,11 @@ function show() {
   connection.dataset.online = String(online);
   for (const input of document.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLTextAreaElement>('main input, main button, main textarea, main select')) {
     if (input.closest('#step-1') || input.classList.contains('toggle')) continue;
+    // The invented dictionary is loaded while the tab is online, so its button needs only the page to be ready.
+    if (input.id === 'invented-load') {
+      input.disabled = state !== 'ready' || busy;
+      continue;
+    }
     input.disabled = !ready || busy || input.dataset.unusable === 'true' || (input.id === 'dictionary-load' && !$<HTMLInputElement>('dictionary').files?.length);
   }
 }
@@ -1096,6 +1105,7 @@ $('dictionary-load').addEventListener('click', async () => {
   workerHasFiles = true;
   try {
     const reply = await ask('describe_dictionary', [file, tables ?? undefined, JSON.stringify(headings), file.name, tables?.name ?? undefined, d.steps[1]]);
+    status('t-invented-status', '');
     if (reply.ok) status('t-dictionary-status', d.dictionaryReceipt(reply.receipt as Parameters<typeof d.dictionaryReceipt>[0]), 'good');
     else {
       status('t-dictionary-status', reply.problem ?? d.dictionaryFailed, 'problem');
@@ -1107,23 +1117,56 @@ $('dictionary-load').addEventListener('click', async () => {
   setBusy(false);
 });
 
-// The paths inside the chosen folder, without the folder's own name, which the browser puts first.
-function folderFiles(input: HTMLInputElement) {
-  const files = [...(input.files ?? [])];
-  return files.map((file) => ({ path: (file.webkitRelativePath || file.name).split('/').slice(1).join('/'), file })).filter((f) => f.path);
-}
+// The invented dictionary is served with the page, beside the invented example, and fetched while the tab is online.
+// It is then loaded exactly as a chosen file would be, and marked as invented so that everything saved says so.
+$('invented-load').addEventListener('click', async () => {
+  if (busy || state !== 'ready') return;
+  if (!navigator.onLine) {
+    status('t-invented-status', d.inventedOnlineOnly, 'problem');
+    return;
+  }
+  setBusy(true);
+  status('t-invented-status', d.inventedLoading);
+  try {
+    const base = new URL('./example/dictionary/', location.href);
+    const take = async (name: string) => {
+      const response = await fetch(new URL(name, base));
+      if (!response.ok) throw new Error(name);
+      return new File([await response.blob()], name);
+    };
+    const [file, tables] = await Promise.all([take('invented-dictionary.csv'), take('invented-tables.csv')]);
+    workerHasFiles = true;
+    const reply = await ask('describe_dictionary', [file, tables, '{}', file.name, tables.name, d.steps[1], true]);
+    if (reply.ok) {
+      status('t-invented-status', '');
+      status('t-dictionary-status', d.dictionaryReceipt(reply.receipt as Parameters<typeof d.dictionaryReceipt>[0]), 'good');
+    } else status('t-invented-status', reply.problem ?? d.inventedFailed, 'problem');
+  } catch {
+    status('t-invented-status', d.inventedFailed, 'problem');
+  }
+  setBusy(false);
+});
 
-$('hospital-folder').addEventListener('change', async () => {
-  const input = $<HTMLInputElement>('hospital-folder');
-  if (!input.files?.length || !open()) return;
+// A saved hospital schema is one file, which the worker opens and restores. A file that holds no dictionary is opened
+// only once a dictionary is loaded at step 2.
+$('schema-file').addEventListener('change', async () => {
+  const input = $<HTMLInputElement>('schema-file');
+  const file = input.files?.[0];
+  if (!file || !open()) return;
   setBusy(true);
   status('t-folder-status', d.folderReading);
   workerHasFiles = true;
   try {
-    const reply = await ask('describe_folder_end', [], { files: folderFiles(input) });
-    const restored = reply.restored as Parameters<typeof d.folderReceipt>[0] & { problem: string };
-    status('t-folder-status', [restored.problem, d.folderReceipt(restored)].filter(Boolean).join(' '), restored.map ? 'good' : '');
-    $('t-folder-no-dictionary').hidden = !(restored.map && !model?.dictionary);
+    const reply = await ask('describe_schema_open', [file]);
+    if (!reply.ok) status('t-folder-status', d.folderFailed, 'problem');
+    else {
+      const restored = reply.restored as Parameters<typeof d.folderReceipt>[0] & { problem: string; needs_dictionary: boolean };
+      if (restored.needs_dictionary) status('t-folder-status', d.folderNeedsDictionary, 'problem');
+      else {
+        status('t-folder-status', [restored.problem, d.folderReceipt(restored)].filter(Boolean).join(' '), restored.map ? 'good' : '');
+        if (restored.dictionary && model?.dictionary) status('t-dictionary-status', d.dictionaryReceipt(model.dictionary), 'good');
+      }
+    }
   } catch {
     status('t-folder-status', d.folderFailed, 'problem');
   }
@@ -1208,62 +1251,20 @@ $('counts-write').addEventListener('click', async () => {
   render();
 });
 
-function base64Bytes(value: string) {
-  const raw = atob(value);
-  const bytes = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-  return bytes;
-}
-
-type DirectoryHandle = {
-  getDirectoryHandle(name: string, options?: { create?: boolean }): Promise<DirectoryHandle>;
-  getFileHandle(name: string, options?: { create?: boolean }): Promise<{ createWritable(): Promise<{ write(data: BlobPart): Promise<void>; close(): Promise<void> }> }>;
-  removeEntry(name: string, options?: { recursive?: boolean }): Promise<void>;
-};
-const picker = (window as unknown as { showDirectoryPicker?: (options?: { mode?: string }) => Promise<DirectoryHandle> }).showDirectoryPicker;
-
-$('write-folder').addEventListener('click', async () => {
-  if (!picker) return;
-  const keep = $<HTMLInputElement>('keep-dictionary').checked;
-  try {
-    const root = await picker({ mode: 'readwrite' });
-    setBusy(true);
-    const reply = await call('describe_folder_files', [keep]);
-    const files = JSON.parse(reply.reply as string) as [string, string][];
-    for (const [path, data] of files) {
-      const parts = path.split('/');
-      let folder = root;
-      for (const part of parts.slice(0, -1)) folder = await folder.getDirectoryHandle(part, { create: true });
-      const handle = await folder.getFileHandle(parts[parts.length - 1], { create: true });
-      const writable = await handle.createWritable();
-      await writable.write(base64Bytes(data));
-      await writable.close();
-    }
-    if (!keep) await root.removeEntry('dictionary', { recursive: true }).catch(() => undefined);
-    written = true;
-    writtenDraft = !!model?.unfinished;
-    status('t-write-status', d.written(files.length, model?.unfinished ?? ''), 'good');
-  } catch {
-    status('t-write-status', d.writeFailed, 'problem');
-  }
-  setBusy(false);
-});
-
-$('write-zip').addEventListener('click', async () => {
-  const keep = $<HTMLInputElement>('keep-dictionary').checked;
+// The saved hospital schema, as one file that the browser downloads.
+$('write-save').addEventListener('click', async () => {
   setBusy(true);
   try {
-    const reply = await call('describe_folder_zip', [keep]);
+    const reply = await call('describe_schema_zip');
     const zip = reply.zip as Uint8Array<ArrayBuffer>;
     const link = el('a');
     link.href = URL.createObjectURL(new Blob([zip], { type: 'application/zip' }));
-    link.download = 'hospital-folder.zip';
+    link.download = SCHEMA_FILE;
     link.click();
     URL.revokeObjectURL(link.href);
-    const listed = JSON.parse((await call('describe_folder_files', [keep])).reply as string) as unknown[];
     written = true;
     writtenDraft = !!model?.unfinished;
-    status('t-write-status', d.zipped(listed.length, model?.unfinished ?? ''), 'good');
+    status('t-write-status', d.saved(model?.unfinished ?? ''), 'good');
   } catch {
     status('t-write-status', d.writeFailed, 'problem');
   }
@@ -1341,6 +1342,11 @@ const fixed: Record<string, string> = {
   's-policy': d.policySummary,
   't-policy-held': strings.policyHeld,
   't-dictionary-what': d.dictionaryWhat,
+  'h-choice-real': d.choiceReal,
+  't-choice-real': d.choiceRealWhat,
+  'h-choice-invented': d.choiceInvented,
+  'invented-load': d.inventedLoad,
+  'h-choice-saved': d.choiceSaved,
   'l-dictionary': d.dictionaryLabel,
   's-dictionary-about': d.aboutFile,
   't-dictionary-about': d.dictionaryAbout,
@@ -1351,11 +1357,10 @@ const fixed: Record<string, string> = {
   't-headings-what': d.headingsWhat,
   'dictionary-load': d.dictionaryLoad,
   't-folder-what': d.folderWhat,
-  'l-hospital-folder': d.folderLabel,
-  'b-hospital-folder': d.folderChoose,
-  's-folder-about': d.folderAboutSummary,
+  'l-schema': d.folderLabel,
+  'b-schema-file': d.folderChoose,
+  's-folder-about': d.aboutFile,
   't-folder-about': d.folderAbout,
-  't-folder-no-dictionary': d.folderNoDictionary,
   'h-check': d.checkHeading,
   't-check-what': d.checkWhat,
   check: d.checkButton,
@@ -1400,12 +1405,8 @@ const fixed: Record<string, string> = {
   't-write-what': d.writeWhat,
   's-write-about': d.writeAboutSummary,
   't-write-about': d.writeAbout,
-  'l-keep': d.keepLabel,
-  't-keep-note': d.keepNote,
-  'write-folder': d.writeFolder,
-  't-write-folder-note': d.writeFolderNote,
-  'write-zip': d.writeZip,
-  't-write-zip-note': d.writeZipNote,
+  'write-save': d.writeSave,
+  't-write-save-note': d.writeSaveNote,
 };
 for (const [id, value] of Object.entries(fixed)) text(id, value);
 d.steps.forEach((heading, i) => text(`h-step-${i + 1}`, heading));
@@ -1424,9 +1425,15 @@ $('headings').replaceChildren(...d.headingFields.map(([field, label]) => {
   box.append(caption, input);
   return box;
 }));
-$('b-write-folder').hidden = !picker;
-// Where the browser can write into a folder, that is the primary action and the zip the other; elsewhere the zip is.
-$('write-zip').classList.toggle('secondary', !!picker);
+// A sentence with a link to a step, which opens that step.
+function linked(id: string, [before, label, after]: string[], n: string) {
+  const link = el('a', label);
+  link.href = `#step-${n}`;
+  link.addEventListener('click', () => toggleStep(n, true));
+  $(id).replaceChildren(document.createTextNode(before), link, document.createTextNode(after));
+}
+linked('t-offline-invented', d.offlineInvented, '2');
+linked('t-choice-saved', d.choiceSavedWhat, '3');
 text('t-version', d.version(__VERSION__));
 renderDatabase();
 

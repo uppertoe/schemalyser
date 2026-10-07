@@ -90,3 +90,9 @@ for published, source in copies.items():
 manifest = {"state": sorted(p for p in copies if p.startswith("state/")),
             "requests": sorted(p for p in copies if p.startswith("requests/"))}
 (example_out / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n")
+
+# The invented data dictionary and its tables file, which the describe page loads at step 2 when a person wants to try
+# the page before using a real dictionary. They sit outside the manifest, since the old page does not read them.
+(example_out / "dictionary").mkdir(parents=True, exist_ok=True)
+for name in ("invented-dictionary.csv", "invented-tables.csv"):
+    shutil.copyfile(FIXTURES / "dictionary" / name, example_out / "dictionary" / name)

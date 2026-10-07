@@ -43,6 +43,7 @@
               <p id="t-loading" class="status working-note"></p>
               <p id="t-load-failed" class="status problem" hidden></p>
               <div id="b-loaded" hidden>
+                <p id="t-offline-invented" class="do-also"></p>
                 <p id="t-loaded" class="status"></p>
                 <details open>
                   <summary id="s-offline-how"></summary>
@@ -66,28 +67,45 @@
             <button type="button" class="toggle link" id="toggle-2"></button>
             <div class="body">
               <p id="t-dictionary-what" class="do"></p>
-              <div class="field">
-                <label for="dictionary" id="l-dictionary"></label>
-                <input type="file" id="dictionary" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain" />
-                <details class="about">
-                  <summary id="s-dictionary-about"></summary>
-                  <p id="t-dictionary-about" class="note"></p>
-                </details>
+              <!-- Three ways to begin, one line each. The first takes a real dictionary, the second the invented one, and the
+                   third leads to step 3. -->
+              <div class="choices">
+                <section class="choice" aria-labelledby="h-choice-real">
+                  <h3 id="h-choice-real"></h3>
+                  <p id="t-choice-real" class="note"></p>
+                  <div class="field">
+                    <label for="dictionary" id="l-dictionary"></label>
+                    <input type="file" id="dictionary" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain" />
+                    <details class="about">
+                      <summary id="s-dictionary-about"></summary>
+                      <p id="t-dictionary-about" class="note"></p>
+                    </details>
+                  </div>
+                  <div class="field">
+                    <label for="dictionary-tables" id="l-dictionary-tables"></label>
+                    <input type="file" id="dictionary-tables" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain" />
+                    <details class="about">
+                      <summary id="s-tables-about"></summary>
+                      <p id="t-tables-about" class="note"></p>
+                    </details>
+                  </div>
+                  <details id="d-headings" class="about">
+                    <summary id="s-headings"></summary>
+                    <p id="t-headings-what" class="note"></p>
+                    <div id="headings"></div>
+                  </details>
+                  <div class="actions"><button type="button" id="dictionary-load" disabled></button></div>
+                </section>
+                <section class="choice" aria-labelledby="h-choice-invented">
+                  <h3 id="h-choice-invented"></h3>
+                  <div class="actions"><button type="button" id="invented-load" class="secondary"></button></div>
+                  <p id="t-invented-status" class="status" hidden role="status"></p>
+                </section>
+                <section class="choice" aria-labelledby="h-choice-saved">
+                  <h3 id="h-choice-saved"></h3>
+                  <p id="t-choice-saved" class="note"></p>
+                </section>
               </div>
-              <div class="field">
-                <label for="dictionary-tables" id="l-dictionary-tables"></label>
-                <input type="file" id="dictionary-tables" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain" />
-                <details class="about">
-                  <summary id="s-tables-about"></summary>
-                  <p id="t-tables-about" class="note"></p>
-                </details>
-              </div>
-              <details id="d-headings" class="about">
-                <summary id="s-headings"></summary>
-                <p id="t-headings-what" class="note"></p>
-                <div id="headings"></div>
-              </details>
-              <div class="actions"><button type="button" id="dictionary-load" disabled></button></div>
               <p id="t-dictionary-status" class="status" hidden role="status"></p>
             </div>
           </li>
@@ -100,17 +118,15 @@
             <div class="body">
               <p id="t-folder-what" class="do"></p>
               <div class="field">
-                <p id="l-hospital-folder" class="field-label"></p>
-                <!-- The browser labels its own control for a file, not a folder, so the page gives the control its own name. -->
-                <input type="file" id="hospital-folder" class="visually-hidden" webkitdirectory />
-                <label for="hospital-folder" id="b-hospital-folder" class="button-like"></label>
+                <p id="l-schema" class="field-label"></p>
+                <input type="file" id="schema-file" class="visually-hidden" accept=".zip,application/zip" />
+                <label for="schema-file" id="b-schema-file" class="button-like"></label>
                 <details class="about">
                   <summary id="s-folder-about"></summary>
                   <p id="t-folder-about" class="note"></p>
                 </details>
               </div>
               <p id="t-folder-status" class="status" hidden role="status"></p>
-              <p id="t-folder-no-dictionary" class="status" hidden></p>
             </div>
           </li>
 
@@ -261,18 +277,8 @@
               <p id="t-write-draft-codes" class="note" hidden></p>
               <ul id="write-draft-list" class="findings"></ul>
               <div id="b-write">
-                <div class="field">
-                  <label class="option"><input type="checkbox" id="keep-dictionary" /> <span id="l-keep"></span></label>
-                  <p id="t-keep-note" class="note"></p>
-                </div>
-                <div class="write-choice" id="b-write-folder" hidden>
-                  <div class="actions"><button type="button" id="write-folder"></button></div>
-                  <p id="t-write-folder-note" class="note"></p>
-                </div>
-                <div class="write-choice">
-                  <div class="actions"><button type="button" id="write-zip" class="secondary"></button></div>
-                  <p id="t-write-zip-note" class="note"></p>
-                </div>
+                <div class="actions"><button type="button" id="write-save"></button></div>
+                <p id="t-write-save-note" class="note"></p>
                 <details class="about">
                   <summary id="s-write-about"></summary>
                   <p id="t-write-about" class="note"></p>
@@ -283,7 +289,7 @@
           </li>
         </ol>
 
-        <!-- Not a step of the first sitting: the check of a folder saved at an earlier one. -->
+        <!-- Not a step of the first sitting: the check of a hospital schema saved at an earlier one. -->
         <section class="step extra" id="step-check">
           <div class="step-head"><h2 id="h-check"></h2><span class="state" id="state-check"></span></div>
           <p class="waiting" id="waiting-check"></p>

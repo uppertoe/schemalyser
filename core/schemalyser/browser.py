@@ -930,33 +930,36 @@ def describe_begin(version):
     return "ok"
 
 
-def describe_dictionary(data, tables, headings, name, tables_name, step):
+def describe_dictionary(data, tables, headings, name, tables_name, step, invented=False):
+    """Loads the dictionary from the bytes of a chosen file, or of the invented dictionary that the page serves, which
+    invented marks so that everything written afterwards says the folder describes no hospital."""
     d = _describing()
     return _reply(lambda: {"receipt": d.load_dictionary(
         _bytes(data), _bytes(tables) if tables is not None else None, json.loads(headings or "{}"), name,
-        tables_name or "tables.csv", step)})
+        tables_name or "tables.csv", step, invented=bool(invented))})
 
 
-def describe_folder_begin():
-    _describing()._incoming = {}
-    return "ok"
+# The paths that a saved hospital schema holds. Anything else inside the file is let go of at once.
+_SCHEMA_PATH = re.compile(r"(settings\.json|journal\.json|confirmations\.csv|map/map\.json|codes/role_\w+\.\w+\.json|"
+                          r"counts/judgements\.json|queries/\d\d-[\w.-]+\.sql|results/\d\d-[\w.-]+\.tsv|"
+                          r"dictionary/[\w .()-]+\.(json|csv|tsv|txt))")
 
 
-def describe_folder_put(path, data):
-    """One file of a chosen hospital folder, with its path inside the folder. Only the files that the folder holds are
-    taken; anything else in the chosen folder is let go of at once."""
-    if re.fullmatch(r"(settings\.json|journal\.json|confirmations\.csv|map/map\.json|codes/role_\w+\.\w+\.json|"
-                    r"counts/judgements\.json|queries/\d\d-[\w.-]+\.sql|results/\d\d-[\w.-]+\.tsv|"
-                    r"dictionary/[\w .()-]+\.(json|csv|tsv|txt))", path or ""):
-        _describing()._incoming[path] = _bytes(data)
-    return "ok"
-
-
-def describe_folder_end():
+def describe_schema_open(data):
+    """Opens a saved hospital schema from the bytes of its one file, and restores everything it holds."""
+    import zipfile
     d = _describing()
-    files = getattr(d, "_incoming", {})
-    d._incoming = {}
-    return _reply(lambda: {"restored": d.restore(files)})
+
+    def work():
+        from .describe import DescribeError
+        try:
+            with zipfile.ZipFile(io.BytesIO(_bytes(data))) as archive:
+                files = {info.filename: archive.read(info) for info in archive.infolist()
+                         if not info.is_dir() and _SCHEMA_PATH.fullmatch(info.filename)}
+        except (zipfile.BadZipFile, OSError):
+            raise DescribeError("unreadable") from None
+        return {"restored": d.restore(files)}
+    return _reply(work)
 
 
 def describe_propose(progress):
@@ -1016,15 +1019,14 @@ def describe_count_judge(request):
     return _reply(lambda: _describing().judge_count(r["name"], r["looksRight"], r.get("note") or ""))
 
 
-def describe_folder_files(keep):
-    """The hospital folder as a JSON list of [path, base64 of the bytes], for the page to write into a chosen folder."""
-    import base64
-    files = _describing().folder_files(bool(keep))
-    return json.dumps([[path, base64.b64encode(data).decode("ascii")] for path, data in sorted(files.items())])
+def describe_schema_files():
+    """The paths inside the saved hospital schema, which the page counts once it has saved the file."""
+    return json.dumps(sorted(_describing().folder_files()))
 
 
-def describe_folder_zip(keep):
-    return _describing().folder_zip(bool(keep))
+def describe_schema_zip():
+    """The saved hospital schema, as the bytes of its one file."""
+    return _describing().folder_zip()
 
 
 def describe_check():

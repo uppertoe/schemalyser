@@ -191,17 +191,13 @@ self.onmessage = async (event) => {
       self.postMessage({ type: 'state-zip', zip }, [zip.buffer]);
     } else if (message.type === 'describe') {
       // Screen 1 (describe.html): one call of a describe_ function of the bridge. Files are read here into bytes, and
-      // the dictionary and the folder stay in this worker's memory.
+      // the dictionary and the hospital schema stay in this worker's memory.
       if (!/^describe_[a-z_]+$/.test(message.call) || typeof browser[message.call] !== 'function') throw new Error('call');
       let reply;
       if (message.call === 'describe_propose') {
         reply = browser.describe_propose((done, total) => self.postMessage({ type: 'describe-progress', id: message.id, done, total }));
-      } else if (message.call === 'describe_folder_end') {
-        browser.describe_folder_begin();
-        for (const { path, file } of message.files ?? []) browser.describe_folder_put(path, await bytes(file));
-        reply = browser.describe_folder_end();
-      } else if (message.call === 'describe_folder_zip') {
-        const zip = browser.describe_folder_zip(message.args?.[0] ?? false).toJs();
+      } else if (message.call === 'describe_schema_zip') {
+        const zip = browser.describe_schema_zip().toJs();
         self.postMessage({ type: 'describe-reply', id: message.id, zip }, [zip.buffer]);
         return;
       } else {

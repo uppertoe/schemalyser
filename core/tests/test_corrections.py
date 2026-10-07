@@ -4,7 +4,7 @@ probe that tests it once against the database.
 Each form is made on the invented dictionary's proposed map. Its SQL is run on the invented world's own shadow in
 DuckDB, as the page's other queries are, so that it is known to run and to give the contract's columns. The check is
 then shown to pass a sound correction, to catch a link that repeats readings, and to refuse a time window with no
-key. A correction that fails is kept only with a reason, which the folder records and its check reports. The probe of
+key. A correction that fails is kept only with a reason, which the saved schema records and its check reports. The probe of
 a kept correction runs on the invented world and is read back.
 """
 import csv
@@ -136,7 +136,7 @@ def test_the_check_says_the_model_is_whole_when_nothing_is_wrong():
     s.data["roles"].pop("role_operation")
     found = s.correction_check(SOUND["window"])
     assert found["passed"]
-    assert found["sentence"].startswith("This change keeps the map whole: all 11 parts of the record run on invented rows and give the rows "
+    assert found["sentence"].startswith("This change keeps the hospital schema whole: all 11 parts of the record run on made-up rows and give the rows "
                                         "they should, every identifying column is unique, every flag is filled, and the "
                                         "invented newborns of the test audit give the expected answer.")
     assert any("outside the anaesthetic's window" in n for n in found["notes"])
@@ -145,7 +145,7 @@ def test_the_check_says_the_model_is_whole_when_nothing_is_wrong():
 def test_the_check_catches_a_link_that_repeats_readings_and_a_window_too_wide(proposed):
     found = proposed.correction_check(DOUBLING)
     assert not found["passed"]
-    assert any(re.fullmatch(r"In Readings charted during an anaesthetic, [\d,]+ invented readings appear twice, each linked to a "
+    assert any(re.fullmatch(r"In Readings charted during an anaesthetic, [\d,]+ made-up readings appear twice, each linked to a "
                             r"second anaesthetic, so a reading no longer links to exactly one anaesthetic\.", p) for p in found["problems"])
     # Each finding names the binding that it concerns, so that the page can link it to its row.
     assert all(found["about"][p] == "role_reading.anaesthetic_key" for p in found["problems"] if "readings appear twice" in p)
@@ -186,12 +186,12 @@ def test_a_window_with_no_key_and_names_not_in_the_dictionary_are_refused(propos
         s.correction_preview(SOUND["joined"])
 
 
-def test_a_failing_correction_is_kept_only_with_a_reason_and_the_folder_records_and_reports_it():
+def test_a_failing_correction_is_kept_only_with_a_reason_and_the_saved_schema_records_and_reports_it():
     s = sitting()
     s.correction_keep(SOUND["window"], date=DATE)
-    with pytest.raises(describe.DescribeError, match="Keep it although the check fails"):
+    with pytest.raises(describe.DescribeError, match="Keep it although the test fails"):
         s.correction_keep(DOUBLING, date=DATE)
-    with pytest.raises(describe.DescribeError, match="Keep it although the check fails"):
+    with pytest.raises(describe.DescribeError, match="Keep it although the test fails"):
         s.correction_keep(DOUBLING, although=True, reason="  ", date=DATE)
     kept = s.correction_keep(DOUBLING, although=True, reason="The team says that a visit holds one anaesthetic here.", date=DATE)
     assert kept == {"kept": "role_reading.anaesthetic_key", "probe": "link"}
@@ -200,7 +200,7 @@ def test_a_failing_correction_is_kept_only_with_a_reason_and_the_folder_records_
     assert item["confirmation"]["reason"] == "The team says that a visit holds one anaesthetic here."
     files = s.folder_files(date=DATE)
     rows = list(csv.DictReader(io.StringIO(files["confirmations.csv"].decode())))
-    assert [r["check"][:6] for r in rows] == ["passed", "failed"]
+    assert [r["test"][:6] for r in rows] == ["passed", "failed"]
     assert json.loads(rows[1]["correction"]) == DOUBLING and rows[1]["reason"].startswith("The team says")
     journal = json.loads(files["journal.json"])["entries"]
     entries = [e for e in journal if e["name"] == "correction"]
@@ -208,11 +208,11 @@ def test_a_failing_correction_is_kept_only_with_a_reason_and_the_folder_records_
     # map.json, with the new forms, is still a map that the checker reads.
     folder = s._work_folder()
     rolemap.read_map(folder, s.dictionary)
-    # A new sitting restores the folder, rebuilds the same map and reports the binding kept although it failed.
+    # A new sitting restores the saved schema, rebuilds the same map and reports the binding kept although it failed.
     again = describe.Describe()
     again.version = "test"
-    again.restore({k: v for k, v in files.items()})
     again.load_dictionary(DICTIONARY.read_bytes(), TABLES.read_bytes())
+    again.restore({k: v for k, v in files.items()})
     checked = again.check()
     assert checked["same"], checked["differences"]
     assert [f["about"] for f in checked["failing"]] == ["role_reading.anaesthetic_key"]
@@ -239,7 +239,7 @@ def test_the_probes_run_on_the_invented_world_and_are_read_back(world):
     files = s.folder_files(date=DATE)
     assert any(p.startswith("queries/") and "probe-role_reading-anaesthetic_key" in p for p in files)
     assert any(p.startswith("results/") and "probe-role_anaesthetic-rows" in p for p in files)
-    with pytest.raises(describe.DescribeError, match="no probe"):
+    with pytest.raises(describe.DescribeError, match="no test query"):
         s.probe_query("role_patient.birth_date", 2024)
 
 
@@ -280,6 +280,6 @@ def test_an_alternative_column_or_table_is_checked_and_its_check_recorded_when_k
     assert s.data["roles"]["role_stay"]["rows"]["status"] == "person"
     files = s.folder_files(date=DATE)
     found = list(csv.DictReader(io.StringIO(files["confirmations.csv"].decode())))
-    assert [(r["attribute"], r["check"][:6]) for r in found] == [("role_anaesthetic.patient_key", "passed"), ("role_stay rows", "passed")]
+    assert [(r["attribute"], r["test"][:6]) for r in found] == [("role_anaesthetic.patient_key", "passed"), ("role_stay rows", "passed")]
     with pytest.raises(describe.DescribeError, match="TABLE.COLUMN"):
         s.correction_preview({"form": "column", "about": "role_anaesthetic.patient_key", "replacement": "nothing here"})

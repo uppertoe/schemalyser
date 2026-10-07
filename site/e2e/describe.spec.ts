@@ -8,8 +8,9 @@ import { setOnline } from './network';
 import { describeStrings as d } from '../src/describe-strings';
 
 // The page Describe the record, walked through with the invented dictionary and the invented world: loaded, taken
-// offline, the map proposed, the tables and columns query answered from the invented catalogue, some bindings
-// confirmed, a list of what is charted and a count pasted, the folder saved as a zip, and the folder chosen again.
+// offline, the hospital schema proposed, the query of tables and columns answered from the invented catalogue, some
+// columns confirmed, a list of what is charted and a count pasted, the hospital schema saved as one file, and that file
+// opened again.
 const fixtures = fileURLToPath(new URL('../../fixtures/', import.meta.url));
 const pass = process.env.DESCRIBE_PASS;
 
@@ -82,7 +83,7 @@ async function loadDictionary(page: Page) {
   );
 }
 
-test('the record is described, written as a hospital folder and restored from it', async ({ page, context, browserName }) => {
+test('the record is described, saved as a hospital schema and opened again', async ({ page, context, browserName }) => {
   test.setTimeout(240_000);
   const requestsWhileOffline: string[] = [];
   let offline = false;
@@ -136,7 +137,7 @@ test('the record is described, written as a hospital folder and restored from it
   await expect(nothing.locator('.answer-yes')).toHaveCount(0);
   await expect(nothing.getByRole('button', { name: d.chooseColumn })).toBeVisible();
 
-  // Some bindings confirmed, one corrected by hand after its check, one not sure.
+  // Some columns confirmed, one corrected by hand after its test on made-up rows, one not sure.
   const tallyText = (await page.locator('#t-tally').textContent())!;
   const total = Number(tallyText.match(/^Of (\d+) columns/)![1]);
   const tables = Number(tallyText.match(/Of the (\d+) tables of the parts/)![1]);
@@ -176,7 +177,7 @@ test('the record is described, written as a hospital folder and restored from it
   // Each question states the proposal and asks whether it is right.
   await expect(page.locator('#questions')).toContainText(
     'The value in Readings charted during an anaesthetic: The page proposes OBS_READING.READ_VALUE as the value in Readings charted during an anaesthetic. Is that right, and if not, which column holds it?');
-  // After the first answer, the check of the whole map says that it checks the map as it now stands.
+  // After the first answer, the test of the whole hospital schema says that it tests the schema as it now stands.
   await expect(page.locator('#model-check')).toHaveText(d.corrections.modelCheckAgain);
   await expect(page.locator('#questions')).not.toContainText('roles.md');
   // No code name of a part or a column stands alone anywhere in the step.
@@ -229,70 +230,84 @@ test('the record is described, written as a hospital folder and restored from it
   await expect(page.locator('#step-8')).not.toHaveAttribute('data-state', 'done');
   await stage(page, '8-counts', '[data-count="coverage_by_year"]');
 
-  // The folder, as a zip, without the dictionary.
+  // The hospital schema, saved as one file that holds the dictionary as well.
   await openStep(page, 9);
-  await expect(page.locator('#keep-dictionary')).not.toBeChecked();
   const download = page.waitForEvent('download');
-  await page.locator('#write-zip').click();
+  await page.locator('#write-save').click();
   const saved = await download;
-  expect(saved.suggestedFilename()).toBe('hospital-folder.zip');
-  // With columns still to answer, the folder is saved as a draft and step 9 is not done.
-  await expect(page.locator('#t-write-draft')).toContainText('The folder is not yet complete:');
-  await expect(page.locator('#t-write-status')).toContainText('The page has saved the hospital folder as a draft (');
+  expect(saved.suggestedFilename()).toBe('hospital-schema.schemalyser.zip');
+  // With columns still to answer, the hospital schema is saved as a draft and step 9 is not done.
+  await expect(page.locator('#t-write-draft')).toContainText('The hospital schema is not yet complete:');
+  await expect(page.locator('#t-write-status')).toContainText('The page has saved the hospital schema as a draft (');
   await expect(page.locator('#step-9')).not.toHaveAttribute('data-state', 'done');
   await expect(page.locator('#rail a[href="#step-9"]')).toContainText(d.savedDraft);
   await stage(page, '9-written', '#step-9');
-  const folder = join(mkdtempSync(join(tmpdir(), 'hospital-')), 'hospital-folder');
-  const zipPath = folder + '.zip';
+  const unzipped = join(mkdtempSync(join(tmpdir(), 'hospital-')), 'hospital-schema');
+  const zipPath = unzipped + '.schemalyser.zip';
   await saved.saveAs(zipPath);
-  execFileSync('python3', ['-c', 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])', zipPath, folder]);
+  execFileSync('python3', ['-c', 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])', zipPath, unzipped]);
   for (const name of ['README.md', 'journal.json', 'confirmations.csv', 'settings.json', 'map/map.json', 'map/role_reading.sql',
-    'queries/01-tables-and-columns.sql', 'results/01-tables-and-columns.tsv', 'codes/role_reading.kind.json']) {
-    expect(existsSync(join(folder, name)), name).toBe(true);
+    'queries/01-tables-and-columns.sql', 'results/01-tables-and-columns.tsv', 'codes/role_reading.kind.json',
+    'dictionary/invented-dictionary.csv', 'dictionary/invented-tables.csv']) {
+    expect(existsSync(join(unzipped, name)), name).toBe(true);
   }
-  expect(existsSync(join(folder, 'dictionary'))).toBe(false);
-  expect(readFileSync(join(folder, 'map/role_reading.sql'), 'utf8')).toContain("IN ('52') THEN 'map_arterial'");
+  expect(readFileSync(join(unzipped, 'map/role_reading.sql'), 'utf8')).toContain("IN ('52') THEN 'map_arterial'");
   // The view's head carries one true sentence about who has answered for it.
-  expect(readFileSync(join(folder, 'map/role_anaesthetic.sql'), 'utf8')).not.toContain('No person has confirmed');
-  const settings = JSON.parse(readFileSync(join(folder, 'settings.json'), 'utf8'));
+  expect(readFileSync(join(unzipped, 'map/role_anaesthetic.sql'), 'utf8')).not.toContain('No person has confirmed');
+  const settings = JSON.parse(readFileSync(join(unzipped, 'settings.json'), 'utf8'));
   expect(settings.year).toBe(2024);
   expect(settings.complete).toBe(false);
+  expect(settings.invented).toBeUndefined();
   expect(settings.draft).toMatch(/^draft: [\d,]+ columns and [\d,]+ tables unanswered/);
-  expect(readFileSync(join(folder, 'README.md'), 'utf8')).toContain('## This folder is a draft');
-  // The map says how many columns a person has answered for, and the README speaks of parts, not roles.
-  expect(JSON.parse(readFileSync(join(folder, 'map/map.json'), 'utf8')).description).toContain('A person has since answered for');
-  expect(readFileSync(join(folder, 'README.md'), 'utf8')).not.toMatch(/\brole\b|\bbindings?\b/);
-  expect(readFileSync(join(folder, 'README.md'), 'utf8')).toContain('## Queries to run again on production');
-  expect(readFileSync(join(folder, 'confirmations.csv'), 'utf8')).toMatch(/role_anaesthetic\.patient_key,no,"?THEATRE_CASE\.PERSON_KEY[^\n]*,passed,/);
-  // A change after the folder was saved makes step 9 to be done again.
+  const readme = readFileSync(join(unzipped, 'README.md'), 'utf8');
+  expect(readme).toContain('## This hospital schema is a draft');
+  expect(readme).toContain("It must stay on the hospital's own storage.");
+  // The hospital schema says how many columns a person has answered for, and the README speaks of parts and the
+  // hospital schema, not of roles, bindings, maps or folders.
+  expect(JSON.parse(readFileSync(join(unzipped, 'map/map.json'), 'utf8')).description).toContain('A person has since answered for');
+  expect(readme.replace(/`[^`]*`/g, '').replace(/\S*\/\S*/g, '')).not.toMatch(/\brole\b|\bbindings?\b|\bfolders?\b|\bmaps?\b/i);
+  expect(readme).toContain('## Queries to run again on production');
+  expect(readFileSync(join(unzipped, 'confirmations.csv'), 'utf8')).toMatch(/role_anaesthetic\.patient_key,no,"?THEATRE_CASE\.PERSON_KEY[^\n]*,passed,/);
+  // A change after the hospital schema was saved makes step 9 to be done again.
   await page.locator('#confirm [data-about="role_patient.patient_key"] .answer-yes').click();
   await expect(page.locator('#step-9')).not.toHaveAttribute('data-state', 'done');
   await expect(page.locator('#t-write-status')).toHaveText(d.writtenStale);
   // No description of the dictionary is in any query.
-  expect(readFileSync(join(folder, 'queries/01-tables-and-columns.sql'), 'utf8')).not.toContain('on which the patient was born');
+  expect(readFileSync(join(unzipped, 'queries/01-tables-and-columns.sql'), 'utf8')).not.toContain('on which the patient was born');
   expect(requestsWhileOffline).toEqual([]);
 
-  // The page returned to: the folder restores what was settled.
+  // The page returned to: a saved schema without the dictionary is refused until one is loaded, and the saved file
+  // opens everything, the dictionary included, with nothing else.
+  const stripped = unzipped + '-without-dictionary.schemalyser.zip';
+  execFileSync('python3', ['-c', [
+    'import sys, zipfile',
+    'source = zipfile.ZipFile(sys.argv[1])',
+    'with zipfile.ZipFile(sys.argv[2], "w") as out:',
+    '    [out.writestr(i, source.read(i)) for i in source.infolist() if not i.filename.startswith("dictionary/")]',
+  ].join('\n'), zipPath, stripped]);
   await setOnline(page, context, browserName, true);
   offline = false;
   await expect(page.locator('#t-locked')).toBeVisible();
   await loadAndGoOffline(page, context, browserName);
   offline = true;
   await openStep(page, 3);
-  await expect(page.locator('#b-hospital-folder')).toHaveText(d.folderChoose);
-  await page.locator('#hospital-folder').setInputFiles(folder);
-  await expect(page.locator('#t-folder-status')).toContainText('The page has restored the map from the hospital folder.');
-  // The Yes given after the folder was written is not in the folder, so the restored tally is the one that was saved.
+  await expect(page.locator('#b-schema-file')).toHaveText(d.folderChoose);
+  await page.locator('#schema-file').setInputFiles(stripped);
+  await expect(page.locator('#t-folder-status')).toHaveText(d.folderNeedsDictionary);
+  await expect(page.locator('#step-4')).toHaveAttribute('data-state', 'waiting');
+  await page.locator('#schema-file').setInputFiles(zipPath);
+  await expect(page.locator('#t-folder-status')).toContainText('The page has opened the hospital schema from the saved file.');
+  await expect(page.locator('#receipt-2')).toHaveText(d.dictionaryReceipt({ tables: 25, columns: 98, described: 98, keyed: 25, skipped: 0, source: 'saved' }));
+  await expect(page.locator('#step-2')).toHaveAttribute('data-state', 'done');
+  // The Yes given after the file was saved is not in it, so the restored tally is the one that was saved.
   await expect(page.locator('#t-tally')).toHaveText(tally(1, 1, 1, 0));
   await expect(page.locator('#confirm [data-about="role_reading.value"]')).toContainText(d.presence.large('OBS_READING', 25_000_000));
   await expect(page.locator('[data-key="role_reading.kind"] select[data-code="52"]')).toHaveValue('map_arterial');
   await stage(page, '10-restored', '#rail-nav');
 
-  // The check: without the dictionary it lists the queries only, and with it the rebuilt map is the same.
-  await page.locator('#check').click();
-  await expect(page.locator('#check-result')).toContainText(d.checkNoDictionary);
-  await expect(page.locator('#check-result [data-query="tables-and-columns"]')).toBeVisible();
-  await loadDictionary(page);
+  // The saved schema checked against the database: the schema proposed again is the same, and each query is offered
+  // to run again.
+  await expect(page.locator('#check')).toHaveText(d.checkButton);
   await page.locator('#check').click();
   await expect(page.locator('#check-result')).toContainText(d.checkSame, { timeout: 60_000 });
   const again = page.locator('#check-result [data-query="tables-and-columns"]');
@@ -303,10 +318,10 @@ test('the record is described, written as a hospital folder and restored from it
   expect(requestsWhileOffline).toEqual([]);
 });
 
-// Step 6's corrections: one of each kind made in its plain form, its sentence and SQL shown, checked on invented rows
+// Step 6's corrections: one of each kind made in its plain form, its sentence and SQL shown, tested on made-up rows
 // in the worker and kept or discarded; a link that repeats readings reported, and kept only with a reason; a window
 // with no key refused; and the probes of kept corrections written and read back.
-test('each kind of correction is checked on invented rows before it is kept', async ({ page, context, browserName }) => {
+test('each kind of correction is tested on made-up rows before it is kept', async ({ page, context, browserName }) => {
   test.setTimeout(900_000);
   const c = d.corrections;
   const requestsWhileOffline: string[] = [];
@@ -324,9 +339,9 @@ test('each kind of correction is checked on invented rows before it is kept', as
   await page.locator('#tables-read').click();
   await expect(page.locator('#t-tables-status')).toContainText('The page has read the result');
 
-  // The map as it stands, checked with no change; each finding is in plain words and leads to its column.
+  // The hospital schema as it stands, tested with no change; each finding is in plain words and leads to its column.
   await page.locator('#model-check').click();
-  await expect(page.locator('#model-check-result')).toContainText('The map as it stands has', { timeout: 120_000 });
+  await expect(page.locator('#model-check-result')).toContainText('The hospital schema as it stands has', { timeout: 120_000 });
   expect(await page.locator('#model-check-result').innerText()).not.toMatch(/\brole_[a-z]|contract/);
   const finding = page.locator('#model-check-result a.finding-link').first();
   const sought = (await finding.getAttribute('data-about'))!;
@@ -494,7 +509,7 @@ test('each kind of correction is checked on invented rows before it is kept', as
   await check(about, true);
   await keep(about);
 
-  // The local codes, from the binding.
+  // The hospital's codes, from the column already chosen.
   about = 'role_reading.kind';
   await open(about, 'codes');
   const code = entry(about).getByLabel(c.codeLabel);
@@ -521,39 +536,39 @@ test('each kind of correction is checked on invented rows before it is kept', as
   await step(2).getByLabel(c.stepToColumn).selectOption('VISIT_KEY');
   await column(about, c.finalColumn('ANAES_RECORD'), 'ANAES_KEY');
   const broken = await check(about, false);
-  await expect(broken).toContainText('This change breaks the map in 1 place:');
+  await expect(broken).toContainText('This change breaks the hospital schema in 1 place:');
   await expect(broken).toContainText('readings appear twice, each linked to a second anaesthetic, so a reading no longer links to exactly one anaesthetic.');
   await stage(page, 'c6-broken', '#confirm [data-about="role_reading.anaesthetic_key"]');
-  // After a failed check, only Discard and the ticked keep with its reason are offered.
+  // After a failed test, only Discard and the ticked keep with its reason are offered.
   await expect(entry(about).getByRole('button', { name: c.keep, exact: true })).toHaveCount(0);
   await expect(entry(about).getByRole('button', { name: c.discard })).toBeVisible();
   await entry(about).locator('input.although').check();
   await entry(about).getByLabel(c.reasonLabel).fill('The database team says that each visit holds one anaesthetic at this hospital.');
   await entry(about).getByRole('button', { name: c.keepAlthough }).click();
-  await expect(entry(about).locator('.kept-correction')).toContainText('although the check failed');
+  await expect(entry(about).locator('.kept-correction')).toContainText('although the test on made-up rows failed');
   await expect(entry(about).locator('.kept-correction')).toContainText('The reason given: The database team says');
   await stage(page, 'c7-kept-failing', '#confirm [data-about="role_reading.anaesthetic_key"]');
 
-  // The folder records each correction with the outcome of its check.
+  // The saved hospital schema records each correction with the outcome of its test on made-up rows.
   await openStep(page, 9);
   const download = page.waitForEvent('download');
-  await page.locator('#write-zip').click();
+  await page.locator('#write-save').click();
   const saved = await download;
-  const folder = join(mkdtempSync(join(tmpdir(), 'hospital-')), 'hospital-folder');
-  await saved.saveAs(folder + '.zip');
-  execFileSync('python3', ['-c', 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])', folder + '.zip', folder]);
-  const confirmations = readFileSync(join(folder, 'confirmations.csv'), 'utf8');
-  expect(confirmations.split('\n')[0]).toBe('attribute,answer,replacement,date,note,version,correction,check,reason');
+  const unzipped = join(mkdtempSync(join(tmpdir(), 'hospital-')), 'hospital-schema');
+  await saved.saveAs(unzipped + '.zip');
+  execFileSync('python3', ['-c', 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])', unzipped + '.zip', unzipped]);
+  const confirmations = readFileSync(join(unzipped, 'confirmations.csv'), 'utf8');
+  expect(confirmations.split('\n')[0]).toBe('attribute,answer,replacement,date,note,version,correction,test,reason');
   expect(confirmations).toContain('failed: In Readings charted during an anaesthetic');
   expect(confirmations).toContain('The database team says that each visit holds one anaesthetic at this hospital.');
-  const journal = JSON.parse(readFileSync(join(folder, 'journal.json'), 'utf8')).entries as { name: string; passed?: boolean }[];
+  const journal = JSON.parse(readFileSync(join(unzipped, 'journal.json'), 'utf8')).entries as { name: string; passed?: boolean }[];
   expect(journal.filter((e) => e.name === 'correction').map((e) => e.passed)).toEqual([true, true, true, true, true, true, true, true, false]);
-  expect(readFileSync(join(folder, 'map/role_reading.sql'), 'utf8')).toContain('LEFT JOIN ANAES_RECORD');
+  expect(readFileSync(join(unzipped, 'map/role_reading.sql'), 'utf8')).toContain('LEFT JOIN ANAES_RECORD');
   expect(requestsWhileOffline).toEqual([]);
 });
 
 // A Yes on a column that holds codes: the row says what the page assumes, a Yes leads straight on to the 1-or-0 form,
-// the row and the rail say that the codes are not yet translated, the folder is a draft that lists the column, and the
+// the row and the rail say that the codes are not yet translated, the hospital schema is a draft that lists the column, and the
 // translation kept on the proposed column is a confirmation.
 test('a Yes on a column that holds codes leads on to its translation', async ({ page, context, browserName }) => {
   test.setTimeout(400_000);
@@ -578,7 +593,7 @@ test('a Yes on a column that holds codes leads on to its translation', async ({ 
   await expect(row.getByLabel(c.tableLabel, { exact: true })).toHaveValue('PERSON_MASTER');
   await expect(page.locator('#rail a[href="#step-6"]')).toContainText('1 still to translate');
   await expect(page.locator('#step-6')).not.toHaveAttribute('data-state', 'done');
-  // Step 9 lists the column and calls the folder a draft until it is translated.
+  // Step 9 lists the column and calls the hospital schema a draft until it is translated.
   await openStep(page, 9);
   await expect(page.locator('#write-draft-list')).toContainText('The test patient in Patients');
   await expect(page.locator('#t-write-draft')).toContainText('1 still to translate');
@@ -598,7 +613,7 @@ test('a Yes on a column that holds codes leads on to its translation', async ({ 
   await expect(row.getByLabel(c.valueRows('N', 1200))).not.toBeChecked();
   await expect(row.locator('.correction-sentence')).toContainText('is 1 where PERSON_MASTER.TEST_PERSON_FLAG holds Y, and 0 where it holds anything else or is empty.');
   await row.getByRole('button', { name: c.checkButton }).click();
-  // The first check of a sitting also builds the map as it stands, so it takes the longest.
+  // The first test of a sitting also builds the hospital schema as it stands, so it takes the longest.
   await expect(row.locator('.check-report')).toBeVisible({ timeout: 300_000 });
   await expect(row.locator('.passed-means')).toHaveText(c.passedMeans);
   await stage(page, 'd1-checked', '#confirm [data-about="role_patient.is_test"]');
@@ -612,4 +627,42 @@ test('a Yes on a column that holds codes leads on to its translation', async ({ 
   // Its test query counts 1 and 0 alone, as the form never leaves this flag empty.
   await expect(row.locator('.probe .note').first()).toHaveText(c.probeWhat.flag_two);
   await stage(page, 'd1-translated', '#confirm [data-about="role_patient.is_test"]');
+});
+
+// The invented dictionary, loaded at step 2 while the tab is still online, then the tab taken offline: the receipt says
+// which dictionary was read, the real file's control stays shut until the tab is offline, and the saved hospital schema
+// says on its first line that it describes no hospital.
+test('the invented dictionary is loaded while online and marks the saved schema as practice', async ({ page, context, browserName }) => {
+  test.setTimeout(240_000);
+  await page.goto('./describe.html');
+  await expect(page.getByText(d.loaded)).toBeVisible({ timeout: 90_000 });
+  // A real dictionary is never loaded online, so its control is shut; the invented one is offered from step 1.
+  await expect(page.locator('#dictionary')).toBeDisabled();
+  await page.locator('#t-offline-invented a').click();
+  await expect(page.locator('#step-2 .body')).toBeVisible();
+  await expect(page.locator('#dictionary')).toBeDisabled();
+  await expect(page.locator('#h-choice-real')).toHaveText(d.choiceReal);
+  await page.locator('#invented-load').click();
+  const receipt = d.dictionaryReceipt({ tables: 25, columns: 98, described: 98, keyed: 25, skipped: 0, source: 'invented' });
+  await expect(page.locator('#t-dictionary-status')).toHaveText(receipt);
+  await stage(page, 'i1-invented', '#step-2');
+  await setOnline(page, context, browserName, false);
+  await expect(page.locator('#receipt-1')).toHaveText(d.offlineDone);
+  await expect(page.locator('#receipt-2')).toHaveText(receipt);
+  // Offline, the invented dictionary is not fetched again, and the page says why.
+  await openStep(page, 2);
+  await page.locator('#invented-load').click();
+  await expect(page.locator('#t-invented-status')).toHaveText(d.inventedOnlineOnly);
+  await page.locator('#propose').click();
+  await expect(page.locator('#step-4')).toHaveAttribute('data-state', 'done', { timeout: 60_000 });
+  await openStep(page, 9);
+  const download = page.waitForEvent('download');
+  await page.locator('#write-save').click();
+  const saved = await download;
+  const path = join(mkdtempSync(join(tmpdir(), 'hospital-')), 'practice.schemalyser.zip');
+  await saved.saveAs(path);
+  const read = (name: string) => execFileSync('python3', ['-c', 'import sys, zipfile; sys.stdout.write(zipfile.ZipFile(sys.argv[1]).read(sys.argv[2]).decode())', path, name], { encoding: 'utf8' });
+  expect(read('README.md').split('\n')[0]).toBe('This file was made with the invented dictionary, for practice, and describes no hospital.');
+  expect(JSON.parse(read('settings.json')).invented).toBe(true);
+  expect(JSON.parse(read('journal.json')).entries[0].invented).toBe(true);
 });
