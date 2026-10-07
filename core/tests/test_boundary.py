@@ -384,11 +384,14 @@ def test_everything_adds_the_provenance_to_the_outputs_as_write_does(invented):
 # What the module needs and what it reaches.
 
 def test_the_module_imports_without_duckdb_and_the_run_opens_no_network_module(invented, tmp_path):
-    # The interpreter's own start-up may import a network module on some systems (a site file on a
-    # build server, for example), so only what the import and the run add is counted.
+    # What the interpreter and the parser the tool depends on import is not the tool's doing: on Linux,
+    # sqlglot reads its own version through a standard module that pulls in the email package, which
+    # imports socket without ever opening a connection. So only what the tool's own import and run add
+    # beyond its dependency is counted.
     code = (
         "import sys\n"
         "network = ('socket', 'ssl', 'http.client', 'urllib.request')\n"
+        "import sqlglot\n"
         "at_start = {m for m in network if m in sys.modules}\n"
         "import schemalyser.boundary as b\n"
         "assert 'duckdb' not in sys.modules, 'duckdb at import'\n"

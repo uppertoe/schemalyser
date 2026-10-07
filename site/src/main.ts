@@ -1,5 +1,5 @@
 import { sandboxStrings } from './sandbox-strings';
-import { catalogueQuery, githubStrings, packFiles, strings } from './strings';
+import { catalogueQuery, githubStrings, packFiles, strings, type Guide } from './strings';
 import { REPOSITORY, isStateFile, type FetchReply, type FetchRequest, type RepositoryReport } from './github-protocol';
 
 declare const __VERSION__: string;
@@ -557,6 +557,8 @@ function askElement(item: Item) {
   const box = el('div', undefined, 'ask');
   box.dataset.ask = ask.kind;
   box.append(el('p', strings.questionFirst, 'ask-label'), el('p', ask.text, 'ask-text'));
+  // Beside the question, in one line, why Schemalyser asks it and what the answer changes.
+  if (strings.askWhy[ask.kind]) box.append(el('p', strings.askWhy[ask.kind], 'note ask-why'));
   const send = (fact: Record<string, unknown>) => sendFacts(box, [fact]);
   const actions = el('div', undefined, 'actions');
   if (ask.kind === 'route') {
@@ -975,7 +977,8 @@ function showListed(columns: string[], rows: { code: string; readings: number | 
     facts.push({ kind: 'listed', column: listed.column, year: listed.year, rows: rows.length });
     sendFacts(shown, facts);
   });
-  shown.replaceChildren(el('p', strings.listedFound(rows.length, rows.filter((_, i) => selects[i][2].dataset.likely).length), 'note'), filter, table, save);
+  shown.replaceChildren(el('p', strings.listedFound(rows.length, rows.filter((_, i) => selects[i][2].dataset.likely).length, listed.year ?? 0), 'note'),
+    filter, table, save);
   listedShown = { column: listed.column, year: listed.year ?? 0, columns, rows };
 }
 
@@ -1014,7 +1017,8 @@ function yearCountBox() {
   label.append(area);
   const shown = el('div', undefined, 'count-result');
   box.append(el('p', strings.countPlan, 'sizes-reason script-note'),
-    ...(cohortLargest ? [el('p', strings.countCostly(...cohortLargest), 'sizes-reason script-note')] : []));
+    ...(cohortLargest ? [el('p', strings.countCostly(...cohortLargest), 'sizes-reason script-note')] : []),
+    el('p', strings.countHow, 'note count-how'));
   box.append(label, askButton(strings.countRead, 'count-read', () => {
     if (area.value.trim()) worker?.postMessage({ type: 'year-count', text: area.value });
   }), shown);
@@ -1047,7 +1051,9 @@ function showYearCount(years: (number | null)[][]) {
   // The earliest year with anaesthetics is offered as the start of the study period, where none has been entered.
   const from = document.querySelector<HTMLInputElement>('input.setting-date');
   if (from && !from.value && years.length) from.value = `${years[0][0]}-01-01`;
-  shown.replaceChildren(table, ask, actions);
+  const received = years.length
+    ? [el('p', strings.countReceived(years.length, Number(years[0][0]), Number(years[years.length - 1][0])), 'status good count-received')] : [];
+  shown.replaceChildren(...received, table, ask, actions);
 }
 
 // A block of text that the core wrote, with buttons that copy it and, where given, save it.
@@ -1376,7 +1382,7 @@ function remainingPoints(target: Target, needs: NonNullable<Target['needs']>): P
 // Where the audit stands, in plain words, with what remains and who can settle each part, and where to keep the state.
 function endingElement(target: Target, needs: NonNullable<Target['needs']>, ready: boolean, points: Point[]) {
   const box = el('div', undefined, 'sizes ending');
-  box.append(el('h4', strings.endingHeading));
+  box.append(el('h4', strings.endingHeading), el('p', strings.endingWhat, 'sizes-reason'));
   box.append(el('p', strings.endingSettled(needs.settled), 'note'));
   if (points.length) {
     box.append(el('p', strings.endingRemaining, 'note'));
@@ -1449,7 +1455,7 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
     routes.append(...target.routes.map((sentence) => el('p', sentence, 'note')));
     section.append(routes);
   }
-  // The questions that a colleague can answer from knowledge come first, as one list to send.
+  // 4.2: the questions that a colleague can answer from knowledge, as one list to send.
   if (target.questions) {
     const questions = textBlock('questions', strings.questionsHeading, strings.questionsWhat, target.questions, strings.questionsCopy);
     const who = el('label', strings.whoLabel);
@@ -1463,13 +1469,11 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
     questions.append(who);
     section.append(questions);
   }
-  section.append(settingsElement(target));
-  if (target.charted) section.append(chartedElement(target));
 
-  // The table sizes query comes first, because every other query waits for the sizes it gives.
+  // 4.3: the table sizes query, before the points, because every other short query waits for the sizes it gives.
   if (target.sizes) {
     const sizes = el('div', undefined, 'sizes');
-    sizes.append(el('h4', strings.sizesHeading), el('p', target.sizes.reason, 'sizes-reason'));
+    sizes.append(el('h4', strings.sizesHeading), el('p', target.sizes.reason, 'sizes-reason'), el('p', strings.sizesHow, 'sizes-reason'));
     const [code, copy] = queryBlock(target.sizes.sql, 'sizes-query');
     code.dataset.query = 'sizes';
     copy.dataset.query = 'sizes';
@@ -1519,13 +1523,12 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
     missingShown.add(item.missing);
     return true;
   };
+  // 4.4: the points that need the colleague now, each with its question or short query, the count by year among them.
   const open = target.rows.filter((item) => item.group !== 'answered' && firstStage(item)).filter(once);
   const yours = ordered(open.filter(needsYou));
   section.append(el('h4', strings.groupYou));
   if (yours.length) section.append(el('p', strings.groupYouNote, 'note'), itemList('you', yours.map(offered)));
   else section.append(el('p', strings.groupYouNone, 'note'));
-  // Once the count by year has been seen, the codes are chosen from the list of what is charted on the cohort.
-  if (target.listed && !target.listed.waiting) section.append(listedElement(target));
   // The answers that a person gave stay in view, each beside the button that changes it, and none is folded away: every
   // item that holds such an answer and is not already shown above is listed here.
   const given = (item: Item) => !!item.withdraw?.length && !fresh.includes(item) && !yours.includes(item);
@@ -1557,6 +1560,11 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
       itemList('unneeded', unneeded.map((item) => itemElement(item))));
     section.append(folded);
   }
+  // 4.5: once the count by year has been seen, the codes are chosen from the list of what is charted on the cohort.
+  if (target.listed && !target.listed.waiting) section.append(listedElement(target));
+  // 4.6: the study period, the kinds of anaesthetic and the decisions; 4.7: the optional count of the chosen codes.
+  section.append(settingsElement(target));
+  if (target.charted) section.append(chartedElement(target));
   // The ending, whatever the state of the checklist: what is settled, what remains and who can settle it, the button
   // that saves the state, and the specification, in which each open point is an unsettled assumption.
   section.append(endingElement(target, needs, sourceReady, points));
@@ -1817,7 +1825,7 @@ function onMessage(event: MessageEvent) {
       firstChecks = new File([message.checks], 'checks.csv', { type: 'text/csv' });
       result.className = 'status good';
       result.textContent = strings.firstReadDone(message.facts.tables, message.facts.columns, message.facts.sized)
-        + (message.missing?.length ? ` ${strings.firstMissing(message.missing)}` : '');
+        + (message.missing?.length ? ` ${strings.firstMissing(message.missing)}` : '') + ` ${strings.firstReadNext}`;
       $<HTMLTextAreaElement>('first-paste').value = '';
     }
   } else if (message.type === 'state-zip') {
@@ -2272,6 +2280,17 @@ const fixed: Record<string, string> = {
   title: strings.title,
   intro: strings.intro,
   't-catalogue-why': strings.catalogueWhy,
+  's-overview': strings.overviewSummary,
+  't-overview-lead': strings.overviewLead,
+  't-overview-private': strings.overviewPrivate,
+  't-overview-example': strings.overviewExample,
+  's-glossary': strings.glossarySummary,
+  'h-state': strings.stateHeading,
+  'h-sql': strings.sqlHeading,
+  'h-analyse': strings.analyseHeading,
+  't-analyse-what': strings.analyseWhat,
+  't-first-shape': strings.firstShape,
+  't-first-use': strings.firstUse,
   query: catalogueQuery,
   copy: strings.copyQuery,
   't-query-safe': strings.querySafe,
@@ -2355,18 +2374,18 @@ const fixed: Record<string, string> = {
   'save-profile': strings.saveProfile,
   't-save-profile': strings.saveProfileNote,
   'download-check-script': strings.downloadCheckScript,
-  't-build-what': sandboxStrings.buildWhat,
-  'l-rows': sandboxStrings.rowsLabel,
-  build: sandboxStrings.build,
-  't-building': sandboxStrings.building,
-  't-invented': sandboxStrings.invented,
+  't-build-what': strings.practiceBuildWhat,
+  'l-rows': strings.practiceRows,
+  build: strings.practiceBuild,
+  't-building': strings.practiceBuilding,
+  't-invented': strings.practiceInvented,
   't-no-values-yet': sandboxStrings.noValuesYet,
   't-uses-checks': strings.usesChecks,
-  'l-sql': sandboxStrings.queryWhat,
-  run: sandboxStrings.run,
+  'l-sql': strings.practiceQuery,
+  run: strings.practiceRun,
   's-translated': sandboxStrings.showTranslated,
   't-runs-chosen': strings.runsChosenRequests,
-  'run-requests': sandboxStrings.runRequests,
+  'run-requests': strings.practiceRunFiles,
   'h-safeguards': strings.safeguardsHeading,
   't-check-yourself': strings.checkYourself,
   'a-sandbox': strings.openSandbox,
@@ -2398,6 +2417,29 @@ if (github) {
   for (const [id, value] of Object.entries(proposed)) text(id, value);
 }
 strings.steps.forEach((heading, i) => text(`h-step-${i + 1}`, heading));
+$('overview').replaceChildren(...strings.overview.map(([heading, what]) => {
+  const stage = el('li');
+  stage.append(el('strong', heading), document.createTextNode(`. ${what}`));
+  return stage;
+}));
+// Each step in the same shape: what it is for and who does it, what to do, what you see when it has worked, what
+// Schemalyser does with what you gave it, and what comes next.
+function guide(box: HTMLElement, shape: Guide) {
+  const parts: HTMLElement[] = [];
+  if (shape.purpose) parts.push(el('p', shape.purpose, 'guide-purpose'));
+  if (shape.steps?.length) {
+    const list = el('ol', undefined, 'guide-steps');
+    list.append(...shape.steps.map((step) => el('li', step)));
+    parts.push(list);
+  }
+  for (const [line, className] of [[shape.worked, 'guide-worked'], [shape.does, 'guide-does'], [shape.next, 'guide-next']] as const) {
+    if (line) parts.push(el('p', line, className));
+  }
+  box.replaceChildren(...parts);
+}
+strings.guides.forEach((shape, i) => guide($(`g-step-${i + 1}`), shape));
+$('t-first-how').replaceChildren(...strings.firstHow.map((step) => el('li', step)));
+$('glossary').replaceChildren(...strings.glossary.flatMap(([term, meaning]) => [el('dt', term), el('dd', meaning)]));
 $('safeguards').replaceChildren(...strings.safeguards.map((sentence) => el('li', sentence)));
 $('t-offline-how').replaceChildren(...strings.offlineHow.map((sentence) => el('li', sentence)));
 // The fetch from GitHub is folded away, as a meeting does not need it, and opened at once by a link that asks for it.

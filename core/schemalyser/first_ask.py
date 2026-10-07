@@ -35,9 +35,10 @@ SIZE_COLUMN = "TABLE_ROWS"
 LAYOUT = QUERY_ORDER + (SIZE_COLUMN,)
 WIDTH = 100
 WORDING = {
-    "comment": "This query lists every column of each table below that exists, with the size of the table from "
-               "SQL Server's own records, rounded down to the nearest ten. It reads only the server's own records "
-               "and no table. Please run it, copy the whole results grid with its headers, and paste it into the page.",
+    "comment": "This is the tables and columns query. It lists every column of each table below that exists, with the "
+               "number of rows in the table from SQL Server's own records, rounded down to the nearest ten. It reads only "
+               "the server's own records and no row of any table. Please run it, select the whole results grid, copy it "
+               "with its headers, and paste it into the box below the query on the page.",
 }
 
 

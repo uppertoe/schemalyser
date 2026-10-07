@@ -365,7 +365,7 @@ test('without a catalogue, one first query of names and sizes starts the project
   for (const row of catalogueRows.filter((r) => names.includes(r[1]))) lines.push([...row.map((c) => c || 'NULL'), '600'].join('\t'));
   await page.locator('#first-paste').fill(lines.join('\n'));
   await page.locator('#first-read').click();
-  await expect(page.locator('#t-first-result')).toContainText('You can now analyse the files.');
+  await expect(page.locator('#t-first-result')).toContainText('You can now choose Analyse the folder and the SQL files');
   // Every table that the audit needs came back, so nothing suggests the wrong database.
   await expect(page.locator('#t-first-doubt')).toBeHidden();
   await expect(page.locator('#analyse')).toBeEnabled();
@@ -621,7 +621,7 @@ test('a state saved part of the way loads on a fresh page without the request fi
   for (const row of catalogueRows.filter((r) => names.includes(r[1]))) lines.push([...row.map((c) => c || 'NULL'), '600'].join('\t'));
   await page.locator('#first-paste').fill(lines.join('\n'));
   await page.locator('#first-read').click();
-  await expect(page.locator('#t-first-result')).toContainText('You can now analyse the files.');
+  await expect(page.locator('#t-first-result')).toContainText('You can now choose Analyse the folder and the SQL files');
   await page.locator('#analyse').click();
   await expect(page.locator('#checklists section.target')).toHaveCount(world.targets.length, { timeout: 120_000 });
   const section = page.locator('section.target[data-target="neonatal_low_mean_pressure"]');

@@ -804,3 +804,81 @@ a:focus-visible {
   margin: 0 0.4rem 0.4rem 0;
   max-width: 22rem;
 }
+
+/* The overview at the top: the seven steps of the meeting, with who does each. */
+.overview {
+  margin: 1.25rem 0 0;
+  max-width: 50rem;
+  padding: 0.9rem 1.1rem 0.2rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: 5px;
+}
+
+.overview summary {
+  font-size: 1.02rem;
+  font-weight: 600;
+  margin-bottom: 0.6rem;
+}
+
+.overview-steps {
+  margin: 0 0 0.9rem;
+  padding-left: 1.4rem;
+  max-width: 46rem;
+}
+
+.overview-steps li {
+  margin: 0 0 0.5rem;
+}
+
+/* Each step in the same shape: what it is for, what to do, what you see, what Schemalyser does, and what comes next. */
+.guide {
+  margin: 0 0 1.1rem;
+  padding: 0 0 0.3rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.guide:empty {
+  display: none;
+}
+
+.guide-steps {
+  margin: 0 0 0.9rem;
+  padding-left: 1.4rem;
+  max-width: 44rem;
+}
+
+.guide-steps li {
+  margin: 0 0 0.35rem;
+}
+
+.guide-next {
+  font-weight: 600;
+}
+
+h3.part {
+  margin: 1.4rem 0 0.5rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.item .ask-why {
+  margin-top: 0.3rem;
+}
+
+/* The glossary, folded away at the end. */
+.glossary {
+  margin: 0 0 2rem;
+  max-width: 50rem;
+}
+
+.glossary dt {
+  margin-top: 0.7rem;
+  font-weight: 600;
+}
+
+.glossary dd {
+  margin: 0.15rem 0 0;
+  max-width: 44rem;
+}

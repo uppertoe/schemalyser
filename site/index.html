@@ -18,6 +18,14 @@
     <header class="masthead">
       <h1 id="title"></h1>
       <p id="intro" class="intro"></p>
+      <!-- The overview: the seven steps of the meeting, numbered as the steps below are, with who does each. -->
+      <details id="d-overview" class="overview" open>
+        <summary id="s-overview"></summary>
+        <p id="t-overview-lead"></p>
+        <p id="t-overview-private"></p>
+        <ol id="overview" class="overview-steps"></ol>
+        <p id="t-overview-example"></p>
+      </details>
     </header>
 
     <div class="layout">
@@ -27,6 +35,7 @@
             <h2 id="h-step-1"></h2>
             <div class="body">
               <p id="t-catalogue-why"></p>
+              <div id="g-step-1" class="guide"></div>
               <details id="d-catalogue">
                 <summary id="s-catalogue"></summary>
                 <p id="t-skip-catalogue" class="note"></p>
@@ -40,6 +49,7 @@
           <li class="step" id="step-2">
             <h2 id="h-step-2"></h2>
             <div class="body">
+              <div id="g-step-2" class="guide"></div>
               <p id="t-loading" class="status"></p>
               <p id="t-load-failed" class="status problem" hidden></p>
               <div id="b-loaded" hidden>
@@ -108,12 +118,23 @@
               <p id="t-offline" class="status good"></p>
               <p id="t-example-chosen" class="status example" hidden></p>
               <p id="t-kept" class="note" hidden></p>
+              <div id="g-step-3" class="guide"></div>
+              <h3 id="h-state" class="part"></h3>
               <div class="field">
                 <label for="state-folder" id="l-state"></label>
                 <input type="file" id="state-folder" webkitdirectory />
                 <p id="t-state-note" class="note"></p>
                 <p id="t-state-found" class="count" hidden></p>
               </div>
+              <h3 id="h-sql" class="part"></h3>
+              <div class="field">
+                <label for="folder" id="l-folder"></label>
+                <input type="file" id="folder" webkitdirectory />
+                <p id="t-folder-note" class="note"></p>
+                <p id="t-folder-count" class="count" hidden></p>
+              </div>
+              <details id="d-other-files">
+              <summary id="s-other-files"></summary>
               <div class="field">
                 <label for="catalogue" id="l-catalogue"></label>
                 <input type="file" id="catalogue" accept=".csv,text/csv" />
@@ -125,29 +146,20 @@
                 <p id="t-rules-note" class="note"></p>
               </div>
               <div class="field">
-                <label for="folder" id="l-folder"></label>
-                <input type="file" id="folder" webkitdirectory />
-                <p id="t-folder-note" class="note"></p>
-                <p id="t-folder-count" class="count" hidden></p>
-              </div>
-              <details id="d-other-files">
-              <summary id="s-other-files"></summary>
-              <div class="field">
                 <label for="checks" id="l-checks"></label>
                 <input type="file" id="checks" accept=".csv,text/csv" />
                 <p id="t-checks-note" class="note"></p>
               </div>
               </details>
-              <!-- Without a catalogue: one query of the names and sizes of the tables that the requests read. The
-                   query holds names from the requests, so it exists only on this page. -->
+              <!-- Without a list of tables and columns: the tables and columns query, of the names and sizes of the tables
+                   that the SQL files and the audit's steps read. The query holds names from the SQL files, so it exists only on
+                   this page. -->
               <section id="b-first" class="add" hidden>
                 <h3 id="h-first"></h3>
                 <p id="t-first-what"></p>
-                <details id="d-first-note">
-                  <summary id="s-first-note"></summary>
-                  <pre id="first-note" class="code wrap-text"></pre>
-                  <div class="actions"><button type="button" id="note-copy" class="secondary"></button></div>
-                </details>
+                <ol id="t-first-how" class="guide-steps"></ol>
+                <p id="t-first-shape"></p>
+                <p id="t-first-use"></p>
                 <!-- Which database the SQL window is connected to, chosen before anything is run. -->
                 <fieldset id="b-database" class="database-choice">
                   <legend id="l-database"></legend>
@@ -165,7 +177,14 @@
                 </div>
                 <p id="t-first-doubt" class="status problem first-doubt" role="alert" hidden></p>
                 <p id="t-first-result" class="status" hidden></p>
+                <details id="d-first-note">
+                  <summary id="s-first-note"></summary>
+                  <pre id="first-note" class="code wrap-text"></pre>
+                  <div class="actions"><button type="button" id="note-copy" class="secondary"></button></div>
+                </details>
               </section>
+              <h3 id="h-analyse" class="part"></h3>
+              <p id="t-analyse-what"></p>
               <p id="t-catalogue-error" class="status problem" hidden></p>
               <p id="t-checks-error" class="status problem" hidden></p>
               <p id="t-analysis-failed" class="status problem" hidden></p>
@@ -176,29 +195,13 @@
           <li class="step" id="step-4">
             <h2 id="h-step-4"></h2>
             <div class="body">
+              <div id="g-step-4" class="guide"></div>
               <div id="b-progress" hidden>
                 <p id="t-progress" class="status"></p>
                 <progress id="progress-bar" max="1" value="0"></progress>
               </div>
               <div id="checklist" hidden>
                 <p id="t-example-banner" class="status example" hidden></p>
-                <!-- The loop: more requests are added here and analysed again, without starting over. -->
-                <section id="b-add" class="add">
-                  <h3 id="h-add"></h3>
-                  <p id="t-add-what"></p>
-                  <div class="add-fields">
-                    <div class="field">
-                      <label for="add-files" id="l-add-files"></label>
-                      <input type="file" id="add-files" multiple accept=".sql" />
-                    </div>
-                    <div class="field">
-                      <label for="add-folder" id="l-add-folder"></label>
-                      <input type="file" id="add-folder" webkitdirectory />
-                    </div>
-                  </div>
-                  <p id="t-held" class="count"></p>
-                  <button type="button" id="reanalyse"></button>
-                </section>
                 <div id="b-restart" hidden>
                   <p id="t-restart-what"></p>
                   <button type="button" id="restart" class="secondary"></button>
@@ -241,6 +244,23 @@
                 </section>
                 <div id="boundary-notes"></div>
                 <div id="checklists"></div>
+                <!-- The loop: more SQL files are added here, at the end of the checklists, and analysed again, without starting over. -->
+                <section id="b-add" class="add">
+                  <h3 id="h-add"></h3>
+                  <p id="t-add-what"></p>
+                  <div class="add-fields">
+                    <div class="field">
+                      <label for="add-files" id="l-add-files"></label>
+                      <input type="file" id="add-files" multiple accept=".sql" />
+                    </div>
+                    <div class="field">
+                      <label for="add-folder" id="l-add-folder"></label>
+                      <input type="file" id="add-folder" webkitdirectory />
+                    </div>
+                  </div>
+                  <p id="t-held" class="count"></p>
+                  <button type="button" id="reanalyse"></button>
+                </section>
               </div>
             </div>
           </li>
@@ -248,6 +268,7 @@
           <li class="step" id="step-5">
             <h2 id="h-step-5"></h2>
             <div class="body">
+              <div id="g-step-5" class="guide"></div>
               <div id="results" hidden>
                 <p id="t-files-sentence" class="status good"></p>
                 <p id="t-found-sentence"></p>
@@ -276,6 +297,7 @@
           <li class="step" id="step-6">
             <h2 id="h-step-6"></h2>
             <div class="body">
+              <div id="g-step-6" class="guide"></div>
               <p id="t-download-holds" hidden></p>
               <details id="d-summary" hidden>
                 <summary id="s-summary"></summary>
@@ -297,6 +319,7 @@
           <li class="step" id="step-7">
             <h2 id="h-step-7"></h2>
             <div class="body">
+              <div id="g-step-7" class="guide"></div>
               <div id="b-build-form">
                 <p id="t-build-what"></p>
                 <div class="field">
@@ -339,6 +362,11 @@
             </div>
           </li>
         </ol>
+        <!-- Every term that the page explains, folded away, so that an explanation can be found again. -->
+        <details id="d-glossary" class="glossary">
+          <summary id="s-glossary"></summary>
+          <dl id="glossary"></dl>
+        </details>
       </main>
 
       <aside>

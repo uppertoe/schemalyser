@@ -196,7 +196,7 @@ def _actor(row):
         return ""
     item = target._item(row) if target.WORDING["item"].get(row.get("_wording")) or \
         target.WORDING["item"].get(row["kind"]) else ""
-    return target.WORDING["readiness"]["act"].format(who=who, item=item or "this item", how=how)
+    return target.WORDING["readiness"]["act"].format(who=who, item=item or "this point", how=how)
 
 
 def _reading():
