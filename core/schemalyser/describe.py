@@ -85,9 +85,9 @@ WORDING = {
     "not_found": "The dictionary holds no column {name}.",
     "not_found_catalogue": "The result of the tables and columns query holds no column {name}.",
     "not_a_name": "Please write the replacement as TABLE.COLUMN, such as the name of a table, a full stop and the name of one of its columns.",
-    "no_dictionary": "Please load the dictionary in step 2 first, because Schemalyser needs it to find how the view reaches that table.",
+    "no_dictionary": "Please load the dictionary in step 2 first, because Schemalyser needs it to find how this part reaches that table.",
     "no_table": "The dictionary holds no table {name}.",
-    "unreachable": "The view's table does not reach {table} by any link that the dictionary shows, so Schemalyser cannot use that column here.",
+    "unreachable": "This part's own table does not reach {table} by any link that the dictionary shows, so Schemalyser cannot use that column here.",
     "unknown_count": "Schemalyser does not know a count named {name}.",
     "grid_columns": "The pasted text does not have the columns that the query returns ({wanted}). Please copy the whole results grid with Copy with Headers, and paste it again.",
     "grid_empty": "The pasted text holds no rows. If the query returned no rows, the grid is empty; otherwise please copy the whole results grid with Copy with Headers, and paste it again.",
@@ -1126,8 +1126,8 @@ class Describe:
         """The counts of this screen: two that read the small tables only, and the readings of one year's cohort by kind
         as a two-part script. Each is {"name", "safe", "sql", "tables"}."""
         year = int(year or self.settings.get("year") or dt.date.today().year - 1)
-        step = 10
-        rounded = lambda n: f"g.{n} - g.{n} % {step} AS {n}"  # noqa: E731
+        rounding = 10
+        rounded = lambda n: f"g.{n} - g.{n} % {rounding} AS {n}"  # noqa: E731
         coverage = ("with_patient", "with_birth_date", "with_death_date", "test_patients", "with_stop", "stop_before_start")
         found = []
         small = self._tables_of("role_patient") + self._tables_of("role_anaesthetic")

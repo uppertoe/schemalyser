@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 import { setOnline } from './network';
 import { describeStrings as d } from '../src/describe-strings';
-import { strings } from '../src/strings';
 
 // The page Describe the record, walked through with the invented dictionary and the invented world: loaded, taken
 // offline, the map proposed, the tables and columns query answered from the invented catalogue, some bindings
@@ -41,19 +40,37 @@ const coverage = [
   '2024\t420\t420\t410\t10\t0\t410\t0',
 ].join('\n');
 
-async function stage(page: Page, name: string) {
+// With DESCRIBE_PASS set, each stage saves the page's text and a screenshot of the step in hand, at the size that
+// DESCRIBE_VIEWPORT gives (such as 390x844), for reading the screen as a person would meet it.
+async function stage(page: Page, name: string, step?: string) {
   if (!pass) return;
   const { writeFileSync, mkdirSync } = await import('node:fs');
   mkdirSync(pass, { recursive: true });
   writeFileSync(join(pass, `${name}.txt`), await page.locator('body').innerText());
+  const target = page.locator(step ?? 'main [aria-current="step"]').first();
+  if (await target.count()) await target.evaluate((node) => node.scrollIntoView({ block: 'start', behavior: 'instant' }));
+  else await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+  await page.screenshot({ path: join(pass, `${name}.png`) });
+  // Nothing on the page scrolls sideways, at a phone's width as well.
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(page.viewportSize()!.width);
+}
+
+// A step that is not the current one is folded; the rail opens it.
+async function openStep(page: Page, n: number | string) {
+  await page.locator(`#rail a[href="#step-${n}"]`).click();
+  await expect(page.locator(`#step-${n} .body`)).toBeVisible();
 }
 
 async function loadAndGoOffline(page: Page, context: import('@playwright/test').BrowserContext, browserName: string) {
+  const size = process.env.DESCRIBE_VIEWPORT?.match(/^(\d+)x(\d+)$/);
+  if (size) await page.setViewportSize({ width: Number(size[1]), height: Number(size[2]) });
   await page.goto('./describe.html');
-  await expect(page.getByText(strings.loaded)).toBeVisible({ timeout: 90_000 });
+  await expect(page.getByText(d.loaded)).toBeVisible({ timeout: 90_000 });
   await expect(page.locator('#dictionary')).toBeDisabled();
   await setOnline(page, context, browserName, false);
-  await expect(page.getByText(d.offlineDone)).toBeVisible();
+  // Step 1 folds to its receipt once the tab is offline.
+  await expect(page.locator('#receipt-1')).toHaveText(d.offlineDone);
+  await expect(page.locator('#receipt-1')).toBeVisible();
 }
 
 async function loadDictionary(page: Page) {
@@ -79,7 +96,7 @@ test('the record is described, written as a hospital folder and restored from it
 
   await loadAndGoOffline(page, context, browserName);
   offline = true;
-  await stage(page, '1-offline');
+  await stage(page, '1-offline', 'body');
 
   // The dictionary, with its receipt.
   await loadDictionary(page);
@@ -87,12 +104,12 @@ test('the record is described, written as a hospital folder and restored from it
 
   // The proposal, role by role, with the dictionary's definition beside each attribute.
   await page.locator('#propose').click();
-  await expect(page.locator('#t-propose-status')).toContainText('Schemalyser has proposed', { timeout: 60_000 });
+  await expect(page.locator('#t-propose-status')).toContainText('The page has proposed', { timeout: 60_000 });
   const birth = page.locator('#proposal [data-about="role_patient.birth_date"]');
   await expect(birth).toContainText('PERSON_MASTER.BIRTH_TS');
   await expect(birth).toContainText('The date and time on which the patient was born.');
   await expect(page.locator('#proposal [data-role="role_unit_stay"]')).toContainText(d.roleUndrafted);
-  await stage(page, '4-proposed');
+  await stage(page, '4-proposed', '#step-4');
 
   // The tables and columns query, and its result.
   await page.locator('#database-options input[value="training"]').check();
@@ -101,13 +118,13 @@ test('the record is described, written as a hospital folder and restored from it
   await expect(page.locator('#tables-query')).toContainText("N'OBS_READING'");
   await page.locator('#tables-paste').fill(tablesResult());
   await page.locator('#tables-read').click();
-  await expect(page.locator('#t-tables-status')).toContainText('Schemalyser has read the result of the tables and columns query');
+  await expect(page.locator('#t-tables-status')).toContainText('The page has read the result');
   const value = page.locator('#confirm [data-about="role_reading.value"]');
   await expect(value).toContainText(d.presence.large('OBS_READING', 25_000_000));
-  await stage(page, '5-tables');
+  await stage(page, '5-tables', '#step-5');
 
   // Some bindings confirmed, one corrected by hand, one not sure.
-  const total = Number((await page.locator('#t-tally').innerText()).match(/^Of (\d+) bindings/)![1]);
+  const total = Number((await page.locator('#t-tally').textContent())!.match(/^Of (\d+) columns/)![1]);
   expect(total).toBeGreaterThan(40);
   await page.locator('#confirm [data-about="role_patient.birth_date"]').getByRole('button', { name: d.yes }).click();
   await expect(page.locator('#confirm [data-about="role_patient.birth_date"]')).toContainText('Confirmed on');
@@ -122,9 +139,10 @@ test('the record is described, written as a hospital folder and restored from it
   await expect(page.locator('#confirm [data-about="role_anaesthetic.patient_key"]')).toContainText('Corrected to THEATRE_CASE.PERSON_KEY');
   await expect(page.locator('#t-tally')).toHaveText(d.tally({ confirmed: 1, corrected: 1, not_sure: 1, remaining: total - 3, total }));
   await expect(page.locator('#questions')).toContainText('role_reading.value: Please confirm whether');
-  await stage(page, '6-confirmed');
+  await stage(page, '6-confirmed', '#confirm [data-about="role_anaesthetic.patient_key"]');
 
-  // The codes of the readings, from a pasted list of what is charted.
+  // The codes of the readings, from a pasted list of what is charted, in step 7, which the rail opens.
+  await openStep(page, 7);
   await page.locator('#year').fill('2024');
   await page.locator('#year').dispatchEvent('change');
   const readings = page.locator('[data-key="role_reading.kind"]');
@@ -136,10 +154,11 @@ test('the record is described, written as a hospital folder and restored from it
   await readings.locator('select[data-code="52"]').selectOption('map_arterial');
   await readings.locator('select[data-code="51"]').selectOption('map_cuff');
   await readings.getByRole('button', { name: d.codesSave }).click();
-  await expect(page.locator('[data-key="role_reading.kind"]')).toContainText('Schemalyser recorded 2 codes for this vocabulary on');
-  await stage(page, '7-codes');
+  await expect(page.locator('[data-key="role_reading.kind"]')).toContainText('The page saved 2 codes for this list on');
+  await stage(page, '7-codes', '[data-key="role_reading.kind"]');
 
   // A count, pasted and judged.
+  await openStep(page, 8);
   await page.locator('#counts-write').click();
   const block = page.locator('[data-count="coverage_by_year"]');
   await expect(block).toContainText(d.countSafe);
@@ -150,16 +169,18 @@ test('the record is described, written as a hospital folder and restored from it
   await page.locator('[data-count="coverage_by_year"] input[value="yes"]').check();
   await page.locator('[data-count="coverage_by_year"]').getByRole('button', { name: d.lookRightSave }).click();
   await expect(page.locator('[data-count="coverage_by_year"]')).toContainText('this count looks right');
-  await stage(page, '8-counts');
+  await stage(page, '8-counts', '[data-count="coverage_by_year"]');
 
   // The folder, as a zip, without the dictionary.
+  await openStep(page, 9);
   await expect(page.locator('#keep-dictionary')).not.toBeChecked();
   const download = page.waitForEvent('download');
   await page.locator('#write-zip').click();
   const saved = await download;
   expect(saved.suggestedFilename()).toBe('hospital-folder.zip');
-  await expect(page.locator('#t-write-status')).toContainText('Schemalyser has saved the hospital folder as a zip of');
-  await stage(page, '9-written');
+  await expect(page.locator('#t-write-status')).toContainText('The page has saved the hospital folder as a zip of');
+  await expect(page.locator('#step-9')).toHaveAttribute('data-state', 'done');
+  await stage(page, '9-written', '#step-9');
   const folder = join(mkdtempSync(join(tmpdir(), 'hospital-')), 'hospital-folder');
   const zipPath = folder + '.zip';
   await saved.saveAs(zipPath);
@@ -180,12 +201,13 @@ test('the record is described, written as a hospital folder and restored from it
   await expect(page.locator('#t-locked')).toBeVisible();
   await loadAndGoOffline(page, context, browserName);
   offline = true;
+  await openStep(page, 3);
   await page.locator('#hospital-folder').setInputFiles(folder);
-  await expect(page.locator('#t-folder-status')).toContainText('Schemalyser has restored the map from the hospital folder.');
+  await expect(page.locator('#t-folder-status')).toContainText('The page has restored the map from the hospital folder.');
   await expect(page.locator('#t-tally')).toHaveText(d.tally({ confirmed: 1, corrected: 1, not_sure: 1, remaining: total - 3, total }));
   await expect(page.locator('#confirm [data-about="role_reading.value"]')).toContainText(d.presence.large('OBS_READING', 25_000_000));
   await expect(page.locator('[data-key="role_reading.kind"] select[data-code="52"]')).toHaveValue('map_arterial');
-  await stage(page, '10-restored');
+  await stage(page, '10-restored', '#rail-nav');
 
   // The check: without the dictionary it lists the queries only, and with it the rebuilt map is the same.
   await page.locator('#check').click();
@@ -198,7 +220,7 @@ test('the record is described, written as a hospital folder and restored from it
   await again.locator('textarea').fill(tablesResult().split('\n').filter((line) => !line.includes('\tVISIT_DIAGNOSIS\t')).join('\n'));
   await again.getByRole('button', { name: d.checkCompare }).click();
   await expect(again).toContainText('The table VISIT_DIAGNOSIS was in the earlier result and is not in the new one.');
-  await stage(page, '11-checked');
+  await stage(page, '11-checked', '#step-check');
   expect(requestsWhileOffline).toEqual([]);
 });
 
@@ -217,16 +239,16 @@ test('each kind of correction is checked on invented rows before it is kept', as
   offline = true;
   await loadDictionary(page);
   await page.locator('#propose').click();
-  await expect(page.locator('#t-propose-status')).toContainText('Schemalyser has proposed', { timeout: 60_000 });
+  await expect(page.locator('#t-propose-status')).toContainText('The page has proposed', { timeout: 60_000 });
   await page.locator('#tables-write').click();
   await page.locator('#tables-paste').fill(tablesResult());
   await page.locator('#tables-read').click();
-  await expect(page.locator('#t-tables-status')).toContainText('Schemalyser has read the result');
+  await expect(page.locator('#t-tables-status')).toContainText('The page has read the result');
 
   // The map as it stands, checked with no change.
   await page.locator('#model-check').click();
-  await expect(page.locator('#model-check-result')).toContainText('The model as it stands has', { timeout: 120_000 });
-  await stage(page, 'c0-model-check');
+  await expect(page.locator('#model-check-result')).toContainText('The map as it stands has', { timeout: 120_000 });
+  await stage(page, 'c0-model-check', '#step-6');
 
   const entry = (about: string) => page.locator(`#confirm [data-about="${about}"]`);
   const open = async (about: string, form: string) => {
@@ -266,14 +288,14 @@ test('each kind of correction is checked on invented rows before it is kept', as
     'is_emergency is 1 where THEATRE_CASE.EMERGENCY_FLAG, reached through ANAES_RECORD.CASE_KEY = THEATRE_CASE.CASE_KEY, holds Y, 0 where it holds anything else, and empty where it is empty.');
   await expect(entry(about).locator('.correction-sql')).toContainText("IN ('Y') THEN 1 ELSE 0 END AS is_emergency");
   await check(about, true);
-  await stage(page, 'c1-flag-checked');
+  await stage(page, 'c1-flag-checked', '#confirm [data-about="role_anaesthetic_detail.is_emergency"]');
   await keep(about);
   await entry(about).getByRole('button', { name: c.probeWrite }).click();
   await expect(entry(about).locator('.probe pre')).toContainText('AS ones');
   await entry(about).getByLabel(c.probePasteLabel).fill('ones\tzeros\tempty\n120\t900\tNULL\n');
   await entry(about).getByRole('button', { name: c.probeRead }).click();
   await expect(entry(about).locator('.probe')).toContainText('The flag is 1 in about 120 rows, 0 in about 900 and empty in fewer than ten.');
-  await stage(page, 'c2-flag-probed');
+  await stage(page, 'c2-flag-probed', '#confirm [data-about="role_anaesthetic_detail.is_emergency"]');
 
   // A number in another unit, checked and discarded.
   about = 'role_patient_detail.birth_weight_grams';
@@ -305,8 +327,8 @@ test('each kind of correction is checked on invented rows before it is kept', as
   // Only some of the rows, kept and probed.
   about = 'role_anaesthetic rows';
   await open(about, 'filter');
-  await table(about, c.tableLabel, 'THEATRE_CASE');
-  await column(about, c.columnLabel, 'CASE_STATUS_CAT');
+  await table(about, c.filterTable, 'THEATRE_CASE');
+  await column(about, c.filterColumn, 'CASE_STATUS_CAT');
   const values = entry(about).getByLabel(c.valuesLabel);
   await values.fill('2');
   await values.press('Tab');
@@ -317,7 +339,7 @@ test('each kind of correction is checked on invented rows before it is kept', as
   await entry(about).getByLabel(c.probePasteLabel).fill('rows_read\tpassing\n1200\t1100\n');
   await entry(about).getByRole('button', { name: c.probeRead }).click();
   await expect(entry(about).locator('.probe')).toContainText('Of about 1,200 rows read, about 1,100 pass the filter.');
-  await stage(page, 'c3-filter');
+  await stage(page, 'c3-filter', '#confirm [data-about="role_anaesthetic rows"]');
 
   // A link through two other tables, then a link that joins on two columns, which is checked and discarded.
   about = 'role_anaesthetic.patient_key';
@@ -366,7 +388,7 @@ test('each kind of correction is checked on invented rows before it is kept', as
     "A reading belongs to the anaesthetic whose VISIT_KEY it shares (OBS_SHEET.VISIT_KEY = ANAES_RECORD.VISIT_KEY), if its reading_time lies between the anaesthetic's start and stop, allowing 15 minutes either side.");
   const windowed = await check(about, true);
   await expect(windowed).toContainText("outside the anaesthetic's window, as the window intends");
-  await stage(page, 'c4-window-checked');
+  await stage(page, 'c4-window-checked', '#confirm [data-about="role_reading.anaesthetic_key"]');
   await keep(about);
   await entry(about).getByRole('button', { name: c.probeWrite }).click();
   await expect(entry(about).locator('.probe pre')).toContainText('INTO   #cohort');
@@ -395,7 +417,7 @@ test('each kind of correction is checked on invented rows before it is kept', as
     'The local code of OBS_READING.OBS_TYPE_KEY is translated to map_arterial (52), and every other code is other.');
   await check(about, true);
   await keep(about);
-  await stage(page, 'c5-kept');
+  await stage(page, 'c5-kept', '#confirm [data-about="role_reading.kind"]');
 
   // A link that repeats readings: reported, refused without a reason, and kept with one.
   about = 'role_reading.anaesthetic_key';
@@ -411,9 +433,9 @@ test('each kind of correction is checked on invented rows before it is kept', as
   await step(2).getByLabel(c.stepToColumn).selectOption('VISIT_KEY');
   await column(about, c.finalColumn('ANAES_RECORD'), 'ANAES_KEY');
   const broken = await check(about, false);
-  await expect(broken).toContainText('This change breaks the model in 1 place:');
+  await expect(broken).toContainText('This change breaks the map in 1 place:');
   await expect(broken).toContainText('readings twice, each linked to a second anaesthetic, so a reading no longer links to exactly one anaesthetic.');
-  await stage(page, 'c6-broken');
+  await stage(page, 'c6-broken', '#confirm [data-about="role_reading.anaesthetic_key"]');
   await entry(about).getByRole('button', { name: c.keep, exact: true }).click();
   await expect(entry(about).locator('.problem-note')).toContainText('tick Keep it although the check fails and give the reason');
   await entry(about).getByRole('button', { name: c.checkButton }).click();
@@ -423,9 +445,10 @@ test('each kind of correction is checked on invented rows before it is kept', as
   await entry(about).getByRole('button', { name: c.keep, exact: true }).click();
   await expect(entry(about).locator('.kept-correction')).toContainText('although the check failed');
   await expect(entry(about).locator('.kept-correction')).toContainText('The reason given: The database team says');
-  await stage(page, 'c7-kept-failing');
+  await stage(page, 'c7-kept-failing', '#confirm [data-about="role_reading.anaesthetic_key"]');
 
   // The folder records each correction with the outcome of its check.
+  await openStep(page, 9);
   const download = page.waitForEvent('download');
   await page.locator('#write-zip').click();
   const saved = await download;

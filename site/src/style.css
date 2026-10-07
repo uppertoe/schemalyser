@@ -953,19 +953,425 @@ h3.part {
   color: var(--muted);
 }
 
-/* The page Describe the record (describe.html). Every step stays open once the page is offline, a finished one too. */
+/* The page Describe the record (describe.html). A rail on the left gives the order of the steps and the state of each;
+   the current step is open, a finished one folds to its receipt, and a waiting one says what it waits for. */
 
-.describe .step[data-state='done'] .body {
-  display: block;
+html:has(body.describe) {
+  scroll-padding-top: 1rem;
 }
 
+@media (prefers-reduced-motion: no-preference) {
+  html:has(body.describe) {
+    scroll-behavior: smooth;
+  }
+}
+
+.describe .masthead {
+  padding-top: 2rem;
+  padding-bottom: 1.25rem;
+}
+
+.describe h1 {
+  font-size: 2rem;
+}
+
+.describe .masthead .note {
+  margin: 0.5rem 0 0;
+}
+
+.describe .layout {
+  grid-template-columns: 16rem minmax(0, 1fr);
+  gap: 2.5rem;
+}
+
+.describe main {
+  min-width: 0;
+}
+
+/* The rail. */
+
+.describe .rail {
+  position: sticky;
+  top: 1rem;
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+}
+
+.describe .rail .connection {
+  font-size: 0.93rem;
+}
+
+.describe .rail-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.describe .rail-step a {
+  display: grid;
+  grid-template-columns: 1.85rem minmax(0, 1fr);
+  column-gap: 0.65rem;
+  padding: 0.45rem 0.5rem;
+  border-radius: 5px;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.describe .rail-step a:hover .rail-name {
+  text-decoration: underline;
+}
+
+.describe .rail-extra {
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--line);
+}
+
+.describe .marker {
+  grid-row: span 2;
+  width: 1.85rem;
+  height: 1.85rem;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--line);
+  border-radius: 50%;
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  background: var(--ground);
+}
+
+.describe .rail-name {
+  font-size: 0.93rem;
+  line-height: 1.3;
+}
+
+.describe .rail-state {
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+.describe .rail-step[data-state='current'] a {
+  background: var(--surface);
+}
+
+.describe .rail-step[data-state='current'] .marker {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.describe .rail-step[data-state='current'] .rail-name {
+  font-weight: 600;
+}
+
+.describe .rail-step[data-state='current'] .rail-state {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.describe .rail-step[data-state='done'] .marker {
+  border-color: var(--good);
+  color: var(--good);
+}
+
+.describe .rail-step[data-state='done'] .rail-state {
+  color: var(--good);
+}
+
+.describe .rail-step[data-state='available'] .marker {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.describe .rail-step[data-state='waiting'] .marker {
+  border-style: dashed;
+}
+
+.describe .rail-step[data-state='waiting'] .rail-name {
+  color: var(--muted);
+}
+
+.describe .rail-step[data-state='problem'] .marker {
+  border-color: var(--problem);
+  background: var(--problem);
+  color: var(--accent-ink);
+}
+
+.describe .rail-current {
+  display: none;
+}
+
+/* The steps. */
+
+.describe .step {
+  margin: 0 0 1.1rem;
+  padding: 0 0 0 1.1rem;
+  border-left: 3px solid var(--line);
+}
+
+.describe .step::before,
+.describe .step::after {
+  display: none;
+}
+
+.describe .step[data-state='current'] {
+  border-left-color: var(--accent);
+}
+
+.describe .step[data-state='done'] {
+  border-left-color: var(--good);
+}
+
+.describe .step[data-state='problem'] {
+  border-left-color: var(--problem);
+}
+
+.describe .step-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.85rem;
+}
+
+.describe .step h2 {
+  padding: 0.1rem 0 0.25rem;
+  font-size: 1.2rem;
+  color: var(--ink);
+}
+
+.describe .step[data-state='waiting'] h2 {
+  color: var(--muted);
+}
+
+.describe .state {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.describe .step[data-state='current'] .state {
+  color: var(--accent);
+}
+
+.describe .step[data-state='done'] .state {
+  color: var(--good);
+}
+
+.describe .step[data-state='done'] .state::before {
+  content: '✓ ';
+}
+
+.describe .step[data-state='problem'] .state {
+  color: var(--problem);
+}
+
+.describe .receipt,
+.describe .waiting {
+  margin: 0.1rem 0 0.2rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.describe .receipt.done {
+  color: var(--ink);
+}
+
+.describe button.link {
+  margin: 0 0 0.3rem;
+  padding: 0.1rem 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 0.9rem;
+  font-weight: 400;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.describe .step .body {
+  display: block;
+  margin-top: 0.5rem;
+}
+
+.describe .step[data-open='false'] .body {
+  display: none;
+}
+
+.describe .step.extra {
+  margin-top: 2rem;
+}
+
+/* What to do, then the fuller account behind a disclosure. */
+
+.describe .do {
+  font-size: 1.05rem;
+  color: var(--ink);
+}
+
+.describe details.about,
+.describe details.query {
+  margin: 0.3rem 0 0.9rem;
+}
+
+.describe details.about summary,
+.describe details.query summary {
+  font-size: 0.88rem;
+}
+
+.describe details.about > p,
+.describe details.about > ul {
+  margin: 0.4rem 0 0.4rem;
+  padding-left: 0.85rem;
+  border-left: 2px solid var(--line);
+}
+
+.describe .field details.about {
+  margin-bottom: 0;
+}
+
+.describe label.option {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-weight: 400;
+  margin: 0 0 0.45rem;
+}
+
+/* Messages show their state by a mark and a word as well as by colour. */
+
+.describe .status.good::before {
+  content: '✓';
+  margin-right: 0.45rem;
+  color: var(--good);
+  font-weight: 600;
+}
+
+.describe .status.problem::before {
+  content: '!';
+  margin-right: 0.45rem;
+  color: var(--problem);
+  font-weight: 700;
+}
+
+.describe select {
+  font: inherit;
+  font-size: 0.95rem;
+  max-width: 100%;
+  padding: 0.35rem 0.5rem;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.describe select:focus-visible,
+.describe .rail a:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.describe .aside-block {
+  margin: 0 0 1.25rem;
+  padding: 0.75rem 0 0.1rem;
+  border-top: 1px solid var(--line);
+}
+
+.describe .aside-block h3 {
+  margin: 0 0 0.4rem;
+  font-size: 1.05rem;
+}
+
+/* The progress of step 6, held at the top of the step while its list scrolls. */
+
+.describe .tally-bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: -0.25rem 0 1rem;
+  padding: 0.6rem 0 0.7rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.describe .tally-figures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1.75rem;
+  margin: 0 0 0.5rem;
+}
+
+.describe .tally-figures dt {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.describe .tally-figures dd {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 600;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.describe .figure.confirmed dd {
+  color: var(--good);
+}
+
+.describe .figure.corrected dd {
+  color: var(--accent);
+}
+
+.describe .figure.not_sure dd {
+  color: var(--caution);
+}
+
+.describe .meter {
+  height: 0.4rem;
+  max-width: 30rem;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.describe .meter span {
+  display: block;
+  height: 100%;
+  background: var(--good);
+}
+
+/* The parts of the record and their columns. */
+
 .describe .role {
-  margin: 0 0 1.5rem;
+  margin: 0 0 1.75rem;
 }
 
 .describe .role h3 {
-  margin: 1.2rem 0 0.3rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.75rem;
+  margin: 1.4rem 0 0.2rem;
+  font-size: 1rem;
+}
+
+.describe .role-name {
   font: 600 1rem var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.describe .role-count {
+  font: 400 0.85rem var(--sans);
+  color: var(--muted);
+}
+
+.describe .role-what {
+  color: var(--muted);
+  font-size: 0.95rem;
 }
 
 .describe .bindings {
@@ -976,16 +1382,30 @@ h3.part {
 }
 
 .describe .binding {
-  padding: 0.6rem 0;
-  border-bottom: 1px solid var(--line);
+  padding: 0.85rem 0 0.4rem;
+  border-top: 1px solid var(--line);
+  scroll-margin-top: 7rem;
+}
+
+.describe .binding .attribute.rows {
+  font: 600 0.98rem var(--sans);
 }
 
 .describe .binding p {
-  margin: 0 0 0.25rem;
+  margin: 0 0 0.3rem;
 }
 
 .describe .binding .attribute {
-  font-weight: 600;
+  font: 600 0.98rem var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.describe .binding .meaning {
+  color: var(--ink);
+}
+
+.describe .binding .proposed code {
+  font: 0.9rem var(--mono);
   overflow-wrap: anywhere;
 }
 
@@ -993,24 +1413,120 @@ h3.part {
   color: var(--muted);
 }
 
+.describe .confidence {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.describe .confidence.low,
+.describe .confidence.none {
+  color: var(--problem);
+}
+
+.describe .binding details {
+  margin: 0 0 0.3rem;
+}
+
 .describe .definition {
-  margin: 0.2rem 0 0.5rem;
+  margin: 0.3rem 0 0.5rem;
   padding-left: 0.85rem;
   border-left: 3px solid var(--line);
   color: var(--muted);
+}
+
+.describe .presence,
+.describe .answered {
+  font-size: 0.93rem;
+}
+
+.describe .presence::before,
+.describe .answered::before {
+  display: inline-block;
+  width: 1.1rem;
+  font-weight: 700;
+}
+
+.describe .presence.present::before {
+  content: '✓';
+  color: var(--good);
 }
 
 .describe .presence.missing {
   color: var(--problem);
 }
 
+.describe .presence.missing::before {
+  content: '✕';
+}
+
 .describe .presence.large {
   color: var(--caution);
 }
 
+.describe .presence.large::before {
+  content: '!';
+}
+
+.describe .presence.unknown {
+  color: var(--muted);
+}
+
+.describe .presence.unknown::before {
+  content: '–';
+}
+
 .describe .answered {
+  font-weight: 600;
+}
+
+.describe .answered.yes {
   color: var(--good);
 }
+
+.describe .answered.yes::before {
+  content: '✓';
+}
+
+.describe .answered.no {
+  color: var(--accent);
+}
+
+.describe .answered.no::before {
+  content: '✎';
+}
+
+.describe .answered.unsure {
+  color: var(--caution);
+}
+
+.describe .answered.unsure::before {
+  content: '?';
+}
+
+.describe .answers {
+  margin-top: 0.45rem;
+}
+
+.describe .answers button {
+  margin-bottom: 0.5rem;
+}
+
+.describe .answers button[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.describe .binding[data-answer] .answers button.answer-yes[aria-pressed='false'] {
+  background: transparent;
+  color: var(--accent);
+}
+
+.describe .binding[data-answer=''] .answers button.answer-yes[aria-pressed='false'] {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* The forms that correct a column, each a sentence to complete. */
 
 .describe .another {
   margin: 0.5rem 0;
@@ -1022,26 +1538,54 @@ h3.part {
   margin: 0.3rem 0.5rem 0.3rem 0;
 }
 
-.describe .correction {
-  margin: 0.5rem 0;
-  padding: 0.6rem 0.8rem;
-  border: 1px solid var(--line);
-  border-radius: 5px;
+.describe .correction,
+.describe .another {
+  margin: 0.3rem 0 0.9rem;
+  padding: 0.75rem 0 0.2rem 0.9rem;
+  border-left: 3px solid var(--accent);
 }
 
-.describe .correction .field {
-  margin: 0.35rem 0;
+.describe .correction > .field {
+  margin: 0 0 0.6rem;
 }
 
-.describe .correction .field label {
-  display: block;
+.describe .correction .fields {
+  margin: 0.5rem 0 0.75rem;
+}
+
+.describe .correction .fields .field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.6rem;
+  margin: 0.45rem 0;
+}
+
+.describe .correction .fields .field label {
+  margin: 0;
+  font-weight: 400;
 }
 
 .describe .correction select,
 .describe .correction input[type='text'],
 .describe .correction input[type='number'] {
   max-width: 100%;
-  min-width: 14rem;
+  min-width: min(14rem, 100%);
+}
+
+.describe .correction input[type='number'] {
+  width: 6rem;
+  min-width: 0;
+}
+
+.describe .correction .fields input[type='text'] {
+  width: 18rem;
+  max-width: 100%;
+}
+
+.describe .correction fieldset.step {
+  margin: 0.5rem 0;
+  padding: 0.3rem 0.8rem 0.2rem;
 }
 
 .describe .correction .code-line {
@@ -1050,8 +1594,15 @@ h3.part {
   gap: 0 1rem;
 }
 
+.describe .sentence-label {
+  margin-bottom: 0.2rem;
+}
+
 .describe .correction-sentence {
   font-weight: 600;
+  padding-left: 0.7rem;
+  border-left: 3px solid var(--accent);
+  overflow-wrap: anywhere;
 }
 
 .describe .correction-sql,
@@ -1069,6 +1620,11 @@ h3.part {
   border-left: 3px solid var(--good);
 }
 
+.describe .kept-correction .correction-sentence {
+  border-left: 0;
+  padding-left: 0;
+}
+
 .describe .window-rule {
   border-left: 3px solid var(--caution);
   padding-left: 0.6rem;
@@ -1076,10 +1632,123 @@ h3.part {
 
 .describe fieldset {
   margin: 0 0 1rem;
+  padding: 0.6rem 0.9rem 0.3rem;
   border: 1px solid var(--line);
   border-radius: 5px;
+  min-width: 0;
 }
 
-.describe fieldset label {
-  display: block;
+.describe legend {
+  padding: 0 0.3rem;
+  font-weight: 600;
+}
+
+.describe .vocabulary,
+.describe .count-block {
+  margin: 0 0 1.5rem;
+  padding: 0.9rem 0 0;
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+}
+
+.describe .vocabulary h3,
+.describe .count-block h3 {
+  margin: 0 0 0.4rem;
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+}
+
+.describe .query-block .actions {
+  margin-bottom: 0;
+}
+
+.describe .query-block .actions button {
+  margin-bottom: 0.3rem;
+}
+
+.describe .check-query {
+  margin: 1rem 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.describe .check-query h4 {
+  margin: 0 0 0.4rem;
+  font-size: 0.98rem;
+  overflow-wrap: anywhere;
+}
+
+/* On a narrow screen the rail becomes a strip of numbered marks above the steps, with the current step named. */
+
+@media (max-width: 62rem) {
+  .describe .layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.25rem;
+  }
+
+  .describe .rail {
+    position: static;
+    max-height: none;
+    overflow: visible;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .describe .rail .connection {
+    margin-bottom: 0.6rem;
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+
+  .describe .rail-steps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+
+  .describe .rail-step a {
+    display: block;
+    padding: 0.15rem;
+  }
+
+  /* The check of a saved folder follows the steps on the page itself; the strip holds the nine steps alone. */
+  .describe .rail-extra {
+    display: none;
+  }
+
+  .describe .rail-name,
+  .describe .rail-state {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .describe .rail-current {
+    display: block;
+    margin: 0.6rem 0 0;
+    font-weight: 600;
+  }
+}
+
+@media (max-width: 36rem) {
+  .describe .step {
+    padding-left: 0.75rem;
+  }
+
+  .describe h1 {
+    font-size: 1.7rem;
+  }
+
+  .describe .step .body {
+    padding: 1rem 0.85rem 0.3rem;
+  }
+
+  .describe .tally-figures {
+    gap: 0.3rem 1.1rem;
+  }
 }

@@ -18,26 +18,37 @@
     <header class="masthead">
       <h1 id="title"></h1>
       <p id="intro" class="intro"></p>
-      <p id="t-private"></p>
-      <p><span id="t-back"></span> <a href="./index.html" id="a-back"></a></p>
+      <p id="t-private" class="note"></p>
+      <p class="note"><span id="t-back"></span> <a href="./index.html" id="a-back"></a></p>
     </header>
 
     <div class="layout">
+      <!-- The order of the steps, with the state of each: done, now, ready or waiting, and what a waiting step waits for. -->
+      <nav class="rail" id="rail-nav" aria-labelledby="h-rail">
+        <p id="t-connection" class="connection"></p>
+        <h2 id="h-rail" class="visually-hidden"></h2>
+        <ol id="rail" class="rail-steps"></ol>
+        <p id="rail-current" class="rail-current"></p>
+      </nav>
+
       <main>
         <ol class="steps">
           <li class="step" id="step-1">
-            <h2 id="h-step-1"></h2>
+            <div class="step-head"><h2 id="h-step-1"></h2><span class="state" id="state-1"></span></div>
+            <p class="receipt" id="receipt-1"></p>
+            <p class="waiting" id="waiting-1"></p>
+            <button type="button" class="toggle link" id="toggle-1"></button>
             <div class="body">
-              <p id="t-offline-what"></p>
-              <p id="t-loading" class="status"></p>
+              <p id="t-offline-what" class="do"></p>
+              <p id="t-loading" class="status working-note"></p>
               <p id="t-load-failed" class="status problem" hidden></p>
               <div id="b-loaded" hidden>
                 <p id="t-loaded" class="status"></p>
-                <details>
+                <details open>
                   <summary id="s-offline-how"></summary>
                   <ul id="t-offline-how" class="offline-how"></ul>
                 </details>
-                <p id="t-no-files"></p>
+                <p id="t-no-files" class="note"></p>
               </div>
               <p id="t-offline-done" class="status good" hidden></p>
               <p id="t-locked" class="status problem" hidden></p>
@@ -49,21 +60,29 @@
           </li>
 
           <li class="step" id="step-2">
-            <h2 id="h-step-2"></h2>
+            <div class="step-head"><h2 id="h-step-2"></h2><span class="state" id="state-2"></span></div>
+            <p class="receipt" id="receipt-2"></p>
+            <p class="waiting" id="waiting-2"></p>
+            <button type="button" class="toggle link" id="toggle-2"></button>
             <div class="body">
-              <p id="t-dictionary-what"></p>
-              <p id="t-dictionary-private"></p>
-              <p id="t-dictionary-headings" class="note"></p>
+              <p id="t-dictionary-what" class="do"></p>
               <div class="field">
                 <label for="dictionary" id="l-dictionary"></label>
                 <input type="file" id="dictionary" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain" />
+                <details class="about">
+                  <summary id="s-dictionary-about"></summary>
+                  <p id="t-dictionary-about" class="note"></p>
+                </details>
               </div>
               <div class="field">
                 <label for="dictionary-tables" id="l-dictionary-tables"></label>
                 <input type="file" id="dictionary-tables" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain" />
-                <p id="t-tables-note" class="note"></p>
+                <details class="about">
+                  <summary id="s-tables-about"></summary>
+                  <p id="t-tables-about" class="note"></p>
+                </details>
               </div>
-              <details id="d-headings">
+              <details id="d-headings" class="about">
                 <summary id="s-headings"></summary>
                 <p id="t-headings-what" class="note"></p>
                 <div id="headings"></div>
@@ -74,56 +93,76 @@
           </li>
 
           <li class="step" id="step-3">
-            <h2 id="h-step-3"></h2>
+            <div class="step-head"><h2 id="h-step-3"></h2><span class="state" id="state-3"></span></div>
+            <p class="receipt" id="receipt-3"></p>
+            <p class="waiting" id="waiting-3"></p>
+            <button type="button" class="toggle link" id="toggle-3"></button>
             <div class="body">
-              <p id="t-folder-what"></p>
+              <p id="t-folder-what" class="do"></p>
               <div class="field">
                 <label for="hospital-folder" id="l-hospital-folder"></label>
                 <input type="file" id="hospital-folder" webkitdirectory />
-                <p id="t-folder-note" class="note"></p>
+                <details class="about">
+                  <summary id="s-folder-about"></summary>
+                  <p id="t-folder-about" class="note"></p>
+                </details>
               </div>
               <p id="t-folder-status" class="status" hidden role="status"></p>
-              <p id="t-folder-no-dictionary" class="note" hidden></p>
-              <section id="b-check" class="add" hidden>
-                <h3 id="h-check"></h3>
-                <p id="t-check-what"></p>
-                <div class="actions"><button type="button" id="check" class="secondary"></button></div>
-                <div id="check-result"></div>
-              </section>
+              <p id="t-folder-no-dictionary" class="status" hidden></p>
             </div>
           </li>
 
           <li class="step" id="step-4">
-            <h2 id="h-step-4"></h2>
+            <div class="step-head"><h2 id="h-step-4"></h2><span class="state" id="state-4"></span></div>
+            <p class="receipt" id="receipt-4"></p>
+            <p class="waiting" id="waiting-4"></p>
+            <button type="button" class="toggle link" id="toggle-4"></button>
             <div class="body">
-              <p id="t-propose-what"></p>
-              <p id="t-propose-waiting" class="note"></p>
+              <p id="t-propose-what" class="do"></p>
+              <details class="about">
+                <summary id="s-propose-about"></summary>
+                <p id="t-propose-about" class="note"></p>
+              </details>
               <div class="actions"><button type="button" id="propose" hidden></button></div>
               <progress id="propose-progress" hidden></progress>
               <p id="t-propose-status" class="status" hidden role="status"></p>
-              <div id="proposal"></div>
+              <details id="d-proposal" hidden>
+                <summary id="s-proposal"></summary>
+                <div id="proposal"></div>
+              </details>
             </div>
           </li>
 
           <li class="step" id="step-5">
-            <h2 id="h-step-5"></h2>
+            <div class="step-head"><h2 id="h-step-5"></h2><span class="state" id="state-5"></span></div>
+            <p class="receipt" id="receipt-5"></p>
+            <p class="waiting" id="waiting-5"></p>
+            <button type="button" class="toggle link" id="toggle-5"></button>
             <div class="body">
-              <p id="t-tables-what"></p>
-              <p id="t-tables-waiting" class="note"></p>
-              <div id="b-tables" hidden>
+              <p id="t-tables-what" class="do"></p>
+              <div id="b-tables">
                 <fieldset class="database">
                   <legend id="l-database"></legend>
-                  <p id="t-database-what" class="note"></p>
                   <div id="database-options"></div>
                   <p id="t-database-unsure" class="note" hidden></p>
+                  <details class="about">
+                    <summary id="s-database-about"></summary>
+                    <p id="t-database-about" class="note"></p>
+                  </details>
                 </fieldset>
                 <div class="actions"><button type="button" id="tables-write"></button></div>
                 <div id="b-tables-query" hidden>
-                  <p id="t-tables-names"></p>
+                  <p id="t-tables-names" class="note"></p>
                   <ol id="t-tables-how" class="guide-steps"></ol>
-                  <pre id="tables-query" class="code"></pre>
                   <div class="actions"><button type="button" id="tables-copy" class="secondary"></button></div>
-                  <p id="t-query-safe" class="note"></p>
+                  <details class="query">
+                    <summary id="s-tables-query"></summary>
+                    <pre id="tables-query" class="code"></pre>
+                  </details>
+                  <details class="about">
+                    <summary id="s-query-safe"></summary>
+                    <p id="t-query-safe" class="note"></p>
+                  </details>
                   <label for="tables-paste" id="l-tables-paste"></label>
                   <textarea id="tables-paste" rows="5" spellcheck="false" autocomplete="off"></textarea>
                   <div class="actions"><button type="button" id="tables-read"></button></div>
@@ -134,20 +173,31 @@
           </li>
 
           <li class="step" id="step-6">
-            <h2 id="h-step-6"></h2>
+            <div class="step-head"><h2 id="h-step-6"></h2><span class="state" id="state-6"></span></div>
+            <p class="receipt" id="receipt-6"></p>
+            <p class="waiting" id="waiting-6"></p>
+            <button type="button" class="toggle link" id="toggle-6"></button>
             <div class="body">
-              <p id="t-confirm-what"></p>
-              <p id="t-confirm-waiting" class="note"></p>
-              <p id="t-tally" class="count" hidden></p>
-              <section id="b-model-check" class="add" hidden>
-                <p id="t-model-check-what"></p>
+              <!-- The progress of the confirming, which stays in view while the list scrolls. -->
+              <div id="b-tally" class="tally-bar">
+                <dl id="tally-figures" class="tally-figures"></dl>
+                <div class="meter" aria-hidden="true"><span id="tally-meter"></span></div>
+                <p id="t-tally" class="visually-hidden" role="status"></p>
+              </div>
+              <p id="t-confirm-what" class="do"></p>
+              <details class="about">
+                <summary id="s-confirm-about"></summary>
+                <p id="t-confirm-about" class="note"></p>
+              </details>
+              <section id="b-model-check" class="aside-block">
+                <p id="t-model-check-what" class="note"></p>
                 <div class="actions"><button type="button" id="model-check" class="secondary"></button></div>
                 <div id="model-check-result"></div>
               </section>
               <div id="confirm"></div>
-              <section id="b-questions" class="add" hidden>
+              <section id="b-questions" class="aside-block">
                 <h3 id="h-questions"></h3>
-                <p id="t-questions-what"></p>
+                <p id="t-questions-what" class="note"></p>
                 <p id="t-questions-none" class="note"></p>
                 <pre id="questions" class="code wrap-text" hidden></pre>
                 <div class="actions"><button type="button" id="questions-copy" class="secondary" hidden></button></div>
@@ -156,43 +206,56 @@
           </li>
 
           <li class="step" id="step-7">
-            <h2 id="h-step-7"></h2>
+            <div class="step-head"><h2 id="h-step-7"></h2><span class="state" id="state-7"></span></div>
+            <p class="receipt" id="receipt-7"></p>
+            <p class="waiting" id="waiting-7"></p>
+            <button type="button" class="toggle link" id="toggle-7"></button>
             <div class="body">
-              <p id="t-codes-what"></p>
-              <p id="t-codes-waiting" class="note"></p>
-              <div id="b-codes" hidden>
+              <p id="t-codes-what" class="do"></p>
+              <div id="b-codes">
                 <div class="field">
                   <label for="year" id="l-year"></label>
                   <input type="number" id="year" min="1990" max="2100" step="1" />
                   <p id="t-year-note" class="note"></p>
                 </div>
-                <p id="t-codes-safe" class="note"></p>
+                <details class="about">
+                  <summary id="s-codes-safe"></summary>
+                  <p id="t-codes-safe" class="note"></p>
+                </details>
                 <div id="vocabularies"></div>
               </div>
             </div>
           </li>
 
           <li class="step" id="step-8">
-            <h2 id="h-step-8"></h2>
+            <div class="step-head"><h2 id="h-step-8"></h2><span class="state" id="state-8"></span></div>
+            <p class="receipt" id="receipt-8"></p>
+            <p class="waiting" id="waiting-8"></p>
+            <button type="button" class="toggle link" id="toggle-8"></button>
             <div class="body">
-              <p id="t-counts-what"></p>
-              <p id="t-counts-waiting" class="note"></p>
-              <div id="b-counts" hidden>
+              <p id="t-counts-what" class="do"></p>
+              <details class="about">
+                <summary id="s-counts-about"></summary>
+                <p id="t-counts-about" class="note"></p>
+              </details>
+              <div id="b-counts">
                 <div class="actions"><button type="button" id="counts-write"></button></div>
-                <p id="t-counts-again" class="note"></p>
+                <p id="t-counts-again" class="note" hidden></p>
                 <div id="counts"></div>
               </div>
             </div>
           </li>
 
           <li class="step" id="step-9">
-            <h2 id="h-step-9"></h2>
+            <div class="step-head"><h2 id="h-step-9"></h2><span class="state" id="state-9"></span></div>
+            <p class="receipt" id="receipt-9"></p>
+            <p class="waiting" id="waiting-9"></p>
+            <button type="button" class="toggle link" id="toggle-9"></button>
             <div class="body">
-              <p id="t-write-what"></p>
-              <p id="t-write-waiting" class="note"></p>
-              <div id="b-write" hidden>
+              <p id="t-write-what" class="do"></p>
+              <div id="b-write">
                 <div class="field">
-                  <label><input type="checkbox" id="keep-dictionary" /> <span id="l-keep"></span></label>
+                  <label class="option"><input type="checkbox" id="keep-dictionary" /> <span id="l-keep"></span></label>
                   <p id="t-keep-note" class="note"></p>
                 </div>
                 <div class="actions">
@@ -201,15 +264,27 @@
                 </div>
                 <p id="t-write-folder-note" class="note" hidden></p>
                 <p id="t-write-zip-note" class="note"></p>
+                <details class="about">
+                  <summary id="s-write-about"></summary>
+                  <p id="t-write-about" class="note"></p>
+                </details>
                 <p id="t-write-status" class="status" hidden role="status"></p>
               </div>
             </div>
           </li>
         </ol>
+
+        <!-- Not a step of the first sitting: the check of a folder saved at an earlier one. -->
+        <section class="step extra" id="step-check">
+          <div class="step-head"><h2 id="h-check"></h2><span class="state" id="state-check"></span></div>
+          <p class="waiting" id="waiting-check"></p>
+          <div class="body">
+            <p id="t-check-what" class="do"></p>
+            <div class="actions"><button type="button" id="check"></button></div>
+            <div id="check-result"></div>
+          </div>
+        </section>
       </main>
-      <aside>
-        <p id="t-connection" class="connection"></p>
-      </aside>
     </div>
     <footer>
       <p id="t-version"></p>

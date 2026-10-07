@@ -63,6 +63,10 @@ let countQueries: CountQuery[] = [];
 let tablesSql = '';
 let databaseChoice: string | null = null;
 const openAnother = new Set<string>();
+// The steps that a person has opened or hidden by hand; otherwise the current step is open and the rest are folded.
+const opened = new Set<string>();
+const hidden = new Set<string>();
+let written = false;
 // The sentence that says why an answer could not be recorded, beside the binding it was given for.
 const problems = new Map<string, string>();
 
@@ -151,6 +155,7 @@ function lock() {
   chartedSql.clear();
   countQueries = [];
   tablesSql = '';
+  written = false;
   for (const input of document.querySelectorAll<HTMLInputElement>('input[type=file]')) input.value = '';
   for (const area of document.querySelectorAll<HTMLTextAreaElement>('textarea')) area.value = '';
   state = 'locked';
@@ -169,19 +174,131 @@ function open() {
   return state === 'ready' && !navigator.onLine;
 }
 
+type StepState = 'done' | 'current' | 'available' | 'waiting' | 'problem';
+const STEPS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
+const OPTIONAL = new Set(['3']);
+
+function vocabulariesDone(m: Model) {
+  return m.vocabularies.filter((v) => !v.reason).every((v) => !!v.date);
+}
+
+function countsDone(m: Model) {
+  const names = countQueries.length ? countQueries.map((q) => q.name) : Object.keys(d.countHeading);
+  return names.every((name) => !!m.counts[name]?.looks_right);
+}
+
+// What each step is: its state, the line that a folded step shows, and what a waiting step waits for.
+function stepStates() {
+  const m = model;
+  const ready = open();
+  const proposed = !!m?.proposed;
+  const restoredMap = !!(m?.restored && (m.restored as { map?: boolean }).map);
+  const done = [ready, !!m?.dictionary, restoredMap, proposed, !!m?.catalogue, proposed && m!.tally.remaining === 0,
+    proposed && vocabulariesDone(m!), proposed && countsDone(m!), written];
+  const waits = STEPS.map((_, i) => {
+    if (i === 0) return '';
+    if (!ready) return d.waitingFor.offline;
+    if (i === 3) return m?.dictionary || proposed ? '' : d.waitingFor.dictionary;
+    if (i >= 4) return proposed ? '' : d.waitingFor.map;
+    return '';
+  });
+  const states: StepState[] = STEPS.map((_, i) => {
+    if (i === 0) return ready ? 'done' : state === 'load-failed' || state === 'locked' ? 'problem' : 'current';
+    return waits[i] ? 'waiting' : done[i] ? 'done' : 'available';
+  });
+  const first = states.findIndex((value, i) => value === 'available' && !OPTIONAL.has(STEPS[i]));
+  if (first >= 0) states[first] = 'current';
+  const statusText = (id: string) => ($(id).hidden ? '' : $(id).textContent ?? '');
+  const receipts = [
+    d.offlineDone,
+    m?.dictionary ? d.dictionaryReceipt(m.dictionary) : '',
+    statusText('t-folder-status') || d.receipt.folder,
+    m ? d.receipt.proposed(m.roles.filter((r) => r.drafted).length, m.roles.length) : '',
+    statusText('t-tables-status') || d.receipt.tables,
+    m ? d.tally(m.tally) : '',
+    d.receipt.codes,
+    d.receipt.counts,
+    statusText('t-write-status'),
+  ];
+  return { states, waits, receipts };
+}
+
+function toggleStep(n: string, open_: boolean) {
+  if (open_) {
+    opened.add(n);
+    hidden.delete(n);
+  } else {
+    opened.delete(n);
+    hidden.add(n);
+  }
+  show();
+}
+
 function show() {
   const online = navigator.onLine;
-  const proposed = !!model?.proposed;
   const ready = open();
-  // Once the page is offline every step is open, since the page can be left and returned to at any step; a step that
-  // cannot be used yet says what it waits for. A step that is finished is marked as done and stays open.
-  const done = [ready, !!model?.dictionary, !!model?.restored, proposed, !!model?.catalogue,
-    proposed && model!.tally.remaining === 0, false, false, false];
-  for (let i = 0; i < 9; i++) {
-    const value = i === 0 ? (ready ? 'done' : state === 'load-failed' || state === 'locked' ? 'problem' : 'current')
-      : !ready ? 'upcoming' : done[i] ? 'done' : 'current';
-    $(`step-${i + 1}`).dataset.state = value;
-  }
+  const { states, waits, receipts } = stepStates();
+  const rail = $('rail');
+  rail.replaceChildren();
+  STEPS.forEach((n, i) => {
+    const value = states[i];
+    const step = $(`step-${n}`);
+    const isOpen = value === 'problem' || (value === 'current' && !hidden.has(n)) || (value !== 'waiting' && opened.has(n));
+    step.dataset.state = value;
+    step.dataset.open = String(isOpen);
+    if (value === 'current') step.setAttribute('aria-current', 'step');
+    else step.removeAttribute('aria-current');
+    const word = value === 'available' && OPTIONAL.has(n) ? d.state.optional : d.state[value];
+    text(`state-${n}`, word);
+    const receipt = $(`receipt-${n}`);
+    // A folded step shows its receipt when done, and otherwise its first instruction.
+    const line = value === 'done' ? receipts[i] : value === 'available' || value === 'current' ? step.querySelector('.do')?.textContent ?? '' : '';
+    receipt.textContent = line;
+    receipt.hidden = isOpen || !line;
+    receipt.className = value === 'done' ? 'receipt done' : 'receipt';
+    const waiting = $(`waiting-${n}`);
+    waiting.textContent = waits[i];
+    waiting.hidden = value !== 'waiting';
+    const toggle = $<HTMLButtonElement>(`toggle-${n}`);
+    toggle.hidden = value === 'waiting' || value === 'problem';
+    toggle.textContent = isOpen ? d.hideStep : d.showStep;
+    toggle.setAttribute('aria-expanded', String(isOpen));
+    toggle.onclick = () => toggleStep(n, !isOpen);
+
+    const item = el('li', undefined, 'rail-step');
+    item.dataset.state = value;
+    const link = el('a');
+    link.href = `#step-${n}`;
+    if (value === 'current') link.setAttribute('aria-current', 'step');
+    link.addEventListener('click', () => {
+      if (value !== 'waiting') toggleStep(n, true);
+    });
+    const name = d.steps[i].replace(/^\d+\.\s*/, '');
+    link.append(el('span', value === 'done' ? '✓' : value === 'problem' ? '!' : n, 'marker'), el('span', name, 'rail-name'),
+      el('span', value === 'waiting' ? waits[i] : word, 'rail-state'));
+    item.append(link);
+    rail.append(item);
+  });
+  // The check of a saved folder, after the nine steps.
+  const restoredMap = !!(model?.restored && (model.restored as { map?: boolean }).map);
+  const checkWait = !ready ? d.waitingFor.offline : restoredMap ? '' : d.waitingFor.folder;
+  const check = $('step-check');
+  check.dataset.state = checkWait ? 'waiting' : 'available';
+  check.dataset.open = String(!checkWait);
+  text('state-check', checkWait ? d.state.waiting : d.state.optional);
+  text('waiting-check', checkWait);
+  $('waiting-check').hidden = !checkWait;
+  const extra = el('li', undefined, 'rail-step rail-extra');
+  extra.dataset.state = checkWait ? 'waiting' : 'available';
+  const extraLink = el('a');
+  extraLink.href = '#step-check';
+  extraLink.append(el('span', '+', 'marker'), el('span', d.checkHeading, 'rail-name'), el('span', checkWait || d.state.optional, 'rail-state'));
+  extra.append(extraLink);
+  rail.append(extra);
+  const current = states.findIndex((value) => value === 'current' || value === 'problem');
+  const at = current >= 0 ? current : states.lastIndexOf('done');
+  text('rail-current', d.stepOf(at + 1, STEPS.length, d.steps[at].replace(/^\d+\.\s*/, '')));
+
   $('t-loading').hidden = state !== 'loading';
   $('t-load-failed').hidden = state !== 'load-failed';
   $('b-loaded').hidden = !(state === 'ready' && online);
@@ -191,8 +308,8 @@ function show() {
   connection.textContent = online ? strings.connected : strings.isOffline;
   connection.dataset.online = String(online);
   for (const input of document.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLTextAreaElement>('main input, main button, main textarea, main select')) {
-    if (input.closest('#step-1')) continue;
-    input.disabled = !ready || busy || (input.id === 'dictionary-load' && !$<HTMLInputElement>('dictionary').files?.length);
+    if (input.closest('#step-1') || input.classList.contains('toggle')) continue;
+    input.disabled = !ready || busy || input.dataset.unusable === 'true' || (input.id === 'dictionary-load' && !$<HTMLInputElement>('dictionary').files?.length);
   }
 }
 
@@ -220,18 +337,12 @@ function render() {
     renderCounts();
   });
   const proposed = !!model?.proposed;
-  $('t-propose-waiting').hidden = !!model?.dictionary || proposed;
-  text('t-propose-waiting', d.proposeWaiting);
   $('propose').hidden = !model?.dictionary || proposed;
-  for (const [waiting, box] of [['t-tables-waiting', 'b-tables'], ['t-codes-waiting', 'b-codes'], ['t-counts-waiting', 'b-counts'], ['t-write-waiting', 'b-write']]) {
-    $(waiting).hidden = proposed;
-    $(box).hidden = !proposed;
+  $('d-proposal').hidden = !proposed;
+  if (model && proposed) {
+    text('t-tally', d.tally(model.tally));
+    renderTally(model.tally);
   }
-  $('t-confirm-waiting').hidden = proposed;
-  $('b-model-check').hidden = !proposed;
-  $('t-tally').hidden = !proposed;
-  $('b-questions').hidden = !proposed;
-  if (model && proposed) text('t-tally', d.tally(model.tally));
   const questions = model?.questions ?? [];
   $('t-questions-none').hidden = questions.length > 0;
   $('questions').hidden = questions.length === 0;
@@ -243,8 +354,24 @@ function render() {
     databaseChoice = model.settings.database;
     renderDatabase();
   }
-  $('b-check').hidden = !(model?.restored && (model.restored as { map?: boolean }).map);
+  // The next action of each step is the primary button; one already done becomes secondary.
+  $('tables-write').classList.toggle('secondary', !!tablesSql);
+  $('counts-write').classList.toggle('secondary', countQueries.length > 0);
+  $('t-counts-again').hidden = countQueries.length === 0;
   show();
+}
+
+// The progress of the confirming: four figures and a bar, held in view at the top of step 6.
+function renderTally(t: Model['tally']) {
+  const figures = $('tally-figures');
+  figures.replaceChildren();
+  for (const key of ['confirmed', 'corrected', 'not_sure', 'remaining'] as const) {
+    const box = el('div', undefined, `figure ${key}`);
+    box.append(el('dt', d.tallyLabels[key]), el('dd', t[key].toLocaleString('en-AU')));
+    figures.append(box);
+  }
+  const answered = t.total ? (t.total - t.remaining) / t.total : 0;
+  $('tally-meter').style.width = `${Math.round(answered * 100)}%`;
 }
 
 function quote(definition: string | null, says: string) {
@@ -253,11 +380,17 @@ function quote(definition: string | null, says: string) {
 }
 
 function proposedLine(item: Item) {
-  const line = el('p');
+  const line = el('p', undefined, 'proposed');
   line.append(el('span', `${d.proposedLabel} `, 'label'));
   line.append(el('code', item.bound ? item.from : d.nothingProposed));
-  if (item.confidence) line.append(document.createTextNode(` (${d.confidence[item.confidence] ?? item.confidence})`));
+  if (item.confidence) line.append(el('span', ` ${d.confidence[item.confidence] ?? item.confidence}`, `confidence ${item.confidence}`));
   return line;
+}
+
+function roleHeading(role: Role) {
+  const heading = el('h3');
+  heading.append(el('code', role.name, 'role-name'));
+  return heading;
 }
 
 function renderProposal() {
@@ -267,7 +400,7 @@ function renderProposal() {
   for (const role of model.roles) {
     const section = el('section', undefined, 'role');
     section.dataset.role = role.name;
-    section.append(el('h3', role.name), el('p', role.description), el('p', role.required ? d.roleRequired : d.roleFurther, 'note'));
+    section.append(roleHeading(role), el('p', role.description, 'role-what'), el('p', role.required ? d.roleRequired : d.roleFurther, 'note'));
     if (!role.drafted) {
       section.append(el('p', d.roleUndrafted, 'status'));
       box.append(section);
@@ -277,7 +410,7 @@ function renderProposal() {
     for (const item of role.items) {
       const entry = el('li', undefined, 'binding');
       entry.dataset.about = item.about;
-      entry.append(el('p', item.attribute === 'rows' ? d.rowsAttribute : item.attribute, 'attribute'));
+      entry.append(el('p', item.attribute === 'rows' ? d.rowsAttribute : item.attribute, item.attribute === 'rows' ? 'attribute rows' : 'attribute'));
       if (item.attribute !== 'rows') entry.append(el('p', item.meaning, 'meaning'));
       entry.append(proposedLine(item));
       if (item.bound) {
@@ -303,11 +436,11 @@ function renderProposal() {
   }
 }
 
-function presenceText(presence: Presence | null) {
+function presenceText(presence: Presence | null, table = false) {
   if (!presence) return d.presence.unknown;
   if (presence.state === 'missing') return d.presence.missing(presence.missing);
   if (presence.state === 'large') return d.presence.large(presence.large[0][0], presence.large[0][1]);
-  return d.presence.present;
+  return table ? d.presence.presentTable : d.presence.present;
 }
 
 function answeredText(item: Item) {
@@ -375,49 +508,78 @@ function anotherPanel(item: Item, entry: HTMLElement) {
   return panel;
 }
 
+// The three answers, in the same order and place for every column; one that does not apply is shown but cannot be used.
+function answerButtons(item: Item, entry: HTMLElement, drafted: boolean) {
+  const actions = el('div', undefined, 'actions answers');
+  const yes = button(d.yes, () => void answer(item.about, 'yes', '', entry), 'answer-yes');
+  yes.dataset.unusable = String(!(drafted && item.bound));
+  yes.setAttribute('aria-pressed', String(item.answer === 'yes'));
+  const another = button(d.another, () => {
+    if (openAnother.has(item.about)) openAnother.delete(item.about);
+    else openAnother.add(item.about);
+    render();
+  }, 'secondary answer-another');
+  another.setAttribute('aria-expanded', String(openAnother.has(item.about)));
+  another.setAttribute('aria-pressed', String(item.answer === 'no'));
+  const unsure = button(d.notSure, () => void answer(item.about, 'not sure', '', entry), 'secondary answer-unsure');
+  unsure.dataset.unusable = String(!drafted);
+  unsure.setAttribute('aria-pressed', String(item.answer === 'not sure'));
+  actions.append(yes, another, unsure);
+  return actions;
+}
+
 function renderConfirm() {
   const box = $('confirm');
   box.replaceChildren();
   if (!model?.proposed) return;
   for (const role of model.roles) {
     const section = el('section', undefined, 'role');
-    section.append(el('h3', role.name));
-    const list = el('ul', undefined, 'bindings');
     const items: Item[] = role.drafted ? role.items : [{
       about: `${role.name} rows`, attribute: 'rows', meaning: role.description, type: null, from: '', table: null, column: null, bound: false,
       definition: null, says: d.roleUndrafted, confidence: '', candidates: [], status: 'proposed', question: '', answer: null, date: null,
       replacement: null, presence: null, link: null, correction: null,
     }];
+    const answeredCount = items.filter((item) => item.answer).length;
+    const heading = roleHeading(role);
+    heading.append(el('span', ` ${answeredCount} of ${items.length} answered`, 'role-count'));
+    section.append(heading, el('p', role.description, 'role-what'));
+    const list = el('ul', undefined, 'bindings');
     for (const item of items) {
       const entry = el('li', undefined, 'binding');
       entry.dataset.about = item.about;
       entry.dataset.answer = item.answer ?? '';
-      entry.append(el('p', `${item.attribute === 'rows' ? d.rowsAttribute : item.attribute}: ${item.bound ? item.from : d.nothingProposed}`, 'attribute'));
+      entry.append(el('p', item.attribute === 'rows' ? d.rowsAttribute : item.attribute, item.attribute === 'rows' ? 'attribute rows' : 'attribute'));
+      if (item.attribute !== 'rows' && item.meaning) entry.append(el('p', item.meaning, 'meaning'));
+      entry.append(proposedLine(item));
       if (role.drafted && item.bound) {
         const more = el('details');
         more.append(el('summary', item.definition ? d.definitionLabel : d.evidenceLabel), quote(item.definition, item.says));
         entry.append(more);
       }
-      if (role.drafted) entry.append(el('p', presenceText(item.presence), `presence ${item.presence?.state ?? 'unknown'}`));
+      if (!role.drafted) entry.append(el('p', d.roleUndrafted, 'note'));
+      if (role.drafted) entry.append(el('p', presenceText(item.presence, item.attribute === 'rows'), `presence ${item.presence?.state ?? 'unknown'}`));
       const said = answeredText(item);
-      if (said) entry.append(el('p', said, 'answered'));
+      if (said) entry.append(el('p', said, `answered ${item.answer === 'not sure' ? 'unsure' : item.answer}`));
       const correction = corrections.kept(item);
       if (correction) entry.append(correction);
-      const actions = el('div', undefined, 'actions');
-      if (role.drafted && item.bound) actions.append(button(d.yes, () => void answer(item.about, 'yes', '', entry)));
-      actions.append(button(d.another, () => {
-        if (openAnother.has(item.about)) openAnother.delete(item.about);
-        else openAnother.add(item.about);
-        render();
-      }, 'secondary'));
-      if (role.drafted) actions.append(button(d.notSure, () => void answer(item.about, 'not sure', '', entry), 'secondary'));
-      entry.append(actions);
+      entry.append(answerButtons(item, entry, role.drafted));
       if (openAnother.has(item.about)) entry.append(role.drafted ? corrections.panel(item, () => anotherPanel(item, entry)) : anotherPanel(item, entry));
       list.append(entry);
     }
     section.append(list);
     box.append(section);
   }
+}
+
+// A query to copy and run: the copy button first, and the SQL itself behind a disclosure.
+function queryBlock(sql: string, copyLabel: string, after?: HTMLElement) {
+  const box = el('div', undefined, 'query-block');
+  const actions = el('div', undefined, 'actions');
+  actions.append(copyButton(copyLabel, () => sql, after));
+  const details = el('details', undefined, 'query');
+  details.append(el('summary', d.showQuery), el('pre', sql, 'code'));
+  box.append(actions, details);
+  return box;
 }
 
 function grid(columns: string[], rows: (string | number | null)[][]) {
@@ -477,8 +639,8 @@ function renderVocabularies() {
       continue;
     }
     section.append(el('p', d.vocabularyBound(vocabulary.bound, vocabulary.lookup ? vocabulary.lookup.join('.') : null)));
-    const meanings = el('details');
-    meanings.append(el('summary', vocabulary.vocabulary));
+    const meanings = el('details', undefined, 'about');
+    meanings.append(el('summary', d.kindsSummary(vocabulary.vocabulary)));
     const list = el('ul');
     for (const kind of vocabulary.kinds) list.append(el('li', d.kindMeaning(kind, vocabulary.meanings[kind])));
     meanings.append(list);
@@ -486,6 +648,7 @@ function renderVocabularies() {
     const status_ = el('p', '', 'status');
     status_.id = `status-${vocabulary.key.replace(/[^\w]/g, '-')}`;
     status_.hidden = true;
+    const sql = chartedSql.get(vocabulary.key);
     section.append(el('div', undefined, 'actions'));
     section.lastElementChild!.append(button(d.chartedWrite, async () => {
       setBusy(true);
@@ -495,14 +658,9 @@ function renderVocabularies() {
       } catch { /* shown below */ }
       setBusy(false);
       render();
-    }));
-    const sql = chartedSql.get(vocabulary.key);
+    }, sql || vocabulary.rows.length ? 'secondary' : ''));
     if (sql) {
-      const pre = el('pre', sql, 'code');
-      section.append(pre);
-      const actions = el('div', undefined, 'actions');
-      actions.append(copyButton(d.chartedCopy, () => sql, status_));
-      section.append(actions);
+      section.append(queryBlock(sql, d.chartedCopy, status_));
       const [caption, area] = pasteBox(`charted-${vocabulary.key}`, d.chartedPasteLabel);
       section.append(caption, area);
       const read = el('div', undefined, 'actions');
@@ -524,7 +682,7 @@ function renderVocabularies() {
           setBusy(false);
           status(status_.id, d.failed, 'problem');
         }
-      }));
+      }, vocabulary.rows.length ? 'secondary' : ''));
       section.append(read);
     }
     section.append(status_);
@@ -580,17 +738,17 @@ function renderCounts() {
     const section = el('section', undefined, 'add count-block');
     section.dataset.count = query.name;
     section.append(el('h3', d.countHeading[query.name] ?? query.name), el('p', d.countWhat[query.name] ?? ''));
-    section.append(el('p', query.safe ? d.countSafe : d.countScript((5000).toLocaleString('en-AU')), 'note'));
-    section.append(el('p', d.countTables));
-    const tables = el('ul');
+    const about = el('details', undefined, 'about');
+    about.append(el('summary', d.countTablesSummary), el('p', query.safe ? d.countSafe : d.countScript((5000).toLocaleString('en-AU')), 'note'),
+      el('p', d.countTables, 'note'));
+    const tables = el('ul', undefined, 'note');
     for (const [table, size] of query.tables) tables.append(el('li', `${table} (${size === null ? d.sizeUnknown : d.sizeRows(size)})`));
-    section.append(tables, el('pre', query.sql, 'code'));
+    about.append(tables);
+    section.append(about);
     const status_ = el('p', '', 'status');
     status_.id = `status-count-${query.name}`;
     status_.hidden = true;
-    const actions = el('div', undefined, 'actions');
-    actions.append(copyButton(d.countCopy, () => query.sql, status_));
-    section.append(actions);
+    section.append(queryBlock(query.sql, d.countCopy, status_));
     const [caption, area] = pasteBox(`count-${query.name}`, d.countPasteLabel);
     section.append(caption, area);
     const read = el('div', undefined, 'actions');
@@ -608,17 +766,17 @@ function renderCounts() {
         setBusy(false);
         status(status_.id, d.failed, 'problem');
       }
-    }));
+    }, held?.rows ? 'secondary' : ''));
     section.append(read, status_);
     if (held?.rows && held.columns) {
       section.append(grid(held.columns, held.rows));
       const findings = el('ul', undefined, 'findings');
       for (const finding of held.findings) findings.append(el('li', finding));
       section.append(held.findings.length ? findings : el('p', d.countNoFindings, 'note'));
-      const fieldset = el('fieldset');
+      const fieldset = el('fieldset', undefined, 'judgement');
       fieldset.append(el('legend', d.lookRightLegend));
       for (const [value, label] of d.lookRight) {
-        const option = el('label');
+        const option = el('label', undefined, 'option');
         const radio = el('input');
         radio.type = 'radio';
         radio.name = `right-${query.name}`;
@@ -645,7 +803,7 @@ function renderCounts() {
         } catch { /* kept */ }
         setBusy(false);
         render();
-      }));
+      }, held.looks_right ? 'secondary' : ''));
       fieldset.append(save);
       if (held.looks_right) fieldset.append(el('p', d.lookRightSaved(held.looks_right, held.date ?? ''), 'status good'));
       section.append(fieldset);
@@ -657,7 +815,7 @@ function renderCounts() {
 function renderDatabase() {
   const box = $('database-options');
   box.replaceChildren();
-  for (const [value, label] of strings.databaseOptions) {
+  for (const [value, label] of d.databaseOptions) {
     const option = el('label', undefined, 'option');
     const radio = el('input');
     radio.type = 'radio';
@@ -760,6 +918,7 @@ $('tables-write').addEventListener('click', async () => {
     status('t-tables-status', d.failed, 'problem');
   }
   setBusy(false);
+  render();
 });
 $('tables-copy').addEventListener('click', () => void navigator.clipboard?.writeText(tablesSql).catch(() => undefined));
 $('tables-read').addEventListener('click', async () => {
@@ -834,6 +993,7 @@ $('write-folder').addEventListener('click', async () => {
       await writable.close();
     }
     if (!keep) await root.removeEntry('dictionary', { recursive: true }).catch(() => undefined);
+    written = true;
     status('t-write-status', d.written(files.length), 'good');
   } catch {
     status('t-write-status', d.writeFailed, 'problem');
@@ -853,6 +1013,7 @@ $('write-zip').addEventListener('click', async () => {
     link.click();
     URL.revokeObjectURL(link.href);
     const listed = JSON.parse((await call('describe_folder_files', [keep])).reply as string) as unknown[];
+    written = true;
     status('t-write-status', d.zipped(listed.length), 'good');
   } catch {
     status('t-write-status', d.writeFailed, 'problem');
@@ -880,10 +1041,7 @@ $('check').addEventListener('click', async () => {
       const section = el('section', undefined, 'check-query');
       section.dataset.query = query.name;
       section.append(el('h4', d.checkQuery(query.number, query.file, query.step ?? '')));
-      section.append(el('pre', query.sql, 'code'));
-      const actions = el('div', undefined, 'actions');
-      actions.append(copyButton(d.countCopy, () => query.sql));
-      section.append(actions, el('p', d.checkPrevious(query.pasted, query.database), 'note'));
+      section.append(queryBlock(query.sql, d.tablesCopy), el('p', d.checkPrevious(query.pasted, query.database), 'note'));
       if (query.columns.length) section.append(grid(query.columns, query.rows));
       const [caption, area] = pasteBox(`check-${query.name}`, d.checkPasteLabel);
       const out = el('div');
@@ -922,46 +1080,55 @@ const fixed: Record<string, string> = {
   't-private': d.privateNote,
   't-back': d.back,
   'a-back': d.backLink,
+  'h-rail': d.railLabel,
   't-offline-what': d.offlineWhat,
-  't-loading': strings.loading,
-  't-load-failed': strings.loadFailed,
-  't-loaded': strings.loaded,
-  's-offline-how': strings.offlineHowSummary,
-  't-no-files': strings.noFilesWhileConnected,
+  't-loading': d.loading,
+  't-load-failed': d.loadFailed,
+  't-loaded': d.loaded,
+  's-offline-how': d.offlineHowSummary,
+  't-no-files': d.noFiles,
   't-offline-done': d.offlineDone,
   't-locked': d.locked,
-  's-policy': strings.policySummary,
+  's-policy': d.policySummary,
   't-policy-held': strings.policyHeld,
   't-dictionary-what': d.dictionaryWhat,
-  't-dictionary-private': d.dictionaryPrivate,
-  't-dictionary-headings': d.dictionaryHeadings,
   'l-dictionary': d.dictionaryLabel,
+  's-dictionary-about': d.aboutFile,
+  't-dictionary-about': d.dictionaryAbout,
   'l-dictionary-tables': d.tablesLabel,
-  't-tables-note': d.tablesNote,
+  's-tables-about': d.aboutFile,
+  't-tables-about': d.tablesAbout,
   's-headings': d.headingsSummary,
   't-headings-what': d.headingsWhat,
   'dictionary-load': d.dictionaryLoad,
   't-folder-what': d.folderWhat,
   'l-hospital-folder': d.folderLabel,
-  't-folder-note': d.folderNote,
+  's-folder-about': d.folderAboutSummary,
+  't-folder-about': d.folderAbout,
   't-folder-no-dictionary': d.folderNoDictionary,
   'h-check': d.checkHeading,
   't-check-what': d.checkWhat,
   check: d.checkButton,
   't-propose-what': d.proposeWhat,
+  's-propose-about': d.proposeAboutSummary,
+  't-propose-about': d.proposeAbout,
   propose: d.proposeButton,
+  's-proposal': d.proposalSummary,
   't-tables-what': d.tablesWhat,
-  't-tables-waiting': d.tablesWaiting,
-  'l-database': strings.databaseLegend,
-  't-database-what': strings.databaseWhat,
-  't-database-unsure': strings.databaseUnsure,
+  'l-database': d.databaseLegend,
+  's-database-about': d.databaseAboutSummary,
+  't-database-about': d.databaseAbout,
+  't-database-unsure': d.databaseUnsure,
   'tables-write': d.tablesWrite,
   'tables-copy': d.tablesCopy,
-  't-query-safe': strings.querySafe,
+  's-tables-query': d.showQuery,
+  's-query-safe': d.querySafeSummary,
+  't-query-safe': d.querySafe,
   'l-tables-paste': d.tablesPasteLabel,
   'tables-read': d.tablesRead,
   't-confirm-what': d.confirmWhat,
-  't-confirm-waiting': d.confirmWaiting,
+  's-confirm-about': d.confirmAboutSummary,
+  't-confirm-about': d.confirmAbout,
   't-model-check-what': d.corrections.modelCheckWhat,
   'model-check': d.corrections.modelCheck,
   'h-questions': d.questionsHeading,
@@ -969,16 +1136,18 @@ const fixed: Record<string, string> = {
   't-questions-none': d.questionsNone,
   'questions-copy': d.questionsCopy,
   't-codes-what': d.codesWhat,
-  't-codes-waiting': d.codesWaiting,
   'l-year': d.yearLabel,
   't-year-note': d.yearNote,
+  's-codes-safe': d.codesAboutSummary,
   't-codes-safe': d.codesSafe((5000).toLocaleString('en-AU')),
   't-counts-what': d.countsWhat,
-  't-counts-waiting': d.countsWaiting,
+  's-counts-about': d.countsAboutSummary,
+  't-counts-about': d.countsAbout,
   'counts-write': d.countsWrite,
   't-counts-again': d.countsAgain,
   't-write-what': d.writeWhat,
-  't-write-waiting': d.writeWaiting,
+  's-write-about': d.writeAboutSummary,
+  't-write-about': d.writeAbout,
   'l-keep': d.keepLabel,
   't-keep-note': d.keepNote,
   'write-folder': d.writeFolder,
@@ -988,7 +1157,7 @@ const fixed: Record<string, string> = {
 };
 for (const [id, value] of Object.entries(fixed)) text(id, value);
 d.steps.forEach((heading, i) => text(`h-step-${i + 1}`, heading));
-$('t-offline-how').replaceChildren(...strings.offlineHow.map((sentence) => el('li', sentence)));
+$('t-offline-how').replaceChildren(...d.offlineHow.map((sentence) => el('li', sentence)));
 $('t-tables-how').replaceChildren(...d.tablesHow.map((sentence) => el('li', sentence)));
 $('headings').replaceChildren(...d.headingFields.map(([field, label]) => {
   const box = el('div', undefined, 'field');
@@ -1005,6 +1174,8 @@ $('headings').replaceChildren(...d.headingFields.map(([field, label]) => {
 }));
 $('write-folder').hidden = !picker;
 $('t-write-folder-note').hidden = !picker;
+// Where the browser can write into a folder, that is the primary action and the zip the other; elsewhere the zip is.
+$('write-zip').classList.toggle('secondary', !!picker);
 text('t-version', d.version(__VERSION__));
 renderDatabase();
 

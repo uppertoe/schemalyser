@@ -78,18 +78,18 @@ THING = {"role_reading": "reading", "role_event": "event", "role_drug": "drug gi
 
 WORDING = {
     "unknown_form": "Schemalyser does not know a correction of the kind {form}.",
-    "unknown_about": "The map holds no binding named {about}.",
+    "unknown_about": "The map holds nothing named {about}.",
     "not_drafted": "The map does not yet hold {view}, so it cannot be corrected here.",
     "no_dictionary": "Please load the dictionary in step 2 first, because every table and column of a correction must be in it.",
     "not_found": "The dictionary holds no column {name}.",
     "no_table": "The dictionary holds no table {name}.",
     "not_in_result": "The result of the tables and columns query holds no column {name}.",
-    "unreachable": "The view's table does not reach {table} by any link that the dictionary shows. To name the joins yourself, choose A link through other tables.",
+    "unreachable": "This part's own table does not reach {table} by any link that the dictionary shows. To name the links yourself, choose A link through other tables.",
     "derive_type": "{about} is {type_words}, and a value worked out as {form_words} does not suit it.",
     "values": "Please give at least one value, and at most {most}.",
     "factor": "Please give the factor as a number other than nought, and the offset as a number.",
     "steps": "Please give from one to {most} steps, each joining a column of the table before to a column of the next table.",
-    "step_start": "The first step starts from the view's own table, {table}.",
+    "step_start": "The first link starts from this part's own table, {table}.",
     "step_chain": "Step {number} starts from {table}, the table that step {before} reaches.",
     "pair_needed": "A join on two columns needs a second pair of columns in its step.",
     "not_a_link": "{about} is not a link to another role, so it cannot be a link through other tables.",
@@ -127,12 +127,12 @@ WORDING = {
     "space": "a space",
     "nothing": "nothing",
     # The check.
-    "check_whole": "This change keeps the model whole: {views} compile and give the rows that their bindings describe, every key is unique, every flag is filled, and the neonatal cases give the expected answer.",
-    "check_whole_now": "The model as it stands is whole: {views} compile and give the rows that their bindings describe, every key is unique, every flag is filled, and the neonatal cases give the expected answer.",
-    "check_breaks": "This change breaks the model in {count}:",
+    "check_whole": "This change keeps the map whole: all {views} of the record run and give the rows they should, every identifying column is unique, every flag is filled, and the planted newborns give the expected answer.",
+    "check_whole_now": "The map as it stands is whole: all {views} of the record run and give the rows they should, every identifying column is unique, every flag is filled, and the planted newborns give the expected answer.",
+    "check_breaks": "This change breaks the map in {count}:",
     "check_kept_old": "This change breaks nothing that held before it. {count} {were} there before it and {remain}:",
     "check_mends": "This change also mends {count} that {were} there before it.",
-    "check_now_breaks": "The model as it stands has {count}:",
+    "check_now_breaks": "The map as it stands has {count}:",
     "placeholders": "The local codes of {kinds} are not chosen yet, so the check gives {them}.",
     "outside_window": "{view} leaves out {count} of the invented rows because their time lies outside the anaesthetic's window, as the window intends.",
     "orphans": "{count} rows of {view} link to an anaesthetic that role_anaesthetic does not hold, which can be right where role_anaesthetic leaves some anaesthetics out.",
@@ -1335,7 +1335,7 @@ def further_rows(state, view, anaesthetics, rng):
 # The check.
 
 def _views_text(count):
-    return _plural(count, "view", "views")
+    return _plural(count, "part", "parts")
 
 
 def _problems_text(count):

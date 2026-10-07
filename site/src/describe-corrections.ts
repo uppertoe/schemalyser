@@ -279,9 +279,20 @@ function columnField(item: CorrectionItem, key: string, table: string, label: st
   return labelled(item.about, key, label, select);
 }
 
-function valuesHelper(item: CorrectionItem, box: HTMLElement) {
+// A query to copy and run, with its SQL behind a disclosure.
+function queryBlock(sql: string, copyLabel: string) {
+  const box = deps.el('div', undefined, 'query-block');
+  const copy = deps.el('div', undefined, 'actions');
+  copy.append(deps.button(copyLabel, () => void navigator.clipboard?.writeText(sql).catch(() => undefined), 'secondary copy-query'));
+  const details = deps.el('details', undefined, 'query');
+  details.append(deps.el('summary', d.showQuery), deps.el('pre', sql, 'code'));
+  box.append(copy, details);
+  return box;
+}
+
+function valuesHelper(item: CorrectionItem, box: HTMLElement, label: string) {
   const draft = draftOf(item);
-  box.append(textField(item, 'values', c.valuesLabel));
+  box.append(textField(item, 'values', label));
   box.append(deps.el('p', c.valuesNote, 'note'));
   const actions = deps.el('div', undefined, 'actions');
   actions.append(deps.button(c.valuesWrite, async () => {
@@ -304,10 +315,7 @@ function valuesHelper(item: CorrectionItem, box: HTMLElement) {
   }, 'secondary'));
   box.append(actions);
   if (draft.valuesSql) {
-    box.append(deps.el('pre', draft.valuesSql, 'code'));
-    const copy = deps.el('div', undefined, 'actions');
-    copy.append(deps.button(c.valuesCopy, () => void navigator.clipboard?.writeText(draft.valuesSql).catch(() => undefined), 'secondary copy-query'));
-    box.append(copy);
+    box.append(queryBlock(draft.valuesSql, c.valuesCopy));
     const [caption, area] = deps.pasteBox(`values-${item.about}`, c.valuesPasteLabel);
     const read = deps.el('div', undefined, 'actions');
     read.append(deps.button(c.valuesRead, async () => {
@@ -439,9 +447,12 @@ function formFields(item: CorrectionItem, box: HTMLElement) {
   const anaesthetic = deps.anaestheticTable() ?? '';
   switch (draft.form) {
     case 'flag':
-    case 'filter':
       box.append(tableField(item, 'table', c.tableLabel, () => { f.column = ''; }), columnField(item, 'column', f.table ?? '', c.columnLabel));
-      valuesHelper(item, box);
+      valuesHelper(item, box, c.flagValuesLabel);
+      break;
+    case 'filter':
+      box.append(tableField(item, 'table', c.filterTable, () => { f.column = ''; }), columnField(item, 'column', f.table ?? '', c.filterColumn));
+      valuesHelper(item, box, c.valuesLabel);
       break;
     case 'scale':
       box.append(tableField(item, 'table', c.tableLabel, () => { f.column = ''; }), columnField(item, 'column', f.table ?? '', c.columnLabel),
@@ -485,7 +496,7 @@ export function panel(item: CorrectionItem, plain: () => HTMLElement): HTMLEleme
   const box = deps.el('div', undefined, 'correction');
   box.dataset.form = draft.form;
   const forms = formsFor(item);
-  box.append(deps.el('p', c.intro, 'note'));
+  box.append(deps.el('p', c.intro, 'do'));
   const select = deps.el('select', undefined, 'correction-form');
   for (const form of forms) select.append(Object.assign(deps.el('option', c.forms[form]), { value: form }));
   select.value = draft.form;
@@ -515,7 +526,7 @@ export function panel(item: CorrectionItem, plain: () => HTMLElement): HTMLEleme
     box.append(deps.el('p', c.incomplete, 'note'));
     return box;
   }
-  box.append(deps.el('p', c.sentenceLabel, 'label'), deps.el('p', draft.preview.sentence, 'correction-sentence'));
+  box.append(deps.el('p', c.sentenceLabel, 'label sentence-label'), deps.el('p', draft.preview.sentence, 'correction-sentence'));
   const sql = deps.el('details');
   sql.append(deps.el('summary', c.sqlLabel), deps.el('pre', draft.preview.sql, 'code correction-sql'));
   box.append(sql);
@@ -536,9 +547,9 @@ export function panel(item: CorrectionItem, plain: () => HTMLElement): HTMLEleme
     checking = '';
     deps.setBusy(false);
     deps.render();
-  }));
+  }, draft.report ? 'secondary' : ''));
   box.append(actions);
-  if (checking === item.about) box.append(deps.el('p', c.checking, 'status'));
+  if (checking === item.about) box.append(deps.el('p', c.checking, 'status working-note'));
   if (draft.report) box.append(reportBox(draft.report, item, correction));
   return box;
 }
@@ -626,9 +637,7 @@ export function kept(item: CorrectionItem): HTMLElement | null {
   probe.append(actions);
   const sql = probeSql.get(item.about);
   if (sql) {
-    probe.append(deps.el('pre', sql, 'code'));
-    const copy = deps.el('div', undefined, 'actions');
-    copy.append(deps.button(c.probeCopy, () => void navigator.clipboard?.writeText(sql).catch(() => undefined), 'secondary copy-query'));
+    const copy = queryBlock(sql, c.probeCopy);
     const [caption, area] = deps.pasteBox(`probe-${item.about}`, c.probePasteLabel);
     const read = deps.el('div', undefined, 'actions');
     const status = deps.el('p', '', 'status problem');
@@ -659,7 +668,7 @@ export function kept(item: CorrectionItem): HTMLElement | null {
 
 // The check of the map as it stands, at the head of step 6.
 export async function checkModel(out: HTMLElement) {
-  out.replaceChildren(deps.el('p', c.checking, 'status'));
+  out.replaceChildren(deps.el('p', c.checking, 'status working-note'));
   try {
     const reply = await parsed('describe_model_check');
     out.replaceChildren();

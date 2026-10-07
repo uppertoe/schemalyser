@@ -136,9 +136,9 @@ def test_the_check_says_the_model_is_whole_when_nothing_is_wrong():
     s.data["roles"].pop("role_operation")
     found = s.correction_check(SOUND["window"])
     assert found["passed"]
-    assert found["sentence"].startswith("This change keeps the model whole: 11 views compile and give the rows that their "
-                                        "bindings describe, every key is unique, every flag is filled, and the neonatal cases "
-                                        "give the expected answer.")
+    assert found["sentence"].startswith("This change keeps the map whole: all 11 parts of the record run and give the rows "
+                                        "they should, every identifying column is unique, every flag is filled, and the "
+                                        "planted newborns give the expected answer.")
     assert any("outside the anaesthetic's window" in n for n in found["notes"])
 
 
@@ -172,7 +172,7 @@ def test_a_window_with_no_key_and_names_not_in_the_dictionary_are_refused(propos
         proposed.correction_preview(dict(SOUND["scale"], about="role_patient.is_test"))
     with pytest.raises(describe.DescribeError, match="whole number of minutes"):
         proposed.correction_preview(dict(SOUND["window"], before="ten"))
-    with pytest.raises(describe.DescribeError, match="starts from the view's own table"):
+    with pytest.raises(describe.DescribeError, match="starts from this part's own table"):
         proposed.correction_preview(dict(SOUND["path"], steps=[{"start": "VISIT", "from": "VISIT_KEY", "table": "THEATRE_CASE", "to": "VISIT_KEY"}]))
     # Once the tables and columns query is pasted, every name must be in its result as well.
     from test_describe import tables_result
