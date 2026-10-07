@@ -97,24 +97,25 @@ WORDING = {
     "column_says": "The dictionary describes {table}.{column} as \"{quote}\", and {words} match the role.",
     "column_says_name": "The dictionary describes {table}.{column} as \"{quote}\", and its name matches the role.",
     "column_says_bare": "The dictionary gives no description of {table}.{column}, and its name matches the role.",
-    "key_says": "{table}.{column} is the primary key of the view's table, which the dictionary describes as \"{quote}\".",
-    "key_says_bare": "{table}.{column} is the primary key of the view's table, and the dictionary gives no description of it.",
-    "link_says": "{table}.{column} has the same name as {target}, the key of {role}, and the proposer reaches it {how}.",
-    "link_says_quote": "{table}.{column} has the same name as {target}, the key of {role}, and the proposer reaches it {how}; the dictionary describes {first} as \"{quote}\".",
-    "reverse_says": "{table}.{column} is the key of {role}, and the proposer reaches it {how}. That last join runs from the other side, so a row is repeated wherever one row of {other} has more than one row of {table}.",
-    "column_question": "Please confirm whether {table}.{column} holds {view}.{name} as roles.md describes it, and name the column that holds it if it does not.",
-    "nothing_says": "The dictionary holds no column within reach of {table} that fits {view}.{name}, so the view gives it empty.",
-    "nothing_question": "Please name the table and column that hold {view}.{name}, or say that the hospital does not record it.",
+    "key_says": "{table}.{column} is the column that identifies a row of the table that holds this part, which the dictionary describes as \"{quote}\".",
+    "key_says_bare": "{table}.{column} is the column that identifies a row of the table that holds this part, and the dictionary gives no description of it.",
+    "link_says": "{table}.{column} has the same name as {target}, the column that identifies a row of {role}, and the page reaches it {how}.",
+    "link_says_quote": "{table}.{column} has the same name as {target}, the column that identifies a row of {role}, and the page reaches it {how}; the dictionary describes {first} as \"{quote}\".",
+    "reverse_says": "{table}.{column} is the column that identifies a row of {role}, and the page reaches it {how}. That last link runs from the other side, so a row is repeated wherever one row of {other} has more than one row of {table}.",
+    "column_question": "Please confirm whether {table}.{column} holds {about}, and name the column that holds it if it does not.",
+    "nothing_says": "The dictionary holds no column within reach of {table} that fits {about}, so the page leaves it empty.",
+    "nothing_question": "Please name the table and column that hold {about}, or say that the hospital does not record it.",
     "no_rows_says": "The dictionary holds no table that fits {view}, so the proposer has not drafted it.",
     "kind_says": "The dictionary cannot give the local codes of {kind}, because each hospital builds its own list of the things that can be charted.",
     "kind_question": "Please list the local codes of {source} that hold {meaning}",
-    "header": "-- {view}: a draft that Schemalyser proposed from the data dictionary on {date}. No person has confirmed any of its bindings yet, and map.json gives each one with its evidence and its question.",
+    "header": "-- {view}: a draft that Schemalyser proposed from the data dictionary on {date}.",
+    "header_none": "-- No person has confirmed any of its bindings yet, and map.json gives each one with its evidence and its question.",
     "header_nothing": "-- The dictionary holds no column that fits {columns}, so the view gives {them} empty.",
     "header_vocabulary": "-- The local values of {columns} have not yet been translated to the role's kinds or to 1 and 0, so the view gives a kind as other and a flag as empty until a person writes the translation.",
     "header_codes": "-- The local codes of the mean pressures are not yet known, so every reading is of the kind other until a person supplies them in map.json.",
     "header_person": "-- A person has answered for some bindings of this view, and map.json records each answer with its date.",
-    "via_one": "through {path}",
-    "in_table": "in the view's own table",
+    "via_one": "by matching {path}",
+    "in_table": "in the table that holds this part",
     "replaced_says": "A person replaced the proposal with {source} on {date}.",
     "replaced_says_quote": "A person replaced the proposal with {source} on {date}, which the dictionary describes as \"{quote}\".",
     "no_says": "A person said on {date} that the proposal does not hold this role, and named no replacement.",
@@ -130,7 +131,7 @@ WORDING = {
     "attribute_unknown": "{where}: the map holds no binding named {about}.",
     "replacement": "{where}: a replacement is a table and a column, written as TABLE.COLUMN, with an optional link written as via TABLE.COLUMN = TABLE.COLUMN.",
     "replacement_rows": "{where}: a different table for the rows changes every binding of the view, so please run propose again with --base {view}=TABLE.",
-    "unreachable": "{where}: the view's table does not reach {table} by any link the map knows, so please write the link as via TABLE.COLUMN = TABLE.COLUMN.",
+    "unreachable": "{where}: the table that holds this part does not reach {table} by any link the map knows, so please write the link as via TABLE.COLUMN = TABLE.COLUMN.",
     "hand_written": "{where}: this binding was written by hand and carries no binding data, so confirm can record yes or not sure for it but cannot change its SQL.",
     "confirmations_headings": "The file of confirmations needs the headings attribute and answer, and may add replacement, by, date and note.",
 }
@@ -751,12 +752,17 @@ def _path_text(path):
     if not path:
         return WORDING["in_table"]
     if len(path) > 2:
-        return WORDING["via_one"].format(path=f"{path[0][0]}.{path[0][1]} and {len(path) - 1} further joins")
-    return WORDING["via_one"].format(path=", then ".join(_step_text(step) for step in path))
+        return WORDING["via_one"].format(path=f"{_match_text(path[0])} and {len(path) - 1} further links")
+    return WORDING["via_one"].format(path=", then ".join(_match_text(step) for step in path))
 
 
 def _step_text(step):
     return " and ".join(f"{step[0]}.{a} = {step[2]}.{b}" for a, b in step_pairs(step))
+
+
+def _match_text(step):
+    """A link in words: "A.a to B.b", which a sentence introduces as matching."""
+    return " and ".join(f"{step[0]}.{a} to {step[2]}.{b}" for a, b in step_pairs(step))
 
 
 def _from_text(candidate):
@@ -776,7 +782,7 @@ def _column_says(dictionary, candidate, view_name, column_name, link=None):
         return _fit(WORDING["key_says"].format(table=table, column=column, quote=_quote(description)),
                     lambda n: WORDING["key_says"].format(table=table, column=column, quote=_quote(description, n)))
     if link is not None and candidate.get("reverse"):
-        role = link[0]
+        role = rolemap.view_title(link[0], False)
         sentence = WORDING["reverse_says"].format(table=table, column=column, role=role, how=_path_text(candidate["path"]),
                                                   other=candidate["path"][-1][0])
         if len(sentence) > 400:
@@ -785,6 +791,7 @@ def _column_says(dictionary, candidate, view_name, column_name, link=None):
         return sentence
     if link is not None:
         role, _, (target_table, target_column) = link
+        role = rolemap.view_title(role, False)
         how = _path_text(candidate["path"])
         first = f"{candidate['path'][0][0]}.{candidate['path'][0][1]}" if candidate["path"] else f"{table}.{column}"
         first_description = dictionary.description(*first.split(".", 1))
@@ -854,14 +861,15 @@ def draft(proposal, dictionary, model=None, date=None, world="the hospital"):
             if best is None:
                 columns[column["name"]] = {
                     "status": "proposed", "from": "nothing in the dictionary fits",
-                    "says": WORDING["nothing_says"].format(table=table, view=name, name=column["name"]),
-                    "question": WORDING["nothing_question"].format(view=name, name=column["name"]),
+                    "says": WORDING["nothing_says"].format(table=table, about=rolemap.plain_about(f"{name}.{column['name']}")),
+                    "question": WORDING["nothing_question"].format(about=rolemap.plain_about(f"{name}.{column['name']}")),
                     "binding": None, "confidence": "none", "candidates": candidates}
                 continue
             columns[column["name"]] = {
                 "status": "proposed", "from": _from_text(best),
                 "says": _column_says(dictionary, best, name, column["name"], item.get("link")),
-                "question": WORDING["column_question"].format(table=best["table"], column=best["column"], view=name, name=column["name"]),
+                "question": WORDING["column_question"].format(table=best["table"], column=best["column"],
+                                                              about=rolemap.plain_about(f"{name}.{column['name']}")),
                 "binding": _binding(best), "confidence": item["confidence"], "candidates": candidates}
         roles[name] = {"file": f"{name}.sql", "rows": evidence, "columns": columns}
     kind_source = roles["role_reading"]["columns"]["kind"]["from"] if "role_reading" in roles else "the readings"
@@ -1104,6 +1112,8 @@ def view_sql(name, role, kinds=None, model=None, vocabularies=None):
     header = [WORDING["header"].format(view=name, date=role.get("_date", ""))]
     if any(e.get("confirmation") for e in [role["rows"], *role["columns"].values()]):
         header.append(WORDING["header_person"])
+    else:
+        header.append(WORDING["header_none"])
     if nothing:
         header.append(WORDING["header_nothing"].format(columns=_and(nothing), them="it" if len(nothing) == 1 else "them"))
     if vocabulary:

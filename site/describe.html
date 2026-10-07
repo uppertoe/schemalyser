@@ -100,8 +100,10 @@
             <div class="body">
               <p id="t-folder-what" class="do"></p>
               <div class="field">
-                <label for="hospital-folder" id="l-hospital-folder"></label>
-                <input type="file" id="hospital-folder" webkitdirectory />
+                <p id="l-hospital-folder" class="field-label"></p>
+                <!-- The browser labels its own control for a file, not a folder, so the page gives the control its own name. -->
+                <input type="file" id="hospital-folder" class="visually-hidden" webkitdirectory />
+                <label for="hospital-folder" id="b-hospital-folder" class="button-like"></label>
                 <details class="about">
                   <summary id="s-folder-about"></summary>
                   <p id="t-folder-about" class="note"></p>
@@ -184,7 +186,9 @@
                 <div class="meter" aria-hidden="true"><span id="tally-meter"></span></div>
                 <p id="t-tally" class="visually-hidden" role="status"></p>
               </div>
+              <p id="t-confirm-intro" class="intro-step"></p>
               <p id="t-confirm-what" class="do"></p>
+              <p id="t-confirm-legend" class="note"></p>
               <details class="about">
                 <summary id="s-confirm-about"></summary>
                 <p id="t-confirm-about" class="note"></p>
@@ -258,12 +262,14 @@
                   <label class="option"><input type="checkbox" id="keep-dictionary" /> <span id="l-keep"></span></label>
                   <p id="t-keep-note" class="note"></p>
                 </div>
-                <div class="actions">
-                  <button type="button" id="write-folder" hidden></button>
-                  <button type="button" id="write-zip" class="secondary"></button>
+                <div class="write-choice" id="b-write-folder" hidden>
+                  <div class="actions"><button type="button" id="write-folder"></button></div>
+                  <p id="t-write-folder-note" class="note"></p>
                 </div>
-                <p id="t-write-folder-note" class="note" hidden></p>
-                <p id="t-write-zip-note" class="note"></p>
+                <div class="write-choice">
+                  <div class="actions"><button type="button" id="write-zip" class="secondary"></button></div>
+                  <p id="t-write-zip-note" class="note"></p>
+                </div>
                 <details class="about">
                   <summary id="s-write-about"></summary>
                   <p id="t-write-about" class="note"></p>

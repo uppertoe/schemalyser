@@ -93,7 +93,7 @@ WORDING = {
     "grid_empty": "The pasted text holds no rows. If the query returned no rows, the grid is empty; otherwise please copy the whole results grid with Copy with Headers, and paste it again.",
     "folder_unreadable": "Schemalyser could not read map.json in the chosen folder as a map, so it has started a new hospital folder instead.",
     "cliff": "In {year}, {count} of {total} anaesthetics {what}, against {best_count} of {best_total} in {best_year}. A fall as sharp as this usually means that the data is held differently in that year.",
-    "repeated": "{view} holds {count} keys that more than one row holds.",
+    "repeated": "In {view}, {count} values of the column that identifies a row are held by more than one row.",
     "stamp_query": "Written by Schemalyser {version} on {date}.",
     "stamp_file": "Written by Schemalyser {version} on {date}.",
     "stamp_result": "Pasted into Schemalyser {version} on {date}. The lines below are the result exactly as it was pasted.",
@@ -102,6 +102,7 @@ WORDING = {
     "differs": "{about} differs: the folder holds {before}, and the rebuilt map holds {after}.",
     "only_folder": "The folder's map holds {about}, and the rebuilt map does not.",
     "only_rebuilt": "The rebuilt map holds {about}, and the folder's map does not.",
+    "training": "These queries were run on a training database, whose patients are fictional, so their figures say nothing about the real record. Run each of them again on the production database before the figures are used:",
     "table_gone": "The table {table} was in the earlier result and is not in the new one.",
     "column_gone": "The column {column} was in the earlier result and is not in the new one.",
     "table_new": "The table {table} is in the new result and was not in the earlier one.",
@@ -530,8 +531,17 @@ class Describe:
                 yield f"{name}.{column}", item
 
     def questions(self):
-        return [{"about": about, "question": item.get("question") or ""} for about, item in self._items()
-                if (item.get("confirmation") or {}).get("answer") == "not sure"]
+        """The bindings marked not sure, each named in plain words, with its question and the meaning of the column."""
+        found = []
+        for about, item in self._items():
+            if (item.get("confirmation") or {}).get("answer") != "not sure":
+                continue
+            view, _, column = about.partition(".")
+            spec = next((c for c in self.views[view.split(" ")[0]]["columns"] if c["name"] == column), None)
+            meaning = rolemap.plain(spec["meaning"], view) if spec else rolemap.plain(self.views[view.split(" ")[0]]["description"])
+            found.append({"about": about, "title": rolemap.plain_about(about, True), "question": rolemap.plain(item.get("question") or ""),
+                          "meaning": meaning})
+        return found
 
     # Corrections in plain forms, each checked on invented rows before it is kept.
 
@@ -906,7 +916,7 @@ class Describe:
                     reason = "unbound_link"
                 held = self.codes.get(key, {})
                 lookup = held.get("lookup") or (self._lookup(binding["table"], binding["column"]) if binding else None)
-                found.append({"key": key, "view": view_name, "column": column["name"], "vocabulary": vocabulary,
+                found.append({"key": key, "title": rolemap.plain_about(key, True), "view": view_name, "column": column["name"], "vocabulary": vocabulary,
                               "required": bool(view.get("required")),
                               "kinds": [k for k, _ in kinds], "meanings": dict(kinds),
                               "bound": f"{binding['table']}.{binding['column']}" if binding else "",
@@ -1037,6 +1047,7 @@ class Describe:
         if entry["reason"]:
             raise DescribeError(entry["reason"])
         year = int(year)
+        self.set_settings(year=year)
         view_name, column = entry["view"], entry["column"]
         cohort_column = "anaesthetic_key" if entry["link"] == "anaesthetic_key" else "patient_key"
         lines, expressions, order, where = self._reached(view_name, entry["link"], cohort_column, [column], raw={column})
@@ -1072,7 +1083,9 @@ class Describe:
         """Records the codes that a person chose for each kind of a vocabulary: chosen is {code: kind}."""
         entry = self._vocabulary(key)
         date = date or _today()
-        chosen = {str(code): kind for code, kind in chosen.items() if kind in entry["kinds"] and kind != "other"}
+        # A code chosen as other is kept as chosen, so that the page shows it as chosen, and is translated as any code
+        # left unchosen is.
+        chosen = {str(code): kind for code, kind in chosen.items() if kind in entry["kinds"]}
         held = self.codes.setdefault(key, {})
         names = {r["code"]: r["name"] for r in held.get("rows", [])}
         held.update({"chosen": chosen, "names": {c: names.get(c, "") for c in chosen}, "date": date,
@@ -1101,7 +1114,8 @@ class Describe:
                 continue
             by_kind = {}
             for code, kind in held["chosen"].items():
-                by_kind.setdefault(kind, []).append(code)
+                if kind != "other":
+                    by_kind.setdefault(kind, []).append(code)
             found[column] = {k: sorted(v, key=str) for k, v in by_kind.items()}
         return found
 
@@ -1126,6 +1140,7 @@ class Describe:
         """The counts of this screen: two that read the small tables only, and the readings of one year's cohort by kind
         as a two-part script. Each is {"name", "safe", "sql", "tables"}."""
         year = int(year or self.settings.get("year") or dt.date.today().year - 1)
+        self.set_settings(year=year)
         rounding = 10
         rounded = lambda n: f"g.{n} - g.{n} % {rounding} AS {n}"  # noqa: E731
         coverage = ("with_patient", "with_birth_date", "with_death_date", "test_patients", "with_stop", "stop_before_start")
@@ -1207,7 +1222,8 @@ ORDER  BY g.kind;"""
         if name not in COUNT_COLUMNS:
             raise DescribeError(WORDING["unknown_count"].format(name=name))
         held = self.counts.setdefault(name, {})
-        held.update({"looks_right": looks_right, "note": " ".join((note or "").split())[:400], "judged": date or _today()})
+        held.update({"looks_right": looks_right, "note": " ".join((note or "").split())[:400], "judged": date or _today(),
+                     "database": self.settings.get("database") or "unsure"})
 
     def findings(self, name):
         held = self.counts.get(name) or {}
@@ -1230,7 +1246,7 @@ ORDER  BY g.kind;"""
         elif name == "repeated_keys":
             for r in records:
                 if (r.get("keys_repeated") or 0) > 0:
-                    found.append(WORDING["repeated"].format(view=r["role_view"], count=r["keys_repeated"]))
+                    found.append(WORDING["repeated"].format(view=rolemap.view_title(str(r["role_view"]), False), count=r["keys_repeated"]))
         return found
 
     # The record of how the folder was made: every query offered, every result pasted, every answer.
@@ -1308,7 +1324,7 @@ ORDER  BY g.kind;"""
             files[self._file(name, "results", "tsv")] = (first + "\n" + text.rstrip("\n") + "\n").encode("utf-8")
         for key, held in sorted(self.codes.items()):
             files[f"codes/{key}.json"] = self._json({"view": key.split(".")[0], "column": key.split(".")[1], **held}, date)
-        judgements = {name: {k: held.get(k) for k in ("date", "looks_right", "note", "judged") if held.get(k) is not None}
+        judgements = {name: {k: held.get(k) for k in ("date", "looks_right", "note", "judged", "database") if held.get(k) is not None}
                       for name, held in sorted(self.counts.items())}
         if judgements:
             files["counts/judgements.json"] = self._json({"counts": judgements}, date)
@@ -1340,7 +1356,8 @@ ORDER  BY g.kind;"""
         settings.update({"dictionary": {"kept": kept, **({k: v for k, v in (self.dictionary_receipt() or {}).items()
                                                           if k in ("tables", "columns", "file", "tablesFile")})}})
         files["settings.json"] = self._json(settings, date)
-        files["README.md"] = readme(sorted(files), self.version, date, kept).encode("utf-8")
+        training = [self._file(e["name"], "queries", "sql") for e in entries if e.get("database") == "training"]
+        files["README.md"] = readme(sorted(files), self.version, date, kept, training).encode("utf-8")
         return files
 
     def folder_zip(self, keep_dictionary=False, date=None):
@@ -1452,14 +1469,14 @@ ORDER  BY g.kind;"""
                     else:
                         fresh.confirm(row["attribute"], row["answer"], row.get("replacement") or "", row.get("note") or "", row.get("date") or None)
                 except (DescribeError, KeyError, ValueError) as error:
-                    problems.append(WORDING["check_confirmation"].format(about=row["attribute"], problem=str(error)))
+                    problems.append(WORDING["check_confirmation"].format(about=rolemap.plain_about(row["attribute"]), problem=str(error)))
             for key, held in self.codes.items():
                 if held.get("chosen"):
                     fresh.codes.setdefault(key, {}).update({k: v for k, v in held.items() if k != "chosen"})
                     try:
                         fresh.choose_codes(key, held["chosen"], held.get("date"))
                     except DescribeError:
-                        problems.append(WORDING["check_codes"].format(key=key))
+                        problems.append(WORDING["check_codes"].format(key=rolemap.plain_about(key)))
             self.proposer = fresh.proposer
             rebuilt = {"rebuilt": True, "differences": problems + _differences(self.data, fresh.data)}
             rebuilt["same"] = not rebuilt["differences"]
@@ -1504,26 +1521,27 @@ ORDER  BY g.kind;"""
         roles = []
         for view in self.model["views"]:
             role = (self.data or {}).get("roles", {}).get(view["name"])
-            entry = {"name": view["name"], "description": view["description"], "required": bool(view.get("required")),
-                     "drafted": role is not None, "items": []}
+            entry = {"name": view["name"], "title": rolemap.view_title(view["name"]), "description": rolemap.plain(view["description"]),
+                     "required": bool(view.get("required")), "drafted": role is not None, "items": []}
             if role is not None:
                 rows = role["rows"]
                 table = rows["binding"]["table"] if rows.get("binding") else rows["from"]
-                entry["items"].append(self._item(f"{view['name']} rows", "rows", rows, view["description"], table, None))
+                entry["items"].append(self._item(f"{view['name']} rows", "rows", rows, rolemap.plain(view["description"]), table, None))
                 links = {link["column"]: link["to"] for link in view.get("links", [])}
                 for column in view["columns"]:
                     item = role["columns"][column["name"]]
                     binding = item.get("binding")
                     shown = self._item(f"{view['name']}.{column['name']}", column["name"], item,
-                                       column["meaning"], binding["table"] if binding else None,
+                                       rolemap.plain(column["meaning"], view["name"]), binding["table"] if binding else None,
                                        binding["column"] if binding else None, column["type"])
                     shown["link"] = links.get(column["name"])
+                    shown["title"] = rolemap.column_title(view["name"], column["name"])
                     entry["items"].append(shown)
             roles.append(entry)
         tally = self.tally()
         return {"dictionary": self.dictionary_receipt(), "proposed": self.data is not None, "roles": roles,
                 "tally": tally, "questions": self.questions(), "catalogue": self.catalogue is not None,
-                "vocabularies": self.vocabularies(), "values": self.values, "counts": {k: {kk: v.get(kk) for kk in ("columns", "rows", "looks_right", "note", "date")}
+                "vocabularies": self.vocabularies(), "values": self.values, "counts": {k: {kk: v.get(kk) for kk in ("columns", "rows", "looks_right", "note", "date", "database")}
                                                                 | {"findings": self.findings(k)} for k, v in self.counts.items()},
                 "settings": {k: self.settings.get(k) for k in ("made", "updated", "database", "year")},
                 "anaesthetic_table": ((self.data or {}).get("roles", {}).get("role_anaesthetic") or {}).get("rows", {}).get("binding", {}).get("table"),
@@ -1548,15 +1566,16 @@ ORDER  BY g.kind;"""
                                "definition": words or candidate.get("words")})
         confirmation = item.get("confirmation") or {}
         correction = confirmation.get("correction") if isinstance(confirmation.get("correction"), dict) else None
-        return {"correction": {"form": correction["form"], "says": item["says"] if attribute != "rows" else _filter_says(item),
+        return {"correction": {"form": correction["form"], "says": rolemap.plain(item["says"] if attribute != "rows" or correction["form"] == "rows"
+                                                                         else _filter_says(item, about)),
                                "check": confirmation.get("check") or "", "reason": confirmation.get("reason") or "",
                                "probe": self.probe_kind(about), "probed": self.probes.get(about),
                                "findings": self.probe_findings(about)} if correction else None,
                 "binding_form": _binding_form(binding),
                 "about": about, "attribute": attribute, "meaning": meaning, "type": role_type, "from": item["from"],
                 "table": table, "column": column, "bound": bool(binding) if attribute != "rows" else bool(table),
-                "definition": definition, "says": item["says"], "confidence": item.get("confidence") or "",
-                "candidates": candidates, "status": item["status"], "question": item.get("question") or "",
+                "definition": definition, "says": rolemap.plain(item["says"]), "title": "", "confidence": item.get("confidence") or "",
+                "candidates": candidates, "status": item["status"], "question": rolemap.plain(item.get("question") or ""),
                 "answer": confirmation.get("answer"), "date": confirmation.get("date"),
                 "replacement": confirmation.get("replacement"), "note": confirmation.get("note"),
                 "presence": self.presence(binding if attribute != "rows" else ({"table": table} if table else None))}
@@ -1574,12 +1593,12 @@ def _binding_form(binding):
     return "column"
 
 
-def _filter_says(item):
+def _filter_says(item, about=""):
     filters = (item.get("binding") or {}).get("filter") or []
     if not filters:
         return item["says"]
     return " ".join(corrections._fit(corrections.WORDING["say_filter"].format(
-        view="The role", source=f"{f['table']}.{f['column']}", values=corrections._shown_values(f["values"]), how=""))
+        view=rolemap.view_title(about.split(" ")[0], False), source=f"{f['table']}.{f['column']}", values=corrections._shown_values(f["values"]), how=""))
         for f in filters)
 
 
@@ -1622,7 +1641,7 @@ def _differences(before, after):
     for name in roles:
         one, two = before["roles"].get(name), after["roles"].get(name)
         if one is None or two is None:
-            found.append(WORDING["only_folder" if two is None else "only_rebuilt"].format(about=name))
+            found.append(WORDING["only_folder" if two is None else "only_rebuilt"].format(about=rolemap.view_title(name, False)))
             continue
         pairs = [(f"{name} rows", one["rows"], two["rows"])]
         pairs += [(f"{name}.{c}", one["columns"].get(c), two["columns"].get(c)) for c in dict.fromkeys([*one["columns"], *two["columns"]])]
@@ -1630,7 +1649,7 @@ def _differences(before, after):
             same = x is not None and y is not None and x.get("binding") == y.get("binding") and x["status"] == y["status"] \
                 and (x.get("confirmation") or {}).get("answer") == (y.get("confirmation") or {}).get("answer")
             if not same:
-                found.append(WORDING["differs"].format(about=about, before=_shown(x), after=_shown(y)))
+                found.append(WORDING["differs"].format(about=rolemap.plain_about(about, True), before=_shown(x), after=_shown(y)))
     for kind in dict.fromkeys([*before["kinds"], *after["kinds"]]):
         x, y = before["kinds"].get(kind, {}).get("codes"), after["kinds"].get(kind, {}).get("codes")
         if sorted(x or []) != sorted(y or []):
@@ -1685,12 +1704,13 @@ README = {
              "or corrected each one, and the queries that the colleague ran settled the local codes and the counts. "
              "The folder names the hospital's own tables and codes, so it stays on the hospital's own storage.",
     "files": "## What each file holds",
+    "rerun": "## Queries to run again on production",
     "remake": "## How to check or remake the folder",
     "remake_text": [
         "Open the page Describe the record, take it offline, load the data dictionary in step 2 and choose this folder "
         "in step 3. The page then restores everything below, and you can carry on from where the folder was left.",
         "To check that the folder is still right, for example after a change to the database or a new release of the "
-        "vendor's system, choose Check that this folder is still right. Schemalyser proposes the map again from the "
+        "vendor's system, choose Check this folder under Check a saved folder. Schemalyser proposes the map again from the "
         "dictionary, applies the answers in confirmations.csv in their order, and says whether the result is the same "
         "as map/map.json. It then lists every query in queries/ with its earlier result from results/. The colleague "
         "runs each query again and pastes the new result, and the page lists what has changed: a table or column that "
@@ -1726,13 +1746,15 @@ README_FILES = [
                  "The first line names the tool's version and the date."),
     ("codes/", "For each vocabulary that the hospital holds as local codes, the list of what is charted and the codes "
                "chosen for each kind."),
-    ("counts/judgements.json", "For each count, whether it looked right to the two of you, and any note."),
+    ("counts/judgements.json", "For each count, whether it looked right to the two of you, any note, and the database, "
+                               "production or training, whose figures were judged."),
     ("dictionary/", "The dictionary's own files, exactly as they were loaded."),
 ]
 
 
-def readme(paths, version, date, kept):
-    """README.md of the hospital folder, which says what each file is, how it was made and how to remake it."""
+def readme(paths, version, date, kept, training=()):
+    """README.md of the hospital folder, which says what each file is, how it was made and how to remake it. training
+    lists the queries whose results came from a training database, which are to be run again on production."""
     lines = [README["title"], "", README["stamp"].format(version=version or "unknown", date=date), "", README["intro"], "",
              README["files"], ""]
     for name, what in README_FILES:
@@ -1740,6 +1762,8 @@ def readme(paths, version, date, kept):
                       or (name == "map/role_*.sql" and p.startswith("map/role_")) for p in paths)
         if present:
             lines.append(f"- `{name}`: {what}")
+    if training:
+        lines += ["", README["rerun"], "", WORDING["training"], ""] + [f"- `{path}`" for path in training]
     lines += ["", README["licence"] if kept else README["no_licence"], "", README["remake"], ""]
     for paragraph in README["remake_text"]:
         lines += [paragraph, ""]

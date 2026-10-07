@@ -196,6 +196,12 @@ def test_the_folder_records_everything_and_a_new_sitting_restores_and_checks_it(
     assert journal["version"] == "test" and journal["entries"][0]["name"] == "dictionary"
     assert journal["entries"][0]["sha256"] and "description" not in json.dumps(journal["entries"][0]).lower()
     assert all(e.get("database") == "training" for e in journal["entries"][1:] if e["name"].startswith("count-"))
+    # The year that the lists and counts used is saved, the judgement says which database it was made on, and the README
+    # lists each query run on a training database, to be run again on production.
+    assert json.loads(files["settings.json"])["year"] is not None
+    assert json.loads(files["counts/judgements.json"])["counts"]["coverage_by_year"]["database"] == "training"
+    readme = files["README.md"].decode()
+    assert "## Queries to run again on production" in readme and "count-coverage_by_year.sql`" in readme
     rows = list(csv.DictReader(io.StringIO(files["confirmations.csv"].decode())))
     assert [r["attribute"] for r in rows][:2] == ["role_patient.birth_date", "role_patient rows"]
     # Every file names the tool's version and the date, except map.json, whose format is fixed and which gives the
@@ -236,7 +242,7 @@ def test_the_folder_records_everything_and_a_new_sitting_restores_and_checks_it(
     other.restore({**files, "map/map.json": json.dumps(edited).encode()})
     other.load_dictionary(DICTIONARY.read_bytes(), TABLES.read_bytes())
     found = other.check()
-    assert not found["same"] and any(d.startswith("role_patient.death_date differs") for d in found["differences"])
+    assert not found["same"] and any(d.startswith("The date of death in Patients differs") for d in found["differences"])
     # The new result of a query is compared with the earlier one.
     changed = again.compare("tables-and-columns", tables_result({"OBS_READING": 40_000_000}, leave_out=("VISIT_DIAGNOSIS",)))
     assert "The table VISIT_DIAGNOSIS was in the earlier result and is not in the new one." in changed["differences"]

@@ -15,19 +15,22 @@ interface Item {
   about: string; attribute: string; meaning: string; type: string | null; from: string; table: string | null; column: string | null;
   bound: boolean; definition: string | null; says: string; confidence: string; candidates: Candidate[]; status: string; question: string;
   answer: string | null; date: string | null; replacement: string | null; presence: Presence | null;
-  link: string | null; correction: corrections.CorrectionHeld | null;
+  link: string | null; correction: corrections.CorrectionHeld | null; title: string;
 }
-interface Role { name: string; description: string; required: boolean; drafted: boolean; items: Item[] }
+interface Role { name: string; title: string; description: string; required: boolean; drafted: boolean; items: Item[] }
 interface Vocabulary {
-  key: string; view: string; column: string; vocabulary: string; kinds: string[]; meanings: Record<string, string>; bound: string;
+  key: string; title: string; view: string; column: string; vocabulary: string; kinds: string[]; meanings: Record<string, string>; bound: string;
   lookup: [string, string] | null; reason: string; rows: { code: string; charted: number | null; anaesthetics: number | null; name: string }[];
   chosen: Record<string, string>; year: number | null; date: string | null;
 }
-interface CountHeld { columns: string[] | null; rows: string[][] | null; looks_right: string | null; note: string | null; date: string | null; findings: string[] }
+interface CountHeld {
+  columns: string[] | null; rows: string[][] | null; looks_right: string | null; note: string | null; date: string | null; findings: string[];
+  database: string | null;
+}
 interface Model {
   dictionary: { tables: number; columns: number; described: number; keyed: number; skipped: number } | null;
   proposed: boolean; roles: Role[]; tally: { confirmed: number; corrected: number; not_sure: number; remaining: number; total: number };
-  questions: { about: string; question: string }[]; catalogue: boolean; vocabularies: Vocabulary[]; counts: Record<string, CountHeld>;
+  questions: { about: string; title: string; question: string; meaning: string }[]; catalogue: boolean; vocabularies: Vocabulary[]; counts: Record<string, CountHeld>;
   settings: { made: string | null; updated: string | null; database: string | null; year: number | null };
   restored: Record<string, unknown> | null;
   values: Record<string, { value: string; rows: number | null }[]>; anaesthetic_table: string | null; bases: Record<string, string>;
@@ -63,10 +66,16 @@ let countQueries: CountQuery[] = [];
 let tablesSql = '';
 let databaseChoice: string | null = null;
 const openAnother = new Set<string>();
+// The columns whose answer a person has asked to change, which show their choices again.
+const changing = new Set<string>();
 // The steps that a person has opened or hidden by hand; otherwise the current step is open and the rest are folded.
 const opened = new Set<string>();
 const hidden = new Set<string>();
 let written = false;
+// Whether something has changed since the folder was saved, which makes step 9 to be done again.
+let changedSinceWritten = false;
+// The calls that change nothing that the hospital folder holds.
+const READING = new Set(['describe_model', 'describe_check', 'describe_compare']);
 // The sentence that says why an answer could not be recorded, beside the binding it was given for.
 const problems = new Map<string, string>();
 
@@ -95,6 +104,10 @@ function call(name: string, args: unknown[] = [], extra: Record<string, unknown>
 async function ask(name: string, args: unknown[] = [], extra: Record<string, unknown> = {}, progress?: (done: number, total: number) => void): Promise<Reply> {
   const reply = await call(name, args, extra, progress);
   const parsed = JSON.parse(reply.reply as string) as Reply;
+  if (parsed.ok && !READING.has(name) && written) {
+    written = false;
+    changedSinceWritten = true;
+  }
   if (parsed.model) {
     model = parsed.model;
     render();
@@ -152,6 +165,8 @@ function lock() {
   pending.clear();
   model = null;
   corrections.forget();
+  changing.clear();
+  openAnother.clear();
   chartedSql.clear();
   countQueries = [];
   tablesSql = '';
@@ -178,13 +193,18 @@ type StepState = 'done' | 'current' | 'available' | 'waiting' | 'problem';
 const STEPS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 const OPTIONAL = new Set(['3']);
 
-function vocabulariesDone(m: Model) {
-  return m.vocabularies.filter((v) => !v.reason).every((v) => !!v.date);
+// Step 7 is done once at least one list of codes is saved, or where no column holds codes to choose.
+function listsSaved(m: Model) {
+  return m.vocabularies.filter((v) => !v.reason && v.date).length;
 }
 
-function countsDone(m: Model) {
-  const names = countQueries.length ? countQueries.map((q) => q.name) : Object.keys(d.countHeading);
-  return names.every((name) => !!m.counts[name]?.looks_right);
+function vocabulariesDone(m: Model) {
+  return listsSaved(m) > 0 || m.vocabularies.every((v) => !!v.reason);
+}
+
+// Step 8 is done once at least one count has a saved judgement.
+function judged(m: Model) {
+  return Object.values(m.counts).filter((held) => !!held.looks_right).length;
 }
 
 // What each step is: its state, the line that a folded step shows, and what a waiting step waits for.
@@ -194,7 +214,7 @@ function stepStates() {
   const proposed = !!m?.proposed;
   const restoredMap = !!(m?.restored && (m.restored as { map?: boolean }).map);
   const done = [ready, !!m?.dictionary, restoredMap, proposed, !!m?.catalogue, proposed && m!.tally.remaining === 0,
-    proposed && vocabulariesDone(m!), proposed && countsDone(m!), written];
+    proposed && vocabulariesDone(m!), proposed && judged(m!) > 0, written];
   const waits = STEPS.map((_, i) => {
     if (i === 0) return '';
     if (!ready) return d.waitingFor.offline;
@@ -215,9 +235,9 @@ function stepStates() {
     statusText('t-folder-status') || d.receipt.folder,
     m ? d.receipt.proposed(m.roles.filter((r) => r.drafted).length, m.roles.length) : '',
     statusText('t-tables-status') || d.receipt.tables,
-    m ? d.tally(m.tally) : '',
-    d.receipt.codes,
-    d.receipt.counts,
+    m ? d.receipt.confirmed(m.tally.total, m.roles.filter((r) => !r.drafted).length) : '',
+    m ? d.receipt.codes(listsSaved(m)) : '',
+    m ? d.receipt.counts(judged(m)) : '',
     statusText('t-write-status'),
   ];
   return { states, waits, receipts };
@@ -274,8 +294,11 @@ function show() {
       if (value !== 'waiting') toggleStep(n, true);
     });
     const name = d.steps[i].replace(/^\d+\.\s*/, '');
+    // Step 6 says how many columns are still to answer until every one has an answer.
+    const remaining = n === '6' && model?.proposed && value !== 'done' && value !== 'waiting' ? model.tally.remaining : 0;
+    const railWord = value === 'waiting' ? waits[i] : remaining ? `${word}: ${d.stillToAnswer(remaining)}` : word;
     link.append(el('span', value === 'done' ? '✓' : value === 'problem' ? '!' : n, 'marker'), el('span', name, 'rail-name'),
-      el('span', value === 'waiting' ? waits[i] : word, 'rail-state'));
+      el('span', railWord, 'rail-state'));
     item.append(link);
     rail.append(item);
   });
@@ -347,7 +370,8 @@ function render() {
   $('t-questions-none').hidden = questions.length > 0;
   $('questions').hidden = questions.length === 0;
   $('questions-copy').hidden = questions.length === 0;
-  $('questions').textContent = [d.questionsNoteHead, '', ...questions.map((q, i) => `${i + 1}. ${q.about}: ${q.question}`)].join('\n');
+  $('questions').textContent = [d.questionsNoteHead, '',
+    ...questions.map((q, i) => `${i + 1}. ${q.title}: ${q.question} ${d.questionsMeaning(q.meaning)}`)].join('\n\n');
   const year = $<HTMLInputElement>('year');
   if (!year.value) year.value = String(model?.settings.year ?? new Date().getFullYear() - 1);
   if (model?.settings.database && !databaseChoice) {
@@ -358,6 +382,7 @@ function render() {
   $('tables-write').classList.toggle('secondary', !!tablesSql);
   $('counts-write').classList.toggle('secondary', countQueries.length > 0);
   $('t-counts-again').hidden = countQueries.length === 0;
+  if (changedSinceWritten && !written) status('t-write-status', d.writtenStale);
   show();
 }
 
@@ -379,17 +404,52 @@ function quote(definition: string | null, says: string) {
   return box;
 }
 
+// Where a binding comes from, as the map writes it ("T.C, by A.a = B.b, then B.c = C.d"), with each link in words:
+// the column in code type, then "linked by matching A.a to B.b, then B.c to C.d".
+function fromNode(from: string) {
+  const box = el('span', undefined, 'from');
+  const [head, ...rest] = from.split(', by ');
+  box.append(el('code', head));
+  if (rest.length) {
+    const links = rest.join(', by ').split(', then ').map((step) => step.split(' and ').map((pair) => pair.split(' = ')));
+    box.append(document.createTextNode(`, ${d.linkedBy} `));
+    links.forEach((pairs, i) => {
+      if (i) box.append(document.createTextNode(`, ${d.linkedThen} `));
+      pairs.forEach((pair, j) => {
+        if (j) box.append(document.createTextNode(' and '));
+        box.append(el('code', pair[0]));
+        if (pair[1]) box.append(document.createTextNode(` ${d.linkedTo} `), el('code', pair[1]));
+      });
+    });
+  }
+  return box;
+}
+
+function capital(text: string) {
+  return text ? text[0].toUpperCase() + text.slice(1) : text;
+}
+
+function attributeName(item: Item) {
+  return item.attribute === 'rows' ? d.rowsAttribute : capital(item.title || item.attribute);
+}
+
+// What the page proposes, or what a person has settled, for one column.
 function proposedLine(item: Item) {
   const line = el('p', undefined, 'proposed');
-  line.append(el('span', `${d.proposedLabel} `, 'label'));
-  line.append(el('code', item.bound ? item.from : d.nothingProposed));
-  if (item.confidence) line.append(el('span', ` ${d.confidence[item.confidence] ?? item.confidence}`, `confidence ${item.confidence}`));
+  const rows = item.attribute === 'rows';
+  if (!item.bound) {
+    line.append(el('span', rows ? d.nothingProposedRows : d.nothingProposed, 'label nothing'));
+    return line;
+  }
+  const settled = item.answer === 'yes' ? d.confirmedLabel : item.answer === 'no' && item.status === 'person' ? d.correctedLabel : d.proposedLabel;
+  line.append(el('span', `${settled} `, 'label'), fromNode(rows ? item.table ?? item.from : item.from));
+  if (settled === d.proposedLabel && item.confidence) line.append(el('span', ` ${d.confidence[item.confidence] ?? item.confidence}`, `confidence ${item.confidence}`));
   return line;
 }
 
 function roleHeading(role: Role) {
   const heading = el('h3');
-  heading.append(el('code', role.name, 'role-name'));
+  heading.append(el('span', role.title || role.name, 'role-name'));
   return heading;
 }
 
@@ -410,7 +470,7 @@ function renderProposal() {
     for (const item of role.items) {
       const entry = el('li', undefined, 'binding');
       entry.dataset.about = item.about;
-      entry.append(el('p', item.attribute === 'rows' ? d.rowsAttribute : item.attribute, item.attribute === 'rows' ? 'attribute rows' : 'attribute'));
+      entry.append(el('p', attributeName(item), item.attribute === 'rows' ? 'attribute rows' : 'attribute'));
       if (item.attribute !== 'rows') entry.append(el('p', item.meaning, 'meaning'));
       entry.append(proposedLine(item));
       if (item.bound) {
@@ -422,7 +482,7 @@ function renderProposal() {
         const alternatives = el('ul');
         for (const candidate of item.candidates) {
           const one = el('li');
-          one.append(el('code', candidate.from));
+          one.append(fromNode(candidate.from));
           if (candidate.definition) one.append(el('blockquote', candidate.definition, 'definition'));
           alternatives.append(one);
         }
@@ -443,11 +503,18 @@ function presenceText(presence: Presence | null, table = false) {
   return table ? d.presence.presentTable : d.presence.present;
 }
 
-function answeredText(item: Item) {
-  if (item.answer === 'yes') return d.answered.yes(item.date ?? '');
-  if (item.answer === 'no' && item.status === 'person') return d.answered.no(item.date ?? '', item.replacement ?? '');
-  if (item.answer === 'not sure') return d.answered.notSure(item.date ?? '');
-  return '';
+// The answer that a column holds, as a state: confirmed, corrected or not sure, with its date.
+function answeredNode(item: Item) {
+  const day = d.day(item.date ?? '');
+  if (item.answer === 'yes') return el('p', d.answered.yes(day), 'answered yes');
+  if (item.answer === 'not sure') return el('p', d.answered.notSure(day), 'answered unsure');
+  if (item.answer === 'no' && item.status === 'person') {
+    const line = el('p', undefined, 'answered no');
+    const [before, after] = d.answered.no(day, '\u0000').split('\u0000');
+    line.append(document.createTextNode(before), fromNode(item.attribute === 'rows' ? item.table ?? item.from : item.from), document.createTextNode(after));
+    return line;
+  }
+  return null;
 }
 
 async function answer(about: string, value: string, replacement = '', from?: HTMLElement) {
@@ -456,10 +523,10 @@ async function answer(about: string, value: string, replacement = '', from?: HTM
     const reply = await ask('describe_confirm', [JSON.stringify({ about, answer: value, replacement })]);
     if (!reply.ok) {
       problems.set(about, reply.problem ?? d.confirmFailed);
-      openAnother.add(about);
     } else {
       problems.delete(about);
       openAnother.delete(about);
+      changing.delete(about);
     }
   } catch {
     problems.set(about, d.confirmFailed);
@@ -469,62 +536,78 @@ async function answer(about: string, value: string, replacement = '', from?: HTM
   render();
 }
 
-function anotherPanel(item: Item, entry: HTMLElement) {
+// The choice of another column or table: one that the page found, or one written by hand. Whichever is chosen, the
+// page checks it on invented rows and shows the result before it can be kept.
+function anotherPanel(item: Item) {
   const panel = el('div', undefined, 'another');
   const rows = item.attribute === 'rows';
   const id = `another-${item.about.replace(/[^\w]/g, '-')}`;
-  const label = el('label', rows ? d.anotherRowsLabel : d.anotherLabel);
-  label.htmlFor = id;
-  panel.append(label);
   let select: HTMLSelectElement | null = null;
   if (item.candidates.length) {
+    const label = el('label', rows ? d.anotherRowsChoose : d.anotherLabel);
+    label.htmlFor = id;
     select = el('select');
     select.id = id;
     for (const candidate of item.candidates) {
-      const option = el('option', candidate.from);
+      const option = el('option', candidate.from.replace(/, by /, `, ${d.linkedBy} `).replace(/ = /g, ` ${d.linkedTo} `).replace(/, then /g, `, ${d.linkedThen} `));
       option.value = candidate.replacement;
       select.append(option);
     }
     const write = el('option', d.anotherNone);
     write.value = '';
     select.append(write);
-    panel.append(select);
+    panel.append(label, select);
+  } else if (!rows) {
+    panel.append(el('p', d.anotherNoneFound, 'note no-alternative'));
   }
   const written = el('input');
   written.type = 'text';
   written.spellcheck = false;
   written.autocomplete = 'off';
   written.dataset.keep = `${id}-written`;
-  written.setAttribute('aria-label', d.anotherWritten);
+  const writtenLabel = rows ? (select ? d.anotherRowsWrittenOr : d.anotherRowsLabel) : select ? d.anotherWrittenOr : d.anotherWritten;
+  written.setAttribute('aria-label', writtenLabel);
   if (!select) written.id = id;
-  panel.append(el('span', ` ${d.anotherWritten} `, 'label'), written);
+  panel.append(el('span', ` ${writtenLabel} `, 'label'), written);
   panel.append(button(d.anotherUse, () => {
     const chosen = written.value.trim() || select?.value || '';
-    if (chosen) void answer(item.about, 'no', chosen, entry);
+    if (chosen) void corrections.useAlternative(item, chosen);
   }));
-  const problem = el('p', problems.get(item.about) ?? '', 'status problem problem-note');
-  problem.hidden = !problems.has(item.about);
-  panel.append(problem);
   return panel;
 }
 
-// The three answers, in the same order and place for every column; one that does not apply is shown but cannot be used.
-function answerButtons(item: Item, entry: HTMLElement, drafted: boolean) {
+// The answers for one column, in the same order and place for every column. A column for which the page found
+// nothing offers no Yes. A column that has an answer shows that answer, with Change the answer to bring the choices back.
+function answerButtons(item: Item, drafted: boolean) {
   const actions = el('div', undefined, 'actions answers');
-  const yes = button(d.yes, () => void answer(item.about, 'yes', '', entry), 'answer-yes');
-  yes.dataset.unusable = String(!(drafted && item.bound));
-  yes.setAttribute('aria-pressed', String(item.answer === 'yes'));
-  const another = button(d.another, () => {
+  const rows = item.attribute === 'rows';
+  if (item.answer && !changing.has(item.about) && !openAnother.has(item.about)) {
+    actions.classList.add('settled');
+    actions.append(button(d.change, () => {
+      changing.add(item.about);
+      render();
+    }, 'link answer-change'));
+    return actions;
+  }
+  const found = drafted && item.bound;
+  if (found) {
+    const yes = button(d.yes, () => void answer(item.about, 'yes', ''), 'answer-yes');
+    yes.setAttribute('aria-pressed', String(item.answer === 'yes'));
+    actions.append(yes);
+  }
+  const label = found ? (rows ? d.anotherRows : d.another) : rows ? d.chooseTable : d.chooseColumn;
+  const another = button(label, () => {
     if (openAnother.has(item.about)) openAnother.delete(item.about);
     else openAnother.add(item.about);
     render();
-  }, 'secondary answer-another');
+  }, `${found ? 'secondary ' : ''}answer-another`);
   another.setAttribute('aria-expanded', String(openAnother.has(item.about)));
   another.setAttribute('aria-pressed', String(item.answer === 'no'));
-  const unsure = button(d.notSure, () => void answer(item.about, 'not sure', '', entry), 'secondary answer-unsure');
+  actions.append(another);
+  const unsure = button(d.notSure, () => void answer(item.about, 'not sure', ''), 'secondary answer-unsure');
   unsure.dataset.unusable = String(!drafted);
   unsure.setAttribute('aria-pressed', String(item.answer === 'not sure'));
-  actions.append(yes, another, unsure);
+  actions.append(unsure);
   return actions;
 }
 
@@ -534,41 +617,60 @@ function renderConfirm() {
   if (!model?.proposed) return;
   for (const role of model.roles) {
     const section = el('section', undefined, 'role');
+    section.dataset.role = role.name;
     const items: Item[] = role.drafted ? role.items : [{
       about: `${role.name} rows`, attribute: 'rows', meaning: role.description, type: null, from: '', table: null, column: null, bound: false,
       definition: null, says: d.roleUndrafted, confidence: '', candidates: [], status: 'proposed', question: '', answer: null, date: null,
-      replacement: null, presence: null, link: null, correction: null,
+      replacement: null, presence: null, link: null, correction: null, title: '',
     }];
     const answeredCount = items.filter((item) => item.answer).length;
     const heading = roleHeading(role);
-    heading.append(el('span', ` ${answeredCount} of ${items.length} answered`, 'role-count'));
-    section.append(heading, el('p', role.description, 'role-what'));
+    heading.append(el('span', d.partCount(answeredCount, items.length), 'role-count'));
+    const who = d.teamParts.includes(role.name) ? 'team' : 'colleague';
+    section.append(heading, el('p', role.description, 'role-what'), el('p', d.whoAnswers[who], `who ${who}`));
     const list = el('ul', undefined, 'bindings');
     for (const item of items) {
       const entry = el('li', undefined, 'binding');
       entry.dataset.about = item.about;
       entry.dataset.answer = item.answer ?? '';
-      entry.append(el('p', item.attribute === 'rows' ? d.rowsAttribute : item.attribute, item.attribute === 'rows' ? 'attribute rows' : 'attribute'));
+      entry.append(el('p', attributeName(item), item.attribute === 'rows' ? 'attribute rows' : 'attribute'));
       if (item.attribute !== 'rows' && item.meaning) entry.append(el('p', item.meaning, 'meaning'));
-      entry.append(proposedLine(item));
+      const said = answeredNode(item);
+      // A corrected column shows what it was corrected to, and no longer the proposal with its confidence.
+      if (!(said && item.answer === 'no')) entry.append(proposedLine(item));
+      if (said) entry.append(said);
       if (role.drafted && item.bound) {
         const more = el('details');
         more.append(el('summary', item.definition ? d.definitionLabel : d.evidenceLabel), quote(item.definition, item.says));
         entry.append(more);
       }
       if (!role.drafted) entry.append(el('p', d.roleUndrafted, 'note'));
-      if (role.drafted) entry.append(el('p', presenceText(item.presence, item.attribute === 'rows'), `presence ${item.presence?.state ?? 'unknown'}`));
-      const said = answeredText(item);
-      if (said) entry.append(el('p', said, `answered ${item.answer === 'not sure' ? 'unsure' : item.answer}`));
+      if (role.drafted && item.bound) entry.append(el('p', presenceText(item.presence, item.attribute === 'rows'), `presence ${item.presence?.state ?? 'unknown'}`));
       const correction = corrections.kept(item);
       if (correction) entry.append(correction);
-      entry.append(answerButtons(item, entry, role.drafted));
-      if (openAnother.has(item.about)) entry.append(role.drafted ? corrections.panel(item, () => anotherPanel(item, entry)) : anotherPanel(item, entry));
+      entry.append(answerButtons(item, role.drafted));
+      const problem = problems.get(item.about);
+      if (problem) entry.append(el('p', problem, 'status problem problem-note'));
+      if (openAnother.has(item.about)) entry.append(corrections.panel(item, () => anotherPanel(item)));
       list.append(entry);
     }
     section.append(list);
     box.append(section);
   }
+}
+
+// Takes the person to the row of one column in step 6, from a finding of a check.
+function goTo(about: string) {
+  const target = document.querySelector<HTMLElement>(`#confirm [data-about="${CSS.escape(about)}"]`)
+    ?? document.querySelector<HTMLElement>(`#confirm [data-about="${CSS.escape(about.split(/[ .]/)[0])} rows"]`);
+  if (!target) return;
+  opened.add('6');
+  hidden.delete('6');
+  show();
+  target.classList.add('sought');
+  target.scrollIntoView({ block: 'start' });
+  target.querySelector<HTMLElement>('button')?.focus({ preventScroll: true });
+  window.setTimeout(() => target.classList.remove('sought'), 2500);
 }
 
 // A query to copy and run: the copy button first, and the SQL itself behind a disclosure.
@@ -632,7 +734,7 @@ function renderVocabularies() {
   for (const vocabulary of model.vocabularies) {
     const section = el('section', undefined, 'add vocabulary');
     section.dataset.key = vocabulary.key;
-    section.append(el('h3', d.vocabularyHeading(vocabulary.key)));
+    section.append(el('h3', d.vocabularyHeading(vocabulary.title || vocabulary.key)));
     if (vocabulary.reason) {
       section.append(el('p', d.vocabularyReason[vocabulary.reason] ?? vocabulary.reason, 'note'));
       box.append(section);
@@ -696,7 +798,7 @@ function renderVocabularies() {
         const none = el('option', d.notChosen);
         none.value = '';
         select.append(none);
-        for (const kind of vocabulary.kinds.filter((k) => k !== 'other')) {
+        for (const kind of vocabulary.kinds) {
           const option = el('option', kind);
           option.value = kind;
           select.append(option);
@@ -704,7 +806,7 @@ function renderVocabularies() {
         select.value = vocabulary.chosen[row.code] ?? '';
         body[i].lastElementChild!.replaceChildren(select);
       });
-      section.append(frame);
+      section.append(frame, el('p', d.codesOther, 'note'));
       const save = el('div', undefined, 'actions');
       save.append(button(d.codesSave, async () => {
         const chosen: Record<string, string> = {};
@@ -737,7 +839,9 @@ function renderCounts() {
     const held = model.counts[query.name];
     const section = el('section', undefined, 'add count-block');
     section.dataset.count = query.name;
+    const training = model.settings.database === 'training';
     section.append(el('h3', d.countHeading[query.name] ?? query.name), el('p', d.countWhat[query.name] ?? ''));
+    if (training) section.append(el('p', d.countTraining, 'status training'));
     const about = el('details', undefined, 'about');
     about.append(el('summary', d.countTablesSummary), el('p', query.safe ? d.countSafe : d.countScript((5000).toLocaleString('en-AU')), 'note'),
       el('p', d.countTables, 'note'));
@@ -773,8 +877,10 @@ function renderCounts() {
       const findings = el('ul', undefined, 'findings');
       for (const finding of held.findings) findings.append(el('li', finding));
       section.append(held.findings.length ? findings : el('p', d.countNoFindings, 'note'));
+      if (training) section.append(el('p', d.countTrainingNote, 'note'));
       const fieldset = el('fieldset', undefined, 'judgement');
       fieldset.append(el('legend', d.lookRightLegend));
+      if (d.lookRightCompare[query.name]) fieldset.append(el('p', d.lookRightCompare[query.name], 'note compare'));
       for (const [value, label] of d.lookRight) {
         const option = el('label', undefined, 'option');
         const radio = el('input');
@@ -805,7 +911,8 @@ function renderCounts() {
         render();
       }, held.looks_right ? 'secondary' : ''));
       fieldset.append(save);
-      if (held.looks_right) fieldset.append(el('p', d.lookRightSaved(held.looks_right, held.date ?? ''), 'status good'));
+      if (held.looks_right) fieldset.append(el('p', d.lookRightSaved(held.looks_right, d.day(held.date ?? '')), 'status good'));
+      if (held.looks_right && held.database === 'training') fieldset.append(el('p', d.lookRightTraining, 'note'));
       section.append(fieldset);
     }
     box.append(section);
@@ -1103,6 +1210,7 @@ const fixed: Record<string, string> = {
   'dictionary-load': d.dictionaryLoad,
   't-folder-what': d.folderWhat,
   'l-hospital-folder': d.folderLabel,
+  'b-hospital-folder': d.folderChoose,
   's-folder-about': d.folderAboutSummary,
   't-folder-about': d.folderAbout,
   't-folder-no-dictionary': d.folderNoDictionary,
@@ -1126,7 +1234,9 @@ const fixed: Record<string, string> = {
   't-query-safe': d.querySafe,
   'l-tables-paste': d.tablesPasteLabel,
   'tables-read': d.tablesRead,
+  't-confirm-intro': d.confirmIntro,
   't-confirm-what': d.confirmWhat,
+  't-confirm-legend': d.confirmLegend,
   's-confirm-about': d.confirmAboutSummary,
   't-confirm-about': d.confirmAbout,
   't-model-check-what': d.corrections.modelCheckWhat,
@@ -1172,8 +1282,7 @@ $('headings').replaceChildren(...d.headingFields.map(([field, label]) => {
   box.append(caption, input);
   return box;
 }));
-$('write-folder').hidden = !picker;
-$('t-write-folder-note').hidden = !picker;
+$('b-write-folder').hidden = !picker;
 // Where the browser can write into a folder, that is the primary action and the zip the other; elsewhere the zip is.
 $('write-zip').classList.toggle('secondary', !!picker);
 text('t-version', d.version(__VERSION__));
@@ -1198,7 +1307,11 @@ corrections.setup({
   anaestheticTable: () => model?.anaesthetic_table ?? null,
   kinds: (about) => model?.vocabularies.find((v) => v.key === about)?.kinds ?? [],
   values: (name) => model?.values?.[name] ?? null,
-  close: (about) => { openAnother.delete(about); },
+  close: (about) => {
+    openAnother.delete(about);
+    changing.delete(about);
+  },
+  goTo,
   step: d.steps[5],
 });
 

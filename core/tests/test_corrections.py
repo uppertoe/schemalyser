@@ -104,7 +104,7 @@ def test_each_form_writes_a_view_that_runs_on_the_invented_world_and_says_what_i
 def test_the_sentences_and_the_sql_say_what_each_form_does(proposed):
     window = proposed.correction_preview(SOUND["window"])
     assert window["sentence"] == ("A reading belongs to the anaesthetic whose VISIT_KEY it shares (OBS_SHEET.VISIT_KEY = "
-                                  "ANAES_RECORD.VISIT_KEY), if its reading_time lies between the anaesthetic's start and stop, "
+                                  "ANAES_RECORD.VISIT_KEY), if its time of the reading lies between the anaesthetic's start and stop, "
                                   "allowing 15 minutes either side.")
     assert "DATEADD(minute, -15, w" in window["sql"] and "IS NULL OR t0.READ_TS <= DATEADD(minute, 15, w" in window["sql"]
     assert "AND t0.OBS_TYPE_KEY" not in window["sql"]
@@ -132,11 +132,11 @@ def test_the_check_says_the_model_is_whole_when_nothing_is_wrong():
     # role_operation reaches its anaesthetic from the theatre case's side, which repeats an operation wherever two
     # anaesthetics share one case, so the proposal's own fragile link is the one problem left.
     now = s.check_model()
-    assert [p for p in now["problems"] if not p.startswith("role_operation gives")] == []
+    assert [p for p in now["problems"] if not p.startswith("In Procedures done under an anaesthetic, ")] == []
     s.data["roles"].pop("role_operation")
     found = s.correction_check(SOUND["window"])
     assert found["passed"]
-    assert found["sentence"].startswith("This change keeps the map whole: all 11 parts of the record run and give the rows "
+    assert found["sentence"].startswith("This change keeps the map whole: all 11 parts of the record run on invented rows and give the rows "
                                         "they should, every identifying column is unique, every flag is filled, and the "
                                         "planted newborns give the expected answer.")
     assert any("outside the anaesthetic's window" in n for n in found["notes"])
@@ -145,8 +145,11 @@ def test_the_check_says_the_model_is_whole_when_nothing_is_wrong():
 def test_the_check_catches_a_link_that_repeats_readings_and_a_window_too_wide(proposed):
     found = proposed.correction_check(DOUBLING)
     assert not found["passed"]
-    assert any(re.fullmatch(r"role_reading gives [\d,]+ readings twice, each linked to a second anaesthetic, so a reading no "
-                            r"longer links to exactly one anaesthetic\.", p) for p in found["problems"])
+    assert any(re.fullmatch(r"In Readings charted during an anaesthetic, [\d,]+ invented readings appear twice, each linked to a "
+                            r"second anaesthetic, so a reading no longer links to exactly one anaesthetic\.", p) for p in found["problems"])
+    # Each finding names the binding that it concerns, so that the page can link it to its row.
+    assert all(found["about"][p] == "role_reading.anaesthetic_key" for p in found["problems"] if "readings appear twice" in p)
+    assert not any("role_" in p or "contract" in p for p in found["problems"] + found["notes"])
     wide = dict(SOUND["window"], before=240, after=240)
     assert not proposed.correction_check(wide)["passed"]
 
@@ -155,7 +158,8 @@ def test_a_broken_view_is_reported_by_name(proposed):
     trial = proposed._clone()
     trial.data["roles"]["role_anaesthetic"]["columns"]["patient_key"]["binding"]["path"] = []
     found = corrections.run_check(trial)
-    assert "role_anaesthetic.sql: the catalogue does not hold the column PERSON_KEY of ANAES_RECORD." in found["problems"]
+    assert "In Anaesthetics, the dictionary does not hold the column PERSON_KEY of ANAES_RECORD." in found["problems"]
+    assert found["about"]["In Anaesthetics, the dictionary does not hold the column PERSON_KEY of ANAES_RECORD."] == "role_anaesthetic rows"
     # The shadow makes every column that a binding names, so the view runs there, and the dictionary is what refuses it.
 
 
@@ -164,7 +168,7 @@ def test_a_window_with_no_key_and_names_not_in_the_dictionary_are_refused(propos
         proposed.correction_check({"form": "window", "about": "role_reading.anaesthetic_key", "before": 15, "after": 15})
     with pytest.raises(describe.DescribeError, match="Rule 3 of the record"):
         proposed.correction_preview(dict(SOUND["window"], key=""))
-    with pytest.raises(describe.DescribeError, match="applies only to a link to role_anaesthetic"):
+    with pytest.raises(describe.DescribeError, match="applies only to the anaesthetic's identifier"):
         proposed.correction_preview(dict(SOUND["window"], about="role_reading.reading_time"))
     with pytest.raises(describe.DescribeError, match="holds no column THEATRE_CASE.NO_SUCH"):
         proposed.correction_preview(dict(SOUND["flag"], column="NO_SUCH"))
@@ -172,7 +176,7 @@ def test_a_window_with_no_key_and_names_not_in_the_dictionary_are_refused(propos
         proposed.correction_preview(dict(SOUND["scale"], about="role_patient.is_test"))
     with pytest.raises(describe.DescribeError, match="whole number of minutes"):
         proposed.correction_preview(dict(SOUND["window"], before="ten"))
-    with pytest.raises(describe.DescribeError, match="starts from this part's own table"):
+    with pytest.raises(describe.DescribeError, match="starts from the table that holds this part"):
         proposed.correction_preview(dict(SOUND["path"], steps=[{"start": "VISIT", "from": "VISIT_KEY", "table": "THEATRE_CASE", "to": "VISIT_KEY"}]))
     # Once the tables and columns query is pasted, every name must be in its result as well.
     from test_describe import tables_result
@@ -192,7 +196,7 @@ def test_a_failing_correction_is_kept_only_with_a_reason_and_the_folder_records_
     kept = s.correction_keep(DOUBLING, although=True, reason="The team says that a visit holds one anaesthetic here.", date=DATE)
     assert kept == {"kept": "role_reading.anaesthetic_key", "probe": "link"}
     item = s.data["roles"]["role_reading"]["columns"]["anaesthetic_key"]
-    assert item["status"] == "person" and item["confirmation"]["check"].startswith("failed: role_reading gives")
+    assert item["status"] == "person" and item["confirmation"]["check"].startswith("failed: In Readings charted during an anaesthetic, ")
     assert item["confirmation"]["reason"] == "The team says that a visit holds one anaesthetic here."
     files = s.folder_files(date=DATE)
     rows = list(csv.DictReader(io.StringIO(files["confirmations.csv"].decode())))
@@ -256,3 +260,26 @@ def test_a_map_json_with_a_broken_form_is_refused():
         corrections.check_shape({"table": "A", "column": "B", "path": [], "window": {"table": "C"}}, "role_x.y")
     with pytest.raises(rolemap.MapError, match="derived value"):
         corrections.check_shape({"table": "A", "column": "B", "path": [], "derive": {"form": "sql"}}, "role_x.y")
+
+
+def test_an_alternative_column_or_table_is_checked_and_its_check_recorded_when_kept():
+    s = sitting()
+    # An alternative column as the page lists it, with its link, goes through the same check as any other correction.
+    chosen = {"form": "column", "about": "role_anaesthetic.patient_key",
+              "replacement": "THEATRE_CASE.PERSON_KEY, by ANAES_RECORD.CASE_KEY = THEATRE_CASE.CASE_KEY"}
+    preview = s.correction_preview(chosen)
+    assert preview["sentence"].startswith("The patient's identifier in Anaesthetics is THEATRE_CASE.PERSON_KEY, reached by matching "
+                                          "ANAES_RECORD.CASE_KEY to THEATRE_CASE.CASE_KEY")
+    assert s.correction_check(chosen)["passed"]
+    s.correction_keep(chosen, date=DATE)
+    # A different table for the rows of a part proposes that part again, and is checked in the same way.
+    table = s.data["roles"]["role_stay"]["rows"]["binding"]["table"]
+    rows = {"form": "rows", "about": "role_stay rows", "table": table}
+    assert s.correction_preview(rows)["sentence"].startswith(f"The rows of Hospital stays come from {table}, one row for each")
+    s.correction_keep(rows, date=DATE)
+    assert s.data["roles"]["role_stay"]["rows"]["status"] == "person"
+    files = s.folder_files(date=DATE)
+    found = list(csv.DictReader(io.StringIO(files["confirmations.csv"].decode())))
+    assert [(r["attribute"], r["check"][:6]) for r in found] == [("role_anaesthetic.patient_key", "passed"), ("role_stay rows", "passed")]
+    with pytest.raises(describe.DescribeError, match="TABLE.COLUMN"):
+        s.correction_preview({"form": "column", "about": "role_anaesthetic.patient_key", "replacement": "nothing here"})

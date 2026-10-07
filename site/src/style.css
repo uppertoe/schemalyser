@@ -1360,7 +1360,7 @@ html:has(body.describe) {
 }
 
 .describe .role-name {
-  font: 600 1rem var(--mono);
+  font: 600 1.08rem var(--sans);
   overflow-wrap: anywhere;
 }
 
@@ -1372,6 +1372,22 @@ html:has(body.describe) {
 .describe .role-what {
   color: var(--muted);
   font-size: 0.95rem;
+}
+
+/* Beside each part, who can usually answer for it. */
+.describe .who {
+  font-size: 0.9rem;
+  color: var(--muted);
+  padding-left: 0.6rem;
+  border-left: 2px solid var(--line);
+}
+
+.describe .who.team {
+  border-left-color: var(--caution);
+}
+
+.describe .intro-step {
+  max-width: 50rem;
 }
 
 .describe .bindings {
@@ -1396,15 +1412,36 @@ html:has(body.describe) {
 }
 
 .describe .binding .attribute {
-  font: 600 0.98rem var(--mono);
+  font: 600 1rem var(--sans);
   overflow-wrap: anywhere;
+}
+
+/* A binding that a finding of the check has led to, marked for a moment. */
+.describe .binding.sought {
+  outline: 3px solid var(--accent);
+  outline-offset: 4px;
+}
+
+.describe .finding-link {
+  color: inherit;
+  text-underline-offset: 0.15em;
+}
+
+.describe .from code,
+.describe .another option {
+  overflow-wrap: anywhere;
+}
+
+.describe .proposed .nothing {
+  color: var(--problem);
 }
 
 .describe .binding .meaning {
   color: var(--ink);
 }
 
-.describe .binding .proposed code {
+.describe .binding .proposed code,
+.describe .binding .answered code {
   font: 0.9rem var(--mono);
   overflow-wrap: anywhere;
 }
@@ -1511,6 +1548,11 @@ html:has(body.describe) {
   margin-bottom: 0.5rem;
 }
 
+/* A column that has an answer shows the answer as a state, with one small control to change it. */
+.describe .answers.settled button.answer-change {
+  margin: 0 0 0.3rem;
+}
+
 .describe .answers button[aria-pressed='true'] {
   background: var(--accent);
   color: var(--accent-ink);
@@ -1524,6 +1566,42 @@ html:has(body.describe) {
 .describe .binding[data-answer=''] .answers button.answer-yes[aria-pressed='false'] {
   background: var(--accent);
   color: var(--accent-ink);
+}
+
+/* The control that chooses the hospital folder, named by the page rather than by the browser. */
+.describe label.button-like {
+  display: inline-block;
+  font-weight: 600;
+  padding: 0.55rem 1.1rem;
+  margin: 0.2rem 0 0.6rem;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.describe input:focus-visible + label.button-like {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.describe input:disabled + label.button-like {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.describe .field-label {
+  margin: 0;
+  font-weight: 600;
+}
+
+.describe .write-choice .actions button {
+  margin-bottom: 0.2rem;
+}
+
+.describe .status.training {
+  color: var(--caution);
 }
 
 /* The forms that correct a column, each a sentence to complete. */
@@ -1683,17 +1761,37 @@ html:has(body.describe) {
 /* On a narrow screen the rail becomes a strip of numbered marks above the steps, with the current step named. */
 
 @media (max-width: 62rem) {
+  /* A block rather than a grid, so that the strip can stay at the top of the screen while the steps scroll. */
   .describe .layout {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 1.25rem;
+    display: block;
+  }
+
+  .describe main {
+    margin-top: 1.25rem;
   }
 
   .describe .rail {
-    position: static;
+    position: sticky;
+    top: 0;
+    z-index: 4;
     max-height: none;
     overflow: visible;
-    padding-bottom: 0.75rem;
+    padding: 0.5rem 0 0.6rem;
+    background: var(--ground);
     border-bottom: 1px solid var(--line);
+  }
+
+  /* Below the strip, the progress of step 6 scrolls with its step, and a column sought is not hidden under the strip. */
+  .describe .tally-bar {
+    position: static;
+  }
+
+  .describe .binding {
+    scroll-margin-top: 9rem;
+  }
+
+  html:has(body.describe) {
+    scroll-padding-top: 8rem;
   }
 
   .describe .rail .connection {
@@ -1730,7 +1828,7 @@ html:has(body.describe) {
 
   .describe .rail-current {
     display: block;
-    margin: 0.6rem 0 0;
+    margin: 0.4rem 0 0;
     font-weight: 600;
   }
 }
@@ -1750,5 +1848,16 @@ html:has(body.describe) {
 
   .describe .tally-figures {
     gap: 0.3rem 1.1rem;
+  }
+
+  /* The answers stack, one to a line, so that no label wraps. */
+  .describe .answers:not(.settled) {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+  }
+
+  .describe .answers:not(.settled) button {
+    margin-bottom: 0;
   }
 }

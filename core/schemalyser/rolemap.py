@@ -147,6 +147,69 @@ def kinds():
     return [item["kind"] for item in contract()["kinds"]]
 
 
+# The plain names of the views and their columns, which a person reads in place of the code names. Each view's title
+# names the part of the record ("Patients"), and each column's title is a short phrase ("date of birth").
+
+_TITLES = None
+
+
+def _titles():
+    global _TITLES
+    if _TITLES is None:
+        model = contract()
+        _TITLES = ({view["name"]: view.get("title") or view["name"] for view in model["views"]},
+                   {(view["name"], column["name"]): column.get("title") or column["name"].replace("_", " ")
+                    for view in model["views"] for column in view["columns"]})
+    return _TITLES
+
+
+def _start(text, start):
+    if start:
+        return text[:1].upper() + text[1:]
+    return "the " + text[4:] if text.startswith("The ") else text
+
+
+def view_title(view, start=True):
+    """A view's plain name, as at the start of a sentence, or within one where start is false."""
+    return _start(_titles()[0].get(view, view), start)
+
+
+def column_title(view, column):
+    """A column's plain name as a phrase, such as "date of birth", without an article."""
+    return _titles()[1].get((view, column), column.replace("_", " "))
+
+
+def plain_about(about, start=False):
+    """A binding named as role_view.column, role_view rows or role_view, in plain words: "the date of birth in
+    Patients", "the rows of Patients" or "Patients"."""
+    rows = re.fullmatch(r"(role_\w+) rows", about or "")
+    column = re.fullmatch(r"(role_\w+)\.(\w+)", about or "")
+    if rows:
+        found = f"the rows of {view_title(rows.group(1), False)}"
+    elif column:
+        title = column_title(column.group(1), column.group(2))
+        found = f"{'' if title.startswith('the ') else 'the '}{title} in {view_title(column.group(1), False)}"
+    else:
+        return view_title(about, start)
+    return _start(found, start)
+
+
+def plain(text, view=None):
+    """Text with every code name of a view or column put into plain words. Where view is given, a bare column name of
+    that view is put into plain words as well."""
+    text = text or ""
+
+    def named(match):
+        at = match.start()
+        return plain_about(match.group(0).strip("`"), at == 0 or text[:at].rstrip().endswith((".", ":")))
+    text = re.sub(r"`?\brole_[a-z_]+(?:\.[a-z_]+)?\b`?", named, text)
+    if view is not None:
+        columns = {name for (owner, name) in _titles()[1] if owner == view and "_" in name}
+        text = re.sub(r"\b[a-z]+_[a-z_]+\b", lambda m: f"the {column_title(view, m.group(0)).removeprefix('the ')}"
+                      if m.group(0) in columns else m.group(0), text)
+    return text
+
+
 # Reading and checking a map.
 
 def _sentence(value, where, field):

@@ -52,7 +52,7 @@ from collections import Counter
 from . import propose, rolemap
 from .catalogue import NAME
 
-FORMS = ("column", "derived", "filter", "path", "pair", "window", "joined", "codes")
+FORMS = ("column", "rows", "derived", "filter", "path", "pair", "window", "joined", "codes")
 DERIVED = ("flag", "scale", "date", "trim")
 # Which derived forms suit which types of the role model.
 DERIVED_TYPES = {"flag": ("flag", "flag_or_empty"), "scale": ("number", "whole"), "date": ("date",),
@@ -80,20 +80,21 @@ WORDING = {
     "unknown_form": "Schemalyser does not know a correction of the kind {form}.",
     "unknown_about": "The map holds nothing named {about}.",
     "not_drafted": "The map does not yet hold {view}, so it cannot be corrected here.",
+    "not_a_name": "Please write the replacement as TABLE.COLUMN, such as the name of a table, a full stop and the name of one of its columns.",
     "no_dictionary": "Please load the dictionary in step 2 first, because every table and column of a correction must be in it.",
     "not_found": "The dictionary holds no column {name}.",
     "no_table": "The dictionary holds no table {name}.",
     "not_in_result": "The result of the tables and columns query holds no column {name}.",
-    "unreachable": "This part's own table does not reach {table} by any link that the dictionary shows. To name the links yourself, choose A link through other tables.",
+    "unreachable": "The table that holds this part does not reach {table} by any link that the dictionary shows. To name the links yourself, choose A link through other tables.",
     "derive_type": "{about} is {type_words}, and a value worked out as {form_words} does not suit it.",
     "values": "Please give at least one value, and at most {most}.",
     "factor": "Please give the factor as a number other than nought, and the offset as a number.",
     "steps": "Please give from one to {most} steps, each joining a column of the table before to a column of the next table.",
-    "step_start": "The first link starts from this part's own table, {table}.",
+    "step_start": "The first link starts from the table that holds this part, {table}.",
     "step_chain": "Step {number} starts from {table}, the table that step {before} reaches.",
     "pair_needed": "A join on two columns needs a second pair of columns in its step.",
-    "not_a_link": "{about} is not a link to another role, so it cannot be a link through other tables.",
-    "window_link": "A time window links a row to its anaesthetic, so it applies only to a link to role_anaesthetic.anaesthetic_key.",
+    "not_a_link": "{about} is not a link to another part of the record, so it cannot be a link through other tables.",
+    "window_link": "A time window links a row to its anaesthetic, so it applies only to the anaesthetic's identifier.",
     "window_key": "Rule 3 of the record says that a row belongs to an anaesthetic by its link to that anaesthetic, and never because its time falls within the anaesthetic, so a time window always needs the key that the row shares with its anaesthetic as well. Please choose that key on both sides.",
     "window_time": "The window reads the time of each row from {column}, so please bind {column} first.",
     "window_anaesthetic": "Please name the anaesthetic's table and its columns that hold the key, the start and the stop.",
@@ -101,7 +102,7 @@ WORDING = {
     "joined_type": "Rows joined into one text suit a column of text, and {about} is {type_words}.",
     "joined_fields": "Please name the table of the rows, the column that links each to this row, the column of text and the column that gives their order.",
     "separator": "Please give a separator of at most ten characters, with no line break.",
-    "filter_rows": "A filter applies to the rows of a role, so please choose it under One row of the role.",
+    "filter_rows": "A filter applies to the rows of a part, so please choose it on the row for the table, at the head of the part.",
     "codes_kind": "A translation of codes suits a column that holds a kind, and {about} is {type_words}.",
     "codes_unknown": "{kind} is not one of the kinds of this vocabulary.",
     # The sentences that each form means.
@@ -113,7 +114,8 @@ WORDING = {
     "say_offset_minus": ", with {offset} taken away",
     "say_date": "{column} is the date of {source}, without its time{how}.",
     "say_trim": "{column} is {source} with any spaces at either end removed{how}.",
-    "say_filter": "{view} keeps only the rows in which {source} holds {values}{how}.",
+    "say_filter": "The rows of {view} are only those in which {source} holds {values}{how}.",
+    "say_rows": "The rows of {view} come from {table}, one row for each {what}, and the page proposes every column of this part again from that table.",
     "say_path": "{column} is {source}, which {base} reaches {steps}.",
     "say_window": "A {thing} belongs to the anaesthetic whose {key} it shares ({pairs}), if its {time} lies between the anaesthetic's start and stop, {margin}.",
     "say_margin_same": "allowing {before} {minutes} either side",
@@ -123,31 +125,31 @@ WORDING = {
     "say_codes": "The local {codes} of {source} {are} translated to {pairs}, and every other code is other.",
     "say_how": ", reached {path}",
     "say_steps": "through {steps}",
-    "say_step": "{table} ({pairs})",
+    "say_step": "{table}, matching {pairs}",
     "space": "a space",
     "nothing": "nothing",
     # The check.
-    "check_whole": "This change keeps the map whole: all {views} of the record run and give the rows they should, every identifying column is unique, every flag is filled, and the planted newborns give the expected answer.",
-    "check_whole_now": "The map as it stands is whole: all {views} of the record run and give the rows they should, every identifying column is unique, every flag is filled, and the planted newborns give the expected answer.",
+    "check_whole": "This change keeps the map whole: all {views} of the record run on invented rows and give the rows they should, every identifying column is unique, every flag is filled, and the planted newborns give the expected answer.",
+    "check_whole_now": "The map as it stands is whole: all {views} of the record run on invented rows and give the rows they should, every identifying column is unique, every flag is filled, and the planted newborns give the expected answer.",
     "check_breaks": "This change breaks the map in {count}:",
     "check_kept_old": "This change breaks nothing that held before it. {count} {were} there before it and {remain}:",
     "check_mends": "This change also mends {count} that {were} there before it.",
     "check_now_breaks": "The map as it stands has {count}:",
     "placeholders": "The local codes of {kinds} are not chosen yet, so the check gives {them}.",
-    "outside_window": "{view} leaves out {count} of the invented rows because their time lies outside the anaesthetic's window, as the window intends.",
-    "orphans": "{count} rows of {view} link to an anaesthetic that role_anaesthetic does not hold, which can be right where role_anaesthetic leaves some anaesthetics out.",
-    "contract": "{problem}",
-    "runs_not": "{view} does not run on the invented rows ({error}).",
-    "doubled": "{view} gives {count} of its rows more than once, each under a second {link}, so a row is linked to more than one {target}.",
-    "doubled_reading": "role_reading gives {count} readings twice, each linked to a second anaesthetic, so a reading no longer links to exactly one anaesthetic.",
-    "missing": "{view} leaves out {count} of the {total} rows that its bindings should give.",
-    "extra": "{view} gives {count} rows that its bindings should not give.",
-    "keys": "{count} keys of {view} repeat, so its key no longer identifies one row.",
-    "flag_empty": "{view}.{column} is empty in {count}, and a flag is never empty.",
-    "type": "{view}.{column} gives {found} where the contract asks for {wanted}.",
-    "count_fails": "The standard count {name} does not run on the shadow.",
-    "neonatal_missing": "The neonatal audit cannot run, because the map does not supply {views}.",
-    "neonatal_fails": "The neonatal audit does not run on the shadow ({error}).",
+    "outside_window": "In {view}, the page leaves out {count} of the invented rows because their time lies outside the anaesthetic's window, as the window intends.",
+    "orphans": "In {view}, {count} invented rows link to an anaesthetic that Anaesthetics does not hold, which can be right where Anaesthetics leaves some anaesthetics out.",
+    "contract": "In {view}, {problem}",
+    "runs_not": "The SQL of {view} does not run on the invented rows ({error}).",
+    "doubled": "In {view}, {count} invented rows appear more than once, each under a second value of {link}, so a row is linked to more than one {target}.",
+    "doubled_reading": "In {view}, {count} invented readings appear twice, each linked to a second anaesthetic, so a reading no longer links to exactly one anaesthetic.",
+    "missing": "In {view}, {count} of the {total} invented rows that its columns should give are missing.",
+    "extra": "In {view}, {count} invented rows appear that its columns should not give.",
+    "keys": "In {view}, {count} values of the column that identifies a row appear more than once, so that column no longer identifies one row.",
+    "flag_empty": "{subject} is empty in {count}, and a flag of 1 or 0 is never empty.",
+    "type": "{subject} gives {found} where this column should hold {wanted}.",
+    "count_fails": "The standard count of {name} does not run on the invented rows.",
+    "neonatal_missing": "The neonatal audit cannot run, because the map does not yet hold {views}.",
+    "neonatal_fails": "The neonatal audit does not run on the invented rows ({error}).",
     "neonatal_minutes": "The planted neonate {key} gives {found} minutes below 40, where {wanted} are expected.",
     "neonatal_died": "The planted neonate {key} gives {found} for a death within 90 days, where {wanted} is expected.",
     "neonatal_absent": "The planted neonate {key} is not counted, although the audit should count it.",
@@ -286,7 +288,7 @@ def _about(state, about):
         raise CorrectionError(WORDING["unknown_about"].format(about=about))
     role = (state.data or {}).get("roles", {}).get(view_name)
     if role is None or not role["rows"].get("binding"):
-        raise CorrectionError(WORDING["not_drafted"].format(view=view_name))
+        raise CorrectionError(WORDING["not_drafted"].format(view=rolemap.view_title(view_name, False)))
     spec = state.views[view_name]
     column = None
     if column_of:
@@ -376,6 +378,22 @@ def _steps(state, base, steps, pair=False):
     return path
 
 
+def _replacement(text):
+    """A replacement written as TABLE.COLUMN, optionally with its links, as the page lists an alternative:
+    "T.C, by A.a = B.b, then B.c = C.d" or "T.C via A.a = B.b". Returns (table, column, steps)."""
+    match = re.fullmatch(r"\s*([A-Za-z_][\w]*)\.([A-Za-z_][\w]*)\s*(?:(?:,\s*by|via)\s+(.+))?", str(text or ""))
+    if not match:
+        raise CorrectionError(WORDING["not_a_name"])
+    table, column, joins = match.groups()
+    steps = []
+    for part in re.split(r",\s*then\s+", (joins or "").strip()) if joins else []:
+        step = re.fullmatch(r"(\w+)\.(\w+)\s*=\s*(\w+)\.(\w+)", part.strip())
+        if not step:
+            return table, column, None
+        steps.append({"start": step.group(1), "from": step.group(2), "table": step.group(3), "to": step.group(4)})
+    return table, column, steps
+
+
 def _values(values):
     if not isinstance(values, list):
         raise CorrectionError(WORDING["values"].format(most=MOST_VALUES))
@@ -405,6 +423,16 @@ def build(state, correction):
         raise CorrectionError(WORDING["unknown_form"].format(form=_clean((correction or {}).get("form", ""))))
     form = correction["form"]
     about = correction.get("about", "")
+    if form == "rows":
+        rows_of = re.fullmatch(r"(role_\w+) rows", about or "")
+        if not rows_of or rows_of.group(1) not in state.views:
+            raise CorrectionError(WORDING["unknown_about"].format(about=about))
+        view_name = rows_of.group(1)
+        given = correction.get("table") or str(correction.get("replacement") or "").split(".")[0].split(",")[0].strip()
+        table = _table(state, given)
+        return {"about": about, "view": view_name, "column": None, "form": "rows", "correction": correction, "table": table,
+                "source": table, "sentence": _fit(WORDING["say_rows"].format(
+                    view=rolemap.view_title(view_name, False), table=table, what=state.views[view_name]["one_row_per"]))}
     view_name, spec, role, column = _about(state, about)
     base = role["rows"]["binding"]["table"]
     links = {link["column"]: link["to"] for link in spec.get("links", [])}
@@ -418,15 +446,16 @@ def build(state, correction):
         values = _values(correction.get("values"))
         item = {"table": table, "column": name, "path": path, "values": values}
         built.update(filter=item, sentence=_fit(WORDING["say_filter"].format(
-            view=view_name, source=f"{table}.{name}", values=_shown_values(values), how=_how(path))),
+            view=rolemap.view_title(view_name, False), source=f"{table}.{name}", values=_shown_values(values), how=_how(path))),
             source=f"{table}.{name}")
         return built
     if column is None:
         raise CorrectionError(WORDING["filter_rows"] if form != "column" else WORDING["unknown_about"].format(about=about))
     type_words = TYPE_WORDS[column["type"]]
+    subject = rolemap.plain_about(about, True)
     if form == "codes":
         if column["type"] != "kind":
-            raise CorrectionError(WORDING["codes_kind"].format(about=about, type_words=type_words))
+            raise CorrectionError(WORDING["codes_kind"].format(about=subject, type_words=type_words))
         entry = state._vocabulary(about)
         chosen = {}
         for code, kind in (correction.get("chosen") or {}).items():
@@ -444,23 +473,35 @@ def build(state, correction):
             pairs=_and(pairs))))
         return built
     if form in ("column", "derived"):
-        table, name, data_type = _column(state, correction.get("table"), correction.get("column"))
-        path = path_to(state, role, table)
+        path = None
+        if form == "column" and correction.get("replacement"):
+            table, name, steps = _replacement(correction["replacement"])
+            table, name, data_type = _column(state, table, name)
+            if steps and len(steps) <= MOST_STEPS:
+                try:
+                    path = _steps(state, base, steps)
+                except CorrectionError:
+                    path = None
+                if path and path[-1][2].upper() != table.upper():
+                    path = None
+        else:
+            table, name, data_type = _column(state, correction.get("table"), correction.get("column"))
+        path = path if path is not None else path_to(state, role, table)
         binding = {"table": table, "column": name, "path": path, "data_type": data_type}
         source = f"{table}.{name}"
         if form == "column":
-            sentence = WORDING["say_column"].format(column=column["name"], source=source, how=_how(path))
+            sentence = WORDING["say_column"].format(column=subject, source=source, how=_how(path))
         else:
             derive = dict(correction.get("derive") or {})
             kind = derive.get("form")
             if kind not in DERIVED or column["type"] not in DERIVED_TYPES[kind]:
-                raise CorrectionError(WORDING["derive_type"].format(about=about, type_words=type_words,
+                raise CorrectionError(WORDING["derive_type"].format(about=subject, type_words=type_words,
                                                                     form_words=FORM_WORDS.get(kind, "that")))
             if kind == "flag":
                 values = _values(derive.get("values"))
                 binding["derive"] = {"form": "flag", "values": values}
                 sentence = WORDING["say_flag_or_empty" if column["type"] == "flag_or_empty" else "say_flag"].format(
-                    column=column["name"], source=source, values=_shown_values(values), how=_how(path, True))
+                    column=subject, source=source, values=_shown_values(values), how=_how(path, True))
             elif kind == "scale":
                 try:
                     factor, offset = float(derive.get("factor")), float(derive.get("offset") or 0)
@@ -471,23 +512,23 @@ def build(state, correction):
                 binding["derive"] = {"form": "scale", "factor": factor, "offset": offset}
                 shown_offset = "" if not offset else WORDING["say_offset_plus" if offset > 0 else "say_offset_minus"].format(
                     offset=propose._number_text(abs(offset)))
-                sentence = WORDING["say_scale"].format(column=column["name"], source=source,
+                sentence = WORDING["say_scale"].format(column=subject, source=source,
                                                        factor=propose._number_text(factor), offset=shown_offset, how=_how(path, True))
             else:
                 binding["derive"] = {"form": kind}
-                sentence = WORDING[f"say_{kind}"].format(column=column["name"], source=source, how=_how(path))
+                sentence = WORDING[f"say_{kind}"].format(column=subject, source=source, how=_how(path))
         built.update(binding=binding, sentence=_fit(sentence), source=propose._from_text(binding))
         return built
     if form in ("path", "pair"):
         if column["name"] not in links and column["type"] != "key":
-            raise CorrectionError(WORDING["not_a_link"].format(about=about))
+            raise CorrectionError(WORDING["not_a_link"].format(about=subject))
         path = _steps(state, base, correction.get("steps"), pair=form == "pair")
         table, name, data_type = _column(state, path[-1][2], correction.get("column"))
         binding = {"table": table, "column": name, "path": path, "data_type": data_type}
         steps = WORDING["say_steps"].format(steps=", then ".join(
-            WORDING["say_step"].format(table=s[2], pairs=propose._step_text(s)) for s in path))
+            WORDING["say_step"].format(table=s[2], pairs=propose._match_text(s)) for s in path))
         built.update(binding=binding, source=propose._from_text(binding), sentence=_fit(WORDING["say_path"].format(
-            column=column["name"], source=f"{table}.{name}", base=base, steps=steps)))
+            column=subject, source=f"{table}.{name}", base=base, steps=steps)))
         return built
     if form == "window":
         if links.get(column["name"]) != "role_anaesthetic.anaesthetic_key":
@@ -519,7 +560,8 @@ def build(state, correction):
                                                        and c["name"] in spec["key"]), None) \
             or next((c["name"] for c in spec["columns"] if c["type"] == "datetime"), None)
         if not time_column or not role["columns"].get(time_column, {}).get("binding"):
-            raise CorrectionError(WORDING["window_time"].format(column=time_column or "a time"))
+            raise CorrectionError(WORDING["window_time"].format(
+                column=f"the {rolemap.column_title(view_name, time_column)}" if time_column else "a time"))
         margins = []
         for wanted in ("before", "after"):
             given = correction.get(wanted, 0)
@@ -542,11 +584,12 @@ def build(state, correction):
             margin = WORDING["say_margin"].format(before=before, after=after, before_minutes=minutes(before), after_minutes=minutes(after))
         pairs = f"{table}.{name} = {a_table}.{fields['key']}"
         built.update(binding=binding, source=f"{a_table}.{fields['output']}", sentence=_fit(WORDING["say_window"].format(
-            thing=THING.get(view_name, "row"), key=fields["key"], pairs=pairs, time=time_column, margin=margin)))
+            thing=THING.get(view_name, "row"), key=fields["key"], pairs=pairs, time=rolemap.column_title(view_name, time_column),
+            margin=margin)))
         return built
     if form == "joined":
         if column["type"] != "text":
-            raise CorrectionError(WORDING["joined_type"].format(about=about, type_words=type_words))
+            raise CorrectionError(WORDING["joined_type"].format(about=subject, type_words=type_words))
         if not all(correction.get(k) for k in ("on_table", "on_column", "table", "link", "text", "order")):
             raise CorrectionError(WORDING["joined_fields"])
         on_table, on_column, data_type = _column(state, correction["on_table"], correction["on_column"])
@@ -562,7 +605,7 @@ def build(state, correction):
         binding = {"table": on_table, "column": on_column, "path": path, "data_type": data_type, "joined": joined}
         shown = WORDING["space"] if separator == " " else WORDING["nothing"] if separator == "" else f"'{_clean(separator, 10)}'"
         built.update(binding=binding, source=f"{x_table}.{joined['text']}", sentence=_fit(WORDING["say_joined"].format(
-            column=column["name"], text=joined["text"], table=x_table, link=joined["link"], on=f"{on_table}.{on_column}",
+            column=subject, text=joined["text"], table=x_table, link=joined["link"], on=f"{on_table}.{on_column}",
             order=joined["order"], separator=shown)))
         return built
     raise CorrectionError(WORDING["unknown_form"].format(form=form))
@@ -570,6 +613,12 @@ def build(state, correction):
 
 def apply(state, built, record):
     """Writes a built correction into the map that state holds, with the person's record of it."""
+    if built["form"] == "rows":
+        state.repropose(built["view"], built["table"], record.get("date"))
+        item = state.data["roles"][built["view"]]["rows"]
+        item["says"] = built["sentence"]
+        item["confirmation"] = record
+        return
     role = state.data["roles"][built["view"]]
     if built["form"] == "codes":
         held = dict((state.codes.get(built["about"]) or {}).get("chosen") or {})
@@ -1351,12 +1400,30 @@ def _error(error):
     return _clean(text, 160).rstrip(" .") or "an error"
 
 
+COUNT_TITLES = {"coverage_by_year": "the anaesthetics of each year", "repeated_keys": "rows that appear twice",
+                "readings_by_kind_and_year": "the readings of each kind and year",
+                "gaps_between_readings": "the gaps between readings"}
+
+
+def _contract_problem(error, view, source):
+    """A rule of a view that its SQL breaks, from rolemap's message, in plain words."""
+    text = str(error).split(": ", 1)[-1].rstrip(".")
+    for before, after in (("the catalogue", source), ("the contract asks for", "the description of the record asks for"),
+                          ("the view gives", "the SQL gives"), ("a role view", "the SQL of a part")):
+        text = text.replace(before, after)
+    return _fit(WORDING["contract"].format(view=rolemap.view_title(view, False), problem=rolemap.plain(text)))
+
+
 def run_check(state, seed=SHADOW_SEED, anaesthetics=SHADOW_ANAESTHETICS):
     """Builds the shadow of the map that state holds and checks it. Returns {"problems": [sentence], "notes":
-    [sentence], "views": number, "seconds": number}. Every sentence names the view, and none quotes the dictionary."""
+    [sentence], "about": {sentence: binding}, "views": number, "seconds": number}. Every sentence names the part of the
+    record in plain words, about gives the binding (role_view rows or role_view.column) that each concerns, and none
+    quotes the dictionary."""
     from .translate import to_duckdb
     began = time.perf_counter()
     problems, notes = [], []
+    about = {}
+    title = lambda name: rolemap.view_title(name, False)  # noqa: E731
     data = copy.deepcopy(state.data)
     kinds = data["kinds"]
     missing = [k for k in rolemap.MEAN_KINDS if not (kinds.get(k) or {}).get("codes")]
@@ -1371,12 +1438,15 @@ def run_check(state, seed=SHADOW_SEED, anaesthetics=SHADOW_ANAESTHETICS):
         role["_date"] = ""
         views[name] = propose.view_sql(name, role, kinds, state.model, vocabularies[name])
     for name, sql in views.items():
+        source = "the dictionary"
         try:
             rolemap.check_view(sql, name, state.dictionary)
             if state.catalogue is not None:
+                source = "the database"
                 rolemap.check_view(sql, name, state.catalogue)
         except rolemap.MapError as error:
-            problems.append(WORDING["contract"].format(problem=str(error)))
+            problems.append(_contract_problem(error, name, source))
+            about[problems[-1]] = f"{name} rows"
     held = copy.copy(state)
     held.data = data
     shadow = Shadow(held, views, kinds, vocabularies)
@@ -1404,13 +1474,17 @@ def run_check(state, seed=SHADOW_SEED, anaesthetics=SHADOW_ANAESTHETICS):
             cursor = con.execute(statements[0])
             got = cursor.fetchall()
         except Exception as error:  # noqa: BLE001 - any failure to run is the finding
-            problems.append(WORDING["runs_not"].format(view=name, error=_error(error)))
+            problems.append(WORDING["runs_not"].format(view=title(name), error=_error(error)))
+            about[problems[-1]] = f"{name} rows"
             continue
         results[name] = got
         expected, outside = shadow.expected(name)
         if outside:
-            notes.append(WORDING["outside_window"].format(view=name, count=_cases(outside)))
-        problems += _compare(name, spec, got, expected, state)
+            notes.append(WORDING["outside_window"].format(view=title(name), count=_cases(outside)))
+            about[notes[-1]] = f"{name}.anaesthetic_key"
+        for text, concerns in _compare(name, spec, got, expected, state):
+            problems.append(text)
+            about[text] = concerns
     if "role_anaesthetic" in results:
         held_keys = {_normal(r[0]) for r in results["role_anaesthetic"]}
         for name, got in results.items():
@@ -1420,7 +1494,8 @@ def run_check(state, seed=SHADOW_SEED, anaesthetics=SHADOW_ANAESTHETICS):
             at = columns.index("anaesthetic_key")
             orphans = sum(1 for r in got if r[at] is not None and _normal(r[at]) not in held_keys)
             if orphans:
-                notes.append(WORDING["orphans"].format(count=_plural(orphans, "row", "rows").split(" ", 1)[0], view=name))
+                notes.append(WORDING["orphans"].format(count=_plural(orphans, "row", "rows").split(" ", 1)[0], view=title(name)))
+                about[notes[-1]] = f"{name}.anaesthetic_key"
     lacking = [v for v in rolemap.views() if v not in results]
     roles_map = {"data": data, "views": views}
     if not lacking:
@@ -1429,20 +1504,23 @@ def run_check(state, seed=SHADOW_SEED, anaesthetics=SHADOW_ANAESTHETICS):
             try:
                 run(item["sql"])
             except Exception:  # noqa: BLE001
-                problems.append(WORDING["count_fails"].format(name=count_name))
+                problems.append(WORDING["count_fails"].format(name=COUNT_TITLES.get(count_name, count_name.replace("_", " "))))
         try:
             found = rolemap.per_anaesthetic(run)
             problems += _neonates(found)
         except Exception as error:  # noqa: BLE001
             problems.append(WORDING["neonatal_fails"].format(error=_error(error)))
     else:
-        problems.append(WORDING["neonatal_missing"].format(views=_and(lacking)))
+        problems.append(WORDING["neonatal_missing"].format(views=_and([title(v) for v in lacking])))
     return {"problems": list(dict.fromkeys(problems)), "notes": list(dict.fromkeys(notes)), "views": len(views),
-            "seconds": round(time.perf_counter() - began, 1)}
+            "about": about, "seconds": round(time.perf_counter() - began, 1)}
 
 
 def _compare(name, spec, got, expected, state):
+    """The ways in which a view's rows differ from what its bindings should give, as [(sentence, binding)]."""
     problems = []
+    view = rolemap.view_title(name, False)
+    rows = f"{name} rows"
     columns = spec["columns"]
     actual = Counter(tuple(_normal(v) for v in row) for row in got)
     wanted = Counter(tuple(_normal(v) for v in row) for row in expected)
@@ -1455,32 +1533,35 @@ def _compare(name, spec, got, expected, state):
         other = sum(extra.values()) - doubled
         if doubled:
             if name == "role_reading":
-                problems.append(WORDING["doubled_reading"].format(count=f"{doubled:,}"))
+                problems.append((WORDING["doubled_reading"].format(view=view, count=f"{doubled:,}"), f"{name}.anaesthetic_key"))
             else:
                 link = columns[links[0]]["name"] if links else "key"
                 target = next((l["to"].split(".")[0] for l in spec.get("links", []) if l["column"] == link), "row")
-                problems.append(WORDING["doubled"].format(view=name, count=f"{doubled:,}", link=link,
-                                                          target=THING.get(target, target.replace("role_", "").replace("_", " "))))
+                problems.append((WORDING["doubled"].format(view=view, count=f"{doubled:,}", link=rolemap.column_title(name, link),
+                                                           target=THING.get(target, target.replace("role_", "").replace("_", " "))),
+                                 f"{name}.{link}" if links else rows))
         if other:
-            problems.append(WORDING["extra"].format(view=name, count=f"{other:,}"))
+            problems.append((WORDING["extra"].format(view=view, count=f"{other:,}"), rows))
     if missing:
-        problems.append(WORDING["missing"].format(view=name, count=f"{sum(missing.values()):,}", total=f"{sum(wanted.values()):,}"))
+        problems.append((WORDING["missing"].format(view=view, count=f"{sum(missing.values()):,}", total=f"{sum(wanted.values()):,}"), rows))
     keys = [i for i, c in enumerate(columns) if c["name"] in spec["key"]]
     repeated = Counter(tuple(_normal(r[i]) for i in keys) for r in got)
     count = sum(1 for n in repeated.values() if n > 1)
     if count:
-        problems.append(WORDING["keys"].format(count=f"{count:,}", view=name))
+        problems.append((WORDING["keys"].format(count=f"{count:,}", view=view), f"{name}.{spec['key'][0]}" if len(spec["key"]) == 1 else rows))
     allowed = _allowed_kinds(state, name)
     for i, column in enumerate(columns):
         values = [r[i] for r in got]
         if column["type"] == "flag":
             empty = sum(1 for v in values if v is None)
             if empty:
-                problems.append(WORDING["flag_empty"].format(view=name, column=column["name"], count=_cases(empty)))
+                problems.append((WORDING["flag_empty"].format(subject=rolemap.plain_about(f"{name}.{column['name']}", True),
+                                                              count=_cases(empty)), f"{name}.{column['name']}"))
         wrong = next((v for v in values if v is not None and not _suits(column["type"], v, allowed.get(column["name"]))), None)
         if wrong is not None:
-            problems.append(WORDING["type"].format(view=name, column=column["name"], found=_found_words(wrong),
-                                                   wanted=TYPE_WORDS[column["type"]]))
+            problems.append((WORDING["type"].format(subject=rolemap.plain_about(f"{name}.{column['name']}", True),
+                                                    found=_found_words(wrong), wanted=TYPE_WORDS[column["type"]]),
+                             f"{name}.{column['name']}"))
     return problems
 
 
@@ -1564,7 +1645,8 @@ def report(before, after, change=True):
         sentence = WORDING["check_whole_now"].format(views=_views_text(after["views"])) if not after["problems"] \
             else WORDING["check_now_breaks"].format(count=_problems_text(len(after["problems"])))
         return {"passed": not after["problems"], "sentence": sentence, "problems": after["problems"], "remaining": [],
-                "mended": "", "notes": after["notes"], "seconds": after["seconds"], "views": after["views"]}
+                "mended": "", "notes": after["notes"], "seconds": after["seconds"], "views": after["views"],
+                "about": dict(after.get("about") or {})}
     if new:
         sentence = WORDING["check_breaks"].format(count=_plural(len(new), "place", "places"))
     elif old:
@@ -1575,7 +1657,7 @@ def report(before, after, change=True):
     mends = WORDING["check_mends"].format(count=_problems_text(len(mended)), were="was" if len(mended) == 1 else "were") if mended else ""
     return {"passed": passed, "sentence": sentence, "problems": new, "remaining": old if new or old else [],
             "mended": mends, "notes": after["notes"], "seconds": round(before.get("seconds", 0) + after["seconds"], 1),
-            "views": after["views"]}
+            "views": after["views"], "about": {**(before.get("about") or {}), **(after.get("about") or {})}}
 
 
 def outcome(found):

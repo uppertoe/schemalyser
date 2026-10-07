@@ -11,9 +11,11 @@ export interface CorrectionHeld {
 }
 export interface CorrectionItem {
   about: string; attribute: string; type: string | null; link: string | null; date: string | null; correction: CorrectionHeld | null;
+  bound?: boolean;
 }
 interface Report {
   passed: boolean; sentence: string; problems: string[]; remaining: string[]; mended: string; notes: string[]; seconds: number;
+  about?: Record<string, string>;
 }
 interface Column { name: string; type: string; key: boolean; present: boolean | null }
 interface Join { from: string; table: string; to: string; repeats: boolean }
@@ -40,6 +42,7 @@ export interface Deps {
   kinds(about: string): string[];
   values(name: string): { value: string; rows: number | null }[] | null;
   close(about: string): void;
+  goTo(about: string): void;
   step: string;
 }
 
@@ -110,7 +113,8 @@ function joinsOf(table: string): Join[] | null {
 
 // Which forms suit an attribute.
 export function formsFor(item: CorrectionItem): string[] {
-  if (item.attribute === 'rows') return ['rows', 'filter'];
+  // A part for which the page found no table can only be given one.
+  if (item.attribute === 'rows') return item.bound === false ? ['rows'] : ['rows', 'filter'];
   const forms = ['column'];
   if (item.link) {
     forms.push('path', 'pair');
@@ -149,6 +153,10 @@ function correctionOf(item: CorrectionItem, draft: Draft): Record<string, unknow
   const about = item.about;
   const values = (f.values ?? '').split(',').map((v) => v.trim()).filter(Boolean);
   switch (draft.form) {
+    case 'column':
+      return f.replacement ? { form: 'column', about, replacement: f.replacement } : null;
+    case 'rows':
+      return f.replacement ? { form: 'rows', about, table: f.replacement.split(/[.,\s]/)[0] } : null;
     case 'flag':
       return f.table && f.column && values.length ? { form: 'derived', about, table: f.table, column: f.column, derive: { form: 'flag', values } } : null;
     case 'scale':
@@ -510,7 +518,18 @@ export function panel(item: CorrectionItem, plain: () => HTMLElement): HTMLEleme
   box.append(labelled(item.about, 'form', c.formLabel, select));
   box.append(deps.el('p', c.formWhat[draft.form] ?? '', 'note'));
   if (draft.form === 'column' || draft.form === 'rows') {
+    // The column or table chosen: its sentence, then the check on invented rows, which runs as soon as it is chosen.
     box.append(plain());
+    if (draft.problem) box.append(deps.el('p', `${c.problemLabel} ${draft.problem}`, 'status problem problem-note'));
+    if (draft.preview) {
+      box.append(deps.el('p', c.sentenceLabel, 'label sentence-label'), deps.el('p', draft.preview.sentence, 'correction-sentence'));
+      const sql = deps.el('details');
+      sql.append(deps.el('summary', c.sqlLabel), deps.el('pre', draft.preview.sql, 'code correction-sql'));
+      box.append(sql);
+    }
+    if (checking === item.about) box.append(deps.el('p', c.checkingUse, 'status working-note'));
+    const correction = correctionOf(item, draft);
+    if (draft.report && correction) box.append(reportBox(draft.report, item, correction));
     return box;
   }
   if (!document.getElementById('dl-tables')) {
@@ -554,21 +573,63 @@ export function panel(item: CorrectionItem, plain: () => HTMLElement): HTMLEleme
   return box;
 }
 
-function list(items: string[], className = 'findings') {
+// A list of findings, each linked to the row of the column that it concerns where the check names one.
+function list(items: string[], className = 'findings', about: Record<string, string> = {}) {
   const node = deps.el('ul', undefined, className);
-  for (const text of items) node.append(deps.el('li', text));
+  for (const text of items) {
+    const entry = deps.el('li');
+    const target = about[text];
+    if (target) {
+      const link = deps.el('a', text, 'finding-link');
+      link.href = '#step-6';
+      link.dataset.about = target;
+      link.addEventListener('click', (event) => {
+        event.preventDefault();
+        deps.goTo(target);
+      });
+      entry.append(link);
+    } else entry.textContent = text;
+    node.append(entry);
+  }
   return node;
+}
+
+// A column or table chosen in place of the proposal: previewed, then checked on invented rows, so that its sentence and
+// the outcome of its check are shown before it can be kept or discarded.
+export async function useAlternative(item: CorrectionItem, chosen: string) {
+  const draft = draftOf(item);
+  draft.form = item.attribute === 'rows' ? 'rows' : 'column';
+  draft.f.replacement = chosen;
+  draft.report = null;
+  draft.although = false;
+  await preview(item);
+  const correction = correctionOf(item, draft);
+  if (!draft.preview || !correction) return;
+  checking = item.about;
+  deps.setBusy(true);
+  deps.render();
+  try {
+    const reply = await parsed('describe_correction_check', [JSON.stringify(correction)]);
+    if (reply.ok) draft.report = reply.report as Report;
+    else draft.problem = reply.problem ?? d.failed;
+  } catch {
+    draft.problem = d.failed;
+  }
+  checking = '';
+  deps.setBusy(false);
+  deps.render();
 }
 
 function reportBox(report: Report, item: CorrectionItem, correction: Record<string, unknown>) {
   const draft = draftOf(item);
   const box = deps.el('div', undefined, `check-report ${report.passed ? 'passed' : 'failed'}`);
   box.append(deps.el('p', report.sentence, `status ${report.passed ? 'good' : 'problem'}`));
-  if (report.problems.length) box.append(list(report.problems));
-  if (report.remaining.length && report.problems.length) box.append(deps.el('p', c.remainingLabel), list(report.remaining));
-  else if (report.remaining.length) box.append(list(report.remaining));
+  const about = report.about ?? {};
+  if (report.problems.length) box.append(list(report.problems, 'findings', about));
+  if (report.remaining.length && report.problems.length) box.append(deps.el('p', c.remainingLabel), list(report.remaining, 'findings', about));
+  else if (report.remaining.length) box.append(list(report.remaining, 'findings', about));
   if (report.mended) box.append(deps.el('p', report.mended, 'status good'));
-  if (report.notes.length) box.append(deps.el('p', c.notesLabel), list(report.notes, 'notes'));
+  if (report.notes.length) box.append(deps.el('p', c.notesLabel), list(report.notes, 'notes', about));
   box.append(deps.el('p', c.checkSeconds(report.seconds), 'note'));
   if (!report.passed) {
     const option = deps.el('label', undefined, 'option');
@@ -617,7 +678,7 @@ export function kept(item: CorrectionItem): HTMLElement | null {
   if (!held) return null;
   const box = deps.el('div', undefined, 'kept-correction');
   box.append(deps.el('p', held.says, 'correction-sentence'));
-  box.append(deps.el('p', c.kept(item.date ?? '', held.check), held.check.startsWith('passed') ? 'status good' : 'status problem'));
+  box.append(deps.el('p', c.kept(d.day(item.date ?? ''), held.check), held.check.startsWith('passed') ? 'status good' : 'status problem'));
   if (held.reason) box.append(deps.el('p', c.keptReason(held.reason), 'note'));
   if (!held.probe) {
     box.append(deps.el('p', c.probeNone, 'note'));
@@ -678,8 +739,8 @@ export async function checkModel(out: HTMLElement) {
     }
     const report = reply.report as Report;
     out.append(deps.el('p', report.sentence, `status ${report.passed ? 'good' : 'problem'}`));
-    if (report.problems.length) out.append(list(report.problems));
-    if (report.notes.length) out.append(deps.el('p', c.notesLabel), list(report.notes, 'notes'));
+    if (report.problems.length) out.append(list(report.problems, 'findings', report.about ?? {}));
+    if (report.notes.length) out.append(deps.el('p', c.notesLabel), list(report.notes, 'notes', report.about ?? {}));
     out.append(deps.el('p', c.checkSeconds(report.seconds), 'note'));
   } catch {
     out.replaceChildren(deps.el('p', d.failed, 'status problem'));

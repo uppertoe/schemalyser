@@ -41,9 +41,15 @@ export const describeStrings = {
     folder: 'The page has restored the hospital folder.',
     proposed: (drafted: number, roles: number) => `The page has proposed ${drafted} of the ${roles} parts of the record.`,
     tables: 'The page has read the result of the tables and columns query.',
-    codes: 'The codes are saved for every list that needs them.',
-    counts: 'Every count has been read and judged.',
+    confirmed: (total: number, undrafted: number) =>
+      undrafted
+        ? `Every column that can be answered has an answer. The page found no table for ${plural(undrafted, 'part', 'parts')}, which ${undrafted === 1 ? 'remains' : 'remain'} to be answered once a table is chosen.`
+        : `Every one of the ${total} columns has an answer.`,
+    codes: (n: number) => (n ? `The page has saved the codes of ${plural(n, 'list', 'lists')}.` : 'No column holds local codes that need choosing.'),
+    counts: (n: number) => `The page has saved the judgement of ${plural(n, 'count', 'counts')}.`,
   },
+  // Beside step 6 in the rail, while some columns still have no answer.
+  stillToAnswer: (n: number) => `${plural(n, 'column', 'columns')} still to answer`,
   aboutFile: 'What this file is',
 
   // 1. Offline.
@@ -56,6 +62,7 @@ export const describeStrings = {
     'In Chrome or Edge, press F12, choose the Network panel, open the menu that reads No throttling and choose Offline. Leave the developer tools open, because the tab goes back online when they close.',
     'In Firefox, open the File menu and choose Work Offline. If you cannot see the menu bar, press Alt.',
     'If the developer tools are not available on this computer, use Firefox and Work Offline.',
+    'On a phone or a tablet, the page cannot be taken offline in this way, so please use it on a computer.',
   ],
   noFiles: 'The page will not accept any files while it is online.',
   offlineDone: 'This tab is offline, so nothing you load or paste can leave it.',
@@ -91,11 +98,12 @@ export const describeStrings = {
 
   // 3. The folder.
   folderWhat:
-    'If you saved a hospital folder at an earlier sitting, choose it here and the page will carry on from where you left off. At a first sitting, skip this step.',
+    'If you saved a hospital folder at an earlier sitting, use Choose the folder to pick it, and the page will carry on from where you left off. At a first sitting, skip this step.',
   folderLabel: 'The hospital folder:',
+  folderChoose: 'Choose the folder',
   folderAboutSummary: 'What this folder is',
   folderAbout:
-    "The hospital folder holds what the two of you settle: the map, the codes, the counts, and every query that was run with its result. It lives on the hospital's own storage. The page reads only the files that it wrote there. Your browser may ask you to confirm an upload, but the folder is read into this tab only and nothing is sent.",
+    "The hospital folder holds what the two of you settle: the map, the codes, the counts, and every query that was run with its result. It lives on the hospital's own storage. The page reads only the files that it wrote there. Your browser may ask whether to let the page read the folder; nothing is sent anywhere.",
   folderReading: 'The page is reading the hospital folder.',
   folderReceipt: (r: { map: boolean; tables: boolean; codes: number; counts: number; dictionary: boolean; confirmations: number; queries: number }) =>
     [
@@ -147,16 +155,23 @@ export const describeStrings = {
   roleUndrafted: 'The dictionary has no table that fits this part, so the page has not proposed one.',
   roleRequired: 'Every audit reads this part.',
   roleFurther: 'An audit reads this part only where the hospital records it.',
-  rowsAttribute: 'The table, with one row for each',
+  rowsAttribute: 'The table that holds one row for each',
   proposedLabel: 'Proposed:',
-  nothingProposed: 'nothing in the dictionary fits',
+  confirmedLabel: 'Confirmed:',
+  correctedLabel: 'Corrected to:',
+  nothingProposed: 'The page found nothing in the dictionary for this column.',
+  nothingProposedRows: 'The page found no table in the dictionary for this part.',
+  // A link between two tables, in words: "T.C, by A = B" becomes "T.C, linked by matching A to B".
+  linkedBy: 'linked by matching',
+  linkedTo: 'to',
+  linkedThen: 'then',
   definitionLabel: "The dictionary's definition",
   evidenceLabel: 'Why the page proposed it',
   confidence: { high: 'high confidence', medium: 'medium confidence', low: 'low confidence', none: 'no match' } as Record<string, string>,
   alternativesLabel: 'Other columns that came close',
 
   // 5. The tables and columns query.
-  tablesWhat: 'Choose the database, then write the query, run it in your SQL window and paste the result below.',
+  tablesWhat: 'Choose the database, then choose Write the query. Run the query in your SQL window, paste the result below and choose Read the result.',
   databaseLegend: 'The database that your SQL window is connected to:',
   databaseOptions: [
     ['production', 'The production reporting database, or a refreshed copy of it'],
@@ -188,25 +203,51 @@ export const describeStrings = {
   tablesUnreadable: "The page could not read this as the query's result. Use Copy with Headers on the whole results grid, then paste it again.",
 
   // 6. Confirming.
-  confirmWhat: 'For each column below, choose Yes if it holds what its description says, Choose another if a different column does, or Not sure if neither of you can say.',
+  confirmIntro:
+    "The page describes the anaesthetic record as a set of parts, such as patients, anaesthetics and the readings charted during an anaesthetic, each with a few columns. For each column, the page proposes the table and column in the hospital's database that holds it, and your colleague says whether that is right.",
+  confirmWhat: 'Beside each column below, choose Yes, this is right, Choose another column, or Not sure.',
+  confirmLegend:
+    "Where a column sits in another table, the page shows how the tables are linked: linked by matching A to B means that a row of one table belongs with the row of the other in which B holds the same value as A. Beside each proposal, the page gives its confidence: high where the dictionary's own words match the column's meaning, medium where they match in part, and low where the proposal is a guess.",
   confirmAboutSummary: 'What happens to each answer',
   confirmAbout:
-    'The page records each answer with its date. Choose another opens a short form, and the page checks each change on invented rows before you keep it. Each Not sure goes into a list of questions for the database team at the end of this step.',
+    'The page records each answer with its date. Choose another column opens a short form, and the page checks each change on invented rows and shows the result before you keep it. Each Not sure goes into the list of questions for the database team at the end of this step. Once a column has an answer, Change the answer brings the choices back.',
+  // Beside each part, who can usually answer for it.
+  whoAnswers: {
+    colleague: 'Your colleague can usually answer for this part from what they know of the record.',
+    team: 'Usually only the team that looks after the reporting database can answer for this part, so a Not sure here goes to them.',
+  } as Record<string, string>,
+  teamParts: ['role_lab', 'role_diagnosis', 'role_note', 'role_finding'],
+  partCount: (answered: number, total: number) => `${answered} of ${total} answered`,
   tally: (t: { confirmed: number; corrected: number; not_sure: number; remaining: number; total: number }) =>
     `Of ${t.total} columns, ${t.confirmed} ${t.confirmed === 1 ? 'is' : 'are'} confirmed, ${t.corrected} corrected and ${t.not_sure} not sure, and ${t.remaining} ${t.remaining === 1 ? 'remains' : 'remain'}.`,
   tallyLabels: { confirmed: 'Confirmed', corrected: 'Corrected', not_sure: 'Not sure', remaining: 'Still to answer' } as Record<string, string>,
   yes: 'Yes, this is right',
-  another: 'Choose another',
+  another: 'Choose another column',
+  anotherRows: 'Choose another table',
+  chooseColumn: 'Choose a column',
+  chooseTable: 'Choose a table',
   notSure: 'Not sure',
-  anotherLabel: 'Choose one of the other columns:',
+  change: 'Change the answer',
+  anotherLabel: 'Choose one of the other columns that the page found:',
+  anotherNoneFound: 'The page has no other suggestion, so write a column from the dictionary below.',
   anotherRowsLabel: 'Write the name of the table that holds one row for each, and the page will propose this part again from it:',
-  anotherWritten: 'Or write it as TABLE.COLUMN:',
+  anotherRowsChoose: 'Choose one of the other tables that the page found:',
+  anotherRowsWrittenOr: 'Or write the name of the table, and the page will propose this part again from it:',
+  anotherWritten: 'Write it as TABLE.COLUMN:',
+  anotherWrittenOr: 'Or write it as TABLE.COLUMN:',
   anotherNone: 'None of these',
   anotherUse: 'Use this one',
+  // The date of an answer, as 7 October.
+  day: (iso: string) => {
+    const at = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!at) return iso;
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    return `${Number(at[3])} ${months[Number(at[2]) - 1]}${at[1] === String(new Date().getFullYear()) ? '' : ` ${at[1]}`}`;
+  },
   answered: {
     yes: (date: string) => `Confirmed on ${date}.`,
     no: (date: string, replacement: string) => `Corrected to ${replacement} on ${date}.`,
-    notSure: (date: string) => `Marked as not sure on ${date}.`,
+    notSure: (date: string) => `Not sure, listed as a question on ${date}.`,
   },
   presence: {
     present: 'The database holds this column.',
@@ -216,21 +257,22 @@ export const describeStrings = {
     unknown: 'The page has not yet checked this against the database.',
   },
   questionsHeading: 'Questions for the database team',
-  questionsWhat: 'Each column marked Not sure is listed here. Copy the list into an email to the team, and answer each one above when they reply.',
+  questionsWhat: 'Each column marked Not sure is listed here. Choose Copy the questions, paste them into an email to the team, and answer each column above when they reply.',
   questionsNone: 'There are no questions yet.',
   questionsCopy: 'Copy the questions',
   questionsNoteHead: 'Questions about the reporting database, from the description of the anaesthetic record:',
+  questionsMeaning: (meaning: string) => `The description of the record defines it as follows: ${meaning}`,
   confirmFailed: 'The page could not record that answer. Please try again.',
 
   // 7. The codes.
   codesWhat:
-    "Some columns hold the hospital's own codes, such as the kind of each reading. For each list below, write the list, run it, paste the result, then choose what each code means and save.",
+    "Some columns hold the hospital's own codes, such as the kind of each reading. For each list below, choose Write the list, run it in your SQL window, paste the result and choose Read the list. Then choose what each code means and choose Save these codes.",
   codesAboutSummary: 'How the list works, and why it is safe',
   codesSafe: (limit: string) =>
     `The list counts the codes used on the anaesthetics of the chosen year, with their names. It runs in two parts: part 1 puts at most ${limit} anaesthetics of that year into a temporary table, #cohort, and part 2 reads only their rows, never the whole of a large table.`,
   yearLabel: 'The year to look at:',
   yearNote: 'A recent full year shows how the record is charted now.',
-  vocabularyHeading: (key: string) => `Codes in ${key}`,
+  vocabularyHeading: (title: string) => `The codes of ${title[0].toLowerCase()}${title.slice(1)}`,
   vocabularyBound: (bound: string, lookup: string | null) =>
     lookup ? `The codes come from ${bound}, and their names from ${lookup}.` : `The codes come from ${bound}. The dictionary names no table of their names, so the list shows the codes alone.`,
   vocabularyReason: {
@@ -245,8 +287,9 @@ export const describeStrings = {
   chartedRead: 'Read the list',
   chartedReceipt: (n: number, year: number) =>
     `The page has read ${plural(n, 'code', 'codes')} charted in ${year}. Choose the kind of each code you recognise, leave the rest as Not chosen, then choose Save these codes.`,
+  codesOther: 'A code left as Not chosen counts as other, which each list also offers.',
   chartedEmpty: (year: number) => `The list for ${year} came back empty. Check this part's columns in step 6, or choose another year.`,
-  chartedColumns: ['Code', 'Rows', 'Anaesthetics', 'Name', 'Kind'],
+  chartedColumns: ['Code', 'Times charted', 'Anaesthetics', 'Name', 'Kind'],
   notChosen: 'Not chosen',
   codesSave: 'Save these codes',
   codesSaved: (n: number, date: string) => `The page saved ${plural(n, 'code', 'codes')} for this list on ${date}.`,
@@ -254,7 +297,7 @@ export const describeStrings = {
   kindMeaning: (kind: string, meaning: string) => `${kind}: ${meaning}`,
 
   // 8. The counts.
-  countsWhat: 'Choose Write the counts, then run each count, paste its result and record whether it looks right.',
+  countsWhat: 'Choose Write the counts. For each count, choose Copy the count, run it, paste its result and choose Read the result, then choose Save the judgement.',
   countsAboutSummary: 'What the counts are for',
   countsAbout:
     'The counts show whether the map reaches the record in every year. Each count is rounded down to ten, and a group of fewer than ten is left blank, so that no small number can point to a patient.',
@@ -273,6 +316,8 @@ export const describeStrings = {
   } as Record<string, string>,
   countTablesSummary: 'Which tables this count reads',
   countSafe: 'This count reads no table of readings, so it is safe to run on production.',
+  countTraining: 'Run on the training database; run it again on production before the figures are used.',
+  countTrainingNote: 'Your SQL window is connected to a training database, whose patients are fictional, so these figures show only that the query runs.',
   countScript: (limit: string) =>
     `This count reads the readings, so it runs in two parts: part 1 puts at most ${limit} anaesthetics of the year into #cohort, and part 2 reads only their readings.`,
   countTables: 'It reads these tables:',
@@ -284,14 +329,20 @@ export const describeStrings = {
   countReceipt: (n: number) => `The page has read ${rows(n)} of this count.`,
   countNoFindings: 'The page sees nothing unusual in this count.',
   lookRightLegend: 'Record whether these figures look right to the two of you:',
+  lookRightCompare: {
+    coverage_by_year: 'Compare each year with about the number of anaesthetics the department gives in a year, which your colleague will know.',
+    repeated_keys: 'Compare the figures with none, because a patient or an anaesthetic should appear on one row only.',
+    readings_by_kind: 'Compare the readings of each kind with what is usually charted, such as a mean pressure every few minutes of an anaesthetic.',
+  } as Record<string, string>,
   lookRight: [['yes', 'Yes, they look right'], ['no', 'No, something is wrong']] as [string, string][],
   lookRightNote: 'A note, if you want to record what looks wrong or why:',
   lookRightSave: 'Save the judgement',
   lookRightSaved: (answer: string, date: string) =>
     answer === 'yes' ? `On ${date}, you recorded that this count looks right.` : `On ${date}, you recorded that something in this count is wrong.`,
+  lookRightTraining: 'The page has recorded this judgement as made on the training database, and the README in the hospital folder lists the count to run again on production.',
 
   // 9. The folder.
-  writeWhat: 'Save everything you have settled into the hospital folder. At the next sitting, choose that folder in step 3 to carry on.',
+  writeWhat: 'Choose Save into a folder or Download as a zip to save everything you have settled as the hospital folder. At the next sitting, choose that folder in step 3 to carry on.',
   writeAboutSummary: 'What the folder holds',
   writeAbout:
     'The folder holds the map, with one SQL file for each part of the record, the codes, the counts and their judgements, every query with its result, the answers in order, and a README that explains each file.',
@@ -300,9 +351,10 @@ export const describeStrings = {
   writeFolder: 'Save into a folder',
   writeFolderNote: 'Your browser will ask you to choose the folder and to allow the page to save changes to it.',
   writeZip: 'Download as a zip',
-  writeZipNote: 'If you download a zip, unzip it into the hospital folder, replacing what is there.',
+  writeZipNote: "Unzip the downloaded zip into the hospital folder on the hospital's own storage, replacing what is there.",
   written: (n: number) => `The page has saved ${plural(n, 'file', 'files')} into the folder.`,
-  zipped: (n: number) => `The page has saved the hospital folder as a zip of ${plural(n, 'file', 'files')}. Unzip it into the hospital folder, replacing what is there.`,
+  zipped: (n: number) => `The page has saved the hospital folder as a zip of ${plural(n, 'file', 'files')}. Unzip it into the hospital folder on the hospital's own storage, replacing what is there.`,
+  writtenStale: 'You have changed something since the folder was saved, so please save it again.',
   writeFailed: 'The page could not save into that folder. Choose Download as a zip instead.',
 
   // 6. Corrections, each a sentence to complete.
@@ -384,6 +436,7 @@ export const describeStrings = {
     kindLabel: 'stands for',
     addCode: 'Add another code',
     sentenceLabel: 'What this change means:',
+    checkingUse: 'The page is checking this change on invented rows before you keep it.',
     sqlLabel: 'Show the SQL that the page will write',
     incomplete: 'Complete the sentence, and the page will show what the change means.',
     checkWhat: 'Choose Check this change. The page tests the whole map with the change on a small invented database in this tab, using no hospital data.',
@@ -401,7 +454,7 @@ export const describeStrings = {
       check.startsWith('passed') ? `Kept on ${date}. The check passed.` : `Kept on ${date}, although the check failed.`,
     keptReason: (reason: string) => `The reason given: ${reason}`,
     modelCheck: 'Check the whole map',
-    modelCheckWhat: 'Before you change anything, you can check the map as it stands to see what is already wrong.',
+    modelCheckWhat: 'Before you change anything, you can check the map as it stands to see what is already wrong. Each finding links to its column below.',
     probeWhat: {
       link: 'Run this test query to try the link on the database. It counts the anaesthetics of the chosen year that have at least one row through the link, and those with none.',
       filter: 'Run this test query to count the rows read and how many of them pass the filter.',
