@@ -3794,6 +3794,8 @@ FIELD_WORDS = {
     ("device_exposure", "visit_detail_id"): "The anaesthetic during which a device was placed",
     ("person", "birth_datetime"): "The child's date of birth",
 }
+# A field that is the same thing as another where both come from the same columns, so that the specification gives one line.
+SAME_AS = {"The anaesthetic's own record": "The anaesthetic itself"}
 STEP_WORDS = {"person": "patients", "visit_occurrence": "visits", "visit_detail": "anaesthetics",
               "procedure_occurrence": "anaesthetics", "measurement": "readings", "death": "deaths",
               "anaesthetic": "anaesthetics", "observation": "events", "drug_exposure": "drugs", "device_exposure": "devices"}
@@ -3882,7 +3884,7 @@ def specification(conversion, target_sql, rows, traced, catalogue, name="the tar
 
     lines += ["", w["h_sources"], ""]
     target_read = read_target(target_sql, custom_fields(folder))
-    sourced = 0
+    sources = []
     for table, field in target_read["fields"]:
         words = FIELD_WORDS.get((table, field))
         behind = [f"{t}.{c}" for t, c in (_spelled(catalogue, o) or o for o in _behind(traced, table, field))]
@@ -3891,8 +3893,12 @@ def specification(conversion, target_sql, rows, traced, catalogue, name="the tar
             behind = [f"{t}.{c}" for r in rows if r.get("_wording") == "codes-concept"
                       and r["question_id"].startswith(f"codes-{table}.{field}-") for t, c in r.get("_columns") or []]
         if words and behind:
-            lines.append(w["source"].format(what=words, columns=_join(dict.fromkeys(behind))))
-            sourced += 1
+            sources.append((words, tuple(dict.fromkeys(behind))))
+    # The same thing from the same columns is said once.
+    sources = [(words, columns) for words, columns in sources if (SAME_AS.get(words), columns) not in sources]
+    for words, columns in dict.fromkeys(sources):
+        lines.append(w["source"].format(what=words, columns=_join(columns)))
+    sourced = len(sources)
     if not sourced and deps.get("columns"):
         lines.append(w["source_columns"].format(columns=_join(sorted(deps["columns"]))))
     lines += [w["route"].format(sentence=s) for s in traced.get("routes") or []]

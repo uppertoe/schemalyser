@@ -172,6 +172,10 @@ def test_each_specification_carries_only_what_its_own_question_depends_on():
     assert "PROCEDURE_OCCURRENCE" not in text and "DEVICE_EXPOSURE" not in text and "AIRWAY_DEVICE" in sections["1. The question"]
     # No section is empty.
     assert "The kind of device comes from AIRWAY_DEVICE.DEVICE_KIND_KEY." in sections["3. Where each part"]
+    # The anaesthetic and its own record come from the same column, so the specification says so in one line.
+    assert sections["3. Where each part"].count("from ANAES_RECORD.ANAES_KEY.") == 2, sections["3. Where each part"]
+    assert "The anaesthetic itself comes from ANAES_RECORD.ANAES_KEY." in sections["3. Where each part"]
+    assert "The anaesthetic's own record" not in sections["3. Where each part"]
     # Deaths, gestation and the pressure decisions belong to the pressure questions.
     assert "register of deaths" not in text and "gestational age" not in text and "arterial line" not in text
     assert sections["9. Decisions for the clinicians"].startswith("None of the decisions for the clinicians can change the answer")

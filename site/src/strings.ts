@@ -1,6 +1,6 @@
 // The wording of the page, as approved on 3 and 4 October 2026, with the checklist's wording added on
 // 4 October 2026 in the same voice, and rewritten on 7 October 2026 so that the page explains itself: an overview of the
-// seven steps, each step and each part of a checklist in the same shape, one name for each thing, and a glossary.
+// steps, each step and each part of a checklist in the same shape, one name for each thing, and a glossary.
 // The owner no longer reviews this internal tool's wording.
 // The sentences that summarise the results and say what could not be read come from the core
 // (core/schemalyser/vocabulary.py), because the coverage file carries the same wording.
@@ -64,7 +64,7 @@ export const strings = {
   // The overview at the top of the page: the stages of the meeting, numbered as the steps below are.
   overviewSummary: 'How the meeting runs, step by step',
   overviewLead:
-    "Two people use this page together at one computer: the clinician who leads the audit, and a colleague who can read the reporting database, which is the copy of the hospital's records that SQL Server holds for reporting. The meeting has seven steps, and the page opens each one in turn.",
+    "Two people use this page together at one computer: the clinician who leads the audit, and a colleague who can read the reporting database, which is the copy of the hospital's records that SQL Server holds for reporting. The page has seven steps. The meeting itself is steps 1 to 6. Step 7 is an optional practice step, which either of you can use at any time, and which stands in for a SQL window when you try the invented example. The page opens each step in turn.",
   overviewPrivate: 'The whole page runs in this browser, and it sends nothing anywhere.',
   overviewExample:
     'If you would like to try the page before the meeting, you can load the invented example in step 2. Everything in it is made up, and nothing in it comes from a hospital.',
@@ -75,7 +75,7 @@ export const strings = {
     ['Work through the checklist together', 'The colleague answers the questions that they can, runs each short query, the count by year and the list of what is charted, and pastes each result back. The two of you choose the codes and make the clinical decisions together. At the end of this step you have the specification of the audit query, a list of what remains with who can settle each point, and a saved file that holds what was settled today.'],
     ['Check what Schemalyser found in the SQL files', 'The colleague reads the inventory, which lists the tables, columns and joins that the SQL files use, before anything is downloaded. A join is the way in which a query links the rows of two tables, by matching a column of one with a column of the other. At the end of this step you know exactly what a download would hold.'],
     ['Download the results', 'If the clinician would like a record of what the SQL files use, the clinician downloads the inventory and the checklists here. The file that the next meeting needs is the one saved in step 4.'],
-    ['Try the SQL files in a practice database', 'This step is optional and is not part of the meeting. Either of you can run the SQL files on a small practice database of invented rows that the page builds in this browser.'],
+    ['Try the SQL files in a practice database', 'This is the optional practice step, which is not one of the six steps of the meeting. Either of you can run the SQL files, or a query that the checklist offers, on a small practice database of invented rows that the page builds in this browser. With the invented example loaded, the practice database stands in for a SQL window.'],
   ] as [string, string][],
 
   steps: [
@@ -119,7 +119,7 @@ export const strings = {
         'Choose Analyse the folder and the SQL files, under 3.4.',
       ],
       worked: 'When it has worked, step 4 opens with a checklist for each audit question.',
-      does: 'Schemalyser reads every file here, on this computer, and keeps nothing on any server. From the SQL files it takes only the names of tables and columns and the ways in which they are joined and filtered, and it never writes out a value, a comment or a file name from them.',
+      does: 'Schemalyser reads every file here, on this computer, and keeps nothing on any server. From the SQL files it takes only the names of tables and columns and the ways in which they are joined and filtered. It never writes out a comment or a file name from them, and it writes out a value only where the query results already list it as a code of that column.',
       next: 'Next, work through the checklist together in step 4.',
     },
     {
@@ -146,7 +146,7 @@ export const strings = {
         'Read the inventory below, file by file.',
         'If you see anything that should not leave your team, choose Clear everything in step 6, and do not download anything.',
       ],
-      does: 'The inventory holds only names from the list of tables and columns, with counts. Where a SQL file held a value, such as a date, the inventory holds a placeholder in its place.',
+      does: 'The inventory holds only names from the list of tables and columns, with counts. Where a SQL file held a value, such as a date, the inventory holds a placeholder in its place, or leaves it blank. The one exception is the filters file, which keeps a code that a SQL file compares with a column where the query results already list that code for that column.',
       next: 'Next, download the results in step 6, if the clinician would like them.',
     },
     {
@@ -155,11 +155,11 @@ export const strings = {
         'Choose Download the inventory and the checklists, and keep the file with the folder for this audit.',
         'If your team would rather run every short query in one go, choose Download the check script, run it in your SQL window, and save its results as a CSV file.',
       ],
-      does: 'Schemalyser writes the download from what this page shows, and it holds no value, no comment and no file name from the SQL files.',
+      does: 'Schemalyser writes the download from what this page shows. It holds no comment and no file name from the SQL files, and no value from them except the codes that the query results already list, as step 5 shows.',
       next: 'When you have finished, close the page, or choose Clear everything. Schemalyser keeps nothing after the page is closed.',
     },
     {
-      purpose: 'This optional step builds a small practice database of invented rows in this browser, shaped like the tables that the SQL files use, so that you can try a query without touching the hospital\'s database.',
+      purpose: 'This is the optional practice step, which is not one of the six steps of the meeting. It builds a small practice database of invented rows in this browser, shaped like the tables that the SQL files use, so that you can try a query without touching the hospital\'s database.',
       steps: [
         'Enter how many rows each table should hold, then choose Build the practice database.',
         'Type or paste a query into the box, and choose Run the query.',
@@ -200,8 +200,12 @@ export const strings = {
   exampleLoading: 'Schemalyser is loading the invented example.',
   exampleLoaded: (state: number, requests: number) =>
     `Schemalyser has loaded the invented example, which holds ${state} ${files(state)} for the folder for this audit and ${requests} SQL ${files(requests)}. Take the page offline, then choose Analyse the folder and the SQL files in step 3. The example's query results came with its folder, so you can answer its questions without a SQL window. For the short queries and the count by year, the practice database in step 7 can stand in for a SQL window.`,
+  exampleProgress: (done: number, total: number) =>
+    `Schemalyser is loading the invented example, which takes a few seconds. It has fetched ${done} of its ${total} files. Please keep the page online until it has finished.`,
   exampleFailed:
-    'Schemalyser could not load the invented example. If the page is online, you can try again.',
+    'Schemalyser could not fetch every file of the invented example, even after trying each one twice, so it has not loaded it. Keep the page online and choose Load the invented example again. If it fails a second time, reload the page while it is online, wait until Schemalyser has finished loading, and choose Load the invented example once more.',
+  exampleFailedOffline:
+    'Schemalyser could not fetch every file of the invented example, because the page went offline before loading had finished, so it has not loaded it. Bring the page back online, choose Load the invented example again, and take the page offline only once Schemalyser says that the example has loaded.',
   exampleChosen:
     'The invented example is loaded in place of your own files. Its folder already holds a list of tables and columns and the results of some queries, so the tables and columns query is not needed, and you can go straight to 3.4. Everything in it is made up, and none of it comes from a hospital. If you choose any file of your own, Schemalyser discards the example and anything worked out from it, and starts clean.',
   exampleBanner:
@@ -224,7 +228,7 @@ export const strings = {
   rulesNote: 'The site rules file, site-rules.json, tells Schemalyser how this hospital names its tables and codes. It is usually already in the folder for this audit, and Schemalyser works without one.',
   sqlHeading: '3.2 The SQL files that you already have',
   chooseFolder: 'Choose the folder that holds the SQL files:',
-  folderNote: "These are queries that the colleague or their team already use with this database, saved as .sql files. Nothing has to be fetched from anywhere else, and any number of files will do. Schemalyser reads them here to learn how your team already joins and filters these tables, so that it can ask fewer questions. It writes out only the names of tables and columns that it finds in them, and never a value, a comment or a file name. If you have no SQL files, you can leave this empty, and the page will ask more questions instead. Schemalyser can still write the tables and columns query under 3.3 from the table names in the audit's steps alone.",
+  folderNote: "These are queries that the colleague or their team already use with this database, saved as .sql files. Nothing has to be fetched from anywhere else, and any number of files will do. Schemalyser reads them here to learn how your team already joins and filters these tables, so that it can ask fewer questions. It writes out the names of tables and columns that it finds in them, and never a comment or a file name. It writes out a value only where the query results already list it as a code of that column. If you have no SQL files, you can leave this empty, and the page will ask more questions instead. Schemalyser can still write the tables and columns query under 3.3 from the table names in the audit's steps alone.",
   folderCount: (n: number) => `Schemalyser has found ${n} SQL ${files(n)} in the folder that you chose.`,
   chooseChecks: 'Query results saved from an earlier meeting as a separate file, if you have them:',
   checksNote: 'You need this only if an earlier meeting saved its query results as a file of their own. The file saved at the end of an earlier meeting already holds them, so most meetings do not need this.',
@@ -288,8 +292,14 @@ export const strings = {
   groupAnswered: (n: number) => `Show the ${n} settled ${n === 1 ? 'point' : 'points'}`,
   groupGiven: 'The answers that you have given',
   groupGivenNote: 'Each answer that you have given stands here beside the button that changes it. If an answer turns out to be wrong, change it, and Schemalyser asks the question again.',
-  blocking: 'The audit query must rest on this.',
-  notBlocking: 'This makes the answer more certain, and the audit query does not wait for it.',
+  blocking: 'The audit query rests on this point, so Schemalyser cannot write it until the point is settled.',
+  blockingSettled: 'The audit query rests on this point, which is now settled.',
+  notBlocking: 'This point makes the answer more certain, and the audit query does not wait for it.',
+  // In the fold beneath a question for the colleague, what settles the point, in the same terms as the buttons above it.
+  askSettles: {
+    join: "If the colleague answers Yes beside this point, the point is settled. A SQL file from your team that makes the same join is another way to settle it: if you have one, add it under Add more of your team's SQL files, at the end of this step, and choose Analyse again. Either is enough on its own.",
+    filter: "If the colleague answers Yes beside this point, the point is settled. A SQL file from your team that compares this column with the same values is another way to settle it: if you have one, add it under Add more of your team's SQL files, at the end of this step, and choose Analyse again. Either is enough on its own.",
+  } as Record<string, string>,
   statusNames: { answered: 'Settled.', partly: 'Partly settled.', open: 'Open.' } as Record<string, string>,
   againMark: 'To be asked again on the production copy.',
   readinessInFull: "Show the developer's detail",
@@ -383,6 +393,8 @@ export const strings = {
     ['training', 'A training or play database with fictional patients'],
     ['unsure', 'I am not sure'],
   ] as [string, string][],
+  databaseExample:
+    "With the invented example loaded, there is no SQL window, and the practice database in step 7 stands in for one. Choose A training or play database with fictional patients, because the example's rows are invented and its counts mean nothing. Schemalyser has chosen it for you.",
   databaseUnsure:
     'Because you are not sure, Schemalyser treats the database as the production reporting database, so that no result is set aside without cause. If you later find that it is a training database, change this answer.',
   databaseHeading: '4.1 The database that your SQL window is connected to',
@@ -415,6 +427,15 @@ export const strings = {
   factFailed: 'Schemalyser has not been able to record that. The checklist is as it was, and you can try again.',
   working: 'Schemalyser is recording what you have entered and working out the checklist again, which can take several seconds.',
   questionFirst: 'The question for you:',
+  // Beside each point in step 4, who can answer it.
+  whoAnswers: {
+    knowledge: 'The colleague can answer this from what they know.',
+    knowledgeOrQuery: 'The colleague can answer this from what they know, or by running the short query.',
+    query: 'The colleague can answer this by running the query.',
+    team: 'Only the team that looks after the reporting database can answer this, directly or through a SQL file of theirs.',
+    clinician: 'The clinician leading the audit answers this after the meeting.',
+    omop: 'The central OMOP team answers this.',
+  } as Record<string, string>,
   // Beside each question, in one line, why Schemalyser asks it and what the answer changes.
   askWhy: {
     join: 'Schemalyser asks this because the audit links these two tables on these columns, and a wrong link would count the wrong records. If you answer Yes, the point is settled. If you answer No, you can choose the columns that do match, and Schemalyser uses them instead. If you are not sure, Schemalyser offers a short query that measures the link.',
@@ -479,7 +500,7 @@ export const strings = {
   readBeforeDownload:
     'The inventory below, which lists the tables, columns and joins that your SQL files use, is everything that Schemalyser will write, together with the checklists in the previous step. Please read it before you download it.',
   namesOnly:
-    'Every name in the inventory should be a table or a column from your list of tables and columns. Where a SQL file contained a value, such as a date or a record number, Schemalyser has written a placeholder such as <string> or <number> in its place.',
+    'Every name in the inventory should be a table or a column from your list of tables and columns. Where a SQL file contained a value, such as a date or a record number, Schemalyser has written a placeholder such as <string> or <number> in its place, or left it blank. The filters file keeps a value only where the query results already list it as a code of that column.',
   doNotDownload: 'If you see anything that should not leave your team, please clear the inventory and do not download it.',
   showExactly: 'Show this file exactly as Schemalyser will write it',
   indexNote:
@@ -506,6 +527,11 @@ export const strings = {
   practiceInvented: 'Every value in the practice database is invented. A result from it says nothing about real patients.',
   practiceQuery: 'Write a query in T-SQL, which is the form of SQL that SQL Server uses, or paste one. Schemalyser will translate it and run it on the practice database, which answers as SQL Server would, with whole numbers where SQL Server gives them. An empty value shows as NULL.',
   practiceRun: 'Run the query',
+  practiceCopyResult: 'Copy the result with headers',
+  practiceCopyPart: (shown: number) => `The copy holds the first ${shown} rows, which are the rows shown here.`,
+  practiceFromPoint: (point: string) => `This is the query that step 4 offers with the point that reads: ${point} Paste its result back there, in the box that the point names.`,
+  practiceFromPart: (heading: string) => `This is the query that step 4 offers under ${heading}. Paste its result back there, in the box that the part names.`,
+  practiceBack: 'Go back to that point in step 4.',
   practiceRunFiles: 'Run the SQL files',
   download: 'Download the inventory and the checklists',
   downloadHolds:
@@ -515,6 +541,10 @@ export const strings = {
 
   reconnected:
     'This page has gone back online, so Schemalyser has stopped its analysis engine and discarded what it had read from your files, and kept only the inventory and the checklists. You can still download them, or you can clear them. To carry on, choose Begin a new analysis, wait for Schemalyser to load again, take the page offline again and choose the files again, with the folder for this audit into which you unzipped the saved file, if you saved one.',
+  lockedHere:
+    'This page went back online before Schemalyser had finished, so Schemalyser has stopped its analysis engine and has not recorded this. Step 2 says how to carry on.',
+  lockedPressed:
+    'This page has gone back online, so Schemalyser has stopped its analysis engine and cannot record this. Step 2 says how to carry on.',
   reconnectedNoInventory:
     'This page has gone back online, so Schemalyser has stopped its analysis engine and discarded what it had read from your files. Schemalyser had not finished the inventory, so there is nothing to download. To carry on, reload the page while it is online, take it offline again and choose the files again.',
 
@@ -522,7 +552,7 @@ export const strings = {
   safeguards: [
     'Schemalyser reads the files on this computer. It does not send them, or anything taken from them, to any other computer.',
     `Schemalyser will not accept files while this page is online. ${ONLINE_AGAIN}`,
-    'Schemalyser writes only names that it finds in your list of tables and columns and in the audit\'s steps, together with counts. It does not write comments, values, the short names that a query gives its tables, or the names of your SQL files.',
+    'Schemalyser writes only names that it finds in your list of tables and columns and in the audit\'s steps, together with counts. It does not write comments, the short names that a query gives its tables, or the names of your SQL files. It writes a value from a SQL file only where the query results already list it as a code of the column that the file compares it with.',
     'Schemalyser shows you everything it has written before you download it.',
   ],
   checkYourself:
@@ -580,10 +610,12 @@ export const strings = {
   scriptWorst: (worst: string) => `The count by year shows ${worst}, and the script asks only for the readings of those anaesthetics.`,
   scriptTraining: 'A script that runs quickly on a small training database can still run slowly or read far too much on the production copy, so follow these notes there as well.',
   countCostly: (table: string, rows: number) =>
-    `The count by year reads ${table} to find the anaesthetics. ${table} holds about ${rows.toLocaleString('en-AU')} rows, ${sizeWords(rows)}${
+    `Of the tables that the count reads, the largest is ${table}, which holds about ${rows.toLocaleString('en-AU')} rows, ${sizeWords(rows)}${
       rows < 100_000 ? ', so the count should finish quickly' : rows < 10_000_000 ? ', so the count may take a minute or more' : ', so the count can be slow'
     }. ${costTail}`,
-  countPlan: (readings?: [string, number | null] | null) => `This count does not read ${readingsWords(readings)}. Before you run it, set a time limit: in SQL Server Management Studio, with your query window open, open the Query menu, choose Query Options, then Execution, and enter a number of seconds, such as 300, in Execution time-out. Then select the query and press Ctrl+L, which shows its estimated plan, SQL Server\'s description of how it intends to run the query, without running it. If any box in the plan names the table of readings, do not run the count, and show the plan to the clinician leading the audit.`,
+  // The count by year reads none of the readings, as the sentence above its query says with the tables that it reads, so it
+  // needs only a time limit; the check of the estimated plan is for the scripts under 4.5 and 4.7, which do read them.
+  countPlan: (_readings?: [string, number | null] | null) => 'Before you run the count, set a time limit: in SQL Server Management Studio, with your query window open, open the Query menu, choose Query Options, then Execution, and enter a number of seconds, such as 300, in Execution time-out. The count reads none of the charted readings, so it needs no check of its estimated plan. That check is for the scripts under 4.5 and 4.7, which do read the readings, and each of them says how to make it.',
   countHow: "Once it has run, select the whole results grid, copy it with its headers, and paste it into the box below, rather than into the box for the results of the short queries. The count returns one row for each year, with the anaesthetics that started in that year, those in the audit's cohort, which is the group of anaesthetics that the audit question is about, and those with no kind of anaesthetic recorded, each rounded down to the nearest ten. A count under ten comes back blank, as NULL, which is SQL's word for an empty value, and Schemalyser shows it as under 10. Schemalyser shows the numbers as a table, asks whether they look right, and then offers the list of what is charted, under 4.5.",
   auditReferenceOnly: 'This query is shown as a reference for the person who writes the audit query, and it must not be run as it stands on the hospital\'s databases.',
   listedHeading: '4.5 The list of what is charted on the audit\'s anaesthetics',
@@ -667,15 +699,25 @@ export const strings = {
     most: 'Most of the tables that the tables and columns query asked about did not come back. Your SQL window may be connected to the wrong database, or your login may be allowed to see only some tables. Before you go on, check which database the SQL window is connected to: in SQL Server Management Studio, its name shows in the drop-down list on the toolbar. If it is the wrong one, choose the reporting database there and run the tables and columns query again.',
     lookups: 'None of the tables that hold the names of codes, which the site rules list, came back from the tables and columns query. Your SQL window may be connected to the wrong database, or your login may be allowed to see only some tables. Before you go on, check which database the SQL window is connected to: in SQL Server Management Studio, its name shows in the drop-down list on the toolbar. If it is the wrong one, choose the reporting database there and run the tables and columns query again.',
   } as Record<string, string>,
-  endingLessCertain: (n: number) => `${n} further ${n === 1 ? 'point is' : 'points are'} less certain. The audit query does not wait for ${n === 1 ? 'it' : 'them'}, and the specification lists ${n === 1 ? 'it' : 'them'}.`,
+  endingLessCertain: (n: number, later = 0, now = 0) => {
+    const one = n === 1;
+    const where =
+      later === n ? ` Under 4.4, ${one ? 'it is' : 'they are'} among the other points that are folded away.`
+        : now === n ? ` Under 4.4, ${one ? 'it is' : 'they are'} among the points that need the colleague now.`
+          : later && now ? ` Under 4.4, ${later} of them ${later === 1 ? 'is' : 'are'} among the other points that are folded away, and ${now} ${now === 1 ? 'is' : 'are'} among the points that need the colleague now.`
+            : '';
+    return `${n} further ${one ? 'point is' : 'points are'} less certain. The audit query does not wait for ${one ? 'it' : 'them'}, and the specification lists ${one ? 'it' : 'them'}.${where}`;
+  },
   endingSave: "Before you close the page, choose Save what has been settled today, below. The browser saves a file named schemalyser-state.zip. Unzip it into the folder for this audit, replacing any files of the same name, and keep that folder on the hospital's network. At the next meeting, choose that folder in step 3, and nothing will be asked twice.",
   specWhatOpen: "The specification is for the person who writes the audit query. It sets out, in this hospital's own tables and codes, everything that the meeting has settled: the question, the study period, where each part comes from, how the tables are joined, the local codes, and what remains. Some points are not yet settled, and it shows each as an assumption. Copy it, or save it as a text file. It names this hospital's tables and codes, so it is for use inside the hospital only.",
   itemMore: 'More about this point',
   groupYou: '4.4 The points that need the colleague now',
   groupYouNote: 'Each point below says what Schemalyser still needs, with a question beside it, a short query, or both. Answer the question beside it. Where a short query is offered, run it and paste its result into the box for the results of the short queries, near the top of this step. Where you are not sure of an answer, choose Not sure, and Schemalyser offers a short query that settles it instead. Several questions ask whether the audit joins two tables on the right columns, and you can answer Yes if your team\'s SQL joins them on the same columns.',
   groupYouNone: 'Nothing here needs the colleague now.',
-  groupLater: (n: number) =>
-    `Show the ${n} other ${n === 1 ? 'point' : 'points'}, which wait for the team's SQL, the clinician, or the central OMOP team, which runs the hospital's main OMOP database`,
+  groupLater: (n: number, lessCertain = 0) =>
+    `Show the ${n} other ${n === 1 ? 'point' : 'points'}, which wait for the team's SQL, the clinician, or the central OMOP team, which runs the hospital's main OMOP database${
+      lessCertain ? `. ${lessCertain === n ? (n === 1 ? 'It is' : 'All of them are') : `${lessCertain} of them ${lessCertain === 1 ? 'is' : 'are'}`} among the less certain points that 4.8 counts, which the audit query does not wait for` : ''
+    }`,
   firstMissing: (names: string[]) =>
     `The tables and columns query asked about ${names.length} ${names.length === 1 ? 'table' : 'tables'} that did not come back: ${names.join(', ')}.`,
   auditNeedsPeriod: 'Schemalyser will offer the reference query under 4.10 once a study period has been entered under 4.6, because without one it would read every anaesthetic on record.',
@@ -736,6 +778,7 @@ export const strings = {
   ],
   // The glossary at the end of the page: every term that the page explains, so that an explanation can be found again.
   glossarySummary: 'The words that this page uses, and what each one means',
+  glossaryTop: 'The words that this page uses are explained at the end of the page, under The words that this page uses.',
   glossary: [
     ['The reporting database', "The copy of the hospital's records that SQL Server holds for reporting. The colleague's SQL window reads it, and the team that looks after it, usually the hospital's data or reporting team, can grant access and answer questions about its tables."],
     ['The production copy, and a training database', 'The production copy holds the real patients, or a refreshed copy of them. A training or play database has the same tables but fictional patients, so its counts mean nothing. Schemalyser asks which one your SQL window is connected to.'],
@@ -744,7 +787,7 @@ export const strings = {
     ['The folder for this audit', "The folder that the clinician prepared with Schemalyser before the meeting and brings on a USB stick or by email. It holds the audit's steps, the audit question written as a query, the site rules and, after a meeting, the list of tables and columns and the answers given so far."],
     ["The audit's steps", "The queries, in the folder for this audit, that say how the hospital's tables are read to answer the audit question."],
     ['The site rules', 'A file, site-rules.json, that tells Schemalyser how this hospital names its tables and codes.'],
-    ['The SQL files', 'Queries that the colleague or their team already use with this database, saved as .sql files. Schemalyser learns from them how the tables are joined and filtered, and writes out only the names of tables and columns.'],
+    ['The SQL files', 'Queries that the colleague or their team already use with this database, saved as .sql files. Schemalyser learns from them how the tables are joined and filtered, and writes out the names of tables and columns, with a value only where the query results already list it as a code of that column.'],
     ['The list of tables and columns', 'The list of the columns of each table that the audit needs, with the number of rows in each table. It comes from the tables and columns query, or from the folder for this audit once a meeting has saved it.'],
     ['The tables and columns query', "The query, under 3.3, that asks SQL Server which columns the audit's tables have and how many rows each holds. It reads only SQL Server's own records, and no row of any table."],
     ['The query for the full list of tables and columns', 'A longer query, folded away in step 1, that lists every table and column without sizes. Most meetings do not need it.'],
@@ -784,6 +827,19 @@ export const strings = {
     ['The practice database', 'A small database of invented rows that step 7 builds in this browser, for trying a query without touching the hospital\'s database. It answers as SQL Server would, so it can stand in for a SQL window when you try the invented example.'],
     ['The sandbox', 'The practice database of step 7 on a page of its own, which can be opened with an inventory file alone.'],
     ['Parse', 'To read a piece of text as SQL, statement by statement. A part that Schemalyser could not parse is a part that it could not read as SQL.'],
+    ['A concept, and its number', "A meaning in the standard vocabulary that OMOP uses, such as a general anaesthetic, with a number of its own. The page gives the plain name first and then, in smaller type, the vocabulary's own name and the concept's number. The vocabulary's names use American spelling, such as anesthesia."],
+    ['The check results, or the query results', 'The results of the short queries that Schemalyser holds: those that came with the folder for this audit, and those pasted on this page. They are saved as checks.csv.'],
+    ['Open, Partly settled and Settled', 'The state of each point in the checklist. An open point has nothing yet that settles it. A partly settled point, also called partly answered, has some of what it needs. A settled point needs nothing more.'],
+    ['An assumption', "What the folder for this audit takes to be true and nobody here has yet confirmed, such as the meaning of a code. The queries mark each one in a comment, such as /* assumption 3 */, and the specification lists them."],
+    ['dbo', 'The usual schema in SQL Server, that is, the usual group in which a database keeps its tables. A name such as [dbo].[VISIT] means the table VISIT in that group.'],
+    ['TABLE_SCHEMA', 'The column, in the result of the tables and columns query, that gives the schema of each table, which is usually dbo.'],
+    ['A temporary table', 'A table, whose name begins with #, that exists only in your own SQL window and disappears when you close that window.'],
+    ['Reconcile ten to twenty anaesthetics against their charts', "To take ten to twenty of the anaesthetics that the audit query finds and check each one by hand against the patient's chart, so that the clinician can see that the query counts what it should."],
+    ['An access token', 'A key that GitHub issues, which lets the page read the chosen repositories and nothing else. It is needed only to fetch the files from GitHub.'],
+    ['A repository, and owner/name', "A repository is a folder of files that GitHub keeps with its history. It is written as owner/name, that is, the name of the person or team that owns it, a slash, and the repository's own name."],
+    ['A branch', 'One line of the history of a repository on GitHub. If you leave it empty, the page fetches from the default branch.'],
+    ['Provenance', 'A record of where the files came from, such as the repository and the commit, which the download keeps in provenance.json.'],
+    ['The boundary', "The developer's name for the checklists and the account of how ready each audit question is, which the download keeps in the folder named boundary."],
     ['A stored procedure', 'A program saved on the server and run by its name. Schemalyser cannot see the tables that a stored procedure reads, because its SQL is not in the file that calls it.'],
   ] as [string, string][],
   keepsNothing: 'Schemalyser keeps nothing after you close this page.',
@@ -808,7 +864,7 @@ export const packFiles = [
     file: 'filters.csv',
     title: 'Filters',
     explanation:
-      'This file lists each column that the SQL files filter on, the comparison they use and the kind of value they compare it with. Schemalyser does not write the values themselves.',
+      'This file lists each column that the SQL files filter on, the comparison they use and the kind of value they compare it with. Schemalyser writes the value itself only where the query results already list that value for that column, as a code that at least ten rows hold, and it writes it as the query results spell it. Every other value is left blank.',
   },
   {
     file: 'derivations.csv',

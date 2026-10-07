@@ -36,7 +36,7 @@ from . import tuning as tunable
 from .checks import FANOUT_BANDS, Checks, ChecksError
 from .realistic import Realism
 from .rules import SiteRules
-from .translate import Unreadable, Unsupported, to_duckdb
+from .translate import SERVER_SCHEMA, Unreadable, Unsupported, to_duckdb
 
 ROW_LIMIT = 200
 LARGEST_MULTIPLE = 5        # a table is at most 2 ** 5 times the chosen number of rows
@@ -436,11 +436,13 @@ class Lineage:
 
 
 class Sandbox:
-    def __init__(self, catalogue, inventory_zip, fanout=None):
+    def __init__(self, catalogue, inventory_zip, fanout=None, also=()):
         """fanout gives designed fanout results, in the form of Checks.fanout, which the stand-in database of
-        the harness uses in place of check results."""
+        the harness uses in place of check results. also names further tables to build, such as those that the
+        audit's steps read, where the catalogue holds them."""
         self.catalogue = catalogue
         tables, self.pairs, self.compared, self.checks, self.roles, self.tuning = read_inventory(inventory_zip, catalogue)
+        tables = set(tables) | set(also)
         self.tables = sorted(t.name for t in map(catalogue.table, tables) if t is not None)
         self.has_values = bool(self.checks and self.checks.values)
         self.designed_fanout = dict(fanout or {})
@@ -546,7 +548,8 @@ class Sandbox:
         for t in self.tables:
             for c in self.catalogue.table(t).columns.values():
                 (whole if c.data_type.strip().upper() in ("INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT") else other).add(c.name.upper())
-        self.whole_columns = frozenset(whole - other)
+        # The count of rows in SQL Server's own records of its tables (see _server_records) is a whole number as well.
+        self.whole_columns = frozenset((whole | {"ROWS"}) - other)
         text_domains = {d for (table, column), d in domains.items()
                         if typed(self.catalogue.table(table).column(column)) == "VARCHAR"}
 
@@ -667,6 +670,7 @@ class Sandbox:
         except duckdb.Error:
             failures = [{"table": r.table, "column": r.column, "role": r.role, "reason": "database"}
                         for r in self.roles if r.table in sizes]
+        self._server_records()
         return {"tables": len(self.tables), "rows": total, "hasValues": self.has_values,
                 "sentence": v.built_sentence(len(self.tables), total), "rolesNotApplied": failures}
 
@@ -685,6 +689,56 @@ class Sandbox:
         given = {(c, k) for (c, k, _, _) in results}
         return tunable.fanout_provenance(sorted(joins), applied, given, derived)
 
+    def _server_records(self):
+        """Keeps a copy of the records that SQL Server holds of its own tables, so that the page's table sizes query
+        and its first query return here what SQL Server would: sys.tables and sys.partitions, which give each
+        table's number of rows, and INFORMATION_SCHEMA.COLUMNS and INFORMATION_SCHEMA.TABLES, which list the tables
+        and their columns under the catalogue's own types, all in the schema dbo. The number of rows is counted
+        afresh at each read, and OBJECT_ID, SCHEMA_ID and QUOTENAME work as they do in SQL Server on these names."""
+        schema = SERVER_SCHEMA
+        objects = {name: 1000 + i for i, name in enumerate(self.tables, start=1)}
+        self.con.execute(f"CREATE SCHEMA {schema}")
+        listed = " UNION ALL ".join(f"SELECT {_text(name)}, {number}" for name, number in objects.items()) \
+            or "SELECT NULL, NULL WHERE false"
+        self.con.execute(f"CREATE TABLE {schema}.sys_tables AS SELECT CAST(n AS VARCHAR) AS name, "
+                         f"CAST(o AS BIGINT) AS object_id, CAST(1 AS BIGINT) AS schema_id FROM ({listed}) AS x(n, o)")
+        counted = " UNION ALL ".join(f"SELECT {number}, (SELECT COUNT(*) FROM {_quoted(name)})"
+                                     for name, number in objects.items()) or "SELECT NULL, NULL WHERE false"
+        self.con.execute(f"CREATE VIEW {schema}.sys_partitions AS SELECT CAST(o AS BIGINT) AS object_id, "
+                         f"CAST(0 AS BIGINT) AS index_id, CAST(n AS BIGINT) AS rows FROM ({counted}) AS x(o, n)")
+        precision = {"BIGINT": 19, "INT": 10, "INTEGER": 10, "SMALLINT": 5, "TINYINT": 3, "BIT": 1, "FLOAT": 53, "REAL": 24}
+        rows = []
+        for name in self.tables:
+            for place, column in enumerate(self.catalogue.table(name).columns.values(), start=1):
+                data_type = column.data_type.strip().lower() or "nvarchar"
+                text = data_type.endswith("char") or data_type in ("text", "ntext")
+                rows.append(", ".join([
+                    _text(name), _text(column.name), str(column.position or place), _text(data_type),
+                    str(column.max_length) if text and column.max_length is not None else "NULL",
+                    str(precision.get(data_type.upper(), 18 if data_type in ("numeric", "decimal") else 0) or "NULL")
+                    if not text else "NULL",
+                    str(column.scale) if column.scale is not None and not text else "NULL",
+                    "'NO'" if column.nullable is False else "'YES'"]))
+        values = ", ".join(f"({row})" for row in rows) or "(NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)"
+        self.con.execute(
+            f"CREATE TABLE {schema}.information_schema_columns AS SELECT 'practice' AS TABLE_CATALOG, "
+            "'dbo' AS TABLE_SCHEMA, CAST(t AS VARCHAR) AS TABLE_NAME, CAST(c AS VARCHAR) AS COLUMN_NAME, "
+            "CAST(p AS BIGINT) AS ORDINAL_POSITION, CAST(d AS VARCHAR) AS DATA_TYPE, "
+            "CAST(l AS BIGINT) AS CHARACTER_MAXIMUM_LENGTH, CAST(np AS BIGINT) AS NUMERIC_PRECISION, "
+            "CAST(ns AS BIGINT) AS NUMERIC_SCALE, CAST(n AS VARCHAR) AS IS_NULLABLE "
+            f"FROM (VALUES {values}) AS x(t, c, p, d, l, np, ns, n) WHERE t IS NOT NULL")
+        self.con.execute(f"CREATE TABLE {schema}.information_schema_tables AS SELECT 'practice' AS TABLE_CATALOG, "
+                         "'dbo' AS TABLE_SCHEMA, name AS TABLE_NAME, 'BASE TABLE' AS TABLE_TYPE "
+                         f"FROM {schema}.sys_tables")
+        # OBJECT_ID reads the last part of a name such as [dbo].[VISIT] or dbo.VISIT; any schema other than dbo has
+        # no tables here.
+        self.con.execute("CREATE MACRO quotename(n) AS '[' || replace(n, ']', ']]') || ']'")
+        self.con.execute("CREATE MACRO schema_id(n) AS CASE WHEN lower(n) = 'dbo' THEN CAST(1 AS BIGINT) END")
+        self.con.execute(
+            "CREATE MACRO object_id(n) AS (SELECT t.object_id FROM " + schema + ".sys_tables AS t "
+            "WHERE lower(t.name) = lower(regexp_extract(n, '\\[?([^.\\[\\]]+)\\]?$', 1)) "
+            "AND lower(coalesce(nullif(regexp_extract(n, '^\\[?([^.\\[\\]]+)\\]?\\.', 1), ''), 'dbo')) = 'dbo')")
+
     def _clear_temporary_tables(self):
         for (name,) in self.con.execute("SELECT table_name FROM duckdb_tables() WHERE temporary").fetchall():
             self.con.execute(f"DROP TABLE IF EXISTS {_quoted(name)}")
@@ -697,7 +751,7 @@ class Sandbox:
         """
         try:
             # The practice database answers as SQL Server would, so a division of whole numbers gives a whole number.
-            statements = to_duckdb(sql, self.date_columns, getattr(self, "whole_columns", frozenset()))
+            statements = to_duckdb(sql, self.date_columns, getattr(self, "whole_columns", frozenset()), server_records=True)
         except Unreadable:
             return {"status": "unreadable"}
         except Unsupported:

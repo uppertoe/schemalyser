@@ -523,7 +523,18 @@ def sandbox_from_analysis():
     with zipfile.ZipFile(out, "w") as archive:
         for name, text in _analysis.pack().items():
             archive.writestr(name, text)
-    _sandbox = Sandbox(_analysis.catalogue, out.getvalue())
+    # The tables that the audit's steps read are built as well, so that each short query of the checklist finds its table
+    # in the practice database, even where no SQL file reads it.
+    from . import boundary
+    from .first_ask import names_in
+    steps = set()
+    conversion = f"{BOUNDARY_ROOT}/state/{boundary.CONVERSION}"
+    for root, _, names in os.walk(conversion):
+        for name in names:
+            if name.lower().endswith(".sql"):
+                with open(os.path.join(root, name), "rb") as f:
+                    steps |= names_in(decode(f.read()))
+    _sandbox = Sandbox(_analysis.catalogue, out.getvalue(), also=steps)
 
 
 def sandbox_build(rows):

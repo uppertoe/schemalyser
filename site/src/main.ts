@@ -133,9 +133,31 @@ interface RunResult {
 }
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+// A concept's name as the vocabulary gives it, with its number, after the plain Australian name: "general anaesthetic
+// (Administration of general anesthetic, concept 4174669)". The page shows the plain name first and the vocabulary's own
+// name and number after it in smaller type, wherever a concept is named outside a query or a text to copy.
+const CONCEPT = /\(([^()]*\bconcept \d+)\)/g;
+const KEEP_AS_TEXT = new Set(['PRE', 'TEXTAREA', 'OPTION', 'CODE', 'SUMMARY']);
+function withConcepts(node: HTMLElement, content: string) {
+  if (KEEP_AS_TEXT.has(node.tagName) || !CONCEPT.test(content)) {
+    node.textContent = content;
+    return;
+  }
+  CONCEPT.lastIndex = 0;
+  let at = 0;
+  for (const match of content.matchAll(CONCEPT)) {
+    node.append(content.slice(at, match.index));
+    const named = document.createElement('small');
+    named.className = 'concept-name';
+    named.textContent = `(${match[1]})`;
+    node.append(named);
+    at = match.index + match[0].length;
+  }
+  node.append(content.slice(at));
+}
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, content?: string, className?: string) => {
   const node = document.createElement(tag);
-  if (content !== undefined) node.textContent = content;
+  if (content !== undefined) withConcepts(node, content);
   if (className) node.className = className;
   return node;
 };
@@ -921,8 +943,9 @@ function sendDatabase(target: Target, value: string, from?: Element) {
 
 function databaseElement(target: Target) {
   const box = el('div', undefined, 'sizes database');
-  box.append(el('h4', strings.databaseHeading), el('p', strings.databaseWhat, 'sizes-reason'),
-    databaseOptions(`database-${target.name}`, target.settings?.database, (value) => {
+  box.append(el('h4', strings.databaseHeading), el('p', strings.databaseWhat, 'sizes-reason'));
+  if (fromExample) box.append(el('p', strings.databaseExample, 'status example database-example'));
+  box.append(databaseOptions(`database-${target.name}`, target.settings?.database, (value) => {
       databaseChoice = value;
       sendDatabase(target, value, box);
     }), el('p', strings.databaseChanged, 'note'));
@@ -1203,12 +1226,36 @@ function auditSection(target: Target) {
   return audit;
 }
 
+// The query last copied from step 4, with the point or part that offers it, so that step 7 can name that point beside the
+// result of the same query and link back to it.
+let lastCopied: { sql: string; target: string; id: string | null; heading: string; text: string } | null = null;
+const sameQuery = (a: string, b: string) => a.replace(/\s+/g, ' ').trim() === b.replace(/\s+/g, ' ').trim();
+
+function rememberCopied(sql: string, from: Element) {
+  const section = from.closest<HTMLElement>('section.target');
+  const item = from.closest<HTMLElement>('li.item');
+  const part = from.closest<HTMLElement>('.sizes');
+  const said = item?.querySelector('.ask-text, .question')?.textContent ?? '';
+  lastCopied = { sql, target: section?.dataset.target ?? '', id: item?.dataset.id ?? null,
+    heading: item ? '' : part?.querySelector('h4')?.textContent ?? '', text: plainLine(said).trim().split(/(?<=[.?])\s+/)[0] };
+}
+
+// The place in step 4 from which a query was copied, found again after the checklist has been drawn anew.
+function copiedPlace() {
+  if (!lastCopied) return null;
+  const section = document.querySelector<HTMLElement>(`section.target[data-target="${CSS.escape(lastCopied.target)}"]`);
+  if (!section) return null;
+  if (lastCopied.id) return section.querySelector<HTMLElement>(`li.item[data-id="${CSS.escape(lastCopied.id)}"]`);
+  return [...section.querySelectorAll<HTMLElement>('.sizes')].find((part) => part.querySelector('h4')?.textContent === lastCopied!.heading) ?? null;
+}
+
 // A plain query, exactly as the core wrote it, with a button that copies it.
 function queryBlock(sql: string, className: string) {
   const code = el('pre', sql, `code ${className}`);
   const copy = el('button', strings.copyQuery, 'secondary copy-query');
   copy.type = 'button';
   copy.addEventListener('click', async () => {
+    if (!className.endsWith('-text')) rememberCopied(sql, copy);
     try {
       await navigator.clipboard.writeText(sql);
       copy.dataset.copied = 'true';
@@ -1268,6 +1315,16 @@ function itemElement(item: Item, previous?: string, queries?: Map<string, Query>
   const body = el('div', undefined, 'item-body');
   body.append(el('span', strings.statusNames[item.status], 'visually-hidden'));
   if (item.again) body.append(el('p', strings.againMark, 'status again-mark'));
+  // Who can answer the point, in a few words, before anything else.
+  if (item.status !== 'answered') {
+    const query = item.queryState === 'ready' || item.queryState === 'waiting' || !!item.queryIds?.includes('yearcount');
+    const who = item.ask && item.stage === 'source' && (!item.fact || !!item.ask.choose) ? (query ? 'knowledgeOrQuery' : 'knowledge')
+      : query ? 'query'
+        : /^The central OMOP team/.test(item.actor) ? 'omop'
+          : /^The clinician/.test(item.actor) ? 'clinician'
+            : item.group === 'sql' || /^The team/.test(item.actor) ? 'team' : '';
+    if (who) body.append(el('p', strings.whoAnswers[who], 'who-answers'));
+  }
   // The question for the colleague, where there is one, is what he reads; the checklist's own account of the point is
   // folded beneath it, one click away.
   const asking = item.status !== 'answered' && item.ask && item.stage === 'source' && (!item.fact || !!item.ask.choose);
@@ -1298,10 +1355,17 @@ function itemElement(item: Item, previous?: string, queries?: Map<string, Query>
   if (item.intent) more.append(el('p', item.intent, 'intent'));
   if (item.status !== 'answered') {
     if (item.route && item.status === 'open') more.append(el('p', item.route, 'route'));
-    more.append(el('p', item.needed, 'needed'));
-    if (item.actor) more.append(el('p', item.actor, 'actor'));
+    // Where the colleague is asked a join or a filter, the fold says what settles it in the same terms as the buttons:
+    // an answer here, or a SQL file of the team's that does the same, and not the core's account of SQL files alone.
+    const settles = asking && item.ask ? strings.askSettles[item.ask.kind] : undefined;
+    if (settles) more.append(el('p', settles, 'needed'));
+    else {
+      more.append(el('p', item.needed, 'needed'));
+      if (item.actor) more.append(el('p', item.actor, 'actor'));
+    }
   }
-  more.append(el('p', `${inHand} ${item.blocking ? strings.blocking : strings.notBlocking}`.trim(), 'in-hand'));
+  const weight = item.blocking ? (item.status === 'answered' ? strings.blockingSettled : strings.blocking) : strings.notBlocking;
+  more.append(el('p', `${inHand} ${weight}`.trim(), 'in-hand'));
   body.append(more);
   line.append(mark, body);
   return line;
@@ -1488,7 +1552,7 @@ function remainingPoints(target: Target, needs: NonNullable<Target['needs']>): P
 }
 
 // Where the audit stands, in plain words, with what remains and who can settle each part, and where to keep the state.
-function endingElement(target: Target, needs: NonNullable<Target['needs']>, ready: boolean, points: Point[]) {
+function endingElement(target: Target, needs: NonNullable<Target['needs']>, ready: boolean, points: Point[], lessShown = { later: 0, now: 0 }) {
   const box = el('div', undefined, 'sizes ending');
   box.append(el('h4', strings.endingHeading), el('p', strings.endingWhat, 'sizes-reason'));
   box.append(el('p', strings.endingSettled(needs.settled), 'note'));
@@ -1513,7 +1577,9 @@ function endingElement(target: Target, needs: NonNullable<Target['needs']>, read
       }
     }
   } else box.append(el('p', ready ? strings.endingNothing : strings.notReadyYet, 'note'));
-  if (needs.lessCertain) box.append(el('p', strings.endingLessCertain(needs.lessCertain), 'note'));
+  // Where 4.4 shows the less certain points is said only where the page's own count of them agrees with the core's.
+  const placed = lessShown.later + lessShown.now === needs.lessCertain;
+  if (needs.lessCertain) box.append(el('p', strings.endingLessCertain(needs.lessCertain, placed ? lessShown.later : 0, placed ? lessShown.now : 0), 'note'));
   const database = target.settings?.database;
   if (database && strings.databaseRecorded[database]) box.append(el('p', strings.databaseRecorded[database], 'note ending-database'));
   box.append(el('p', strings.endingSave, 'note'));
@@ -1648,9 +1714,13 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
   if (givenItems.length) section.append(el('h4', strings.groupGiven), el('p', strings.groupGivenNote, 'note'),
     itemList('given', givenItems.map((item) => (item.status === 'answered' ? itemElement(item) : offered(item)))));
   const rest = open.filter((item) => !needsYou(item) && !given(item));
+  // The points that 4.8 calls less certain: partly settled, not among what remains, and not to be asked again. They are a
+  // part of the other points folded away below, and may be among the points that need the colleague now as well.
+  const lessCertain = (item: Item) => item.status === 'partly' && !(needs.remaining ?? []).includes(item.id) && !item.again;
+  const lessShown = { later: rest.filter(lessCertain).length, now: yours.filter(lessCertain).length };
   if (rest.length) {
     const folded = el('details', undefined, 'later');
-    folded.append(el('summary', strings.groupLater(rest.length)));
+    folded.append(el('summary', strings.groupLater(rest.length, lessShown.later + lessShown.now === needs.lessCertain ? lessShown.later : 0)));
     const sql = ordered(rest.filter((item) => item.group === 'sql'));
     if (sql.length) folded.append(el('h4', strings.groupSql), el('p', strings.groupSqlNote, 'note'), itemList('sql', sql.map(offered)));
     const other = ordered(rest.filter((item) => item.group !== 'sql'));
@@ -1679,7 +1749,7 @@ function targetSection(target: Target, before?: { answered: number; statuses: Ma
   if (target.charted) section.append(chartedElement(target));
   // The ending, whatever the state of the checklist: what is settled, what remains and who can settle it, the button
   // that saves the state, and the specification, in which each open point is an unsettled assumption.
-  section.append(endingElement(target, needs, sourceReady, points));
+  section.append(endingElement(target, needs, sourceReady, points, lessShown));
   if (target.specification) {
     section.append(textBlock('specification', strings.specHeading, sourceReady ? strings.specWhat : strings.specWhatOpen,
       target.specification, strings.specCopy, strings.specSave, `${target.name}_specification.txt`));
@@ -1840,6 +1910,44 @@ function showRun(result: RunResult) {
   );
   $('d-translated').hidden = !result.translated;
   text('t-translated', result.translated ?? '');
+  // Beside a result with rows: a button that copies it with its headers, as a results grid would, ready to paste in step 4,
+  // and, where the query is the one last copied from step 4, a line that names the point that asked for it.
+  const extra: HTMLElement[] = [];
+  if (result.status === 'ok' && count > 0) {
+    const rows = [result.columns ?? [], ...(result.rows ?? []).map((row) => row.map((value) => value ?? 'NULL'))];
+    const copy = askButton(strings.practiceCopyResult, 'secondary copy-result', async () => {
+      try {
+        await navigator.clipboard.writeText(rows.map((row) => row.join('\t')).join('\n') + '\n');
+        copy.dataset.copied = 'true';
+        setTimeout(() => delete copy.dataset.copied, 2000);
+      } catch {
+        // Without clipboard access the table can still be selected and copied by hand.
+      }
+    });
+    const actions = el('div', undefined, 'actions');
+    actions.append(copy);
+    extra.push(actions);
+    if (count > shown) extra.push(el('p', strings.practiceCopyPart(shown), 'note'));
+  }
+  const ran = $<HTMLTextAreaElement>('sql').value;
+  if (lastCopied && sameQuery(ran, lastCopied.sql) && copiedPlace()) {
+    const line = el('p', lastCopied.id ? strings.practiceFromPoint(lastCopied.text) : strings.practiceFromPart(lastCopied.heading), 'note practice-from');
+    const back = el('a', strings.practiceBack);
+    back.setAttribute('href', '#step-4');
+    back.addEventListener('click', (event) => {
+      event.preventDefault();
+      const place = copiedPlace();
+      place?.scrollIntoView({ block: 'center' });
+      place?.classList.add('flash');
+      setTimeout(() => place?.classList.remove('flash'), 2000);
+    });
+    line.append(' ', back);
+    extra.push(line);
+  }
+  $('query-result').querySelectorAll('.practice-extra').forEach((node) => node.remove());
+  const holder = el('div', undefined, 'practice-extra');
+  holder.append(...extra);
+  $('query-table').after(holder);
   $('query-result').hidden = false;
 }
 
@@ -1868,6 +1976,9 @@ function onMessage(event: MessageEvent) {
     addedSinceAnalysis = 0;
     state = 'review';
     const first = (message as Result).boundary.targets?.[0];
+    // The invented example has no SQL window, and its rows are invented, so its database is a training database with
+    // fictional patients unless the person has chosen otherwise.
+    if (fromExample && !databaseChoice && !first?.settings?.database) databaseChoice = 'training';
     if (first && databaseChoice && first.settings?.database !== databaseChoice) sendDatabase(first, databaseChoice);
   } else if (message.type === 'analysis-failed') {
     state = 'ready';
@@ -2013,9 +2124,36 @@ async function startWorker() {
   }
 }
 
+// Where the page was working when it locked, or where a button that needs the analysis engine is pressed once it has locked,
+// the locked sentence stands in that place, so that nothing is left saying that Schemalyser is still at work.
+function lockedHere(place: Element, after = false) {
+  const note = el('p', after ? strings.lockedPressed : strings.lockedHere, 'status problem locked-note');
+  note.setAttribute('role', 'status');
+  place.parentElement?.querySelector(':scope > .locked-note')?.remove();
+  if (after) place.after(note);
+  else place.replaceWith(note);
+  return note;
+}
+
+function lockWorking() {
+  for (const note of document.querySelectorAll('.working-note')) lockedHere(note);
+  if (workingBox) delete workingBox.dataset.working;
+  workingBox = null;
+  pendingAnchor = null;
+  // A status that said that Schemalyser was reading or working says instead that it has stopped.
+  const working = new Set([strings.pasteReading, strings.boundaryProgress, strings.practiceBuilding]);
+  for (const status of document.querySelectorAll<HTMLElement>('#step-4 .status, #step-7 .status')) {
+    if (!status.hidden && working.has(status.textContent ?? '')) {
+      status.textContent = strings.lockedHere;
+      status.className = 'status problem locked-note';
+    }
+  }
+}
+
 function lock() {
   // The network is back while the page holds data: end the worker, which holds the requests
   // and the sandbox, and let go of the file names.
+  lockWorking();
   worker?.terminate();
   worker = null;
   workerHasFiles = false;
@@ -2045,6 +2183,16 @@ window.addEventListener('online', () => {
   if (state === 'locked') $('step-2').scrollIntoView({ block: 'start' });
 });
 window.addEventListener('offline', show);
+// Once the page has locked, a button in the checklist that needs the analysis engine says so beside itself. Copying and
+// saving what the page already shows still work.
+$('checklists').addEventListener('click', (event) => {
+  if (state !== 'locked') return;
+  const button = (event.target as Element).closest('button');
+  if (!button || button.classList.contains('copy-query') || /^(Copy|Save the (specification|reference))/.test(button.textContent ?? '')) return;
+  event.stopImmediatePropagation();
+  event.preventDefault();
+  lockedHere(button, true);
+}, true);
 // Opening the part for the later OMOP release shows its paste box.
 document.addEventListener('toggle', show, true);
 
@@ -2078,23 +2226,43 @@ $('example-load').addEventListener('click', async () => {
   show();
   try {
     const base = new URL('./example/', location.href);
-    const listed = await fetch(new URL('manifest.json', base));
-    if (!listed.ok) throw new Error('manifest');
-    const manifest = (await listed.json()) as { state: string[]; requests: string[] };
-    const take = async (path: string) => {
-      const response = await fetch(new URL(path, base));
-      if (!response.ok) throw new Error('file');
-      return new File([await response.blob()], path.split('/').pop() ?? path);
+    // Each fetch that fails is tried once more by itself, after a short pause, before the loading gives up.
+    const get = async (path: string) => {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const response = await fetch(new URL(path, base), { cache: attempt ? 'reload' : 'default' });
+          if (response.ok) return response;
+        } catch {
+          // A failed fetch is tried again below.
+        }
+        if (attempt) throw new Error(path);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
     };
+    const manifest = (await (await get('manifest.json')).json()) as { state: string[]; requests: string[] };
+    const paths = [...manifest.state, ...manifest.requests];
+    let done = 0;
+    text('t-example-status', strings.exampleProgress(0, paths.length));
+    const take = async (path: string) => {
+      const file = new File([await (await get(path)).blob()], path.split('/').pop() ?? path);
+      text('t-example-status', strings.exampleProgress(++done, paths.length));
+      return file;
+    };
+    // The files are fetched six at a time, which is much quicker than one after another.
+    const files = new Map<string, File>();
+    const queue = [...paths];
+    await Promise.all(Array.from({ length: 6 }, async () => {
+      for (let path = queue.shift(); path !== undefined; path = queue.shift()) files.set(path, await take(path));
+    }));
     const loaded = { requests: [] as { path: string; file: File }[], state: new Map<string, File>() };
-    for (const path of manifest.state) loaded.state.set(path.replace(/^state\//, ''), await take(path));
-    for (const path of manifest.requests) loaded.requests.push({ path: path.replace(/^requests\//, ''), file: await take(path) });
+    for (const path of manifest.state) loaded.state.set(path.replace(/^state\//, ''), files.get(path)!);
+    for (const path of manifest.requests) loaded.requests.push({ path: path.replace(/^requests\//, ''), file: files.get(path)! });
     example = loaded;
     status.className = 'status good';
     text('t-example-status', strings.exampleLoaded(loaded.state.size, loaded.requests.length));
   } catch {
     status.className = 'status problem';
-    text('t-example-status', strings.exampleFailed);
+    text('t-example-status', navigator.onLine ? strings.exampleFailed : strings.exampleFailedOffline);
   }
   exampleLoading = false;
   show();
@@ -2409,6 +2577,7 @@ const fixed: Record<string, string> = {
   't-overview-private': strings.overviewPrivate,
   't-overview-example': strings.overviewExample,
   's-glossary': strings.glossarySummary,
+  'glossary-top': strings.glossaryTop,
   'h-state': strings.stateHeading,
   'h-sql': strings.sqlHeading,
   'h-analyse': strings.analyseHeading,
@@ -2563,6 +2732,12 @@ function guide(box: HTMLElement, shape: Guide) {
 }
 strings.guides.forEach((shape, i) => guide($(`g-step-${i + 1}`), shape));
 $('t-first-how').replaceChildren(...strings.firstHow.map((step) => el('li', step)));
+// The link at the top of the page opens the glossary at the bottom and goes to it.
+$('glossary-top').addEventListener('click', (event) => {
+  event.preventDefault();
+  $<HTMLDetailsElement>('d-glossary').open = true;
+  $('d-glossary').scrollIntoView({ block: 'start' });
+});
 $('glossary').replaceChildren(...strings.glossary.flatMap(([term, meaning]) => [el('dt', term), el('dd', meaning)]));
 $('safeguards').replaceChildren(...strings.safeguards.map((sentence) => el('li', sentence)));
 $('t-offline-how').replaceChildren(...strings.offlineHow.map((sentence) => el('li', sentence)));

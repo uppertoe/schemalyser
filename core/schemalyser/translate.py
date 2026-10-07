@@ -20,6 +20,13 @@ COMPACT_DATE = re.compile(r"^(19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$")
 NAMED_DATE = re.compile(r"^(\d{1,2})[- ]([A-Za-z]{3})[A-Za-z]*[- ](\d{4})$")
 MONTHS = {m: i for i, m in enumerate("JAN FEB MAR APR MAY JUN JUL AUG SEP OCT NOV DEC".split(), start=1)}
 OMOP_SCHEMA = "omop"
+# SQL Server's own records of its tables, which the practice database keeps in a schema of this name (see
+# Sandbox._server_records), each under the name below, so that a query that reads the size of each table, or the
+# list of its columns, returns there what SQL Server would.
+SERVER_SCHEMA = "sqlserver"
+SERVER_RECORDS = {("SYS", "TABLES"): "sys_tables", ("SYS", "PARTITIONS"): "sys_partitions",
+                  ("INFORMATION_SCHEMA", "COLUMNS"): "information_schema_columns",
+                  ("INFORMATION_SCHEMA", "TABLES"): "information_schema_tables"}
 UNSUPPORTED_KEYS = {"ifblock", "whileblock", "execute", "executesql"}
 UNSUPPORTED_KINDS = {"PROCEDURE", "FUNCTION", "TRIGGER"}
 
@@ -85,9 +92,24 @@ def _widen(node):
     return node
 
 
-def _rewrite(node, date_columns=frozenset()):
+def _quotename(node):
+    return isinstance(node, exp.Anonymous) and str(node.this).upper() == "QUOTENAME"
+
+
+def _joins_quotename(node):
+    """Whether an addition joins text that QUOTENAME made, as in QUOTENAME(schema) + N'.' + QUOTENAME(name)."""
+    return any(_joins_quotename(n) if isinstance(n, exp.Add) else _quotename(n) for n in (node.this, node.expression))
+
+
+def _rewrite(node, date_columns=frozenset(), server_records=False):
     _widen(node)
     for table in node.find_all(exp.Table):
+        record = SERVER_RECORDS.get(((table.db or "").upper(), table.name.upper())) if server_records else None
+        if record is not None and not table.catalog:
+            # The practice database keeps a copy of SQL Server's own records of its tables.
+            table.set("db", exp.to_identifier(SERVER_SCHEMA))
+            table.set("this", exp.to_identifier(record))
+            continue
         # The OMOP tables live in a schema of their own, so that schema is kept. Every other
         # qualifier names the source database, which the sandbox holds without one.
         if (table.db or "").upper() != OMOP_SCHEMA.upper():
@@ -136,6 +158,11 @@ def _rewrite(node, date_columns=frozenset()):
         ignoring_case = exp.ILike(this=like.this, expression=like.expression, escape=like.args.get("escape"))
         # The parser keeps the NOT of NOT LIKE on the LIKE itself, so it is carried across.
         like.replace(exp.Not(this=exp.Paren(this=ignoring_case)) if like.args.get("negate") else ignoring_case)
+    if server_records:
+        for added in list(node.find_all(exp.Add)):
+            # SQL Server joins text with +, and DuckDB with ||.
+            if _joins_quotename(added):
+                added.replace(exp.DPipe(this=added.this, expression=added.expression))
     for added in node.find_all(exp.DateAdd):
         # DATEADD(unit, n, 0) counts from the first of January 1900.
         if isinstance(added.this, exp.Literal) and not added.this.is_string:
@@ -246,13 +273,16 @@ def _whole_division(statement, whole_columns):
     return statement
 
 
-def to_duckdb(sql, date_columns=frozenset(), whole_columns=None):
+def to_duckdb(sql, date_columns=frozenset(), whole_columns=None, server_records=False):
     """Returns the DuckDB statements for a piece of T-SQL, in order.
 
     date_columns holds the names of the columns that hold dates, so that a string compared with one
     of them can be read as a date. Where whole_columns is given, as the names of the columns that hold
     whole numbers, a division of whole numbers gives a whole number, as it does in SQL Server; the
-    practice database asks for this, so that it returns what SQL Server would.
+    practice database asks for this, so that it returns what SQL Server would. With server_records, a read
+    of sys.tables, sys.partitions, INFORMATION_SCHEMA.COLUMNS or INFORMATION_SCHEMA.TABLES reads the practice
+    database's copy of those records, in the schema SERVER_SCHEMA, and text joined to QUOTENAME with + is
+    joined with ||.
     """
     sql = drop_old_hints(sql.lstrip("\ufeff"))
     sql = DROP_IF_EXISTS.sub(lambda m: f"DROP TABLE IF EXISTS {m.group(1)};", sql)
@@ -285,7 +315,7 @@ def to_duckdb(sql, date_columns=frozenset(), whole_columns=None):
             elif isinstance(statement, exp.Set):
                 out.extend(_set(statement))
             else:
-                rewritten = _rewrite(statement, date_columns)
+                rewritten = _rewrite(statement, date_columns, server_records)
                 if whole_columns is not None:
                     rewritten = _whole_division(rewritten, whole_columns)
                 out.append(_sql(rewritten))

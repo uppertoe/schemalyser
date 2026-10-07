@@ -75,11 +75,13 @@ test('the checklist matches the boundary command, and an added request ticks off
     `of which the boundary took ${await page.locator('#checklist').getAttribute('data-seconds')} s in the worker.`);
   await checkTargets(page, world.before);
 
-  // The open join is asked of the colleague, and its own account, folded beneath, says what SQL would settle it.
+  // The open join is asked of the colleague, and its own account, folded beneath, agrees with the buttons: a Yes settles
+  // it, and a SQL file of the team's that makes the join is another way.
   const section = page.locator(`section.target[data-target="${TARGET}"]`);
   const join = section.locator(`ul[data-group="you"] li[data-id="${JOIN}"]`);
   await expect(join).toHaveAttribute('data-status', 'open');
-  await expect(join).toContainText('SQL files of their own that join AIRWAY_DEVICE.ANAES_KEY to ANAES_RECORD.ANAES_KEY');
+  await expect(join).toContainText(strings.askSettles.join);
+  await expect(join).not.toContainText('must act');
   await expect(join).toContainText(strings.blocking);
   // The items that need something else say who must act.
   // Each item's own account, folded beneath it, says who must act.

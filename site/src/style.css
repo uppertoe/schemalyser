@@ -933,3 +933,22 @@ h3.part {
   margin-top: 0.2rem;
   font-size: 0.85rem;
 }
+
+/* The vocabulary's own name of a concept, with its number, after the plain name: smaller and quieter. */
+.concept-name {
+  font-size: 0.8em;
+  color: var(--muted, #666);
+}
+
+/* The point in step 4 that step 7 links back to, marked for a moment when the link is followed. */
+.flash {
+  outline: 3px solid var(--accent);
+  outline-offset: 4px;
+}
+
+/* Who can answer a point, in a few words at its head. */
+.who-answers {
+  margin: 0 0 0.3rem;
+  font-size: 0.85em;
+  color: var(--muted);
+}

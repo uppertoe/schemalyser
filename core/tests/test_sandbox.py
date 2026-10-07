@@ -77,6 +77,26 @@ def test_a_division_of_whole_numbers_gives_a_whole_number_as_sql_server_does(bui
         assert all(value is None or (value.isdecimal() and int(value) % 10 == 0) for value in row[1:]), row
 
 
+def test_the_table_sizes_query_and_the_first_query_read_sql_servers_own_records(built):
+    # The table sizes query of 4.3 and the first query read sys.tables, sys.partitions and INFORMATION_SCHEMA, of which
+    # the practice database keeps a copy, so that each returns there what SQL Server would.
+    from schemalyser import checks, first_ask
+    from schemalyser.catalogue import Catalogue
+    catalogue = Catalogue.from_csv(CATALOGUE.decode())
+    unbuilt = next(t.name for t in catalogue.tables() if t.name not in browser._sandbox.tables)
+    sizes = json.loads(browser.sandbox_run(checks.size_query(catalogue, ["VISIT", "THEATRE_CASE", unbuilt])))
+    assert sizes["status"] == "ok", sizes
+    by_table = {row[1]: row for row in sizes["rows"]}
+    assert by_table["VISIT"][0] == "rows" and by_table["VISIT"][5] == "500"
+    # A table that the practice database does not hold comes back as one of which the server keeps no record.
+    assert by_table[unbuilt][0] == "skipped" and by_table[unbuilt][4] == "unrecorded"
+    listed = json.loads(browser.sandbox_run(first_ask.query(["VISIT"])))
+    assert listed["status"] == "ok", listed
+    assert listed["rows"][0][:3] == ["dbo", "VISIT", catalogue.table("VISIT").first_column().name]
+    assert {row[-1] for row in listed["rows"]} == {"500"}
+    assert all(row[4] == catalogue.table("VISIT").column(row[2]).data_type.lower() for row in listed["rows"])
+
+
 def test_what_cannot_be_run_is_reported_by_kind(built):
     assert json.loads(browser.sandbox_run("CREATE PROCEDURE p AS BEGIN SELECT 1 END"))["status"] == "unsupported"
     assert json.loads(browser.sandbox_run("EXEC sp_executesql N'SELECT 1'"))["status"] == "unsupported"
@@ -171,3 +191,17 @@ def test_text_filler_fits_its_column_and_a_row_key_is_unique():
     assert one("SELECT COUNT(DISTINCT OTHER_ID) FROM EPISODE")[0] < 300
     result = sandbox.run("SELECT EPISODE_ID, ROW_NUMBER() OVER (ORDER BY EPISODE_ID) AS n FROM EPISODE")
     assert result["status"] == "ok" and all(int(key) == int(n) for key, n in result["rows"])
+
+
+def test_the_tables_that_the_audits_steps_read_are_built_as_well(inventory):
+    # A table that no SQL file reads, but that the audit's steps read, is built, so that the table sizes query finds it.
+    from schemalyser import checks
+    from schemalyser.catalogue import Catalogue
+    from schemalyser.sandbox import Sandbox
+    catalogue = Catalogue.from_csv(CATALOGUE.decode())
+    assert "AIRWAY_DEVICE" not in Sandbox(catalogue, inventory).tables
+    sandbox = Sandbox(catalogue, inventory, also={"AIRWAY_DEVICE", "NOT_IN_THE_CATALOGUE"})
+    assert "AIRWAY_DEVICE" in sandbox.tables and "NOT_IN_THE_CATALOGUE" not in sandbox.tables
+    sandbox.build(50)
+    result = sandbox.run(checks.size_query(catalogue, ["AIRWAY_DEVICE"]))
+    assert result["status"] == "ok" and result["rows"][0][:2] == ["rows", "AIRWAY_DEVICE"], result
