@@ -195,11 +195,14 @@ def read_map_json(folder):
         where = f"{MAP_FILE}, {view}"
         if not isinstance(role, dict) or set(role) != {"file", "rows", "columns"} or role["file"] != f"{view}.sql":
             raise MapError(WORDING["map_shape"].format(where=where, problem=f"a role holds file ({view}.sql), rows and columns"))
+        from .corrections import check_shape
         _evidence(role["rows"], f"{where}, rows")
+        check_shape(role["rows"].get("binding"), f"{where}, rows")
         if not isinstance(role["columns"], dict) or set(role["columns"]) != set(columns):
             raise MapError(WORDING["map_shape"].format(where=where, problem=f"columns gives evidence for exactly {', '.join(columns)}"))
         for column in columns:
             _evidence(role["columns"][column], f"{where}.{column}")
+            check_shape(role["columns"][column].get("binding"), f"{where}.{column}")
     if not isinstance(data["kinds"], dict) or not set(data["kinds"]) <= set(kinds()) - {"other"} or set(MEAN_KINDS) - set(data["kinds"]):
         raise MapError(WORDING["map_shape"].format(where=MAP_FILE, problem="kinds gives the local codes of map_arterial and map_cuff"))
     for kind, item in data["kinds"].items():

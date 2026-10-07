@@ -23,6 +23,7 @@ at most COHORT_LIMIT anaesthetics of one year into #cohort from the anaesthetic'
 larger table from #cohort by its keys alone, joining the table of readings last, so that SQL Server cannot read the
 readings before the cohort has been narrowed (see scripts.py for why).
 """
+import copy
 import csv
 import datetime as dt
 import io
@@ -30,10 +31,11 @@ import json
 import hashlib
 import re
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
-from . import datadict, first_ask, propose, rolemap
+from . import corrections, datadict, first_ask, propose, rolemap
 from .catalogue import NAME, QUERY_ORDER, Catalogue, CatalogueError
 
 # A table of at least this many rows is marked as large, and no count on this screen reads it in full.
@@ -45,6 +47,11 @@ LEAST = 10
 FOLDER_FORMAT = 1
 DICTIONARY_FOLDER = "dictionary"
 SAFE_COUNTS = ("coverage_by_year", "repeated_keys")
+CONFIRMATION_FIELDS = ("attribute", "answer", "replacement", "date", "note", "version", "correction", "check", "reason")
+# The most distinct values that the query of values returns.
+MOST_VALUES = 50
+PROBE_COLUMNS = {"link": ("anaesthetics", "with_rows", "without_rows"), "filter": ("rows_read", "passing"),
+                 "flag": ("ones", "zeros", "empty")}
 DROP = "IF OBJECT_ID('tempdb..#cohort') IS NOT NULL DROP TABLE #cohort;"
 # A label column of a lookup table, by the words of its name.
 LABEL_WORDS = {"name", "label", "title", "display", "disp", "description"}
@@ -102,6 +109,19 @@ WORDING = {
     "row_gone": "The row {key} was in the earlier result and is not in the new one.",
     "row_new": "The row {key} is in the new result and was not in the earlier one.",
     "count_changed": "{column} of the row {key} was {before} and is now {after}, a change of more than a tenth.",
+    "keep_failing": "This change fails the check, so Schemalyser keeps it only if you tick Keep it although the check fails and give the reason.",
+    "no_probe": "Schemalyser offers no probe for this kind of correction.",
+    "values_comment": "Part 2 lists the commonest values of {column} among the rows of the anaesthetics in #cohort, at most {most}, with the number of rows that hold each, rounded down to ten and left blank under ten.",
+    "values_safe": "This query lists the commonest values of {column}, at most {most}, with the number of rows that hold each, rounded down to ten and left blank under ten. It reads {tables}, which are small tables, and no table of readings.",
+    "probe_link_comment": "Part 2 counts how many of the anaesthetics in #cohort have at least one row through the link that {about} now makes, and how many have none, rounded down to ten and left blank under ten.",
+    "probe_filter_comment": "This probe counts the rows of {view} that are read and how many of them pass the filter on {column}, rounded down to ten and left blank under ten.",
+    "probe_flag_comment": "This probe counts the rows in which {about} is 1, 0 and empty, rounded down to ten and left blank under ten.",
+    "probe_cohort": "It reads only the rows of the anaesthetics in #cohort, which part 1 makes.",
+    "probe_small": "It reads {tables}, which are small tables, and no table of readings.",
+    "probe_few": "Fewer than ten anaesthetics came back, so the probe says too little to judge the link.",
+    "probe_link": "Of {total} anaesthetics of the year, {linked} have at least one row through this link and {none} have none.",
+    "probe_filter": "Of {total} rows read, {passing} pass the filter.",
+    "probe_flag": "The flag is 1 in {ones} rows, 0 in {zeros} and empty in {empty}.",
 }
 FIGURES = {"with_patient": "have a patient whom the map finds", "with_birth_date": "have a patient with a date of birth",
            "with_stop": "have a recorded stop"}
@@ -148,6 +168,19 @@ def _and(items):
 
 def _now():
     return dt.datetime.now().isoformat(timespec="minutes")
+
+
+def _where(conditions):
+    return ["WHERE  " + "\n  AND  ".join(conditions)] if conditions else []
+
+
+def _rounded(expression, name):
+    """A count rounded down to ten and left blank under ten, as every count of this screen is."""
+    return f"CASE WHEN {expression} >= {LEAST} THEN ({expression}) - ({expression}) % 10 END AS {name}"
+
+
+def _shown_count(value):
+    return "fewer than ten" if value is None else f"about {value:,}" if isinstance(value, int) else str(value)
 
 
 def _wrap(sentence):
@@ -201,12 +234,7 @@ def _parse_from(text):
 
 
 def _binding_tables(binding):
-    if not binding:
-        return []
-    tables = [binding["table"]] if "table" in binding else []
-    for step in binding.get("path") or []:
-        tables += [step[0], step[2]]
-    return tables
+    return corrections.named_tables(binding)
 
 
 def _candidate_tables(item):
@@ -245,6 +273,13 @@ class Describe:
         self.confirmations = []
         self.dictionary_entry = None
         self.folder = None
+        # The corrections that a person kept, each with the outcome of its check, and the probes pasted for them.
+        self.corrections = []
+        self.probes = {}
+        self.values = {}
+        self._baseline = None
+        self._checked = {}
+        self._graph = None
 
     # The dictionary.
 
@@ -397,10 +432,8 @@ class Describe:
             return None
         missing, large = [], []
         table = binding.get("table")
-        columns = [(table, binding["column"])] if binding.get("column") else []
-        for step in binding.get("path") or []:
-            columns += [(step[0], step[1]), (step[2], step[3])]
-        tables = [table] + [s[2] for s in binding.get("path") or []]
+        columns = corrections.named_columns(binding)
+        tables = corrections.named_tables(binding)
         for name in dict.fromkeys(t for t in tables if t):
             if self.catalogue.table(name) is None:
                 missing.append(name)
@@ -500,6 +533,323 @@ class Describe:
         return [{"about": about, "question": item.get("question") or ""} for about, item in self._items()
                 if (item.get("confirmation") or {}).get("answer") == "not sure"]
 
+    # Corrections in plain forms, each checked on invented rows before it is kept.
+
+    def _clone(self):
+        """A copy of this sitting on which a correction can be tried without changing the sitting itself."""
+        other = copy.copy(self)
+        other.data = copy.deepcopy(self.data)
+        other.codes = copy.deepcopy(self.codes)
+        other.settings = dict(self.settings)
+        other._lookups = dict(self._lookups)
+        return other
+
+    def _built(self, correction):
+        try:
+            return corrections.build(self, correction)
+        except corrections.CorrectionError as error:
+            raise DescribeError(str(error)) from None
+
+    def correction_preview(self, correction):
+        """What a correction means, as the sentence that the map records and the SQL of the view that it changes."""
+        built = self._built(correction)
+        trial = self._clone()
+        corrections.apply(trial, built, {"answer": "no", "date": _today()})
+        return {"sentence": built["sentence"], "sql": trial.view_sql(built["view"]), "view": built["view"]}
+
+    def _baseline_check(self):
+        mark = corrections.fingerprint(self)
+        if self._baseline is None or self._baseline[0] != mark:
+            self._baseline = (mark, corrections.run_check(self))
+        return self._baseline[1]
+
+    def check_model(self):
+        """The check of the map as it stands, with no change."""
+        if self.data is None:
+            raise DescribeError(WORDING["no_dictionary"])
+        return corrections.report(self._baseline_check(), self._baseline_check(), change=False)
+
+    def correction_check(self, correction):
+        """Tests a correction on invented rows: the whole map with the change, against the map as it stands."""
+        built = self._built(correction)
+        began = time.perf_counter()
+        before = self._baseline_check()
+        trial = self._clone()
+        corrections.apply(trial, built, {"answer": "no", "date": _today()})
+        after = corrections.run_check(trial)
+        found = corrections.report(before, after)
+        found["sentence_of_change"] = built["sentence"]
+        found["seconds"] = round(time.perf_counter() - began, 1)
+        self._checked[json.dumps(correction, sort_keys=True)] = found
+        return found
+
+    def correction_keep(self, correction, although=False, reason="", date=None):
+        """Keeps a correction that has been checked. One that fails its check is kept only with although and a reason,
+        and both are recorded with it."""
+        date = date or _today()
+        built = self._built(correction)
+        key = json.dumps(correction, sort_keys=True)
+        found = self._checked.get(key) or self.correction_check(correction)
+        reason = " ".join((reason or "").split())[:400]
+        if not found["passed"] and not (although and reason):
+            raise DescribeError(WORDING["keep_failing"])
+        result = corrections.outcome(found)
+        record = {"answer": "no", "date": date, "replacement": built["source"], "correction": correction, "check": result}
+        if not found["passed"]:
+            record["reason"] = reason
+        corrections.apply(self, built, record)
+        self.settings["updated"] = date
+        self.confirmations.append({"attribute": built["about"], "answer": "no", "replacement": built["source"], "date": date,
+                                   "note": "", "version": self.version, "correction": json.dumps(correction, sort_keys=True),
+                                   "check": result, "reason": reason if not found["passed"] else ""})
+        self.corrections.append({"name": "correction", "about": built["about"], "form": built["form"], "says": built["sentence"],
+                                 "check": result, "passed": found["passed"], "reason": reason if not found["passed"] else "",
+                                 "date": date, "version": self.version})
+        self._checked.pop(key, None)
+        return {"kept": built["about"], "probe": self.probe_kind(built["about"])}
+
+    def replay_correction(self, correction, date=None, check="", reason=""):
+        """Applies a correction recorded in confirmations.csv again, without checking it, as the folder check does."""
+        built = self._built(correction)
+        record = {"answer": "no", "date": date or _today(), "replacement": built["source"], "correction": correction, "check": check}
+        if reason:
+            record["reason"] = reason
+        corrections.apply(self, built, record)
+
+    def names(self):
+        """The tables of the dictionary, by name only, for the page's lists."""
+        if self.dictionary is None:
+            raise DescribeError(WORDING["no_dictionary"])
+        return {"tables": sorted((t.name for t in self.dictionary.tables() if t.columns), key=str.upper)}
+
+    def columns_of(self, table):
+        if self.dictionary is None:
+            raise DescribeError(WORDING["no_dictionary"])
+        held = self.dictionary.table(table) if NAME.match(table or "") else None
+        if held is None:
+            raise DescribeError(WORDING["no_table"].format(name=table))
+        found = []
+        for entry in held.columns.values():
+            present = None
+            if self.catalogue is not None:
+                known = self.catalogue.table(held.name)
+                present = bool(known is not None and known.column(entry.name) is not None)
+            found.append({"name": entry.name, "type": entry.data_type or "", "key": entry.name in held.primary_key(), "present": present})
+        return {"table": held.name, "columns": found}
+
+    def joins_from(self, table):
+        """The joins that the dictionary's keys suggest from one table: to a table whose whole key a column names, and
+        from a table that names this table's key, which may repeat rows."""
+        if self.dictionary is None:
+            raise DescribeError(WORDING["no_dictionary"])
+        held = self.dictionary.table(table) if NAME.match(table or "") else None
+        if held is None:
+            raise DescribeError(WORDING["no_table"].format(name=table))
+        graph = corrections._graph(self)
+        found = [{"from": column, "table": target, "to": key, "repeats": False} for column, target, key, _ in graph.hops(held.name)]
+        key = held.primary_key()
+        if len(key) == 1:
+            for other in self.dictionary.tables():
+                if other.name.upper() == held.name.upper():
+                    continue
+                entry = other.column(key[0])
+                if entry is not None and other.primary_key() != (entry.name,):
+                    found.append({"from": key[0], "table": other.name, "to": entry.name, "repeats": True})
+        seen, unique = set(), []
+        for item in found:
+            mark = (item["from"].upper(), item["table"].upper(), item["to"].upper())
+            if mark not in seen:
+                seen.add(mark)
+                unique.append(item)
+        return {"table": held.name, "joins": unique[:40]}
+
+    # The distinct values of a column, for choosing a filter or the values of a flag.
+
+    def values_query(self, about, table, column, year=None, step=""):
+        view_name = about.split(" ")[0].split(".")[0]
+        role = (self.data or {}).get("roles", {}).get(view_name)
+        if role is None:
+            raise DescribeError(corrections.WORDING["not_drafted"].format(view=view_name))
+        try:
+            table, column, _ = corrections._column(self, table, column)
+            path = corrections.path_to(self, role, table)
+        except corrections.CorrectionError as error:
+            raise DescribeError(str(error)) from None
+        year = int(year or self.settings.get("year") or dt.date.today().year - 1)
+        name = f"values-{view_name}-{table}-{column}"
+        script, sql, order = self._counted(view_name, path, table, column, year)
+        if script:
+            second = "\n".join([f"SELECT TOP ({MOST_VALUES}) CAST({sql} AS nvarchar(254)) AS value,",
+                                "       " + _rounded("COUNT(*)", "rows"), *order,
+                                f"GROUP  BY CAST({sql} AS nvarchar(254))", "ORDER  BY COUNT(*) DESC;"])
+            text = self._script(year, _wrap(WORDING["values_comment"].format(column=f"{table}.{column}", most=MOST_VALUES)), second)
+        else:
+            body = "\n".join([f"SELECT TOP ({MOST_VALUES}) CAST({sql} AS nvarchar(254)) AS value,",
+                              "       " + _rounded("COUNT(*)", "rows"), *order,
+                              f"GROUP  BY CAST({sql} AS nvarchar(254))", "ORDER  BY COUNT(*) DESC;"])
+            text = "\n".join([_wrap(WORDING["values_safe"].format(column=f"{table}.{column}", most=MOST_VALUES,
+                                                                  tables=_and(dict.fromkeys(self._sized_names(order))))),
+                              _wrap(WORDING["names"]), body])
+        return {"sql": self.offer(name, step, text, about=about, table=table, column=column, year=year),
+                "name": name, "script": script}
+
+    def read_values(self, name, text):
+        if name not in self.journal:
+            raise DescribeError(WORDING["unknown_count"].format(name=name))
+        columns, rows = read_grid(text, ("value", "rows"))
+        self.pasted(name, text)
+        parsed = [{"value": r[0], "rows": _number(r[1])} for r in rows]
+        self.values[name] = parsed
+        return {"values": parsed}
+
+    def _sized_names(self, lines):
+        return [m for line in lines for m in re.findall(r"(?:FROM|JOIN)\s+\[?([A-Za-z_][\w]*)\]?\s+(?:AS\s+)?t\d", line)]
+
+    def _counted(self, view_name, path, table, column, year, filters=True):
+        """How a count of one column of a view reaches it: over the view's own table where that is small, or from
+        #cohort in a script of two parts where it may be large. Returns (script, column reference, FROM lines), the
+        lines ending with the view's own filters unless filters is false."""
+        role = self.data["roles"][view_name]
+        base = role["rows"]["binding"]["table"]
+        names = [base] + [s[2] for s in path]
+        small = view_name in ("role_patient", "role_anaesthetic") or all(
+            self.sizes.get(n.upper()) is not None and self.sizes[n.upper()] < LARGE for n in names)
+        links = {link["column"]: link["to"] for link in self.views[view_name].get("links", [])}
+        link = next((c for c in ("anaesthetic_key", "patient_key") if c in links and role["columns"][c].get("binding")), None)
+        if small or link is None:
+            aliases, joins = {(): "t0"}, []
+            alias, _ = propose.walk(path, aliases, joins)
+            conditions = []
+            for item in (role["rows"]["binding"].get("filter") or []) if filters else []:
+                end, _ = propose.walk(item["path"], aliases, joins)
+                conditions.append(propose.filter_sql(item, f"{end}.{_name(item['column'])}"))
+            lines = [f"FROM   {_name(base)} AS t0 WITH (NOLOCK)"]
+            for join in joins:
+                head, _, rest = join.partition(" ON ")
+                words = head.split(" ")
+                lines.append(" ".join(words[:-1]) + f" AS {words[-1]} WITH (NOLOCK) ON " + rest)
+            return False, f"{alias}.{_name(column)}", lines + _where(conditions)
+        cohort = "anaesthetic_key" if link == "anaesthetic_key" else "patient_key"
+        probe = {"table": path[-1][2] if path else base, "column": column, "path": path, "data_type": ""}
+        lines, expressions, _, where = self._reached(view_name, link, cohort, ["__probe"], raw={"__probe"},
+                                                     extra={"__probe": probe}, filters=filters)
+        return True, expressions["__probe"], lines + _where(where)
+
+    # The probe of a kept correction against the real database.
+
+    def probe_kind(self, about):
+        """The kind of probe that suits a kept correction: link, filter or flag, or None."""
+        view_name = about.split(" ")[0].split(".")[0]
+        role = (self.data or {}).get("roles", {}).get(view_name)
+        if role is None:
+            return None
+        if about.endswith(" rows"):
+            return "filter" if role["rows"].get("binding", {}).get("filter") else None
+        column = about.split(".", 1)[1]
+        spec = next((c for c in self.views[view_name]["columns"] if c["name"] == column), None)
+        binding = role["columns"].get(column, {}).get("binding")
+        links = {link["column"] for link in self.views[view_name].get("links", [])}
+        if not binding or spec is None:
+            return None
+        if column in links and column in ("anaesthetic_key", "patient_key"):
+            if view_name == "role_anaesthetic" and column == "patient_key":
+                patient = self.data["roles"]["role_patient"]["columns"]["patient_key"].get("binding")
+                return "link" if patient and not patient.get("path") else None
+            return "link"
+        if spec["type"] in ("flag", "flag_or_empty"):
+            return "flag"
+        return None
+
+    def probe_query(self, about, year=None, step=""):
+        kind = self.probe_kind(about)
+        if kind is None:
+            raise DescribeError(WORDING["no_probe"])
+        year = int(year or self.settings.get("year") or dt.date.today().year - 1)
+        view_name = about.split(" ")[0].split(".")[0]
+        role = self.data["roles"][view_name]
+        name = "probe-" + re.sub(r"[^\w]+", "-", about).strip("-")
+        if kind == "link":
+            column = about.split(".", 1)[1]
+            if view_name == "role_anaesthetic":
+                patient = self.data["roles"]["role_patient"]
+                p_binding = patient["columns"]["patient_key"]["binding"]
+                second = "\n".join([
+                    "SELECT " + _rounded("n.total", "anaesthetics") + ",",
+                    "       " + _rounded("n.linked", "with_rows") + ",",
+                    "       " + _rounded("n.total - n.linked", "without_rows"),
+                    "FROM   (SELECT COUNT(*) AS total,",
+                    "               SUM(CASE WHEN p.found = 1 THEN 1 ELSE 0 END) AS linked",
+                    "        FROM   #cohort AS c",
+                    f"               LEFT JOIN (SELECT DISTINCT pp.{_name(p_binding['column'])} AS patient_key, 1 AS found",
+                    f"                          FROM   {_name(p_binding['table'])} AS pp WITH (NOLOCK)) AS p ON p.patient_key = c.patient_key) AS n;"])
+            else:
+                cohort = "anaesthetic_key" if column == "anaesthetic_key" else "patient_key"
+                lines, _, _, where = self._reached(view_name, column, cohort, [])
+                inner = "\n".join("                       " + line for line in lines + _where(where))
+                second = "\n".join([
+                    "SELECT " + _rounded("n.total", "anaesthetics") + ",",
+                    "       " + _rounded("n.linked", "with_rows") + ",",
+                    "       " + _rounded("n.total - n.linked", "without_rows"),
+                    "FROM   (SELECT (SELECT COUNT(*) FROM #cohort) AS total,",
+                    "               (SELECT COUNT(DISTINCT c.anaesthetic_key)",
+                    inner + ") AS linked) AS n;"])
+            text = self._script(year, _wrap(WORDING["probe_link_comment"].format(about=about)), second)
+            columns = PROBE_COLUMNS["link"]
+        else:
+            if kind == "filter":
+                filters = role["rows"]["binding"]["filter"]
+                item = filters[-1]
+                script, ref, lines = self._counted(view_name, item["path"], item["table"], item["column"], year, filters=False)
+                condition = propose.filter_sql(item, ref)
+                select = ["SELECT " + _rounded("COUNT(*)", "rows_read") + ",",
+                          "       " + _rounded(f"SUM(CASE WHEN {condition} THEN 1 ELSE 0 END)", "passing")]
+                comment = WORDING["probe_filter_comment"].format(view=view_name, column=f"{item['table']}.{item['column']}")
+            else:
+                column = about.split(".", 1)[1]
+                spec = next(c for c in self.views[view_name]["columns"] if c["name"] == column)
+                binding = role["columns"][column]["binding"]
+                script, ref, lines = self._counted(view_name, binding["path"], binding["table"], binding["column"], year)
+                expression = propose.render(propose.plan(spec, binding), ref)
+                select = ["SELECT " + _rounded(f"SUM(CASE WHEN {expression} = 1 THEN 1 ELSE 0 END)", "ones") + ",",
+                          "       " + _rounded(f"SUM(CASE WHEN {expression} = 0 THEN 1 ELSE 0 END)", "zeros") + ",",
+                          "       " + _rounded(f"SUM(CASE WHEN {expression} IS NULL THEN 1 ELSE 0 END)", "empty")]
+                comment = WORDING["probe_flag_comment"].format(about=about)
+            body = "\n".join(select + lines) + ";"
+            if script:
+                text = self._script(year, _wrap(comment + " " + WORDING["probe_cohort"]), body)
+            else:
+                text = "\n".join([_wrap(comment + " " + WORDING["probe_small"].format(tables=_and(dict.fromkeys(self._sized_names(lines))))),
+                                  _wrap(WORDING["names"]), body])
+            columns = PROBE_COLUMNS[kind]
+        sql = self.offer(name, step, text, about=about, year=year, probe=kind)
+        return {"sql": sql, "name": name, "kind": kind, "columns": list(columns)}
+
+    def read_probe(self, about, text, record=True):
+        kind = self.probe_kind(about)
+        if kind is None:
+            raise DescribeError(WORDING["no_probe"])
+        name = "probe-" + re.sub(r"[^\w]+", "-", about).strip("-")
+        columns, rows = read_grid(text, PROBE_COLUMNS[kind])
+        if record:
+            self.pasted(name, text)
+        self.probes[about] = {"kind": kind, "columns": columns, "rows": rows, "date": _today()}
+        return {"rows": len(rows), "findings": self.probe_findings(about)}
+
+    def probe_findings(self, about):
+        held = self.probes.get(about)
+        if not held or not held["rows"]:
+            return []
+        row = dict(zip(held["columns"], [_number(v) for v in held["rows"][0]]))
+        if held["kind"] == "link":
+            if row.get("anaesthetics") is None:
+                return [WORDING["probe_few"]]
+            return [WORDING["probe_link"].format(total=_shown_count(row.get("anaesthetics")), linked=_shown_count(row.get("with_rows")),
+                                                 none=_shown_count(row.get("without_rows")))]
+        if held["kind"] == "filter":
+            return [WORDING["probe_filter"].format(total=_shown_count(row.get("rows_read")), passing=_shown_count(row.get("passing")))]
+        return [WORDING["probe_flag"].format(ones=_shown_count(row.get("ones")), zeros=_shown_count(row.get("zeros")),
+                                             empty=_shown_count(row.get("empty")))]
+
     # The codes.
 
     def _lookup(self, table, column):
@@ -571,46 +921,67 @@ class Describe:
             raise DescribeError(f"The map binds no column {key}.")
         return entry
 
-    def _reached(self, view_name, link, cohort_column, columns, raw=()):
+    def _reached(self, view_name, link, cohort_column, columns, raw=(), extra=None, filters=True):
         """The joins of a view turned round so that they start from #cohort and reach the view's own table last, by
         keys alone, then the lookups of its other columns. Returns (lines, {column: expression}, tables in order)."""
         role = self.data["roles"][view_name]
         base = role["rows"]["binding"]["table"]
         link_binding = role["columns"][link]["binding"]
+        window = link_binding.get("window")
         path = [list(step) for step in link_binding["path"]]
         aliases = {(): "t0"}
         tables = {(): base}
         for i in range(len(path)):
-            prefix = tuple(tuple(s) for s in path[:i + 1])
+            prefix = tuple(propose.step_key(s) for s in path[:i + 1])
             aliases[prefix] = f"t{len(aliases)}"
             tables[prefix] = path[i][2]
-        last = tuple(tuple(s) for s in path)
-        lines = ["FROM   #cohort AS c",
-                 f"JOIN   {_name(tables[last])} AS {aliases[last]} WITH (NOLOCK) ON {aliases[last]}.{_name(link_binding['column'])} = c.{cohort_column}"]
-        order = [tables[last]]
+        last = tuple(propose.step_key(s) for s in path)
+        where = []
+        if window:
+            # A link by a shared key and a time window: from #cohort to the anaesthetic's own table, then to the rows
+            # that share its key, whose time is tested against the window below.
+            lines = ["FROM   #cohort AS c",
+                     f"JOIN   {_name(window['table'])} AS w WITH (NOLOCK) ON w.{_name(window['output'])} = c.{cohort_column}",
+                     f"JOIN   {_name(tables[last])} AS {aliases[last]} WITH (NOLOCK) ON {aliases[last]}.{_name(link_binding['column'])} = w.{_name(window['key'])}"]
+            order = [window["table"], tables[last]]
+        else:
+            lines = ["FROM   #cohort AS c",
+                     f"JOIN   {_name(tables[last])} AS {aliases[last]} WITH (NOLOCK) ON {aliases[last]}.{_name(link_binding['column'])} = c.{cohort_column}"]
+            order = [tables[last]]
         for i in range(len(path) - 1, -1, -1):
-            before, after = tuple(tuple(s) for s in path[:i]), tuple(tuple(s) for s in path[:i + 1])
+            before = tuple(propose.step_key(s) for s in path[:i])
+            after = tuple(propose.step_key(s) for s in path[:i + 1])
             step = path[i]
-            lines.append(f"JOIN   {_name(tables[before])} AS {aliases[before]} WITH (NOLOCK) ON "
-                         f"{aliases[before]}.{_name(step[1])} = {aliases[after]}.{_name(step[3])}")
+            on = " AND ".join(f"{aliases[before]}.{_name(a)} = {aliases[after]}.{_name(b)}" for a, b in propose.step_pairs(step))
+            lines.append(f"JOIN   {_name(tables[before])} AS {aliases[before]} WITH (NOLOCK) ON {on}")
             order.append(tables[before])
-        expressions = {}
-        specs = {c["name"]: c for c in self.views[view_name]["columns"]}
-        for name in columns:
-            binding = role["columns"][name].get("binding")
-            if not binding:
-                expressions[name] = propose._empty(specs[name])
-                continue
+
+        def forward(steps):
             prefix = ()
-            for step in binding["path"]:
-                following = prefix + (tuple(step),)
+            for step in steps:
+                following = prefix + (propose.step_key(step),)
                 if following not in aliases:
                     aliases[following] = f"t{len(aliases)}"
                     tables[following] = step[2]
-                    lines.append(f"LEFT JOIN {_name(step[2])} AS {aliases[following]} WITH (NOLOCK) ON "
-                                 f"{aliases[following]}.{_name(step[3])} = {aliases[prefix]}.{_name(step[1])}")
+                    on = " AND ".join(f"{aliases[following]}.{_name(b)} = {aliases[prefix]}.{_name(a)}" for a, b in propose.step_pairs(step))
+                    lines.append(f"LEFT JOIN {_name(step[2])} AS {aliases[following]} WITH (NOLOCK) ON {on}")
                 prefix = following
-            ref = f"{aliases[prefix]}.{_name(binding['column'])}"
+            return aliases[prefix]
+
+        expressions = {}
+        specs = {c["name"]: c for c in self.views[view_name]["columns"]}
+        for name in columns:
+            binding = (extra or {}).get(name) or role["columns"][name].get("binding")
+            if not binding:
+                expressions[name] = propose._empty(specs[name])
+                continue
+            ref = f"{forward(binding['path'])}.{_name(binding['column'])}"
+            if binding.get("window"):
+                expressions[name] = f"w.{_name(binding['window']['output'])}" if name == link else "NULL"
+                continue
+            if binding.get("joined"):
+                expressions[name] = propose.joined_sql(binding["joined"], ref, f"j{len(aliases)}")
+                continue
             if name in raw:
                 expressions[name] = ref
                 continue
@@ -620,8 +991,14 @@ class Describe:
                     codes = {k: item.get("codes", []) for k, item in self.data["kinds"].items()}
                 else:
                     codes = self._vocabulary_codes(view_name).get(name, {})
-            expressions[name] = propose._expression(specs[name], ref, binding.get("data_type", ""), codes)
-        return lines, expressions, order
+            expressions[name] = propose.render(propose.plan(specs[name], binding, codes), ref)
+        if window:
+            time_binding = role["columns"][window["time"]].get("binding")
+            time_ref = f"{forward(time_binding['path'])}.{_name(time_binding['column'])}" if time_binding else "NULL"
+            where.append(propose.window_on("w", window, time_ref))
+        for item in (role["rows"]["binding"].get("filter") or []) if filters else []:
+            where.append(propose.filter_sql(item, f"{forward(item['path'])}.{_name(item['column'])}"))
+        return lines, expressions, order, where
 
     def _cohort(self, year):
         """Part 1 of a script: at most COHORT_LIMIT anaesthetics of one year into #cohort, from role_anaesthetic."""
@@ -662,7 +1039,7 @@ class Describe:
         year = int(year)
         view_name, column = entry["view"], entry["column"]
         cohort_column = "anaesthetic_key" if entry["link"] == "anaesthetic_key" else "patient_key"
-        lines, expressions, order = self._reached(view_name, entry["link"], cohort_column, [column], raw={column})
+        lines, expressions, order, where = self._reached(view_name, entry["link"], cohort_column, [column], raw={column})
         ref = expressions[column]
         lookup = entry["lookup"]
         select = [f"SELECT CAST({ref} AS nvarchar(100)) AS code,",
@@ -677,7 +1054,7 @@ class Describe:
         else:
             select.append("       CAST(NULL AS nvarchar(200)) AS name")
             comment = WORDING["charted_comment_bare"].format(column=entry["bound"], path=_and(order))
-        second = "\n".join(select + lines + [group, "ORDER  BY COUNT(*) DESC;"])
+        second = "\n".join(select + lines + _where(where) + [group, "ORDER  BY COUNT(*) DESC;"])
         sql = self.offer(f"charted-{key.replace('.', '-')}", step, self._script(year, _wrap(comment), second), key=key, year=year)
         return {"sql": sql, "year": year, "tables": self._sized(order)}
 
@@ -790,9 +1167,9 @@ ORDER  BY g.role_view;"""
         reading = self.data["roles"].get("role_reading")
         if reading and reading["columns"]["anaesthetic_key"].get("binding"):
             columns = ["kind", "accepted", "value"]
-            lines, expressions, order = self._reached("role_reading", "anaesthetic_key", "anaesthetic_key", columns)
+            lines, expressions, order, where = self._reached("role_reading", "anaesthetic_key", "anaesthetic_key", columns)
             inner = ("SELECT " + ",\n       ".join(f"{expressions[c]} AS {c}" for c in columns)
-                     + ",\n       c.anaesthetic_key\n" + "\n".join(lines))
+                     + ",\n       c.anaesthetic_key\n" + "\n".join(lines + _where(where)))
             indented = "\n".join("        " + line for line in inner.splitlines())
             second = f"""SELECT g.kind,
        CASE WHEN g.readings >= {LEAST} THEN g.readings - g.readings % 10 END AS readings,
@@ -882,7 +1259,8 @@ ORDER  BY g.kind;"""
 
     def _log_confirmation(self, about, answer, replacement, note, date):
         self.confirmations.append({"attribute": about, "answer": answer, "replacement": replacement, "date": date,
-                                   "note": " ".join((note or "").split())[:400], "version": self.version})
+                                   "note": " ".join((note or "").split())[:400], "version": self.version,
+                                   "correction": "", "check": "", "reason": ""})
 
     # The hospital folder.
 
@@ -936,8 +1314,8 @@ ORDER  BY g.kind;"""
             files["counts/judgements.json"] = self._json({"counts": judgements}, date)
         out = io.StringIO()
         writer = csv.writer(out, lineterminator="\n")
-        writer.writerow(["attribute", "answer", "replacement", "date", "note", "version"])
-        writer.writerows([c[k] for k in ("attribute", "answer", "replacement", "date", "note", "version")] for c in self.confirmations)
+        writer.writerow(list(CONFIRMATION_FIELDS))
+        writer.writerows([c.get(k) or "" for k in CONFIRMATION_FIELDS] for c in self.confirmations)
         files["confirmations.csv"] = out.getvalue().encode("utf-8")
         kept = bool(keep_dictionary and self.dictionary_files)
         if kept:
@@ -951,6 +1329,7 @@ ORDER  BY g.kind;"""
         journal = []
         if self.dictionary_entry:
             journal.append(self.dictionary_entry)
+        journal += [dict(entry) for entry in self.corrections]
         for entry in entries:
             item = {k: v for k, v in entry.items() if k != "number"}
             item["query"] = self._file(entry["name"], "queries", "sql")
@@ -1002,7 +1381,7 @@ ORDER  BY g.kind;"""
         if "confirmations.csv" in files:
             for row in csv.DictReader(io.StringIO(_text(files["confirmations.csv"]))):
                 if row.get("attribute") and row.get("answer"):
-                    self.confirmations.append({k: row.get(k) or "" for k in ("attribute", "answer", "replacement", "date", "note", "version")})
+                    self.confirmations.append({k: row.get(k) or "" for k in CONFIRMATION_FIELDS})
             found["confirmations"] = len(self.confirmations)
         for path, data in sorted(files.items()):
             match = re.fullmatch(r"codes/(role_\w+\.\w+)\.json", path)
@@ -1016,6 +1395,9 @@ ORDER  BY g.kind;"""
             if name in COUNT_COLUMNS:
                 self.counts[name] = dict(held)
         for entry in (_json_of(files.get("journal.json")).get("entries") or []):
+            if entry.get("name") == "correction":
+                self.corrections.append({k: v for k, v in entry.items()})
+                continue
             if entry.get("name") == "dictionary" or "number" not in entry:
                 continue
             name = entry["name"]
@@ -1035,6 +1417,10 @@ ORDER  BY g.kind;"""
                     found["tables"] = True
                 elif name.startswith("charted-") and entry.get("key"):
                     self.read_charted(entry["key"], text, entry.get("year") or self.settings.get("year") or 2000, record=False)
+                elif name.startswith("probe-") and entry.get("about"):
+                    self.read_probe(entry["about"], text, record=False)
+                elif name.startswith("values-"):
+                    self.values[name] = [{"value": r[0], "rows": _number(r[1])} for r in read_grid(text, ("value", "rows"))[1]]
                 elif name.startswith("count-") and name[6:] in COUNT_COLUMNS:
                     self.read_count(name[6:], text, (entry.get("pasted") or "")[:10] or None, record=False)
                     self.counts[name[6:]].update(judgements.get(name[6:]) or {})
@@ -1057,10 +1443,15 @@ ORDER  BY g.kind;"""
             fresh.proposer = self.proposer
             fresh.propose(date=propose._proposed_on(self.data) or self.settings.get("made"))
             problems = []
+            fresh.catalogue = self.catalogue
             for row in self.confirmations:
                 try:
-                    fresh.confirm(row["attribute"], row["answer"], row.get("replacement") or "", row.get("note") or "", row.get("date") or None)
-                except (DescribeError, KeyError) as error:
+                    if row.get("correction"):
+                        fresh.replay_correction(json.loads(row["correction"]), row.get("date") or None, row.get("check") or "",
+                                                row.get("reason") or "")
+                    else:
+                        fresh.confirm(row["attribute"], row["answer"], row.get("replacement") or "", row.get("note") or "", row.get("date") or None)
+                except (DescribeError, KeyError, ValueError) as error:
                     problems.append(WORDING["check_confirmation"].format(about=row["attribute"], problem=str(error)))
             for key, held in self.codes.items():
                 if held.get("chosen"):
@@ -1085,7 +1476,9 @@ ORDER  BY g.kind;"""
             queries.append({"name": name, "number": entry["number"], "step": entry.get("step"), "sql": self.queries.get(name, ""),
                             "file": self._file(name, "queries", "sql"), "pasted": entry.get("pasted"),
                             "database": entry.get("database"), "columns": columns, "rows": rows[:200], "more": max(0, len(rows) - 200)})
-        return {**rebuilt, "queries": queries}
+        failing = [{"about": row["attribute"], "check": row.get("check") or "", "reason": row.get("reason") or "", "date": row.get("date") or ""}
+                   for row in self.confirmations if (row.get("check") or "").startswith("failed")]
+        return {**rebuilt, "queries": queries, "failing": failing}
 
     def compare(self, name, text):
         """The differences between a query's earlier result and a new one, as sentences: a table or column that has
@@ -1117,19 +1510,25 @@ ORDER  BY g.kind;"""
                 rows = role["rows"]
                 table = rows["binding"]["table"] if rows.get("binding") else rows["from"]
                 entry["items"].append(self._item(f"{view['name']} rows", "rows", rows, view["description"], table, None))
+                links = {link["column"]: link["to"] for link in view.get("links", [])}
                 for column in view["columns"]:
                     item = role["columns"][column["name"]]
                     binding = item.get("binding")
-                    entry["items"].append(self._item(f"{view['name']}.{column['name']}", column["name"], item,
-                                                     column["meaning"], binding["table"] if binding else None,
-                                                     binding["column"] if binding else None, column["type"]))
+                    shown = self._item(f"{view['name']}.{column['name']}", column["name"], item,
+                                       column["meaning"], binding["table"] if binding else None,
+                                       binding["column"] if binding else None, column["type"])
+                    shown["link"] = links.get(column["name"])
+                    entry["items"].append(shown)
             roles.append(entry)
         tally = self.tally()
         return {"dictionary": self.dictionary_receipt(), "proposed": self.data is not None, "roles": roles,
                 "tally": tally, "questions": self.questions(), "catalogue": self.catalogue is not None,
-                "vocabularies": self.vocabularies(), "counts": {k: {kk: v.get(kk) for kk in ("columns", "rows", "looks_right", "note", "date")}
+                "vocabularies": self.vocabularies(), "values": self.values, "counts": {k: {kk: v.get(kk) for kk in ("columns", "rows", "looks_right", "note", "date")}
                                                                 | {"findings": self.findings(k)} for k, v in self.counts.items()},
                 "settings": {k: self.settings.get(k) for k in ("made", "updated", "database", "year")},
+                "anaesthetic_table": ((self.data or {}).get("roles", {}).get("role_anaesthetic") or {}).get("rows", {}).get("binding", {}).get("table"),
+                "bases": {name: role["rows"]["binding"]["table"] for name, role in (self.data or {}).get("roles", {}).items()
+                          if role["rows"].get("binding")},
                 "restored": self.restored}
 
     def _item(self, about, attribute, item, meaning, table, column, role_type=None):
@@ -1148,13 +1547,40 @@ ORDER  BY g.kind;"""
             candidates.append({"from": candidate["from"], "replacement": _parse_from(candidate["from"]) if "." in head else head,
                                "definition": words or candidate.get("words")})
         confirmation = item.get("confirmation") or {}
-        return {"about": about, "attribute": attribute, "meaning": meaning, "type": role_type, "from": item["from"],
+        correction = confirmation.get("correction") if isinstance(confirmation.get("correction"), dict) else None
+        return {"correction": {"form": correction["form"], "says": item["says"] if attribute != "rows" else _filter_says(item),
+                               "check": confirmation.get("check") or "", "reason": confirmation.get("reason") or "",
+                               "probe": self.probe_kind(about), "probed": self.probes.get(about),
+                               "findings": self.probe_findings(about)} if correction else None,
+                "binding_form": _binding_form(binding),
+                "about": about, "attribute": attribute, "meaning": meaning, "type": role_type, "from": item["from"],
                 "table": table, "column": column, "bound": bool(binding) if attribute != "rows" else bool(table),
                 "definition": definition, "says": item["says"], "confidence": item.get("confidence") or "",
                 "candidates": candidates, "status": item["status"], "question": item.get("question") or "",
                 "answer": confirmation.get("answer"), "date": confirmation.get("date"),
                 "replacement": confirmation.get("replacement"), "note": confirmation.get("note"),
                 "presence": self.presence(binding if attribute != "rows" else ({"table": table} if table else None))}
+
+
+def _binding_form(binding):
+    """The form of a binding in words of one item, for the page: column, derived, window, joined or filter."""
+    if not binding:
+        return None
+    for form in ("window", "joined", "derive", "filter"):
+        if binding.get(form):
+            return "derived" if form == "derive" else form
+    if any(len(step) > 4 for step in binding.get("path") or []):
+        return "pair"
+    return "column"
+
+
+def _filter_says(item):
+    filters = (item.get("binding") or {}).get("filter") or []
+    if not filters:
+        return item["says"]
+    return " ".join(corrections._fit(corrections.WORDING["say_filter"].format(
+        view="The role", source=f"{f['table']}.{f['column']}", values=corrections._shown_values(f["values"]), how=""))
+        for f in filters)
 
 
 def _safe_file(name, fallback):
@@ -1284,9 +1710,13 @@ README_FILES = [
     ("journal.json", "One entry for each step that took something in: the step's heading, the query file, the result "
                      "file, the database, when the result was pasted and the tool's version. For the dictionary, it "
                      "gives the file's name, its size, its numbers of tables and columns and a fingerprint of its "
-                     "contents (a SHA-256 hash), and never its contents."),
+                     "contents (a SHA-256 hash), and never its contents. Each correction kept has an entry of its own, "
+                     "with the sentence that it means, the outcome of its check and any reason for keeping it."),
     ("confirmations.csv", "Every answer that the colleague gave, in order: the role and attribute, the answer (yes, no "
-                          "or not sure), the replacement where the answer was no, the date and any note."),
+                          "or not sure), the replacement where the answer was no, the date and any note. For a correction "
+                          "made in one of the page's forms, it also gives the correction as data, the outcome of the check "
+                          "that Schemalyser ran on invented rows before it was kept, and, where it was kept although the "
+                          "check failed, the reason that was given."),
     ("map/map.json", "Every binding of every role: the table and column that hold it, the dictionary's description "
                      "that supports it, the answer and its date. Its description gives the date of the proposal."),
     ("map/role_*.sql", "One SQL view for each role, written from the bindings and the chosen codes. An audit reads "

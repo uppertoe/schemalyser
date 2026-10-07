@@ -1034,3 +1034,54 @@ def describe_check():
 def describe_compare(request):
     r = json.loads(request)
     return _reply(lambda: {"compared": _describing().compare(r["name"], r["text"])})
+
+
+# The corrections of screen 1: a form previewed, checked on invented rows, kept, and probed against the database.
+
+def describe_correction_preview(request):
+    return _reply(lambda: {"preview": _describing().correction_preview(json.loads(request))})
+
+
+def describe_correction_check(request):
+    return _reply(lambda: {"report": _describing().correction_check(json.loads(request))})
+
+
+def describe_model_check():
+    return _reply(lambda: {"report": _describing().check_model()})
+
+
+def describe_correction_keep(request):
+    r = json.loads(request)
+    return _reply(lambda: _describing().correction_keep(r["correction"], bool(r.get("although")), r.get("reason") or ""))
+
+
+def describe_names():
+    return _reply(lambda: _describing().names())
+
+
+def describe_columns(request):
+    return _reply(lambda: _describing().columns_of(json.loads(request)["table"]))
+
+
+def describe_joins(request):
+    return _reply(lambda: _describing().joins_from(json.loads(request)["table"]))
+
+
+def describe_values_query(request):
+    r = json.loads(request)
+    return _reply(lambda: _describing().values_query(r["about"], r["table"], r["column"], r.get("year"), r.get("step") or ""))
+
+
+def describe_values_read(request):
+    r = json.loads(request)
+    return _reply(lambda: _describing().read_values(r["name"], r["text"]))
+
+
+def describe_probe_query(request):
+    r = json.loads(request)
+    return _reply(lambda: _describing().probe_query(r["about"], r.get("year"), r.get("step") or ""))
+
+
+def describe_probe_read(request):
+    r = json.loads(request)
+    return _reply(lambda: {"receipt": _describing().read_probe(r["about"], r["text"])})

@@ -2,6 +2,7 @@
 // and the offline gate with the existing page. Everything that is loaded or pasted goes to the worker, which holds it;
 // the page holds only what it shows.
 import { describeStrings as d } from './describe-strings';
+import * as corrections from './describe-corrections';
 import { strings } from './strings';
 
 declare const __VERSION__: string;
@@ -14,6 +15,7 @@ interface Item {
   about: string; attribute: string; meaning: string; type: string | null; from: string; table: string | null; column: string | null;
   bound: boolean; definition: string | null; says: string; confidence: string; candidates: Candidate[]; status: string; question: string;
   answer: string | null; date: string | null; replacement: string | null; presence: Presence | null;
+  link: string | null; correction: corrections.CorrectionHeld | null;
 }
 interface Role { name: string; description: string; required: boolean; drafted: boolean; items: Item[] }
 interface Vocabulary {
@@ -28,6 +30,7 @@ interface Model {
   questions: { about: string; question: string }[]; catalogue: boolean; vocabularies: Vocabulary[]; counts: Record<string, CountHeld>;
   settings: { made: string | null; updated: string | null; database: string | null; year: number | null };
   restored: Record<string, unknown> | null;
+  values: Record<string, { value: string; rows: number | null }[]>; anaesthetic_table: string | null; bases: Record<string, string>;
 }
 interface CountQuery { name: string; safe: boolean; sql: string; tables: [string, number | null][] }
 interface CheckQuery { name: string; number: number; step: string | null; sql: string; file: string; pasted: string | null; database: string | null; columns: string[]; rows: string[][]; more: number }
@@ -144,6 +147,7 @@ function lock() {
   for (const waiting of pending.values()) waiting.reject();
   pending.clear();
   model = null;
+  corrections.forget();
   chartedSql.clear();
   countQueries = [];
   tablesSql = '';
@@ -224,6 +228,7 @@ function render() {
     $(box).hidden = !proposed;
   }
   $('t-confirm-waiting').hidden = proposed;
+  $('b-model-check').hidden = !proposed;
   $('t-tally').hidden = !proposed;
   $('b-questions').hidden = !proposed;
   if (model && proposed) text('t-tally', d.tally(model.tally));
@@ -381,7 +386,7 @@ function renderConfirm() {
     const items: Item[] = role.drafted ? role.items : [{
       about: `${role.name} rows`, attribute: 'rows', meaning: role.description, type: null, from: '', table: null, column: null, bound: false,
       definition: null, says: d.roleUndrafted, confidence: '', candidates: [], status: 'proposed', question: '', answer: null, date: null,
-      replacement: null, presence: null,
+      replacement: null, presence: null, link: null, correction: null,
     }];
     for (const item of items) {
       const entry = el('li', undefined, 'binding');
@@ -396,6 +401,8 @@ function renderConfirm() {
       if (role.drafted) entry.append(el('p', presenceText(item.presence), `presence ${item.presence?.state ?? 'unknown'}`));
       const said = answeredText(item);
       if (said) entry.append(el('p', said, 'answered'));
+      const correction = corrections.kept(item);
+      if (correction) entry.append(correction);
       const actions = el('div', undefined, 'actions');
       if (role.drafted && item.bound) actions.append(button(d.yes, () => void answer(item.about, 'yes', '', entry)));
       actions.append(button(d.another, () => {
@@ -405,7 +412,7 @@ function renderConfirm() {
       }, 'secondary'));
       if (role.drafted) actions.append(button(d.notSure, () => void answer(item.about, 'not sure', '', entry), 'secondary'));
       entry.append(actions);
-      if (openAnother.has(item.about)) entry.append(anotherPanel(item, entry));
+      if (openAnother.has(item.about)) entry.append(role.drafted ? corrections.panel(item, () => anotherPanel(item, entry)) : anotherPanel(item, entry));
       list.append(entry);
     }
     section.append(list);
@@ -772,6 +779,11 @@ $('tables-read').addEventListener('click', async () => {
   setBusy(false);
 });
 
+$('model-check').addEventListener('click', async () => {
+  setBusy(true);
+  await corrections.checkModel($('model-check-result'));
+  setBusy(false);
+});
 $('questions-copy').addEventListener('click', () => void navigator.clipboard?.writeText($('questions').textContent ?? '').catch(() => undefined));
 
 $('year').addEventListener('change', async () => {
@@ -950,6 +962,8 @@ const fixed: Record<string, string> = {
   'tables-read': d.tablesRead,
   't-confirm-what': d.confirmWhat,
   't-confirm-waiting': d.confirmWaiting,
+  't-model-check-what': d.corrections.modelCheckWhat,
+  'model-check': d.corrections.modelCheck,
   'h-questions': d.questionsHeading,
   't-questions-what': d.questionsWhat,
   't-questions-none': d.questionsNone,
@@ -997,6 +1011,24 @@ renderDatabase();
 // The boxes are emptied when the page is left, so that the browser does not keep their contents.
 window.addEventListener('pagehide', () => {
   for (const area of document.querySelectorAll<HTMLTextAreaElement>('textarea')) area.value = '';
+});
+
+corrections.setup({
+  call: (name, args = []) => call(name, args),
+  ask: (name, args = []) => ask(name, args),
+  render,
+  setBusy,
+  el,
+  button,
+  grid,
+  pasteBox,
+  year: yearValue,
+  base: (view) => model?.bases?.[view] ?? null,
+  anaestheticTable: () => model?.anaesthetic_table ?? null,
+  kinds: (about) => model?.vocabularies.find((v) => v.key === about)?.kinds ?? [],
+  values: (name) => model?.values?.[name] ?? null,
+  close: (about) => { openAnother.delete(about); },
+  step: d.steps[5],
 });
 
 show();

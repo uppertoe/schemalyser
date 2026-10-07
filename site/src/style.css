@@ -1022,6 +1022,58 @@ h3.part {
   margin: 0.3rem 0.5rem 0.3rem 0;
 }
 
+.describe .correction {
+  margin: 0.5rem 0;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.describe .correction .field {
+  margin: 0.35rem 0;
+}
+
+.describe .correction .field label {
+  display: block;
+}
+
+.describe .correction select,
+.describe .correction input[type='text'],
+.describe .correction input[type='number'] {
+  max-width: 100%;
+  min-width: 14rem;
+}
+
+.describe .correction .code-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1rem;
+}
+
+.describe .correction-sentence {
+  font-weight: 600;
+}
+
+.describe .correction-sql,
+.describe .kept-correction pre {
+  white-space: pre-wrap;
+}
+
+.describe .check-report {
+  margin: 0.5rem 0;
+}
+
+.describe .kept-correction {
+  margin: 0.4rem 0;
+  padding-left: 0.85rem;
+  border-left: 3px solid var(--good);
+}
+
+.describe .window-rule {
+  border-left: 3px solid var(--caution);
+  padding-left: 0.6rem;
+}
+
 .describe fieldset {
   margin: 0 0 1rem;
   border: 1px solid var(--line);

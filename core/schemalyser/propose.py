@@ -752,7 +752,11 @@ def _path_text(path):
         return WORDING["in_table"]
     if len(path) > 2:
         return WORDING["via_one"].format(path=f"{path[0][0]}.{path[0][1]} and {len(path) - 1} further joins")
-    return WORDING["via_one"].format(path=", then ".join(f"{a}.{b} = {c}.{d}" for a, b, c, d in path))
+    return WORDING["via_one"].format(path=", then ".join(_step_text(step) for step in path))
+
+
+def _step_text(step):
+    return " and ".join(f"{step[0]}.{a} = {step[2]}.{b}" for a, b in step_pairs(step))
 
 
 def _from_text(candidate):
@@ -760,7 +764,7 @@ def _from_text(candidate):
     source = f"{candidate['table']}.{candidate['column']}"
     if not candidate["path"]:
         return source
-    return source + ", by " + ", then ".join(f"{a}.{b} = {c}.{d}" for a, b, c, d in candidate["path"])
+    return source + ", by " + ", then ".join(_step_text(step) for step in candidate["path"])
 
 
 def _column_says(dictionary, candidate, view_name, column_name, link=None):
@@ -882,33 +886,152 @@ def _literal(text):
     return "'" + str(text).replace("'", "''") + "'"
 
 
-def _expression(column, ref, data_type, codes=None):
+def plan(column, binding, codes=None):
+    """What a view does with the column that a binding names, as a small description that both the SQL writer
+    (render) and the check's model of the binding (corrections.evaluate) read, so that the two cannot drift apart.
+
+    It is a tuple whose first item names the operation: raw, date, float, int, const, flag_in, kind, derive_flag,
+    scale or trim, with the operation's own settings after it."""
     kind = column["type"]
+    data_type = binding.get("data_type", "") if binding else ""
     found = _type_of(data_type)
+    derive = (binding or {}).get("derive")
+    if derive:
+        form = derive["form"]
+        if form == "flag":
+            return ("derive_flag", tuple(str(v) for v in derive["values"]), kind == "flag_or_empty")
+        if form == "scale":
+            return ("scale", float(derive.get("factor", 1)), float(derive.get("offset", 0)), kind == "whole")
+        if form == "date":
+            return ("date",)
+        if form == "trim":
+            return ("trim",)
     if kind == "date":
-        return f"CAST({ref} AS date)"
+        return ("date",)
     if kind == "number":
-        return f"TRY_CAST({ref} AS float)" if found in ("text", "unknown") else ref
+        return ("float",) if found in ("text", "unknown") else ("raw",)
     if kind == "whole":
-        return f"TRY_CAST({ref} AS int)" if found in ("text", "unknown") else ref
-    if kind in ("flag", "flag_or_empty") and _category(ref):
-        return f"CASE WHEN {ref} IS NULL THEN {_empty(column)} ELSE {_empty(column)} END"
+        return ("int",) if found in ("text", "unknown") else ("raw",)
+    if kind in ("flag", "flag_or_empty") and _category(binding["column"]):
+        empty = _empty(column)
+        return ("const", None if empty == "NULL" else int(empty))
     if kind in ("flag", "flag_or_empty"):
-        yes, no = ("1", "0") if found == "number" else ("'Y', 'Yes', '1'", "'N', 'No', '0'")
-        if kind == "flag":
-            if column.get("if_empty", 0) == 1:
-                return f"CASE WHEN {ref} IN ({no}) THEN 0 ELSE 1 END"
-            return f"CASE WHEN {ref} IN ({yes}) THEN 1 ELSE 0 END"
-        return f"CASE WHEN {ref} IN ({yes}) THEN 1 WHEN {ref} IN ({no}) THEN 0 END"
+        numeric = found == "number"
+        yes, no = ((1,), (0,)) if numeric else (("Y", "Yes", "1"), ("N", "No", "0"))
+        mode = "plain" if kind == "flag" and column.get("if_empty", 0) != 1 else "if_empty" if kind == "flag" else "or_empty"
+        return ("flag_in", yes, no, mode)
     if kind == "kind":
         if codes is not None:
-            given = [(k, c) for k, c in codes.items() if c]
-            if not given:
-                return f"CASE WHEN {ref} IS NOT NULL THEN 'other' ELSE 'other' END"
-            whens = " ".join(f"WHEN CAST({ref} AS varchar(254)) IN ({', '.join(_literal(x) for x in c)}) THEN {_literal(k)}" for k, c in given)
-            return f"CASE {whens} ELSE 'other' END"
-        return f"CASE WHEN {ref} IS NOT NULL THEN 'other' END"
-    return ref
+            given = tuple((k, tuple(str(x) for x in c)) for k, c in codes.items() if c)
+            return ("kind", given, True)
+        return ("kind", (), False)
+    return ("raw",)
+
+
+def _list(values):
+    return ", ".join(str(v) if isinstance(v, (int, float)) else _literal(v) for v in values)
+
+
+def _number_text(value):
+    value = float(value)
+    return str(int(value)) if value == int(value) and abs(value) < 1e15 else repr(value)
+
+
+def render(step, ref):
+    """The SQL of one planned operation on the column reference ref."""
+    op = step[0]
+    if op == "raw":
+        return ref
+    if op == "date":
+        return f"CAST({ref} AS date)"
+    if op == "float":
+        return f"TRY_CAST({ref} AS float)"
+    if op == "int":
+        return f"TRY_CAST({ref} AS int)"
+    if op == "const":
+        value = "NULL" if step[1] is None else str(step[1])
+        return f"CASE WHEN {ref} IS NULL THEN {value} ELSE {value} END"
+    if op == "flag_in":
+        _, yes, no, mode = step
+        if mode == "plain":
+            return f"CASE WHEN {ref} IN ({_list(yes)}) THEN 1 ELSE 0 END"
+        if mode == "if_empty":
+            return f"CASE WHEN {ref} IN ({_list(no)}) THEN 0 ELSE 1 END"
+        return f"CASE WHEN {ref} IN ({_list(yes)}) THEN 1 WHEN {ref} IN ({_list(no)}) THEN 0 END"
+    if op == "kind":
+        _, given, translated = step
+        if not translated:
+            return f"CASE WHEN {ref} IS NOT NULL THEN 'other' END"
+        if not given:
+            return f"CASE WHEN {ref} IS NOT NULL THEN 'other' ELSE 'other' END"
+        whens = " ".join(f"WHEN CAST({ref} AS varchar(254)) IN ({', '.join(_literal(x) for x in c)}) THEN {_literal(k)}" for k, c in given)
+        return f"CASE {whens} ELSE 'other' END"
+    if op == "derive_flag":
+        _, values, or_empty = step
+        test = f"CAST({ref} AS varchar(254)) IN ({', '.join(_literal(v) for v in values)})"
+        if or_empty:
+            return f"CASE WHEN {ref} IS NULL THEN NULL WHEN {test} THEN 1 ELSE 0 END"
+        return f"CASE WHEN {test} THEN 1 ELSE 0 END"
+    if op == "scale":
+        _, factor, offset, whole = step
+        text = f"TRY_CAST({ref} AS float) * {_number_text(factor)}"
+        if offset:
+            text += f" + {_number_text(offset)}" if offset > 0 else f" - {_number_text(-offset)}"
+        return f"CAST(ROUND({text}, 0) AS int)" if whole else text
+    if op == "trim":
+        return f"LTRIM(RTRIM(CAST({ref} AS nvarchar(4000))))"
+    raise ValueError(op)
+
+
+def _expression(column, ref, data_type, codes=None, binding=None):
+    binding = dict(binding or {})
+    binding.setdefault("data_type", data_type)
+    binding.setdefault("column", ref.rsplit(".", 1)[-1].strip("[]"))
+    return render(plan(column, binding, codes), ref)
+
+
+def step_pairs(step):
+    """The pairs of columns that one step of a path joins, as [(from_column, to_column), ...]: the step's own pair and,
+    where the step joins on more than one column, the further pairs it gives as its fifth item."""
+    return [(step[1], step[3])] + [tuple(pair) for pair in (step[4] if len(step) > 4 else [])]
+
+
+def step_key(step):
+    return (step[0], step[1], step[2], step[3], tuple(tuple(p) for p in (step[4] if len(step) > 4 else [])))
+
+
+def walk(path, aliases, joins, prefix=(), outer="LEFT JOIN"):
+    """Adds the joins of a path from the alias of prefix, reusing any join that an earlier binding of the view made
+    over the same steps, and returns the alias at its end and the prefix that names it."""
+    for step in path:
+        following = prefix + (step_key(step),)
+        if following not in aliases:
+            alias = f"t{len(aliases)}"
+            aliases[following] = alias
+            on = " AND ".join(f"{alias}.{_name(to)} = {aliases[prefix]}.{_name(fr)}" for fr, to in step_pairs(step))
+            joins.append(f"{outer} {_name(step[2])} {alias} ON {on}")
+        prefix = following
+    return aliases[prefix], prefix
+
+
+def window_on(alias, window, time_ref):
+    """The condition by which a row joins the anaesthetic that it shares a key with, within the anaesthetic's window."""
+    before, after = int(window.get("before", 0)), int(window.get("after", 0))
+    start, stop = f"{alias}.{_name(window['start'])}", f"{alias}.{_name(window['stop'])}"
+    low = f"DATEADD(minute, -{before}, {start})" if before else start
+    high = f"DATEADD(minute, {after}, {stop})" if after else stop
+    return f"{time_ref} >= {low} AND ({stop} IS NULL OR {time_ref} <= {high})"
+
+
+def joined_sql(joined, on_ref, alias):
+    """The subquery that joins several rows back into one text, in order."""
+    return (f"(SELECT STRING_AGG(CAST({alias}.{_name(joined['text'])} AS nvarchar(4000)), {_literal(joined.get('separator', ' '))}) "
+            f"WITHIN GROUP (ORDER BY {alias}.{_name(joined['order'])}) FROM {_name(joined['table'])} {alias} "
+            f"WHERE {alias}.{_name(joined['link'])} = {on_ref})")
+
+
+def filter_sql(item, ref):
+    return f"CAST({ref} AS varchar(254)) IN ({', '.join(_literal(v) for v in item['values'])})"
 
 
 def _category(ref):
@@ -933,6 +1056,7 @@ def view_sql(name, role, kinds=None, model=None, vocabularies=None):
     lines, nothing, vocabulary = [], [], []
     links = {link["column"] for link in view.get("links", [])}
     anchor = None
+    refs, windows = {}, []
     for column in view["columns"]:
         evidence = role["columns"][column["name"]]
         binding = evidence.get("binding")
@@ -940,25 +1064,43 @@ def view_sql(name, role, kinds=None, model=None, vocabularies=None):
             nothing.append(column["name"])
             lines.append(f"{_empty(column)} AS {column['name']}")
             continue
-        prefix = ()
-        for step in binding["path"]:
-            following = prefix + (tuple(step),)
-            if following not in aliases:
-                alias = f"t{len(aliases)}"
-                aliases[following] = alias
-                joins.append(f"LEFT JOIN {_name(step[2])} {alias} ON {alias}.{_name(step[3])} = {aliases[prefix]}.{_name(step[1])}")
-            prefix = following
-        ref = f"{aliases[prefix]}.{_name(binding['column'])}"
+        alias, _ = walk(binding["path"], aliases, joins)
+        ref = f"{alias}.{_name(binding['column'])}"
+        refs[column["name"]] = ref
+        if binding.get("window"):
+            # A link by a shared key and a time window waits until every other column is placed, because its join
+            # reads the time of the row.
+            windows.append((len(lines), column, binding, ref))
+            lines.append(None)
+            continue
+        if binding.get("joined"):
+            lines.append(f"{joined_sql(binding['joined'], ref, f'j{len(aliases)}')} AS {column['name']}")
+            continue
         codes = None
         if name == "role_reading" and column["name"] == "kind":
             codes = {k: item.get("codes", []) for k, item in (kinds or {}).items()}
         elif column["type"] == "kind" and (vocabularies or {}).get(column["name"]) is not None:
             codes = vocabularies[column["name"]]
-        elif column["type"] == "kind" or (column["type"] in ("flag", "flag_or_empty") and _category(binding["column"])):
+        elif not binding.get("derive") and (column["type"] == "kind" or (column["type"] in ("flag", "flag_or_empty") and _category(binding["column"]))):
             vocabulary.append(column["name"])
-        lines.append(f"{_expression(column, ref, binding.get('data_type', ''), codes)} AS {column['name']}")
+        lines.append(f"{render(plan(column, binding, codes), ref)} AS {column['name']}")
         if column["name"] in links and column["name"] in view["key"] and anchor is None:
             anchor = ref
+    for at, column, binding, shared_ref in windows:
+        window = binding["window"]
+        alias = f"w{len(aliases)}"
+        aliases[("window", column["name"])] = alias
+        time_ref = refs.get(window["time"], "NULL")
+        joins.append(f"LEFT JOIN {_name(window['table'])} {alias} ON {alias}.{_name(window['key'])} = {shared_ref} AND "
+                     f"{window_on(alias, window, time_ref)}")
+        ref = f"{alias}.{_name(window['output'])}"
+        lines[at] = f"{ref} AS {column['name']}"
+        if column["name"] in links and column["name"] in view["key"] and anchor is None:
+            anchor = ref
+    conditions = [f"{anchor} IS NOT NULL"] if anchor is not None else []
+    for item in (role["rows"].get("binding") or {}).get("filter") or []:
+        alias, _ = walk(item["path"], aliases, joins)
+        conditions.append(filter_sql(item, f"{alias}.{_name(item['column'])}"))
     header = [WORDING["header"].format(view=name, date=role.get("_date", ""))]
     if any(e.get("confirmation") for e in [role["rows"], *role["columns"].values()]):
         header.append(WORDING["header_person"])
@@ -971,8 +1113,8 @@ def view_sql(name, role, kinds=None, model=None, vocabularies=None):
     sql = "\n".join(header) + "\nSELECT " + ",\n       ".join(lines) + f"\nFROM   {_name(base)} t0"
     if joins:
         sql += "\n       " + "\n       ".join(joins)
-    if anchor is not None:
-        sql += f"\nWHERE  {anchor} IS NOT NULL"
+    if conditions:
+        sql += "\nWHERE  " + "\n  AND  ".join(conditions)
     return sql + "\n"
 
 
