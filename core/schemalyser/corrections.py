@@ -122,15 +122,15 @@ WORDING = {
     "say_margin": "allowing {before} {before_minutes} before the start and {after} {after_minutes} after the stop",
     "say_margin_none": "with no margin either side",
     "say_joined": "{column} is every {text} of the rows of {table} whose {link} matches {on}, joined in the order of {order} with {separator} between them.",
-    "say_codes": "The local {codes} of {source} {are} translated to {pairs}, and every other code is other.",
+    "say_codes": "The local {codes} of {source} {are} translated as follows: {pairs}. Every other code is other.",
     "say_how": ", reached {path}",
     "say_steps": "through {steps}",
     "say_step": "{table}, matching {pairs}",
     "space": "a space",
     "nothing": "nothing",
     # The check.
-    "check_whole": "This change keeps the map whole: all {views} of the record run on invented rows and give the rows they should, every identifying column is unique, every flag is filled, and the planted newborns give the expected answer.",
-    "check_whole_now": "The map as it stands is whole: all {views} of the record run on invented rows and give the rows they should, every identifying column is unique, every flag is filled, and the planted newborns give the expected answer.",
+    "check_whole": "This change keeps the map whole: all {views} of the record run on invented rows and give the rows they should, every identifying column is unique, every flag is filled, and the invented newborns of the test audit give the expected answer.",
+    "check_whole_now": "The map as it stands is whole: all {views} of the record run on invented rows and give the rows they should, every identifying column is unique, every flag is filled, and the invented newborns of the test audit give the expected answer.",
     "check_breaks": "This change breaks the map in {count}:",
     "check_kept_old": "This change breaks nothing that held before it. {count} {were} there before it and {remain}:",
     "check_mends": "This change also mends {count} that {were} there before it.",
@@ -139,7 +139,7 @@ WORDING = {
     "outside_window": "In {view}, the page leaves out {count} of the invented rows because their time lies outside the anaesthetic's window, as the window intends.",
     "orphans": "In {view}, {count} invented rows link to an anaesthetic that Anaesthetics does not hold, which can be right where Anaesthetics leaves some anaesthetics out.",
     "contract": "In {view}, {problem}",
-    "runs_not": "The SQL of {view} does not run on the invented rows ({error}).",
+    "runs_not": "In {view}, the page could not run this SQL on invented rows: {error}.",
     "doubled": "In {view}, {count} invented rows appear more than once, each under a second value of {link}, so a row is linked to more than one {target}.",
     "doubled_reading": "In {view}, {count} invented readings appear twice, each linked to a second anaesthetic, so a reading no longer links to exactly one anaesthetic.",
     "missing": "In {view}, {count} of the {total} invented rows that its columns should give are missing.",
@@ -147,14 +147,14 @@ WORDING = {
     "keys": "In {view}, {count} values of the column that identifies a row appear more than once, so that column no longer identifies one row.",
     "flag_empty": "{subject} is empty in {count}, and a flag of 1 or 0 is never empty.",
     "type": "{subject} gives {found} where this column should hold {wanted}.",
-    "count_fails": "The standard count of {name} does not run on the invented rows.",
-    "neonatal_missing": "The neonatal audit cannot run, because the map does not yet hold {views}.",
-    "neonatal_fails": "The neonatal audit does not run on the invented rows ({error}).",
-    "neonatal_minutes": "The planted neonate {key} gives {found} minutes below 40, where {wanted} are expected.",
-    "neonatal_died": "The planted neonate {key} gives {found} for a death within 90 days, where {wanted} is expected.",
-    "neonatal_absent": "The planted neonate {key} is not counted, although the audit should count it.",
-    "neonatal_present": "The planted neonate {key} is counted, although the audit should leave it out.",
-    "neonatal_more": "{count} further planted neonates give an answer other than the expected one.",
+    "count_fails": "The count of {name}, one of the counts that the page runs on every map to test it, could not run on invented rows.",
+    "neonatal_missing": "The test audit, which counts minutes of low mean pressure in invented newborns, cannot run, because the map does not yet hold {views}.",
+    "neonatal_fails": "The page could not run the test audit, which counts minutes of low mean pressure in invented newborns, on invented rows: {error}.",
+    "neonatal_minutes": "The invented newborn {key} gives {found} minutes below 40, where {wanted} are expected.",
+    "neonatal_died": "The invented newborn {key} gives {found} for a death within 90 days, where {wanted} is expected.",
+    "neonatal_absent": "The invented newborn {key} is not counted, although the test audit should count it.",
+    "neonatal_present": "The invented newborn {key} is counted, although the test audit should leave it out.",
+    "neonatal_more": "{count} further invented newborns give an answer other than the expected one.",
 }
 TYPE_WORDS = {"key": "a key", "date": "a date", "datetime": "a date and time", "number": "a number", "whole": "a whole number",
               "flag": "a flag of 1 or 0", "flag_or_empty": "a flag of 1, 0 or empty", "kind": "a kind", "text": "text"}
@@ -467,7 +467,8 @@ def build(state, correction):
             chosen[code[:100]] = kind
         if not chosen:
             raise CorrectionError(WORDING["values"].format(most=MOST_VALUES))
-        pairs = [f"{k} ({_clean(c, 30)})" for c, k in list(chosen.items())[:10]]
+        meanings = entry.get("meanings") or {}
+        pairs = [f"{_clean(c, 30)} to {_meaning(meanings.get(k), k)}" for c, k in list(chosen.items())[:10]]
         built.update(chosen=chosen, source=entry["bound"], sentence=_fit(WORDING["say_codes"].format(
             codes="code" if len(chosen) == 1 else "codes", source=entry["bound"] or about, are="is" if len(chosen) == 1 else "are",
             pairs=_and(pairs))))
@@ -1395,13 +1396,24 @@ def _cases(count):
     return _plural(count, "row", "rows")
 
 
+def _meaning(meaning, kind):
+    """A kind in plain words with its code after it, as "a heart rate, in beats a minute (heart_rate)"."""
+    if not meaning:
+        return kind
+    text = meaning.rstrip(". ")
+    return f"{text[:1].lower()}{text[1:]} ({kind})"
+
+
 def _error(error):
-    text = " ".join(str(error).split("\n")[0].split())[:160]
+    """A database's error in plain words, without the name of the kind of error that DuckDB puts first."""
+    text = " ".join(str(error).split("\n")[0].split())[:200]
+    text = re.sub(r"^[A-Z][a-z]+ Error:\s*", "", text)[:160]
     return _clean(text, 160).rstrip(" .") or "an error"
 
 
 COUNT_TITLES = {"coverage_by_year": "the anaesthetics of each year", "repeated_keys": "rows that appear twice",
                 "readings_by_kind_and_year": "the readings of each kind and year",
+                "readings_outside_anaesthetic": "readings outside an anaesthetic",
                 "gaps_between_readings": "the gaps between readings"}
 
 
@@ -1466,6 +1478,17 @@ def run_check(state, seed=SHADOW_SEED, anaesthetics=SHADOW_ANAESTHETICS):
                 shadow.place(name, decoy, decoy=True)
     shadow.pair_encounters()
     con, date_columns = shadow.database()
+    try:
+        return _run_views(state, data, views, order, shadow, con, date_columns, problems, notes, about, began)
+    finally:
+        # The database is in memory and holds every table of the shadow; closing it gives the memory back, which matters
+        # in the browser, where a sitting runs many checks.
+        con.close()
+
+
+def _run_views(state, data, views, order, shadow, con, date_columns, problems, notes, about, began):
+    from .translate import to_duckdb
+    title = lambda name: rolemap.view_title(name, False)  # noqa: E731
     results = {}
     for name in order:
         spec = state.views[name]

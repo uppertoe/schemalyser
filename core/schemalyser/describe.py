@@ -42,7 +42,8 @@ from .catalogue import NAME, QUERY_ORDER, Catalogue, CatalogueError
 LARGE = 10_000_000
 # The most anaesthetics that part 1 of a script puts into #cohort.
 COHORT_LIMIT = 5000
-# The fewest rows that a count shows; a smaller count is left blank, and every count is rounded down to tens.
+# The fewest rows that a count shows; a smaller group is left out, a smaller figure within a group is left empty, and
+# every count is rounded down to tens.
 LEAST = 10
 FOLDER_FORMAT = 1
 DICTIONARY_FOLDER = "dictionary"
@@ -65,18 +66,19 @@ WORDING = {
     "timeout": "Before you run this script, set a time limit: open the Query menu, choose Query Options, then Execution, "
                "and enter a number of seconds in Execution time-out. Run the whole script; part 1 finishes first.",
     "charted_comment": "Part 2 lists every code of {column} charted on the anaesthetics in #cohort, with the number of "
-                       "rows and of anaesthetics for each, rounded down to ten and left blank under ten, and the name "
+                       "rows and of anaesthetics for each, rounded down to ten and left empty under ten, and the name "
                        "that {lookup} gives each code, most charted first. It reaches {path} from #cohort by their keys, "
                        "so that it reads only the rows of those anaesthetics.",
     "charted_comment_bare": "Part 2 lists every code of {column} charted on the anaesthetics in #cohort, with the number "
-                            "of rows and of anaesthetics for each, rounded down to ten and left blank under ten, most "
+                            "of rows and of anaesthetics for each, rounded down to ten and left empty under ten, most "
                             "charted first. It reaches {path} from #cohort by their keys, so that it reads only the rows "
                             "of those anaesthetics.",
     "readings_comment": "Part 2 counts the readings of the anaesthetics in #cohort by their kind, as the map translates "
-                        "them, with how many were accepted and hold a number, rounded down to ten and left blank under "
+                        "them, with how many were accepted and hold a number, rounded down to ten and left empty under "
                         "ten. It reaches {path} from #cohort by their keys, so that it reads only those readings.",
-    "safe_comment": "This count reads {tables} and no table of readings. Each count is rounded down to ten, and a year "
-                    "or a group with fewer than ten is left out.",
+    "safe_comment": "This count reads {tables} and no table of readings. Each count is rounded down to ten. A year or a "
+                    "group with fewer than ten is left out, and a figure under ten within it is left empty, which the "
+                    "page shows as under 10.",
     "names": "The map names the tables and local codes of the hospital's database, so this query is for use inside the "
              "hospital only.",
     "codes_says": "A person chose {count} local {codes} for this kind from the list of what is charted on {date}.",
@@ -112,13 +114,28 @@ WORDING = {
     "count_changed": "{column} of the row {key} was {before} and is now {after}, a change of more than a tenth.",
     "keep_failing": "This change fails the check, so Schemalyser keeps it only if you tick Keep it although the check fails and give the reason.",
     "no_probe": "Schemalyser offers no probe for this kind of correction.",
-    "values_comment": "Part 2 lists the commonest values of {column} among the rows of the anaesthetics in #cohort, at most {most}, with the number of rows that hold each, rounded down to ten and left blank under ten.",
-    "values_safe": "This query lists the commonest values of {column}, at most {most}, with the number of rows that hold each, rounded down to ten and left blank under ten. It reads {tables}, which are small tables, and no table of readings.",
-    "probe_link_comment": "Part 2 counts how many of the anaesthetics in #cohort have at least one row through the link that {about} now makes, and how many have none, rounded down to ten and left blank under ten.",
-    "probe_filter_comment": "This probe counts the rows of {view} that are read and how many of them pass the filter on {column}, rounded down to ten and left blank under ten.",
-    "probe_flag_comment": "This probe counts the rows in which {about} is 1, 0 and empty, rounded down to ten and left blank under ten.",
+    "values_comment": "Part 2 lists the commonest values of {column} among the rows of the anaesthetics in #cohort, at most {most}, with the number of rows that hold each, rounded down to ten and left empty under ten.",
+    "values_safe": "This query lists the commonest values of {column}, at most {most}, with the number of rows that hold each, rounded down to ten and left empty under ten. It returns at most {most} rows and reads no table of readings. It reads each of these tables once: {tables}.",
+    "probe_link_comment": "Part 2 counts how many of the anaesthetics in #cohort have at least one row through the link that {about} now makes, and how many have none, rounded down to ten and left empty under ten.",
+    "probe_filter_comment": "This probe counts the rows of {view} that are read and how many of them pass the filter on {column}, rounded down to ten and left empty under ten.",
+    "probe_flag_comment": "This probe counts the rows in which {about} is 1, 0 and empty, rounded down to ten and left empty under ten.",
     "probe_cohort": "It reads only the rows of the anaesthetics in #cohort, which part 1 makes.",
-    "probe_small": "It reads {tables}, which are small tables, and no table of readings.",
+    "probe_small": "It reads no table of readings, and it reads each of these tables once: {tables}.",
+    "probe_flag_two_comment": "This probe counts the rows in which {about} is 1 and 0, rounded down to ten and left empty under ten.",
+    "probe_flag_two": "The flag is 1 in {ones} rows and 0 in {zeros}.",
+    "sized": "{table}, which holds about {rows} rows",
+    "sized_unknown": "{table}, whose size is not known",
+    "question_column": "The page proposes {source} as {title}. Is that right, and if not, which column holds it?",
+    "question_nothing": "The page has found no column for {title}. Which column holds it, if the hospital records it?",
+    "question_rows": "The page proposes {table} as the table that holds one row for each {what}. Is that right, and if not, which table holds them?",
+    "assumed_plain": "The page assumes that {subject} is 1 where {source} holds {yes}, and 0 where it holds anything else or is empty. Confirm or change it in the form that opens after Yes.",
+    "assumed_if_empty": "The page assumes that {subject} is 0 where {source} holds {no}, and 1 where it holds anything else or is empty. Confirm or change it in the form that opens after Yes.",
+    "assumed_or_empty": "The page assumes that {subject} is 1 where {source} holds {yes}, 0 where it holds {no}, and empty otherwise. Confirm or change it in the form that opens after Yes.",
+    "described_none": "Schemalyser proposed this draft map from a data dictionary on {date}, and no person has yet answered for any of its columns or tables.",
+    "described_some": "Schemalyser proposed this draft map from a data dictionary on {date}. A person has since answered for {answered} of its {total} columns and tables, and {left} still to be answered.",
+    "described_all": "Schemalyser proposed this draft map from a data dictionary on {date}. A person has since answered for every one of its {total} columns and tables.",
+    "described_codes": " {count} still {hold} codes that a person has not yet translated.",
+    "draft": "draft: {parts}",
     "probe_few": "Fewer than ten anaesthetics came back, so the probe says too little to judge the link.",
     "probe_link": "Of {total} anaesthetics of the year, {linked} have at least one row through this link and {none} have none.",
     "probe_filter": "Of {total} rows read, {passing} pass the filter.",
@@ -167,6 +184,10 @@ def _and(items):
     return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
 
 
+def _count_words(n, one, many):
+    return f"{n:,} {one if n == 1 else many}" if n else ""
+
+
 def _now():
     return dt.datetime.now().isoformat(timespec="minutes")
 
@@ -176,7 +197,7 @@ def _where(conditions):
 
 
 def _rounded(expression, name):
-    """A count rounded down to ten and left blank under ten, as every count of this screen is."""
+    """A count rounded down to ten and left empty under ten, as every count of this screen is."""
     return f"CASE WHEN {expression} >= {LEAST} THEN ({expression}) - ({expression}) % 10 END AS {name}"
 
 
@@ -510,11 +531,22 @@ class Describe:
         return f"{table}.{column}" + (via or "")
 
     def tally(self):
-        counts = {"confirmed": 0, "corrected": 0, "not_sure": 0, "remaining": 0, "total": 0}
-        for _, item in self._items():
-            counts["total"] += 1
+        """The answers so far. The figures count columns only; the table of each part is counted apart, under tables
+        and tables_remaining. A column of a flag or a kind that is answered but whose codes nobody has yet translated is
+        counted as untranslated, and not as confirmed or corrected."""
+        counts = {"confirmed": 0, "corrected": 0, "not_sure": 0, "remaining": 0, "untranslated": 0, "total": 0,
+                  "tables": 0, "tables_remaining": 0}
+        for about, item in self._items():
             answer = (item.get("confirmation") or {}).get("answer")
-            if answer == "yes":
+            if about.endswith(" rows"):
+                counts["tables"] += 1
+                if not (answer in ("yes", "not sure") or (answer == "no" and item["status"] == "person")):
+                    counts["tables_remaining"] += 1
+                continue
+            counts["total"] += 1
+            if (answer == "yes" or (answer == "no" and item["status"] == "person")) and self._untranslated(about, item):
+                counts["untranslated"] += 1
+            elif answer == "yes":
                 counts["confirmed"] += 1
             elif answer == "no" and item["status"] == "person":
                 counts["corrected"] += 1
@@ -530,17 +562,99 @@ class Describe:
             for column, item in role["columns"].items():
                 yield f"{name}.{column}", item
 
+    def _vocabulary_reason(self, view_name, binding):
+        """Why the list of what is charted cannot be written for a column of a kind, or "" where it can."""
+        view = self.views[view_name]
+        role = self.data["roles"][view_name]
+        links = {link["column"] for link in view.get("links", [])}
+        link = next((c for c in ("anaesthetic_key", "patient_key") if c in links), None)
+        if not binding:
+            return "unbound"
+        if link is None:
+            return "unlinked"
+        if not role["columns"][link].get("binding"):
+            return "unbound_link"
+        return ""
+
+    def coding(self, view_name, column, item):
+        """Whether a column of a flag or a kind is bound to a source that holds codes, which a person must translate
+        before the view gives anything useful: None where it is not, or {"form": "flag" | "kind", "translated",
+        "assumed": the sentence of any translation that the proposer guessed, "values": the values guessed to mean
+        yes, "list": whether step 7 can list its codes}. A flag bound to a column of numbers is read as 1 and 0 and
+        needs no translation."""
+        binding = item.get("binding")
+        if not binding or column["type"] not in ("flag", "flag_or_empty", "kind") or binding.get("window") or binding.get("joined"):
+            return None
+        about = f"{view_name}.{column['name']}"
+        if column["type"] == "kind":
+            translated = bool((self.codes.get(about) or {}).get("date"))
+            if view_name == "role_reading" and column["name"] == "kind":
+                translated = translated or any((k or {}).get("status") == "person" and k.get("codes")
+                                               for k in self.data["kinds"].values())
+            return {"form": "kind", "translated": translated, "assumed": "", "values": [],
+                    "list": not self._vocabulary_reason(view_name, binding)}
+        derive = binding.get("derive")
+        if derive:
+            return {"form": "flag", "translated": True, "assumed": "", "values": list(derive.get("values") or [])} \
+                if derive.get("form") == "flag" else None
+        step = propose.plan(column, binding)
+        if step[0] == "const":
+            return {"form": "flag", "translated": False, "assumed": "", "values": []}
+        if step[0] == "flag_in" and not all(isinstance(v, (int, float)) for v in step[1]):
+            _, yes, no, mode = step
+            words = {"subject": rolemap.plain_about(about), "source": f"{binding['table']}.{binding['column']}",
+                     "yes": _and(yes).replace(" and ", " or "), "no": _and(no).replace(" and ", " or ")}
+            return {"form": "flag", "translated": False, "assumed": WORDING[f"assumed_{mode}"].format(**words),
+                    "values": [str(v) for v in yes]}
+        return None
+
+    def _untranslated(self, about, item):
+        view_name, _, name = about.partition(".")
+        spec = next((c for c in self.views[view_name]["columns"] if c["name"] == name), None)
+        found = self.coding(view_name, spec, item) if spec else None
+        return bool(found and not found["translated"])
+
+    def untranslated(self):
+        """The columns answered whose codes are not yet translated, each named in plain words with its source."""
+        return [{"about": about, "title": rolemap.plain_about(about, True), "from": item.get("from", "").split(",")[0]}
+                for about, item in self._items() if not about.endswith(" rows")
+                and ((item.get("confirmation") or {}).get("answer") == "yes"
+                     or ((item.get("confirmation") or {}).get("answer") == "no" and item["status"] == "person"))
+                and self._untranslated(about, item)]
+
+    def unfinished(self):
+        """What keeps the folder a draft, as the words of settings.json ("52 columns unanswered and 3 still to
+        translate"), or "" where nothing does."""
+        t = self.tally() if self.data is not None else None
+        if t is None:
+            return ""
+        unanswered = [p for p in (_count_words(t["remaining"], "column", "columns"), _count_words(t["tables_remaining"], "table", "tables")) if p]
+        parts = [f"{_and(unanswered)} unanswered"] if unanswered else []
+        if t["untranslated"]:
+            parts.append(f"{t['untranslated']:,} still to translate")
+        return " and ".join(parts)
+
     def questions(self):
-        """The bindings marked not sure, each named in plain words, with its question and the meaning of the column."""
+        """The bindings marked not sure, each named in plain words, with a question that states the proposal and asks
+        whether it is right, and the meaning of the column."""
         found = []
         for about, item in self._items():
             if (item.get("confirmation") or {}).get("answer") != "not sure":
                 continue
             view, _, column = about.partition(".")
-            spec = next((c for c in self.views[view.split(" ")[0]]["columns"] if c["name"] == column), None)
-            meaning = rolemap.plain(spec["meaning"], view) if spec else rolemap.plain(self.views[view.split(" ")[0]]["description"])
-            found.append({"about": about, "title": rolemap.plain_about(about, True), "question": rolemap.plain(item.get("question") or ""),
-                          "meaning": meaning})
+            view_name = view.split(" ")[0]
+            spec = next((c for c in self.views[view_name]["columns"] if c["name"] == column), None)
+            meaning = rolemap.plain(spec["meaning"], view) if spec else rolemap.plain(self.views[view_name]["description"])
+            binding = item.get("binding")
+            if about.endswith(" rows"):
+                what = self.views[view_name]["one_row_per"]
+                question = WORDING["question_rows"].format(table=binding["table"], what=what) if binding else \
+                    WORDING["question_nothing"].format(title=f"the table that holds one row for each {what}")
+            elif binding:
+                question = WORDING["question_column"].format(source=f"{binding['table']}.{binding['column']}", title=rolemap.plain_about(about))
+            else:
+                question = WORDING["question_nothing"].format(title=rolemap.plain_about(about))
+            found.append({"about": about, "title": rolemap.plain_about(about, True), "question": question, "meaning": meaning})
         return found
 
     # Corrections in plain forms, each checked on invented rows before it is kept.
@@ -604,12 +718,13 @@ class Describe:
         if not found["passed"] and not (although and reason):
             raise DescribeError(WORDING["keep_failing"])
         result = corrections.outcome(found)
-        record = {"answer": "no", "date": date, "replacement": built["source"], "correction": correction, "check": result}
+        answer = self._answer_of(built)
+        record = {"answer": answer, "date": date, "replacement": built["source"], "correction": correction, "check": result}
         if not found["passed"]:
             record["reason"] = reason
         corrections.apply(self, built, record)
         self.settings["updated"] = date
-        self.confirmations.append({"attribute": built["about"], "answer": "no", "replacement": built["source"], "date": date,
+        self.confirmations.append({"attribute": built["about"], "answer": answer, "replacement": built["source"], "date": date,
                                    "note": "", "version": self.version, "correction": json.dumps(correction, sort_keys=True),
                                    "check": result, "reason": reason if not found["passed"] else ""})
         self.corrections.append({"name": "correction", "about": built["about"], "form": built["form"], "says": built["sentence"],
@@ -618,10 +733,27 @@ class Describe:
         self._checked.pop(key, None)
         return {"kept": built["about"], "probe": self.probe_kind(built["about"])}
 
+    def _answer_of(self, built):
+        """The answer that a kept correction records. A form that keeps the column already bound, such as the 1-or-0
+        form or a translation of codes on the proposed column, confirms it with a translation, and is recorded as yes;
+        any other correction is recorded as no. A column that a person has already corrected stays corrected."""
+        if built["form"] not in ("column", "derived", "codes") or not built.get("column"):
+            return "no"
+        item = self.data["roles"][built["view"]]["columns"][built["column"]]
+        current = item.get("binding")
+        if (item.get("confirmation") or {}).get("answer") == "no" or not current:
+            return "no"
+        if built["form"] == "codes":
+            return "yes"
+        new = built["binding"]
+        same = (current["table"].upper(), current["column"].upper()) == (new["table"].upper(), new["column"].upper())
+        return "yes" if same else "no"
+
     def replay_correction(self, correction, date=None, check="", reason=""):
         """Applies a correction recorded in confirmations.csv again, without checking it, as the folder check does."""
         built = self._built(correction)
-        record = {"answer": "no", "date": date or _today(), "replacement": built["source"], "correction": correction, "check": check}
+        record = {"answer": self._answer_of(built), "date": date or _today(), "replacement": built["source"],
+                  "correction": correction, "check": check}
         if reason:
             record["reason"] = reason
         corrections.apply(self, built, record)
@@ -698,9 +830,9 @@ class Describe:
                               "       " + _rounded("COUNT(*)", "rows"), *order,
                               f"GROUP  BY CAST({sql} AS nvarchar(254))", "ORDER  BY COUNT(*) DESC;"])
             text = "\n".join([_wrap(WORDING["values_safe"].format(column=f"{table}.{column}", most=MOST_VALUES,
-                                                                  tables=_and(dict.fromkeys(self._sized_names(order))))),
+                                                                  tables=self._sized_text(self._sized_names(order)))),
                               _wrap(WORDING["names"]), body])
-        return {"sql": self.offer(name, step, text, about=about, table=table, column=column, year=year),
+        return {"sql": self.offer(name, step, text, about=about, table=table, column=column, year=year if script else None),
                 "name": name, "script": script}
 
     def read_values(self, name, text):
@@ -711,6 +843,15 @@ class Describe:
         parsed = [{"value": r[0], "rows": _number(r[1])} for r in rows]
         self.values[name] = parsed
         return {"values": parsed}
+
+    def _sized_text(self, names):
+        """Tables named with their sizes, as the result of the tables and columns query gives them."""
+        parts = []
+        for name in dict.fromkeys(names):
+            size = self.sizes.get(name.upper())
+            parts.append(WORDING["sized"].format(table=name, rows=f"{size:,}") if size is not None
+                         else WORDING["sized_unknown"].format(table=name))
+        return _and(parts)
 
     def _sized_names(self, lines):
         return [m for line in lines for m in re.findall(r"(?:FROM|JOIN)\s+\[?([A-Za-z_][\w]*)\]?\s+(?:AS\s+)?t\d", line)]
@@ -820,26 +961,37 @@ class Describe:
                 binding = role["columns"][column]["binding"]
                 script, ref, lines = self._counted(view_name, binding["path"], binding["table"], binding["column"], year)
                 expression = propose.render(propose.plan(spec, binding), ref)
+                two = spec["type"] == "flag"
                 select = ["SELECT " + _rounded(f"SUM(CASE WHEN {expression} = 1 THEN 1 ELSE 0 END)", "ones") + ",",
-                          "       " + _rounded(f"SUM(CASE WHEN {expression} = 0 THEN 1 ELSE 0 END)", "zeros") + ",",
-                          "       " + _rounded(f"SUM(CASE WHEN {expression} IS NULL THEN 1 ELSE 0 END)", "empty")]
-                comment = WORDING["probe_flag_comment"].format(about=about)
+                          "       " + _rounded(f"SUM(CASE WHEN {expression} = 0 THEN 1 ELSE 0 END)", "zeros") + ("" if two else ",")]
+                if not two:
+                    select.append("       " + _rounded(f"SUM(CASE WHEN {expression} IS NULL THEN 1 ELSE 0 END)", "empty"))
+                comment = WORDING["probe_flag_two_comment" if two else "probe_flag_comment"].format(about=rolemap.plain_about(about))
             body = "\n".join(select + lines) + ";"
             if script:
                 text = self._script(year, _wrap(comment + " " + WORDING["probe_cohort"]), body)
             else:
-                text = "\n".join([_wrap(comment + " " + WORDING["probe_small"].format(tables=_and(dict.fromkeys(self._sized_names(lines))))),
+                text = "\n".join([_wrap(comment + " " + WORDING["probe_small"].format(tables=self._sized_text(self._sized_names(lines)))),
                                   _wrap(WORDING["names"]), body])
-            columns = PROBE_COLUMNS[kind]
-        sql = self.offer(name, step, text, about=about, year=year, probe=kind)
+            columns = self._probe_columns(about, kind)
+        sql = self.offer(name, step, text, about=about, year=year if kind == "link" or script else None, probe=kind)
         return {"sql": sql, "name": name, "kind": kind, "columns": list(columns)}
+
+    def _probe_columns(self, about, kind):
+        """The columns of a probe. A flag that the record never leaves empty is counted as 1 and 0 alone."""
+        if kind == "flag":
+            view_name, _, column = about.partition(".")
+            spec = next((c for c in self.views[view_name]["columns"] if c["name"] == column), {})
+            if spec.get("type") == "flag":
+                return ("ones", "zeros")
+        return PROBE_COLUMNS[kind]
 
     def read_probe(self, about, text, record=True):
         kind = self.probe_kind(about)
         if kind is None:
             raise DescribeError(WORDING["no_probe"])
         name = "probe-" + re.sub(r"[^\w]+", "-", about).strip("-")
-        columns, rows = read_grid(text, PROBE_COLUMNS[kind])
+        columns, rows = read_grid(text, self._probe_columns(about, kind))
         if record:
             self.pasted(name, text)
         self.probes[about] = {"kind": kind, "columns": columns, "rows": rows, "date": _today()}
@@ -857,6 +1009,8 @@ class Describe:
                                                  none=_shown_count(row.get("without_rows")))]
         if held["kind"] == "filter":
             return [WORDING["probe_filter"].format(total=_shown_count(row.get("rows_read")), passing=_shown_count(row.get("passing")))]
+        if "empty" not in held["columns"]:
+            return [WORDING["probe_flag_two"].format(ones=_shown_count(row.get("ones")), zeros=_shown_count(row.get("zeros")))]
         return [WORDING["probe_flag"].format(ones=_shown_count(row.get("ones")), zeros=_shown_count(row.get("zeros")),
                                              empty=_shown_count(row.get("empty")))]
 
@@ -907,13 +1061,7 @@ class Describe:
                     kinds = [(k["kind"], k["meaning"]) for k in self.model["vocabularies"][vocabulary]]
                 links = {link["column"]: link["to"] for link in view.get("links", [])}
                 link = next((c for c in ("anaesthetic_key", "patient_key") if c in links), None)
-                reason = ""
-                if not binding:
-                    reason = "unbound"
-                elif link is None:
-                    reason = "unlinked"
-                elif not role["columns"][link].get("binding"):
-                    reason = "unbound_link"
+                reason = self._vocabulary_reason(view_name, binding)
                 held = self.codes.get(key, {})
                 lookup = held.get("lookup") or (self._lookup(binding["table"], binding["column"]) if binding else None)
                 found.append({"key": key, "title": rolemap.plain_about(key, True), "view": view_name, "column": column["name"], "vocabulary": vocabulary,
@@ -1143,12 +1291,14 @@ class Describe:
         self.set_settings(year=year)
         rounding = 10
         rounded = lambda n: f"g.{n} - g.{n} % {rounding} AS {n}"  # noqa: E731
+        # A figure within a year that is under ten is left empty, never shown as 0.
+        within = lambda n: f"CASE WHEN g.{n} >= {LEAST} THEN g.{n} - g.{n} % {rounding} END AS {n}"  # noqa: E731
         coverage = ("with_patient", "with_birth_date", "with_death_date", "test_patients", "with_stop", "stop_before_start")
         found = []
         small = self._tables_of("role_patient") + self._tables_of("role_anaesthetic")
         coverage_sql = f"""SELECT g.start_year,
        {rounded('anaesthetics')},
-       {(',' + chr(10) + '       ').join(rounded(n) for n in coverage)}
+       {(',' + chr(10) + '       ').join(within(n) for n in coverage)}
 FROM   (SELECT YEAR(a.start_time) AS start_year,
                COUNT(*) AS anaesthetics,
                SUM(CASE WHEN p.patient_key IS NOT NULL THEN 1 ELSE 0 END) AS with_patient,
@@ -1200,12 +1350,13 @@ FROM   (SELECT r.kind,
 {indented}
                ) r
         GROUP  BY r.kind) g
+WHERE  g.readings >= {LEAST}
 ORDER  BY g.kind;"""
             found.append({"name": "readings_by_kind", "safe": False, "year": year,
                           "sql": self._script(year, _wrap(WORDING["readings_comment"].format(path=_and(order))), second),
                           "tables": self._sized(self._tables_of("role_anaesthetic") + order)})
         for item in found:
-            item["sql"] = self.offer(f"count-{item['name']}", step, item["sql"], year=year)
+            item["sql"] = self.offer(f"count-{item['name']}", step, item["sql"], year=item.get("year"))
         return found
 
     def read_count(self, name, text, date=None, record=True):
@@ -1234,19 +1385,20 @@ ORDER  BY g.kind;"""
         if name == "coverage_by_year":
             records = [r for r in records if isinstance(r.get("anaesthetics"), (int, float)) and r["anaesthetics"]]
             for figure, what in FIGURES.items():
-                shares = [((r.get(figure) or 0) / r["anaesthetics"], r) for r in records]
+                # A figure under ten comes back empty, and says too little to compare.
+                shares = [(r[figure] / r["anaesthetics"], r) for r in records if isinstance(r.get(figure), (int, float))]
                 if not shares:
                     continue
                 best_share, best = max(shares, key=lambda s: (s[0], s[1]["anaesthetics"]))
                 for share, r in shares:
                     if r is not best and best_share > 0 and share <= best_share / 2 and (best_share - share) * r["anaesthetics"] >= 10:
-                        found.append(WORDING["cliff"].format(year=r["start_year"], count=r.get(figure) or 0, total=r["anaesthetics"],
-                                                             what=what, best_count=best.get(figure) or 0,
-                                                             best_total=best["anaesthetics"], best_year=best["start_year"]))
+                        found.append(WORDING["cliff"].format(year=r["start_year"], count=f"{r.get(figure) or 0:,}", total=f"{r['anaesthetics']:,}",
+                                                             what=what, best_count=f"{best.get(figure) or 0:,}",
+                                                             best_total=f"{best['anaesthetics']:,}", best_year=best["start_year"]))
         elif name == "repeated_keys":
             for r in records:
                 if (r.get("keys_repeated") or 0) > 0:
-                    found.append(WORDING["repeated"].format(view=rolemap.view_title(str(r["role_view"]), False), count=r["keys_repeated"]))
+                    found.append(WORDING["repeated"].format(view=rolemap.view_title(str(r["role_view"]), False), count=f"{r['keys_repeated']:,}"))
         return found
 
     # The record of how the folder was made: every query offered, every result pasted, every answer.
@@ -1259,7 +1411,10 @@ ORDER  BY g.kind;"""
             entry = self.journal[name] = {"number": len(self.journal) + 1, "name": name}
         stamp = f"-- {WORDING['stamp_query'].format(version=self.version or 'unknown', date=_today())}"
         text = stamp + "\n" + sql
-        entry.update({"step": step, "offered": _now(), "version": self.version, **extra})
+        entry.update({"step": step, "offered": _now(), "version": self.version,
+                      **{k: v for k, v in extra.items() if v is not None}})
+        for key in [k for k, v in extra.items() if v is None]:
+            entry.pop(key, None)
         self.queries[name] = text
         return text
 
@@ -1295,7 +1450,28 @@ ORDER  BY g.kind;"""
             (folder / name).write_text(text, encoding="utf-8")
         return folder
 
+    def _described(self):
+        """The description of map.json, which follows the record: the date of the proposal, and how many of its
+        columns and tables a person has answered for."""
+        date = propose._proposed_on(self.data)
+        t = self.tally()
+        total = t["total"] + t["tables"]
+        left = t["remaining"] + t["tables_remaining"]
+        answered = total - left
+        if not answered:
+            text = WORDING["described_none"].format(date=date)
+        elif left:
+            text = WORDING["described_some"].format(date=date, answered=f"{answered:,}", total=f"{total:,}",
+                                                    left=f"{left:,} {'is' if left == 1 else 'are'}")
+        else:
+            text = WORDING["described_all"].format(date=date, total=f"{total:,}")
+        if t["untranslated"]:
+            n = t["untranslated"]
+            text += WORDING["described_codes"].format(count=f"{n:,} {'column' if n == 1 else 'columns'}", hold="holds" if n == 1 else "hold")
+        return text
+
     def _map_files(self, stamp=""):
+        self.data["description"] = self._described()
         files = {rolemap.MAP_FILE: json.dumps(self.data, indent=2, ensure_ascii=False) + "\n"}
         for name in self.data["roles"]:
             files[f"{name}.sql"] = (stamp + "\n" if stamp else "") + self.view_sql(name)
@@ -1353,11 +1529,16 @@ ORDER  BY g.kind;"""
             journal.append({"number": entry["number"], **item})
         files["journal.json"] = self._json({"entries": journal}, date)
         settings = dict(self.settings)
+        unfinished = self.unfinished()
+        settings["complete"] = self.data is not None and not unfinished
+        if unfinished:
+            settings["draft"] = WORDING["draft"].format(parts=unfinished)
         settings.update({"dictionary": {"kept": kept, **({k: v for k, v in (self.dictionary_receipt() or {}).items()
                                                           if k in ("tables", "columns", "file", "tablesFile")})}})
         files["settings.json"] = self._json(settings, date)
         training = [self._file(e["name"], "queries", "sql") for e in entries if e.get("database") == "training"]
-        files["README.md"] = readme(sorted(files), self.version, date, kept, training).encode("utf-8")
+        files["README.md"] = readme(sorted(files), self.version, date, kept, training, unfinished,
+                                    self.untranslated() if self.data is not None else []).encode("utf-8")
         return files
 
     def folder_zip(self, keep_dictionary=False, date=None):
@@ -1535,6 +1716,7 @@ ORDER  BY g.kind;"""
                                        rolemap.plain(column["meaning"], view["name"]), binding["table"] if binding else None,
                                        binding["column"] if binding else None, column["type"])
                     shown["link"] = links.get(column["name"])
+                    shown["coding"] = self.coding(view["name"], column, item)
                     shown["title"] = rolemap.column_title(view["name"], column["name"])
                     entry["items"].append(shown)
             roles.append(entry)
@@ -1547,7 +1729,10 @@ ORDER  BY g.kind;"""
                 "anaesthetic_table": ((self.data or {}).get("roles", {}).get("role_anaesthetic") or {}).get("rows", {}).get("binding", {}).get("table"),
                 "bases": {name: role["rows"]["binding"]["table"] for name, role in (self.data or {}).get("roles", {}).items()
                           if role["rows"].get("binding")},
-                "restored": self.restored}
+                "restored": self.restored,
+                "untranslated": self.untranslated() if self.data is not None else [],
+                "unfinished": self.unfinished(),
+                "counts_offered": [n[6:] for n in self.journal if n.startswith("count-")]}
 
     def _item(self, about, attribute, item, meaning, table, column, role_type=None):
         binding = item.get("binding")
@@ -1571,10 +1756,10 @@ ORDER  BY g.kind;"""
                                "check": confirmation.get("check") or "", "reason": confirmation.get("reason") or "",
                                "probe": self.probe_kind(about), "probed": self.probes.get(about),
                                "findings": self.probe_findings(about)} if correction else None,
-                "binding_form": _binding_form(binding),
+                "binding_form": _binding_form(binding), "coding": None,
                 "about": about, "attribute": attribute, "meaning": meaning, "type": role_type, "from": item["from"],
                 "table": table, "column": column, "bound": bool(binding) if attribute != "rows" else bool(table),
-                "definition": definition, "says": rolemap.plain(item["says"]), "title": "", "confidence": item.get("confidence") or "",
+                "definition": definition, "says": re.sub(r"\b(match|matches) the role\.$", r"\1 this column.", rolemap.plain(item["says"])), "title": "", "confidence": item.get("confidence") or "",
                 "candidates": candidates, "status": item["status"], "question": rolemap.plain(item.get("question") or ""),
                 "answer": confirmation.get("answer"), "date": confirmation.get("date"),
                 "replacement": confirmation.get("replacement"), "note": confirmation.get("note"),
@@ -1700,11 +1885,16 @@ README = {
     "stamp": "Schemalyser {version} wrote this folder on {date}.",
     "intro": "This folder describes how the hospital's reporting database holds the anaesthetic record. A clinician and "
              "a colleague who runs SQL against that database made it together with Schemalyser's page Describe the "
-             "record. The page proposed which tables and columns hold each role of the record, the colleague confirmed "
+             "record. The page proposed which tables and columns hold each part of the record, the colleague confirmed "
              "or corrected each one, and the queries that the colleague ran settled the local codes and the counts. "
              "The folder names the hospital's own tables and codes, so it stays on the hospital's own storage.",
     "files": "## What each file holds",
     "rerun": "## Queries to run again on production",
+    "draft": "## This folder is a draft",
+    "draft_text": "The folder is not yet complete ({parts}). To finish it, open the page Describe the record, choose this "
+                  "folder in step 3 and carry on from step 6.",
+    "draft_codes": "These columns are answered, but the codes that they hold are not yet translated, so their views give "
+                   "nothing useful until a person translates them:",
     "remake": "## How to check or remake the folder",
     "remake_text": [
         "Open the page Describe the record, take it offline, load the data dictionary in step 2 and choose this folder "
@@ -1720,9 +1910,9 @@ README = {
         "offered each query, which database it was run on and when the result was pasted.",
     ],
     "licence": "The data dictionary is licensed. The folder holds a copy of it in dictionary/ only because a person "
-               "ticked the box to keep it, and map/map.json quotes it as the evidence for each binding.",
+               "ticked the box to keep it, and map/map.json quotes it as the evidence for each column.",
     "no_licence": "The data dictionary is licensed, so the folder holds no copy of it. map/map.json quotes it only as the "
-                  "evidence for each binding, and the dictionary must be loaded again to check the folder.",
+                  "evidence for each column, and the dictionary must be loaded again to check the folder.",
 }
 README_FILES = [
     ("settings.json", "The tool's version, the dates on which the folder was made and last changed, the database that "
@@ -1732,19 +1922,21 @@ README_FILES = [
                      "gives the file's name, its size, its numbers of tables and columns and a fingerprint of its "
                      "contents (a SHA-256 hash), and never its contents. Each correction kept has an entry of its own, "
                      "with the sentence that it means, the outcome of its check and any reason for keeping it."),
-    ("confirmations.csv", "Every answer that the colleague gave, in order: the role and attribute, the answer (yes, no "
+    ("confirmations.csv", "Every answer that the colleague gave, in order: the part and column, the answer (yes, no "
                           "or not sure), the replacement where the answer was no, the date and any note. For a correction "
                           "made in one of the page's forms, it also gives the correction as data, the outcome of the check "
                           "that Schemalyser ran on invented rows before it was kept, and, where it was kept although the "
                           "check failed, the reason that was given."),
-    ("map/map.json", "Every binding of every role: the table and column that hold it, the dictionary's description "
-                     "that supports it, the answer and its date. Its description gives the date of the proposal."),
-    ("map/role_*.sql", "One SQL view for each role, written from the bindings and the chosen codes. An audit reads "
-                       "these views and nothing else."),
+    ("map/map.json", "Every column of every part of the record: the table and column that hold it, the links "
+                     "that reach them, the dictionary's description that supports it, the answer and its date. Its "
+                     "description gives the date of the proposal and how many columns a person has answered for."),
+    ("map/role_*.sql", "One SQL file for each part of the record, written from its columns, its links and the chosen "
+                       "codes. The SQL files call a part of the record a view, and an audit reads these views and "
+                       "nothing else."),
     ("queries/", "The exact text of every query that the page offered, numbered in the order offered."),
     ("results/", "Each result that the colleague pasted, exactly as pasted, with the same number and name as its query. "
                  "The first line names the tool's version and the date."),
-    ("codes/", "For each vocabulary that the hospital holds as local codes, the list of what is charted and the codes "
+    ("codes/", "For each column that holds the hospital's own codes, the list of what is charted and the codes "
                "chosen for each kind."),
     ("counts/judgements.json", "For each count, whether it looked right to the two of you, any note, and the database, "
                                "production or training, whose figures were judged."),
@@ -1752,11 +1944,15 @@ README_FILES = [
 ]
 
 
-def readme(paths, version, date, kept, training=()):
+def readme(paths, version, date, kept, training=(), unfinished="", untranslated=()):
     """README.md of the hospital folder, which says what each file is, how it was made and how to remake it. training
     lists the queries whose results came from a training database, which are to be run again on production."""
-    lines = [README["title"], "", README["stamp"].format(version=version or "unknown", date=date), "", README["intro"], "",
-             README["files"], ""]
+    lines = [README["title"], "", README["stamp"].format(version=version or "unknown", date=date), "", README["intro"], ""]
+    if unfinished:
+        lines += [README["draft"], "", README["draft_text"].format(parts=unfinished), ""]
+        if untranslated:
+            lines += [README["draft_codes"], ""] + [f"- {u['title']} (`{u['from']}`)" for u in untranslated] + [""]
+    lines += [README["files"], ""]
     for name, what in README_FILES:
         present = any(p == name or (name.endswith("/") and p.startswith(name))
                       or (name == "map/role_*.sql" and p.startswith("map/role_")) for p in paths)

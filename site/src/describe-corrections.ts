@@ -11,7 +11,8 @@ export interface CorrectionHeld {
 }
 export interface CorrectionItem {
   about: string; attribute: string; type: string | null; link: string | null; date: string | null; correction: CorrectionHeld | null;
-  bound?: boolean;
+  bound?: boolean; table?: string | null; column?: string | null;
+  coding?: { form: string; translated: boolean; assumed: string; values: string[]; list?: boolean } | null;
 }
 interface Report {
   passed: boolean; sentence: string; problems: string[]; remaining: string[]; mended: string; notes: string[]; seconds: number;
@@ -40,9 +41,10 @@ export interface Deps {
   base(view: string): string | null;
   anaestheticTable(): string | null;
   kinds(about: string): string[];
+  meanings(about: string): Record<string, string>;
   values(name: string): { value: string; rows: number | null }[] | null;
   close(about: string): void;
-  goTo(about: string): void;
+  goTo(about: string, text?: string): void;
   step: string;
 }
 
@@ -350,6 +352,8 @@ function valuesHelper(item: CorrectionItem, box: HTMLElement, label: string) {
       const tick = deps.el('input');
       tick.type = 'checkbox';
       tick.value = row.value;
+      tick.id = id(item.about, `value-${draft.valueRows.indexOf(row)}`);
+      option.htmlFor = tick.id;
       tick.checked = chosen.has(row.value);
       tick.addEventListener('change', () => {
         if (tick.checked) chosen.add(row.value);
@@ -437,7 +441,8 @@ function codesFields(item: CorrectionItem, box: HTMLElement) {
     const kind = deps.el('select');
     const none = deps.el('option', d.notChosen);
     none.value = '';
-    kind.append(none, ...kinds.map((k) => Object.assign(deps.el('option', k), { value: k })));
+    const meanings = deps.meanings(item.about);
+    kind.append(none, ...kinds.map((k) => Object.assign(deps.el('option', d.kindOption(k, meanings[k])), { value: k })));
     kind.value = pair[1];
     kind.addEventListener('change', () => { pair[1] = kind.value; void preview(item); });
     line.append(labelled(item.about, `code-${i}`, c.codeLabel, code), labelled(item.about, `kind-${i}`, c.kindLabel, kind));
@@ -455,10 +460,15 @@ function formFields(item: CorrectionItem, box: HTMLElement) {
   const anaesthetic = deps.anaestheticTable() ?? '';
   switch (draft.form) {
     case 'flag':
+      if (!f.table && (item.table || base)) {
+        f.table = item.table || base;
+        if (item.table && item.column) f.column = item.column;
+      }
       box.append(tableField(item, 'table', c.tableLabel, () => { f.column = ''; }), columnField(item, 'column', f.table ?? '', c.columnLabel));
       valuesHelper(item, box, c.flagValuesLabel);
       break;
     case 'filter':
+      if (!f.table && base) f.table = base;
       box.append(tableField(item, 'table', c.filterTable, () => { f.column = ''; }), columnField(item, 'column', f.table ?? '', c.filterColumn));
       valuesHelper(item, box, c.valuesLabel);
       break;
@@ -517,28 +527,14 @@ export function panel(item: CorrectionItem, plain: () => HTMLElement): HTMLEleme
   });
   box.append(labelled(item.about, 'form', c.formLabel, select));
   box.append(deps.el('p', c.formWhat[draft.form] ?? '', 'note'));
-  if (draft.form === 'column' || draft.form === 'rows') {
-    // The column or table chosen: its sentence, then the check on invented rows, which runs as soon as it is chosen.
-    box.append(plain());
-    if (draft.problem) box.append(deps.el('p', `${c.problemLabel} ${draft.problem}`, 'status problem problem-note'));
-    if (draft.preview) {
-      box.append(deps.el('p', c.sentenceLabel, 'label sentence-label'), deps.el('p', draft.preview.sentence, 'correction-sentence'));
-      const sql = deps.el('details');
-      sql.append(deps.el('summary', c.sqlLabel), deps.el('pre', draft.preview.sql, 'code correction-sql'));
-      box.append(sql);
-    }
-    if (checking === item.about) box.append(deps.el('p', c.checkingUse, 'status working-note'));
-    const correction = correctionOf(item, draft);
-    if (draft.report && correction) box.append(reportBox(draft.report, item, correction));
-    return box;
-  }
   if (!document.getElementById('dl-tables')) {
     const list = deps.el('datalist');
     list.id = 'dl-tables';
     document.body.append(list);
   }
   const fields = deps.el('div', undefined, 'fields');
-  formFields(item, fields);
+  if (draft.form === 'column' || draft.form === 'rows') fields.append(plain());
+  else formFields(item, fields);
   box.append(fields);
   if (draft.problem) box.append(deps.el('p', `${c.problemLabel} ${draft.problem}`, 'status problem problem-note'));
   if (!draft.preview) {
@@ -585,7 +581,7 @@ function list(items: string[], className = 'findings', about: Record<string, str
       link.dataset.about = target;
       link.addEventListener('click', (event) => {
         event.preventDefault();
-        deps.goTo(target);
+        deps.goTo(target, text);
       });
       entry.append(link);
     } else entry.textContent = text;
@@ -594,8 +590,8 @@ function list(items: string[], className = 'findings', about: Record<string, str
   return node;
 }
 
-// A column or table chosen in place of the proposal: previewed, then checked on invented rows, so that its sentence and
-// the outcome of its check are shown before it can be kept or discarded.
+// A column or table chosen in place of the proposal: its sentence is shown, and the person then chooses Check this
+// change, as in every other form, before it can be kept or discarded.
 export async function useAlternative(item: CorrectionItem, chosen: string) {
   const draft = draftOf(item);
   draft.form = item.attribute === 'rows' ? 'rows' : 'column';
@@ -603,21 +599,20 @@ export async function useAlternative(item: CorrectionItem, chosen: string) {
   draft.report = null;
   draft.although = false;
   await preview(item);
-  const correction = correctionOf(item, draft);
-  if (!draft.preview || !correction) return;
-  checking = item.about;
-  deps.setBusy(true);
-  deps.render();
-  try {
-    const reply = await parsed('describe_correction_check', [JSON.stringify(correction)]);
-    if (reply.ok) draft.report = reply.report as Report;
-    else draft.problem = reply.problem ?? d.failed;
-  } catch {
-    draft.problem = d.failed;
+}
+
+// Starts the translation of a column whose source holds codes, after Yes: the 1-or-0 form, or the translation of
+// codes, filled in with the column and any values that the proposer guessed.
+export function startTranslation(item: CorrectionItem) {
+  if (drafts.has(item.about) || !item.coding) return;
+  const draft = draftOf(item);
+  draft.form = item.coding.form === 'flag' ? 'flag' : 'codes';
+  if (draft.form === 'flag') {
+    draft.f.table = item.table ?? '';
+    draft.f.column = item.column ?? '';
+    draft.f.values = item.coding.values.join(', ');
+    void preview(item);
   }
-  checking = '';
-  deps.setBusy(false);
-  deps.render();
 }
 
 function reportBox(report: Report, item: CorrectionItem, correction: Record<string, unknown>) {
@@ -631,6 +626,7 @@ function reportBox(report: Report, item: CorrectionItem, correction: Record<stri
   if (report.mended) box.append(deps.el('p', report.mended, 'status good'));
   if (report.notes.length) box.append(deps.el('p', c.notesLabel), list(report.notes, 'notes', about));
   box.append(deps.el('p', c.checkSeconds(report.seconds), 'note'));
+  if (report.passed) box.append(deps.el('p', c.passedMeans, 'note passed-means'));
   if (!report.passed) {
     const option = deps.el('label', undefined, 'option');
     const tick = deps.el('input');
@@ -649,7 +645,8 @@ function reportBox(report: Report, item: CorrectionItem, correction: Record<stri
     }
   }
   const actions = deps.el('div', undefined, 'actions');
-  actions.append(deps.button(c.keep, async () => {
+  // After a failed check, only Discard is offered until the box is ticked, and then the keep with its reason.
+  if (report.passed || draft.although) actions.append(deps.button(report.passed ? c.keep : c.keepAlthough, async () => {
     deps.setBusy(true);
     try {
       const reply = await deps.ask('describe_correction_keep', [JSON.stringify({ correction, although: draft.although, reason: draft.reason })]);
@@ -662,7 +659,7 @@ function reportBox(report: Report, item: CorrectionItem, correction: Record<stri
     }
     deps.setBusy(false);
     deps.render();
-  }));
+  }, 'answer-keep'));
   actions.append(deps.button(c.discard, () => {
     drafts.delete(item.about);
     deps.close(item.about);
@@ -686,7 +683,8 @@ export function kept(item: CorrectionItem): HTMLElement | null {
   }
   const probe = deps.el('div', undefined, 'probe');
   probe.dataset.probe = held.probe;
-  probe.append(deps.el('p', c.probeWhat[held.probe] ?? '', 'note'));
+  const what = held.probe === 'flag' && item.type === 'flag' ? c.probeWhat.flag_two : c.probeWhat[held.probe] ?? '';
+  probe.append(deps.el('p', what.replace('{year}', String(deps.year())), 'note'));
   const actions = deps.el('div', undefined, 'actions');
   actions.append(deps.button(c.probeWrite, async () => {
     try {

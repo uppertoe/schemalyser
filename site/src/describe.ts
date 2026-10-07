@@ -16,6 +16,7 @@ interface Item {
   bound: boolean; definition: string | null; says: string; confidence: string; candidates: Candidate[]; status: string; question: string;
   answer: string | null; date: string | null; replacement: string | null; presence: Presence | null;
   link: string | null; correction: corrections.CorrectionHeld | null; title: string;
+  coding: { form: string; translated: boolean; assumed: string; values: string[]; list?: boolean } | null;
 }
 interface Role { name: string; title: string; description: string; required: boolean; drafted: boolean; items: Item[] }
 interface Vocabulary {
@@ -27,9 +28,14 @@ interface CountHeld {
   columns: string[] | null; rows: string[][] | null; looks_right: string | null; note: string | null; date: string | null; findings: string[];
   database: string | null;
 }
+interface Tally {
+  confirmed: number; corrected: number; not_sure: number; remaining: number; untranslated: number; total: number;
+  tables: number; tables_remaining: number;
+}
 interface Model {
   dictionary: { tables: number; columns: number; described: number; keyed: number; skipped: number } | null;
-  proposed: boolean; roles: Role[]; tally: { confirmed: number; corrected: number; not_sure: number; remaining: number; total: number };
+  proposed: boolean; roles: Role[]; tally: Tally;
+  untranslated: { about: string; title: string; from: string }[]; unfinished: string; counts_offered: string[];
   questions: { about: string; title: string; question: string; meaning: string }[]; catalogue: boolean; vocabularies: Vocabulary[]; counts: Record<string, CountHeld>;
   settings: { made: string | null; updated: string | null; database: string | null; year: number | null };
   restored: Record<string, unknown> | null;
@@ -72,6 +78,10 @@ const changing = new Set<string>();
 const opened = new Set<string>();
 const hidden = new Set<string>();
 let written = false;
+// Whether the folder last saved was a draft, which leaves step 9 to be done again.
+let writtenDraft = false;
+// The text of a finding of a check, shown at the row that its link leads to.
+const landed = new Map<string, string>();
 // Whether something has changed since the folder was saved, which makes step 9 to be done again.
 let changedSinceWritten = false;
 // The calls that change nothing that the hospital folder holds.
@@ -193,18 +203,31 @@ type StepState = 'done' | 'current' | 'available' | 'waiting' | 'problem';
 const STEPS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 const OPTIONAL = new Set(['3']);
 
-// Step 7 is done once at least one list of codes is saved, or where no column holds codes to choose.
+// Step 7 is done once every list that a bound column of a kind offers is saved.
 function listsSaved(m: Model) {
   return m.vocabularies.filter((v) => !v.reason && v.date).length;
 }
 
-function vocabulariesDone(m: Model) {
-  return listsSaved(m) > 0 || m.vocabularies.every((v) => !!v.reason);
+function listsOffered(m: Model) {
+  return m.vocabularies.filter((v) => !v.reason).length;
 }
 
-// Step 8 is done once at least one count has a saved judgement.
+function vocabulariesDone(m: Model) {
+  return listsSaved(m) === listsOffered(m);
+}
+
+// Step 8 is done once every count offered has a saved judgement.
 function judged(m: Model) {
-  return Object.values(m.counts).filter((held) => !!held.looks_right).length;
+  return m.counts_offered.filter((name) => !!m.counts[name]?.looks_right).length;
+}
+
+function countsDone(m: Model) {
+  return m.counts_offered.length > 0 && judged(m) === m.counts_offered.length;
+}
+
+// Step 6 is done once every column and table has an answer and every code is translated.
+function confirmDone(t: Tally) {
+  return t.remaining === 0 && t.tables_remaining === 0 && t.untranslated === 0;
 }
 
 // What each step is: its state, the line that a folded step shows, and what a waiting step waits for.
@@ -213,8 +236,8 @@ function stepStates() {
   const ready = open();
   const proposed = !!m?.proposed;
   const restoredMap = !!(m?.restored && (m.restored as { map?: boolean }).map);
-  const done = [ready, !!m?.dictionary, restoredMap, proposed, !!m?.catalogue, proposed && m!.tally.remaining === 0,
-    proposed && vocabulariesDone(m!), proposed && judged(m!) > 0, written];
+  const done = [ready, !!m?.dictionary, restoredMap, proposed, !!m?.catalogue, proposed && confirmDone(m!.tally),
+    proposed && vocabulariesDone(m!), proposed && countsDone(m!), written && !writtenDraft];
   const waits = STEPS.map((_, i) => {
     if (i === 0) return '';
     if (!ready) return d.waitingFor.offline;
@@ -236,8 +259,8 @@ function stepStates() {
     m ? d.receipt.proposed(m.roles.filter((r) => r.drafted).length, m.roles.length) : '',
     statusText('t-tables-status') || d.receipt.tables,
     m ? d.receipt.confirmed(m.tally.total, m.roles.filter((r) => !r.drafted).length) : '',
-    m ? d.receipt.codes(listsSaved(m)) : '',
-    m ? d.receipt.counts(judged(m)) : '',
+    m ? d.receipt.codes(listsSaved(m), listsOffered(m)) : '',
+    m ? d.receipt.counts(judged(m), m.counts_offered.length) : '',
     statusText('t-write-status'),
   ];
   return { states, waits, receipts };
@@ -294,9 +317,16 @@ function show() {
       if (value !== 'waiting') toggleStep(n, true);
     });
     const name = d.steps[i].replace(/^\d+\.\s*/, '');
-    // Step 6 says how many columns are still to answer until every one has an answer.
-    const remaining = n === '6' && model?.proposed && value !== 'done' && value !== 'waiting' ? model.tally.remaining : 0;
-    const railWord = value === 'waiting' ? waits[i] : remaining ? `${word}: ${d.stillToAnswer(remaining)}` : word;
+    // Steps 6 to 9 say how far each has gone until it is done.
+    let progress = '';
+    if (model?.proposed && value !== 'done' && value !== 'waiting') {
+      const t = model.tally;
+      if (n === '6') progress = d.stillToAnswer(t.remaining, t.tables_remaining, t.untranslated);
+      if (n === '7' && listsOffered(model)) progress = d.receipt.codes(listsSaved(model), listsOffered(model)).replace(/\.$/, '');
+      if (n === '8' && model.counts_offered.length) progress = d.receipt.counts(judged(model), model.counts_offered.length).replace(/\.$/, '');
+      if (n === '9' && written && writtenDraft) progress = d.savedDraft;
+    }
+    const railWord = value === 'waiting' ? waits[i] : progress ? `${word}: ${progress}` : word;
     link.append(el('span', value === 'done' ? '✓' : value === 'problem' ? '!' : n, 'marker'), el('span', name, 'rail-name'),
       el('span', railWord, 'rail-state'));
     item.append(link);
@@ -344,11 +374,12 @@ function setBusy(value: boolean) {
 // Keeps what a person has typed into a box that is drawn again.
 function kept(build: () => void) {
   const values = new Map<string, string>();
-  for (const box of document.querySelectorAll<HTMLTextAreaElement | HTMLInputElement>('[data-keep]')) values.set(box.dataset.keep!, box.value);
+  for (const box of document.querySelectorAll<HTMLTextAreaElement | HTMLInputElement | HTMLSelectElement>('[data-keep]')) values.set(box.dataset.keep!, box.value);
   build();
-  for (const box of document.querySelectorAll<HTMLTextAreaElement | HTMLInputElement>('[data-keep]')) {
+  for (const box of document.querySelectorAll<HTMLTextAreaElement | HTMLInputElement | HTMLSelectElement>('[data-keep]')) {
     const value = values.get(box.dataset.keep!);
     if (value !== undefined) box.value = value;
+    box.dispatchEvent(new Event('kept'));
   }
 }
 
@@ -383,19 +414,48 @@ function render() {
   $('counts-write').classList.toggle('secondary', countQueries.length > 0);
   $('t-counts-again').hidden = countQueries.length === 0;
   if (changedSinceWritten && !written) status('t-write-status', d.writtenStale);
+  // The check of the whole map says, once something is answered, that it checks the map as it now stands.
+  const answeredAny = !!model?.proposed && (model.tally.total - model.tally.remaining + model.tally.tables - model.tally.tables_remaining) > 0;
+  text('t-model-check-what', answeredAny ? d.corrections.modelCheckWhatAfter : d.corrections.modelCheckWhat);
+  text('model-check', answeredAny ? d.corrections.modelCheckAgain : d.corrections.modelCheck);
+  renderDraft();
   show();
+}
+
+// Step 9 says what keeps the folder a draft, and lists each column whose codes are not yet translated.
+function renderDraft() {
+  const note = $('t-write-draft');
+  const list = $('write-draft-list');
+  list.replaceChildren();
+  const unfinished = model?.proposed ? model.unfinished : '';
+  note.hidden = !unfinished;
+  note.textContent = unfinished ? d.draftNote(unfinished) : '';
+  const untranslated = model?.untranslated ?? [];
+  $('t-write-draft-codes').hidden = !untranslated.length;
+  text('t-write-draft-codes', d.draftCodes);
+  for (const column of untranslated) {
+    const item = el('li');
+    const link = el('a', column.title);
+    link.href = '#step-6';
+    link.addEventListener('click', (event) => {
+      event.preventDefault();
+      goTo(column.about);
+    });
+    item.append(link, document.createTextNode(` (${column.from})`));
+    list.append(item);
+  }
 }
 
 // The progress of the confirming: four figures and a bar, held in view at the top of step 6.
 function renderTally(t: Model['tally']) {
   const figures = $('tally-figures');
   figures.replaceChildren();
-  for (const key of ['confirmed', 'corrected', 'not_sure', 'remaining'] as const) {
+  for (const key of ['confirmed', 'corrected', 'not_sure', 'untranslated', 'remaining'] as const) {
     const box = el('div', undefined, `figure ${key}`);
     box.append(el('dt', d.tallyLabels[key]), el('dd', t[key].toLocaleString('en-AU')));
     figures.append(box);
   }
-  const answered = t.total ? (t.total - t.remaining) / t.total : 0;
+  const answered = t.total ? (t.total - t.remaining - t.untranslated) / t.total : 0;
   $('tally-meter').style.width = `${Math.round(answered * 100)}%`;
 }
 
@@ -504,8 +564,19 @@ function presenceText(presence: Presence | null, table = false) {
 }
 
 // The answer that a column holds, as a state: confirmed, corrected or not sure, with its date.
+function untranslated(item: Item) {
+  return !!item.coding && !item.coding.translated && (item.answer === 'yes' || (item.answer === 'no' && item.status === 'person'));
+}
+
 function answeredNode(item: Item) {
   const day = d.day(item.date ?? '');
+  if (untranslated(item) && item.answer === 'yes') return el('p', d.answered.untranslated(day), 'answered untranslated');
+  if (untranslated(item)) {
+    const line = el('p', undefined, 'answered untranslated');
+    const [before, after] = d.answered.untranslatedNo(day, '\u0000').split('\u0000');
+    line.append(document.createTextNode(before), fromNode(item.from), document.createTextNode(after));
+    return line;
+  }
   if (item.answer === 'yes') return el('p', d.answered.yes(day), 'answered yes');
   if (item.answer === 'not sure') return el('p', d.answered.notSure(day), 'answered unsure');
   if (item.answer === 'no' && item.status === 'person') {
@@ -525,6 +596,7 @@ async function answer(about: string, value: string, replacement = '', from?: HTM
       problems.set(about, reply.problem ?? d.confirmFailed);
     } else {
       problems.delete(about);
+      landed.delete(about);
       openAnother.delete(about);
       changing.delete(about);
     }
@@ -556,6 +628,8 @@ function anotherPanel(item: Item) {
     const write = el('option', d.anotherNone);
     write.value = '';
     select.append(write);
+    select.value = '';
+    select.dataset.keep = `${id}-chosen`;
     panel.append(label, select);
   } else if (!rows) {
     panel.append(el('p', d.anotherNoneFound, 'note no-alternative'));
@@ -569,6 +643,25 @@ function anotherPanel(item: Item) {
   written.setAttribute('aria-label', writtenLabel);
   if (!select) written.id = id;
   panel.append(el('span', ` ${writtenLabel} `, 'label'), written);
+  const inForce = el('p', '', 'note in-force');
+  const sayInForce = () => {
+    const option = select?.selectedOptions[0];
+    inForce.textContent = written.value.trim() ? d.inForceWritten(written.value.trim())
+      : select?.value && option ? d.inForceChosen(option.textContent ?? '') : '';
+    inForce.hidden = !inForce.textContent;
+  };
+  written.addEventListener('input', () => {
+    if (written.value.trim() && select) select.value = '';
+    sayInForce();
+  });
+  select?.addEventListener('change', () => {
+    if (select!.value) written.value = '';
+    sayInForce();
+  });
+  written.addEventListener('kept', sayInForce);
+  select?.addEventListener('kept', sayInForce);
+  sayInForce();
+  panel.append(inForce);
   panel.append(button(d.anotherUse, () => {
     const chosen = written.value.trim() || select?.value || '';
     if (chosen) void corrections.useAlternative(item, chosen);
@@ -621,7 +714,7 @@ function renderConfirm() {
     const items: Item[] = role.drafted ? role.items : [{
       about: `${role.name} rows`, attribute: 'rows', meaning: role.description, type: null, from: '', table: null, column: null, bound: false,
       definition: null, says: d.roleUndrafted, confidence: '', candidates: [], status: 'proposed', question: '', answer: null, date: null,
-      replacement: null, presence: null, link: null, correction: null, title: '',
+      replacement: null, presence: null, link: null, correction: null, title: '', coding: null,
     }];
     const answeredCount = items.filter((item) => item.answer).length;
     const heading = roleHeading(role);
@@ -639,11 +732,26 @@ function renderConfirm() {
       // A corrected column shows what it was corrected to, and no longer the proposal with its confidence.
       if (!(said && item.answer === 'no')) entry.append(proposedLine(item));
       if (said) entry.append(said);
-      if (role.drafted && item.bound) {
+      // The reason for a proposal is the dictionary's own words that matched, shown under it.
+      if (role.drafted && item.bound && !item.correction && item.status === 'proposed') {
+        const reason = el('p', undefined, 'reason');
+        reason.append(el('span', `${d.reasonLabel} `, 'label'), document.createTextNode(item.says));
+        entry.append(reason);
+      }
+      if (role.drafted && item.bound && item.definition) {
         const more = el('details');
-        more.append(el('summary', item.definition ? d.definitionLabel : d.evidenceLabel), quote(item.definition, item.says));
+        more.append(el('summary', d.definitionLabel), quote(item.definition, item.says));
         entry.append(more);
       }
+      // A column whose source holds codes says so before Yes, with any translation that the page has assumed.
+      if (item.coding && !item.coding.translated && !item.answer) {
+        const coded = el('div', undefined, 'coded');
+        if (item.coding.assumed) coded.append(el('p', item.coding.assumed, 'assumed'));
+        coded.append(el('p', item.coding.form === 'flag' ? d.coded.flag : item.coding.list ? d.coded.kind : d.coded.kindForm, 'note'));
+        entry.append(coded);
+      }
+      const found = landed.get(item.about);
+      if (found) entry.append(el('p', d.landed(found), 'status problem landed'));
       if (!role.drafted) entry.append(el('p', d.roleUndrafted, 'note'));
       if (role.drafted && item.bound) entry.append(el('p', presenceText(item.presence, item.attribute === 'rows'), `presence ${item.presence?.state ?? 'unknown'}`));
       const correction = corrections.kept(item);
@@ -652,6 +760,7 @@ function renderConfirm() {
       const problem = problems.get(item.about);
       if (problem) entry.append(el('p', problem, 'status problem problem-note'));
       if (openAnother.has(item.about)) entry.append(corrections.panel(item, () => anotherPanel(item)));
+      else if (untranslated(item) && !changing.has(item.about)) entry.append(translation(item));
       list.append(entry);
     }
     section.append(list);
@@ -659,11 +768,40 @@ function renderConfirm() {
   }
 }
 
-// Takes the person to the row of one column in step 6, from a finding of a check.
-function goTo(about: string) {
+// The translation of a column answered whose codes are not yet translated: the 1-or-0 form for a flag, and for a kind
+// the list of its codes in step 7, or the form of codes where step 7 cannot list them.
+function translation(item: Item) {
+  const box = el('div', undefined, 'translation');
+  if (item.coding!.form === 'kind' && item.coding!.list) {
+    box.append(el('p', d.coded.kindNext, 'do'));
+    const actions = el('div', undefined, 'actions');
+    actions.append(button(d.codesFromRow, () => {
+      opened.add('7');
+      hidden.delete('7');
+      show();
+      const target = document.querySelector<HTMLElement>(`#vocabularies [data-key="${CSS.escape(item.about)}"]`);
+      target?.scrollIntoView({ block: 'start' });
+      target?.querySelector<HTMLElement>('button')?.focus({ preventScroll: true });
+    }, 'translate-codes'));
+    box.append(actions);
+    return box;
+  }
+  corrections.startTranslation(item);
+  box.append(el('p', item.coding!.form === 'flag' ? d.coded.flagNext : d.coded.kindNextForm, 'do'));
+  box.append(corrections.panel(item, () => anotherPanel(item)));
+  return box;
+}
+
+// Takes the person to the row of one column in step 6, from a finding of a check, and repeats the finding there.
+function goTo(about: string, finding?: string) {
   const target = document.querySelector<HTMLElement>(`#confirm [data-about="${CSS.escape(about)}"]`)
     ?? document.querySelector<HTMLElement>(`#confirm [data-about="${CSS.escape(about.split(/[ .]/)[0])} rows"]`);
   if (!target) return;
+  if (finding) {
+    landed.set(target.dataset.about!, finding);
+    render();
+    return goTo(about);
+  }
   opened.add('6');
   hidden.delete('6');
   show();
@@ -684,7 +822,7 @@ function queryBlock(sql: string, copyLabel: string, after?: HTMLElement) {
   return box;
 }
 
-function grid(columns: string[], rows: (string | number | null)[][]) {
+function grid(columns: string[], rows: (string | number | null)[][], counted: number[] = []) {
   const frame = el('div', undefined, 'table-frame');
   const table = el('table');
   const head = el('tr');
@@ -692,10 +830,12 @@ function grid(columns: string[], rows: (string | number | null)[][]) {
   const body = el('tbody');
   for (const row of rows) {
     const line = el('tr');
-    for (const cell of row) {
-      const value = cell === null || cell === undefined ? '' : String(cell);
-      line.append(el('td', value, /^-?\d+(\.\d+)?$/.test(value) ? 'number' : ''));
-    }
+    row.forEach((cell, at) => {
+      let value = cell === null || cell === undefined ? '' : String(cell);
+      if (/^-?\d+$/.test(value)) value = Number(value).toLocaleString('en-AU');
+      if (!value && counted.includes(at)) value = d.underTen;
+      line.append(el('td', value, /^-?[\d,]+(\.\d+)?$/.test(value) || value === d.underTen ? 'number' : ''));
+    });
     body.append(line);
   }
   const thead = el('thead');
@@ -742,9 +882,9 @@ function renderVocabularies() {
     }
     section.append(el('p', d.vocabularyBound(vocabulary.bound, vocabulary.lookup ? vocabulary.lookup.join('.') : null)));
     const meanings = el('details', undefined, 'about');
-    meanings.append(el('summary', d.kindsSummary(vocabulary.vocabulary)));
+    meanings.append(el('summary', d.kindsSummary));
     const list = el('ul');
-    for (const kind of vocabulary.kinds) list.append(el('li', d.kindMeaning(kind, vocabulary.meanings[kind])));
+    for (const kind of vocabulary.kinds) list.append(el('li', d.kindOption(kind, vocabulary.meanings[kind])));
     meanings.append(list);
     section.append(meanings);
     const status_ = el('p', '', 'status');
@@ -789,7 +929,7 @@ function renderVocabularies() {
     }
     section.append(status_);
     if (vocabulary.rows.length) {
-      const frame = grid(d.chartedColumns, vocabulary.rows.map((r) => [r.code, r.charted, r.anaesthetics, r.name, '']));
+      const frame = grid(d.chartedColumns, vocabulary.rows.map((r) => [r.code, r.charted, r.anaesthetics, r.name, '']), [1, 2]);
       const body = frame.querySelectorAll('tbody tr');
       vocabulary.rows.forEach((row, i) => {
         const select = el('select');
@@ -799,7 +939,7 @@ function renderVocabularies() {
         none.value = '';
         select.append(none);
         for (const kind of vocabulary.kinds) {
-          const option = el('option', kind);
+          const option = el('option', d.kindOption(kind, vocabulary.meanings[kind]));
           option.value = kind;
           select.append(option);
         }
@@ -840,7 +980,7 @@ function renderCounts() {
     const section = el('section', undefined, 'add count-block');
     section.dataset.count = query.name;
     const training = model.settings.database === 'training';
-    section.append(el('h3', d.countHeading[query.name] ?? query.name), el('p', d.countWhat[query.name] ?? ''));
+    section.append(el('h3', d.countHeading[query.name] ?? query.name), el('p', (d.countWhat[query.name] ?? '').replace('{year}', String(yearValue()))));
     if (training) section.append(el('p', d.countTraining, 'status training'));
     const about = el('details', undefined, 'about');
     about.append(el('summary', d.countTablesSummary), el('p', query.safe ? d.countSafe : d.countScript((5000).toLocaleString('en-AU')), 'note'),
@@ -873,7 +1013,7 @@ function renderCounts() {
     }, held?.rows ? 'secondary' : ''));
     section.append(read, status_);
     if (held?.rows && held.columns) {
-      section.append(grid(held.columns, held.rows));
+      section.append(grid(held.columns, held.rows, held.columns.map((_, at) => at).filter((at) => at > 0)));
       const findings = el('ul', undefined, 'findings');
       for (const finding of held.findings) findings.append(el('li', finding));
       section.append(held.findings.length ? findings : el('p', d.countNoFindings, 'note'));
@@ -1101,7 +1241,8 @@ $('write-folder').addEventListener('click', async () => {
     }
     if (!keep) await root.removeEntry('dictionary', { recursive: true }).catch(() => undefined);
     written = true;
-    status('t-write-status', d.written(files.length), 'good');
+    writtenDraft = !!model?.unfinished;
+    status('t-write-status', d.written(files.length, model?.unfinished ?? ''), 'good');
   } catch {
     status('t-write-status', d.writeFailed, 'problem');
   }
@@ -1121,7 +1262,8 @@ $('write-zip').addEventListener('click', async () => {
     URL.revokeObjectURL(link.href);
     const listed = JSON.parse((await call('describe_folder_files', [keep])).reply as string) as unknown[];
     written = true;
-    status('t-write-status', d.zipped(listed.length), 'good');
+    writtenDraft = !!model?.unfinished;
+    status('t-write-status', d.zipped(listed.length, model?.unfinished ?? ''), 'good');
   } catch {
     status('t-write-status', d.writeFailed, 'problem');
   }
@@ -1306,6 +1448,7 @@ corrections.setup({
   base: (view) => model?.bases?.[view] ?? null,
   anaestheticTable: () => model?.anaesthetic_table ?? null,
   kinds: (about) => model?.vocabularies.find((v) => v.key === about)?.kinds ?? [],
+  meanings: (about) => model?.vocabularies.find((v) => v.key === about)?.meanings ?? {},
   values: (name) => model?.values?.[name] ?? null,
   close: (about) => {
     openAnother.delete(about);

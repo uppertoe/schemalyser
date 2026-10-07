@@ -67,7 +67,8 @@ def world():
 def run(world, sql):
     """The rows of a query or script's last statement on the invented world, as the page's tests run scripts."""
     sql = re.sub(r"ISNULL\(a\.anaesthetic_key, 0\)", "a.anaesthetic_key", sql)
-    sql = re.sub(r">= 10 THEN", ">= 0 THEN", sql)
+    # The invented world is small, so a group or a figure under ten is kept here.
+    sql = re.sub(r">= 10 THEN", ">= 0 THEN", sql).replace("WHERE  g.readings >= 10", "WHERE  g.readings >= 0")
     statements = [s for s in to_duckdb(sql, world.sandbox.date_columns) if not s.upper().startswith("ALTER TABLE")]
     try:
         for statement in statements:
@@ -126,10 +127,16 @@ def test_answers_are_recorded_with_their_date_and_counted(sitting):
     sitting.confirm("role_anaesthetic.patient_key", "no",
                     "VISIT.PERSON_KEY via ANAES_RECORD.CASE_KEY = THEATRE_CASE.CASE_KEY then THEATRE_CASE.VISIT_KEY = VISIT.VISIT_KEY",
                     date=DATE)
+    # The figures count columns only; the table of a part is counted apart.
     tally = sitting.tally()
-    assert (tally["confirmed"], tally["corrected"], tally["not_sure"]) == (2, 1, 1)
-    assert tally["remaining"] == tally["total"] - 4
+    assert (tally["confirmed"], tally["corrected"], tally["not_sure"]) == (1, 1, 1)
+    assert tally["remaining"] == tally["total"] - 3
+    assert tally["tables_remaining"] == tally["tables"] - 1
     assert [q["about"] for q in sitting.questions()] == ["role_reading.value"]
+    # A question for the database team states the proposal and asks whether it is right.
+    assert sitting.questions()[0]["question"] == (
+        "The page proposes OBS_READING.READ_VALUE as the value in Readings charted during an anaesthetic. Is that right, "
+        "and if not, which column holds it?")
     patient = sitting.data["roles"]["role_anaesthetic"]["columns"]["patient_key"]
     assert patient["status"] == "person" and patient["confirmation"]["date"] == DATE
     assert "LEFT JOIN THEATRE_CASE" in sitting.view_sql("role_anaesthetic")
@@ -270,3 +277,92 @@ def test_a_dictionary_without_known_headings_asks_for_them_and_names_none_of_its
     assert "patient record" not in str(raised.value)
     receipt = s.load_dictionary(b"Thing\tPart\tWhat\nPERSON\tPERSON_KEY\tThe key\n", headings={"table": "Thing", "column": "Part", "description": "What"})
     assert receipt["columns"] == 1
+
+
+def fresh():
+    s = describe.Describe()
+    s.version = "test"
+    s.load_dictionary(DICTIONARY.read_bytes(), TABLES.read_bytes(), {}, "invented-dictionary.csv", "invented-tables.csv")
+    s.propose(date=DATE)
+    return s
+
+
+def test_a_yes_on_a_column_that_holds_codes_leaves_it_to_translate_and_the_folder_a_draft():
+    s = fresh()
+    items = {i["about"]: i for r in s.view()["roles"] for i in r["items"]}
+    # A flag bound to text, whose values the proposer guessed, says what it assumes before Yes.
+    flag = items["role_patient.is_test"]["coding"]
+    assert flag["form"] == "flag" and not flag["translated"] and flag["values"] == ["Y", "Yes", "1"]
+    assert flag["assumed"].startswith("The page assumes that the test patient in Patients is 1 where "
+                                      "PERSON_MASTER.TEST_PERSON_FLAG holds Y, Yes or 1")
+    assert "Confirm or change it" in flag["assumed"]
+    # A flag bound to a column of codes, and a kind, are to translate as well.
+    assert items["role_stay.unplanned"]["coding"] == {"form": "flag", "translated": False, "assumed": "", "values": []}
+    assert items["role_reading.kind"]["coding"]["form"] == "kind" and items["role_reading.kind"]["coding"]["list"]
+    assert items["role_patient.birth_date"]["coding"] is None
+    s.confirm("role_patient.is_test", "yes", date=DATE)
+    s.confirm("role_reading.kind", "yes", date=DATE)
+    tally = s.tally()
+    assert tally["untranslated"] == 2 and tally["confirmed"] == 0
+    assert [u["about"] for u in s.untranslated()] == ["role_patient.is_test", "role_reading.kind"]
+    files = s.folder_files(date=DATE)
+    settings = json.loads(files["settings.json"])
+    assert settings["complete"] is False
+    assert settings["draft"].startswith("draft: ") and settings["draft"].endswith(" unanswered and 2 still to translate")
+    readme = files["README.md"].decode()
+    assert "## This folder is a draft" in readme and "The test patient in Patients (`PERSON_MASTER.TEST_PERSON_FLAG`)" in readme
+    # The 1-or-0 form on the proposed column translates it, and step 7's codes translate the kind.
+    s.correction_keep({"form": "derived", "about": "role_patient.is_test", "table": "PERSON_MASTER",
+                       "column": "TEST_PERSON_FLAG", "derive": {"form": "flag", "values": ["Y"]}}, date=DATE)
+    s.choose_codes("role_reading.kind", {"52": "map_arterial"}, DATE)
+    tally = s.tally()
+    assert tally["untranslated"] == 0 and tally["confirmed"] == 2 and not s.untranslated()
+
+
+def test_the_form_on_the_proposed_column_is_a_confirmation_and_its_probe_counts_1_and_0():
+    s = fresh()
+    kept = s.correction_keep({"form": "derived", "about": "role_patient.is_test", "table": "PERSON_MASTER",
+                              "column": "TEST_PERSON_FLAG", "derive": {"form": "flag", "values": ["Y"]}}, date=DATE)
+    item = s.data["roles"]["role_patient"]["columns"]["is_test"]
+    assert kept["probe"] == "flag" and item["confirmation"]["answer"] == "yes"
+    assert s.confirmations[-1]["answer"] == "yes" and s.tally()["corrected"] == 0
+    # A flag that the form never leaves empty is probed as 1 and 0 alone.
+    probe = s.probe_query("role_patient.is_test", 2024)
+    assert probe["columns"] == ["ones", "zeros"] and "AS empty" not in probe["sql"] and "is 1 and 0" in probe["sql"]
+    s.read_probe("role_patient.is_test", "ones\tzeros\n20\t1200\n")
+    assert s.probe_findings("role_patient.is_test") == ["The flag is 1 in about 20 rows and 0 in about 1,200."]
+    # The probe reads a small table without a cohort, so no year is recorded with it, nor with the values query.
+    assert "year" not in s.journal[probe["name"]]
+    values = s.values_query("role_patient.is_test", "PERSON_MASTER", "TEST_PERSON_FLAG", 2024)
+    assert not values["script"] and "year" not in s.journal[values["name"]]
+    assert "PERSON_MASTER, whose size is not known" in values["sql"] and "small tables" not in values["sql"]
+    # A different column through the same form is a correction.
+    s.correction_keep({"form": "column", "about": "role_anaesthetic.patient_key", "table": "THEATRE_CASE", "column": "PERSON_KEY"},
+                      date=DATE)
+    assert s.data["roles"]["role_anaesthetic"]["columns"]["patient_key"]["confirmation"]["answer"] == "no"
+
+
+def test_map_json_says_how_many_columns_a_person_has_answered_for():
+    s = fresh()
+    assert "no person has yet answered" in json.loads(s.folder_files(date=DATE)["map/map.json"])["description"]
+    s.confirm("role_patient.birth_date", "yes", date=DATE)
+    s.confirm("role_patient rows", "yes", date=DATE)
+    description = json.loads(s.folder_files(date=DATE)["map/map.json"])["description"]
+    assert DATE in description and "no person" not in description
+    assert re.search(r"A person has since answered for 2 of its [\d,]+ columns and tables", description)
+
+
+def test_a_count_leaves_out_a_small_group_and_leaves_empty_a_small_figure_within_one():
+    s = fresh()
+    queries = {q["name"]: q for q in s.count_queries(2024)}
+    coverage = queries["coverage_by_year"]["sql"]
+    assert "WHERE  g.anaesthetics >= 10" in coverage
+    assert "CASE WHEN g.with_patient >= 10 THEN g.with_patient - g.with_patient % 10 END AS with_patient" in coverage
+    assert "is left out, and a figure under ten within it is left empty" in " ".join(coverage.replace("-- ", "").split())
+    assert "WHERE  g.readings >= 10" in queries["readings_by_kind"]["sql"]
+    # Only the count that reads one year's cohort records the year.
+    assert "year" not in s.journal["count-coverage_by_year"] and s.journal["count-readings_by_kind"]["year"] == 2024
+    # A figure under ten comes back empty and is not read as a fall.
+    s.read_count("coverage_by_year", "start_year\tanaesthetics\twith_patient\twith_birth_date\twith_death_date\ttest_patients\twith_stop\tstop_before_start\n"
+                 "2023\t400\t400\t400\t20\t0\t390\t0\n2024\t20\tNULL\t20\tNULL\tNULL\t20\tNULL\n", DATE)
+    assert not any("have a patient whom" in f for f in s.findings("coverage_by_year"))

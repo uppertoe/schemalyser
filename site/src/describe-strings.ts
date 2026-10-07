@@ -45,11 +45,14 @@ export const describeStrings = {
       undrafted
         ? `Every column that can be answered has an answer. The page found no table for ${plural(undrafted, 'part', 'parts')}, which ${undrafted === 1 ? 'remains' : 'remain'} to be answered once a table is chosen.`
         : `Every one of the ${total} columns has an answer.`,
-    codes: (n: number) => (n ? `The page has saved the codes of ${plural(n, 'list', 'lists')}.` : 'No column holds local codes that need choosing.'),
-    counts: (n: number) => `The page has saved the judgement of ${plural(n, 'count', 'counts')}.`,
+    codes: (n: number, of: number) => (of ? `${n.toLocaleString('en-AU')} of ${plural(of, 'list', 'lists')} saved.` : 'No column holds local codes that need choosing.'),
+    counts: (n: number, of: number) => `${n.toLocaleString('en-AU')} of ${plural(of, 'count', 'counts')} read.`,
   },
   // Beside step 6 in the rail, while some columns still have no answer.
-  stillToAnswer: (n: number) => `${plural(n, 'column', 'columns')} still to answer`,
+  stillToAnswer: (columns: number, tables: number, untranslated: number) => {
+    const unanswered = [columns ? plural(columns, 'column', 'columns') : '', tables ? plural(tables, 'table', 'tables') : ''].filter(Boolean).join(' and ');
+    return [unanswered ? `${unanswered} still to answer` : '', untranslated ? `${untranslated.toLocaleString('en-AU')} still to translate` : ''].filter(Boolean).join(' and ');
+  },
   aboutFile: 'What this file is',
 
   // 1. Offline.
@@ -167,7 +170,13 @@ export const describeStrings = {
   linkedThen: 'then',
   definitionLabel: "The dictionary's definition",
   evidenceLabel: 'Why the page proposed it',
-  confidence: { high: 'high confidence', medium: 'medium confidence', low: 'low confidence', none: 'no match' } as Record<string, string>,
+  confidence: {
+    high: "high confidence, as the dictionary's words match",
+    medium: "medium confidence, as the dictionary's words match in part",
+    low: 'low confidence, as the proposal is a guess',
+    none: 'no match',
+  } as Record<string, string>,
+  reasonLabel: 'Why the page proposed it:',
   alternativesLabel: 'Other columns that came close',
 
   // 5. The tables and columns query.
@@ -205,22 +214,26 @@ export const describeStrings = {
   // 6. Confirming.
   confirmIntro:
     "The page describes the anaesthetic record as a set of parts, such as patients, anaesthetics and the readings charted during an anaesthetic, each with a few columns. For each column, the page proposes the table and column in the hospital's database that holds it, and your colleague says whether that is right.",
-  confirmWhat: 'Beside each column below, choose Yes, this is right, Choose another column, or Not sure.',
+  confirmWhat:
+    "Beside each column below, choose Yes, this is right, Choose another column or Not sure. The row for a part's table offers Choose another table, and a column for which the page found nothing offers Choose a column.",
   confirmLegend:
     "Where a column sits in another table, the page shows how the tables are linked: linked by matching A to B means that a row of one table belongs with the row of the other in which B holds the same value as A. Beside each proposal, the page gives its confidence: high where the dictionary's own words match the column's meaning, medium where they match in part, and low where the proposal is a guess.",
   confirmAboutSummary: 'What happens to each answer',
   confirmAbout:
-    'The page records each answer with its date. Choose another column opens a short form, and the page checks each change on invented rows and shows the result before you keep it. Each Not sure goes into the list of questions for the database team at the end of this step. Once a column has an answer, Change the answer brings the choices back.',
+    'The page records each answer with its date. Choose another column opens a short form. You fill it in, choose Check this change, and the page tests the whole map with the change on invented rows, which are made-up rows that the page builds in this tab, with no hospital data. You then keep the change or discard it. Each Not sure goes into the list of questions for the database team at the end of this step. Once a column has an answer, Change the answer brings the choices back.',
   // Beside each part, who can usually answer for it.
   whoAnswers: {
     colleague: 'Your colleague can usually answer for this part from what they know of the record.',
     team: 'Usually only the team that looks after the reporting database can answer for this part, so a Not sure here goes to them.',
   } as Record<string, string>,
   teamParts: ['role_lab', 'role_diagnosis', 'role_note', 'role_finding'],
-  partCount: (answered: number, total: number) => `${answered} of ${total} answered`,
-  tally: (t: { confirmed: number; corrected: number; not_sure: number; remaining: number; total: number }) =>
-    `Of ${t.total} columns, ${t.confirmed} ${t.confirmed === 1 ? 'is' : 'are'} confirmed, ${t.corrected} corrected and ${t.not_sure} not sure, and ${t.remaining} ${t.remaining === 1 ? 'remains' : 'remain'}.`,
-  tallyLabels: { confirmed: 'Confirmed', corrected: 'Corrected', not_sure: 'Not sure', remaining: 'Still to answer' } as Record<string, string>,
+  partCount: (answered: number, total: number) => `${answered.toLocaleString('en-AU')} of ${total.toLocaleString('en-AU')} answered`,
+  tally: (t: { confirmed: number; corrected: number; not_sure: number; remaining: number; untranslated: number; total: number; tables: number; tables_remaining: number }) => {
+    const n = (v: number) => v.toLocaleString('en-AU');
+    return `Of ${n(t.total)} columns, ${n(t.confirmed)} ${t.confirmed === 1 ? 'is' : 'are'} confirmed, ${n(t.corrected)} corrected and ${n(t.not_sure)} not sure, ${n(t.untranslated)} ${t.untranslated === 1 ? 'is' : 'are'} still to translate, and ${n(t.remaining)} ${t.remaining === 1 ? 'remains' : 'remain'} to answer. Of the ${n(t.tables)} tables of the parts, ${n(t.tables - t.tables_remaining)} ${t.tables - t.tables_remaining === 1 ? 'has' : 'have'} an answer.`;
+  },
+  tallyLabels: { confirmed: 'Confirmed', corrected: 'Corrected', not_sure: 'Not sure', untranslated: 'Still to translate', remaining: 'Still to answer' } as Record<string, string>,
+  tablesTally: (answered: number, total: number) => `The tables of the parts: ${answered.toLocaleString('en-AU')} of ${total.toLocaleString('en-AU')} answered.`,
   yes: 'Yes, this is right',
   another: 'Choose another column',
   anotherRows: 'Choose another table',
@@ -237,6 +250,18 @@ export const describeStrings = {
   anotherWrittenOr: 'Or write it as TABLE.COLUMN:',
   anotherNone: 'None of these',
   anotherUse: 'Use this one',
+  inForceWritten: (name: string) => `The page will use ${name}, which you wrote.`,
+  inForceChosen: (name: string) => `The page will use ${name}, chosen from the list.`,
+  // A column of a flag or a kind whose source holds codes, before and after Yes.
+  coded: {
+    flag: 'This column holds codes rather than 1 and 0. After Yes, the page opens the 1-or-0 form so that you can translate them.',
+    kind: "This column holds the hospital's own codes. After Yes, you translate them in the list of codes in step 7.",
+    kindForm: "This column holds the hospital's own codes. After Yes, the page opens a form in which you translate them.",
+    flagNext: 'To finish this column, translate its codes to 1 and 0 in the form below: choose Write the query of values, run it and paste the result, tick each value that means yes, then choose Check this change.',
+    kindNext: "To finish this column, translate its codes in step 7, where the page lists the codes in use.",
+    kindNextForm: "To finish this column, translate its codes in the form below, then choose Check this change.",
+  },
+  landed: (text: string) => `The check found: ${text}`,
   // The date of an answer, as 7 October.
   day: (iso: string) => {
     const at = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -246,6 +271,8 @@ export const describeStrings = {
   },
   answered: {
     yes: (date: string) => `Confirmed on ${date}.`,
+    untranslated: (date: string) => `Column confirmed on ${date}; codes not yet translated.`,
+    untranslatedNo: (date: string, replacement: string) => `Column corrected to ${replacement} on ${date}; codes not yet translated.`,
     no: (date: string, replacement: string) => `Corrected to ${replacement} on ${date}.`,
     notSure: (date: string) => `Not sure, listed as a question on ${date}.`,
   },
@@ -253,14 +280,14 @@ export const describeStrings = {
     present: 'The database holds this column.',
     presentTable: 'The database holds this table.',
     missing: (names: string[]) => `The database did not return ${names.join(', ')}.`,
-    large: (table: string, n: number) => `The database holds this, and ${table} is large, at about ${rows(n)}.`,
+    large: (table: string, n: number) => `The database holds this. ${table} is large, at about ${rows(n)}, so the page's queries read only a sample of it.`,
     unknown: 'The page has not yet checked this against the database.',
   },
   questionsHeading: 'Questions for the database team',
   questionsWhat: 'Each column marked Not sure is listed here. Choose Copy the questions, paste them into an email to the team, and answer each column above when they reply.',
   questionsNone: 'There are no questions yet.',
   questionsCopy: 'Copy the questions',
-  questionsNoteHead: 'Questions about the reporting database, from the description of the anaesthetic record:',
+  questionsNoteHead: 'Questions about the reporting database, from the description of the anaesthetic record. For each, the page states what it proposes and asks whether that is right:',
   questionsMeaning: (meaning: string) => `The description of the record defines it as follows: ${meaning}`,
   confirmFailed: 'The page could not record that answer. Please try again.',
 
@@ -269,7 +296,7 @@ export const describeStrings = {
     "Some columns hold the hospital's own codes, such as the kind of each reading. For each list below, choose Write the list, run it in your SQL window, paste the result and choose Read the list. Then choose what each code means and choose Save these codes.",
   codesAboutSummary: 'How the list works, and why it is safe',
   codesSafe: (limit: string) =>
-    `The list counts the codes used on the anaesthetics of the chosen year, with their names. It runs in two parts: part 1 puts at most ${limit} anaesthetics of that year into a temporary table, #cohort, and part 2 reads only their rows, never the whole of a large table.`,
+    `The list counts the codes used on the anaesthetics of the year above, with their names. It runs in two parts: part 1 puts at most ${limit} anaesthetics of that year into a temporary table, #cohort, and part 2 reads only their rows, never the whole of a large table.`,
   yearLabel: 'The year to look at:',
   yearNote: 'A recent full year shows how the record is charted now.',
   vocabularyHeading: (title: string) => `The codes of ${title[0].toLowerCase()}${title.slice(1)}`,
@@ -280,7 +307,9 @@ export const describeStrings = {
     unlinked: 'This part does not link to an anaesthetic or a patient, so a later screen settles its codes.',
     unbound_link: 'The map does not yet say how this part links to its anaesthetic, so the page cannot write the list.',
   } as Record<string, string>,
-  kindsSummary: (vocabulary: string) => `What each kind in ${vocabulary} means`,
+  kindsSummary: 'What each kind means',
+  // A kind in plain words, with its code after it, as the lists and forms show it.
+  kindOption: (kind: string, meaning?: string) => (meaning ? `${meaning.replace(/[.\s]+$/, '')} (${kind})` : kind),
   chartedWrite: 'Write the list',
   chartedCopy: 'Copy the list',
   chartedPasteLabel: 'The result of the list, copied with its headers:',
@@ -293,6 +322,8 @@ export const describeStrings = {
   notChosen: 'Not chosen',
   codesSave: 'Save these codes',
   codesSaved: (n: number, date: string) => `The page saved ${plural(n, 'code', 'codes')} for this list on ${date}.`,
+  codesFromRow: 'Go to this list in step 7',
+  underTen: 'under 10',
   codesNoneSaved: 'No codes are saved for this list yet.',
   kindMeaning: (kind: string, meaning: string) => `${kind}: ${meaning}`,
 
@@ -300,7 +331,7 @@ export const describeStrings = {
   countsWhat: 'Choose Write the counts. For each count, choose Copy the count, run it, paste its result and choose Read the result, then choose Save the judgement.',
   countsAboutSummary: 'What the counts are for',
   countsAbout:
-    'The counts show whether the map reaches the record in every year. Each count is rounded down to ten, and a group of fewer than ten is left blank, so that no small number can point to a patient.',
+    'The counts show whether the map reaches the record in every year. Each count is rounded down to ten. A year or a group with fewer than ten is left out, and a figure under ten within a group shows as under 10, so that no small number can point to a patient.',
   countsWrite: 'Write the counts',
   countsAgain: 'If you change a column or a code, choose Write the counts again.',
   countHeading: {
@@ -312,7 +343,7 @@ export const describeStrings = {
     coverage_by_year:
       'This count shows, for each year, how many anaesthetics the map finds and how many of them have a patient, a date of birth, a date of death and a recorded stop.',
     repeated_keys: 'This count shows whether any patient or anaesthetic appears on more than one row, which would make an audit count it twice.',
-    readings_by_kind: 'This count shows the readings of the chosen year by kind, so that you can see whether the codes chosen in step 7 reach them.',
+    readings_by_kind: 'This count shows the readings of {year}, the year chosen in step 7, by kind, so that you can see whether the codes chosen in step 7 reach them.',
   } as Record<string, string>,
   countTablesSummary: 'Which tables this count reads',
   countSafe: 'This count reads no table of readings, so it is safe to run on production.',
@@ -352,8 +383,11 @@ export const describeStrings = {
   writeFolderNote: 'Your browser will ask you to choose the folder and to allow the page to save changes to it.',
   writeZip: 'Download as a zip',
   writeZipNote: "Unzip the downloaded zip into the hospital folder on the hospital's own storage, replacing what is there.",
-  written: (n: number) => `The page has saved ${plural(n, 'file', 'files')} into the folder.`,
-  zipped: (n: number) => `The page has saved the hospital folder as a zip of ${plural(n, 'file', 'files')}. Unzip it into the hospital folder on the hospital's own storage, replacing what is there.`,
+  written: (n: number, draft: string) => `The page has saved ${plural(n, 'file', 'files')} into the folder${draft ? ` as a draft (${draft})` : ''}.`,
+  zipped: (n: number, draft: string) => `The page has saved the hospital folder${draft ? ` as a draft (${draft})` : ''} as a zip of ${plural(n, 'file', 'files')}. Unzip it into the hospital folder on the hospital's own storage, replacing what is there.`,
+  draftNote: (unfinished: string) => `The folder is not yet complete: ${unfinished}. You can save it now as a draft, which the README and settings.json record, and finish it at a later sitting.`,
+  draftCodes: 'These columns are answered, but their codes are not yet translated. Each link leads to its row:',
+  savedDraft: 'Saved as a draft',
   writtenStale: 'You have changed something since the folder was saved, so please save it again.',
   writeFailed: 'The page could not save into that folder. Choose Download as a zip instead.',
 
@@ -439,7 +473,9 @@ export const describeStrings = {
     checkingUse: 'The page is checking this change on invented rows before you keep it.',
     sqlLabel: 'Show the SQL that the page will write',
     incomplete: 'Complete the sentence, and the page will show what the change means.',
-    checkWhat: 'Choose Check this change. The page tests the whole map with the change on a small invented database in this tab, using no hospital data.',
+    checkWhat: 'Choose Check this change. The page tests the whole map with the change on invented rows, which are made-up rows that it builds in this tab, with no hospital data.',
+    passedMeans:
+      'This change keeps the map whole on invented rows. It does not say whether the column means what you think, which the test query against the real database and your own knowledge do.',
     checkButton: 'Check this change',
     checking: 'The page is building the invented rows and checking every part of the map.',
     checkSeconds: (seconds: number) => `The check took ${seconds.toLocaleString('en-AU')} seconds.`,
@@ -450,15 +486,20 @@ export const describeStrings = {
     although: 'Keep it although the check fails',
     reasonLabel: 'The reason for keeping it, which the page records with the change:',
     keepFailing: 'This change fails the check. To keep it, tick Keep it although the check fails and give the reason.',
+    keepAlthough: 'Keep it with this reason',
     kept: (date: string, check: string) =>
       check.startsWith('passed') ? `Kept on ${date}. The check passed.` : `Kept on ${date}, although the check failed.`,
     keptReason: (reason: string) => `The reason given: ${reason}`,
     modelCheck: 'Check the whole map',
-    modelCheckWhat: 'Before you change anything, you can check the map as it stands to see what is already wrong. Each finding links to its column below.',
+    modelCheckAgain: 'Check the whole map as it now stands',
+    modelCheckWhat:
+      'Before you change anything, you can check the map as it stands to see what is already wrong. The check builds invented rows, which are made-up rows with no hospital data, and runs every part of the map on them. Each finding links to its column below.',
+    modelCheckWhatAfter: 'The check runs the map, with every answer and change so far, on invented rows. Each finding links to its column below.',
     probeWhat: {
-      link: 'Run this test query to try the link on the database. It counts the anaesthetics of the chosen year that have at least one row through the link, and those with none.',
+      link: 'Run this test query to try the link on the database. It counts the anaesthetics of {year}, the year chosen in step 7, that have at least one row through the link, and those with none.',
       filter: 'Run this test query to count the rows read and how many of them pass the filter.',
       flag: 'Run this test query to count the rows in which the flag is 1, 0 and empty.',
+      flag_two: 'Run this test query to count the rows in which the flag is 1 and 0. The form never leaves this flag empty.',
     } as Record<string, string>,
     probeWrite: 'Write the test query',
     probeCopy: 'Copy the test query',

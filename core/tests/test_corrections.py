@@ -138,7 +138,7 @@ def test_the_check_says_the_model_is_whole_when_nothing_is_wrong():
     assert found["passed"]
     assert found["sentence"].startswith("This change keeps the map whole: all 11 parts of the record run on invented rows and give the rows "
                                         "they should, every identifying column is unique, every flag is filled, and the "
-                                        "planted newborns give the expected answer.")
+                                        "invented newborns of the test audit give the expected answer.")
     assert any("outside the anaesthetic's window" in n for n in found["notes"])
 
 

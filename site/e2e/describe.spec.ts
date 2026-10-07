@@ -137,8 +137,13 @@ test('the record is described, written as a hospital folder and restored from it
   await expect(nothing.getByRole('button', { name: d.chooseColumn })).toBeVisible();
 
   // Some bindings confirmed, one corrected by hand after its check, one not sure.
-  const total = Number((await page.locator('#t-tally').textContent())!.match(/^Of (\d+) columns/)![1]);
+  const tallyText = (await page.locator('#t-tally').textContent())!;
+  const total = Number(tallyText.match(/^Of (\d+) columns/)![1]);
+  const tables = Number(tallyText.match(/Of the (\d+) tables of the parts/)![1]);
   expect(total).toBeGreaterThan(40);
+  // The figures count columns only; the tables of the parts are counted apart.
+  const tally = (confirmed: number, corrected: number, notSure: number, untranslated: number) =>
+    d.tally({ confirmed, corrected, not_sure: notSure, untranslated, remaining: total - confirmed - corrected - notSure - untranslated, total, tables, tables_remaining: tables });
   const birthRow = page.locator('#confirm [data-about="role_patient.birth_date"]');
   await birthRow.getByRole('button', { name: d.yes }).click();
   // An answered column shows its answer as a state, with Change the answer in place of the choices.
@@ -155,15 +160,24 @@ test('the record is described, written as a hospital folder and restored from it
   await patient.getByRole('button', { name: d.anotherUse }).click();
   await expect(patient.locator('.problem-note')).toContainText('The dictionary holds no column THEATRE_CASE.NO_SUCH.');
   await patient.locator('input[type=text]').fill('THEATRE_CASE.PERSON_KEY');
+  // The written name clears the list's choice, and the row says which is in force.
+  await expect(patient.locator('.in-force')).toHaveText(d.inForceWritten('THEATRE_CASE.PERSON_KEY'));
   await patient.getByRole('button', { name: d.anotherUse }).click();
-  // The chosen column is checked on invented rows, and its sentence and check are shown before it is kept.
+  // The chosen column's sentence is shown; the person then checks it, as in every other form, before keeping it.
   await expect(patient.locator('.correction-sentence')).toContainText("The patient's identifier in Anaesthetics is THEATRE_CASE.PERSON_KEY");
-  await expect(patient.locator('.check-report')).toBeVisible({ timeout: 120_000 });
+  await expect(patient.locator('.check-report')).toHaveCount(0);
+  await patient.getByRole('button', { name: d.corrections.checkButton }).click();
+  await expect(patient.locator('.check-report')).toBeVisible({ timeout: 300_000 });
+  await expect(patient.locator('.passed-means')).toHaveText(d.corrections.passedMeans);
   await patient.getByRole('button', { name: d.corrections.keep, exact: true }).click();
   await expect(patient).toContainText('Corrected to THEATRE_CASE.PERSON_KEY');
   await expect(patient.locator('.proposed')).toHaveCount(0);
-  await expect(page.locator('#t-tally')).toHaveText(d.tally({ confirmed: 1, corrected: 1, not_sure: 1, remaining: total - 3, total }));
-  await expect(page.locator('#questions')).toContainText('The value in Readings charted during an anaesthetic: Please confirm whether');
+  await expect(page.locator('#t-tally')).toHaveText(tally(1, 1, 1, 0));
+  // Each question states the proposal and asks whether it is right.
+  await expect(page.locator('#questions')).toContainText(
+    'The value in Readings charted during an anaesthetic: The page proposes OBS_READING.READ_VALUE as the value in Readings charted during an anaesthetic. Is that right, and if not, which column holds it?');
+  // After the first answer, the check of the whole map says that it checks the map as it now stands.
+  await expect(page.locator('#model-check')).toHaveText(d.corrections.modelCheckAgain);
   await expect(page.locator('#questions')).not.toContainText('roles.md');
   // No code name of a part or a column stands alone anywhere in the step.
   expect(await page.locator('#step-6').innerText()).not.toMatch(/\brole_[a-z]/);
@@ -182,11 +196,16 @@ test('the record is described, written as a hospital folder and restored from it
   await expect(readings.locator('th').nth(1)).toHaveText('Times charted');
   await expect(readings.locator('select[data-code="77"] option[value="other"]')).toHaveCount(1);
   await expect(readings).toContainText(d.codesOther);
+  // Each kind is offered in plain words, with its code after it.
+  await expect(readings.locator('select[data-code="52"] option[value="map_arterial"]')).toHaveText('A mean arterial pressure from an arterial line, in mmHg (map_arterial)');
   await readings.locator('select[data-code="52"]').selectOption('map_arterial');
   await readings.locator('select[data-code="51"]').selectOption('map_cuff');
   await readings.getByRole('button', { name: d.codesSave }).click();
   await expect(page.locator('[data-key="role_reading.kind"]')).toContainText('The page saved 2 codes for this list on');
-  await expect(page.locator('#step-7')).toHaveAttribute('data-state', 'done');
+  // Step 7 is done only when every list is saved, and the rail says how many are.
+  const lists = await page.locator('#vocabularies section.vocabulary:has(button)').count();
+  await expect(page.locator('#rail a[href="#step-7"]')).toContainText(d.receipt.codes(1, lists).replace(/\.$/, ''));
+  await expect(page.locator('#step-7')).not.toHaveAttribute('data-state', 'done');
   await stage(page, '7-codes', '[data-key="role_reading.kind"]');
 
   // A count, pasted and judged.
@@ -205,7 +224,9 @@ test('the record is described, written as a hospital folder and restored from it
   await expect(page.locator('[data-count="coverage_by_year"]')).toContainText('this count looks right');
   await expect(page.locator('[data-count="coverage_by_year"]')).toContainText(d.lookRightTraining);
   await expect(page.locator('[data-count="coverage_by_year"]')).toContainText(d.lookRightCompare.coverage_by_year);
-  await expect(page.locator('#step-8')).toHaveAttribute('data-state', 'done');
+  // Step 8 is done only when every count offered has a judgement.
+  await expect(page.locator('#rail a[href="#step-8"]')).toContainText(d.receipt.counts(1, 3).replace(/\.$/, ''));
+  await expect(page.locator('#step-8')).not.toHaveAttribute('data-state', 'done');
   await stage(page, '8-counts', '[data-count="coverage_by_year"]');
 
   // The folder, as a zip, without the dictionary.
@@ -215,8 +236,11 @@ test('the record is described, written as a hospital folder and restored from it
   await page.locator('#write-zip').click();
   const saved = await download;
   expect(saved.suggestedFilename()).toBe('hospital-folder.zip');
-  await expect(page.locator('#t-write-status')).toContainText('The page has saved the hospital folder as a zip of');
-  await expect(page.locator('#step-9')).toHaveAttribute('data-state', 'done');
+  // With columns still to answer, the folder is saved as a draft and step 9 is not done.
+  await expect(page.locator('#t-write-draft')).toContainText('The folder is not yet complete:');
+  await expect(page.locator('#t-write-status')).toContainText('The page has saved the hospital folder as a draft (');
+  await expect(page.locator('#step-9')).not.toHaveAttribute('data-state', 'done');
+  await expect(page.locator('#rail a[href="#step-9"]')).toContainText(d.savedDraft);
   await stage(page, '9-written', '#step-9');
   const folder = join(mkdtempSync(join(tmpdir(), 'hospital-')), 'hospital-folder');
   const zipPath = folder + '.zip';
@@ -230,7 +254,14 @@ test('the record is described, written as a hospital folder and restored from it
   expect(readFileSync(join(folder, 'map/role_reading.sql'), 'utf8')).toContain("IN ('52') THEN 'map_arterial'");
   // The view's head carries one true sentence about who has answered for it.
   expect(readFileSync(join(folder, 'map/role_anaesthetic.sql'), 'utf8')).not.toContain('No person has confirmed');
-  expect(JSON.parse(readFileSync(join(folder, 'settings.json'), 'utf8')).year).toBe(2024);
+  const settings = JSON.parse(readFileSync(join(folder, 'settings.json'), 'utf8'));
+  expect(settings.year).toBe(2024);
+  expect(settings.complete).toBe(false);
+  expect(settings.draft).toMatch(/^draft: [\d,]+ columns and [\d,]+ tables unanswered/);
+  expect(readFileSync(join(folder, 'README.md'), 'utf8')).toContain('## This folder is a draft');
+  // The map says how many columns a person has answered for, and the README speaks of parts, not roles.
+  expect(JSON.parse(readFileSync(join(folder, 'map/map.json'), 'utf8')).description).toContain('A person has since answered for');
+  expect(readFileSync(join(folder, 'README.md'), 'utf8')).not.toMatch(/\brole\b|\bbindings?\b/);
   expect(readFileSync(join(folder, 'README.md'), 'utf8')).toContain('## Queries to run again on production');
   expect(readFileSync(join(folder, 'confirmations.csv'), 'utf8')).toMatch(/role_anaesthetic\.patient_key,no,"?THEATRE_CASE\.PERSON_KEY[^\n]*,passed,/);
   // A change after the folder was saved makes step 9 to be done again.
@@ -251,7 +282,8 @@ test('the record is described, written as a hospital folder and restored from it
   await expect(page.locator('#b-hospital-folder')).toHaveText(d.folderChoose);
   await page.locator('#hospital-folder').setInputFiles(folder);
   await expect(page.locator('#t-folder-status')).toContainText('The page has restored the map from the hospital folder.');
-  await expect(page.locator('#t-tally')).toHaveText(d.tally({ confirmed: 1, corrected: 1, not_sure: 1, remaining: total - 3, total }));
+  // The Yes given after the folder was written is not in the folder, so the restored tally is the one that was saved.
+  await expect(page.locator('#t-tally')).toHaveText(tally(1, 1, 1, 0));
   await expect(page.locator('#confirm [data-about="role_reading.value"]')).toContainText(d.presence.large('OBS_READING', 25_000_000));
   await expect(page.locator('[data-key="role_reading.kind"] select[data-code="52"]')).toHaveValue('map_arterial');
   await stage(page, '10-restored', '#rail-nav');
@@ -337,7 +369,9 @@ test('each kind of correction is checked on invented rows before it is kept', as
   await expect(entry(about).locator('pre').first()).toContainText('TOP (50)');
   await entry(about).getByLabel(c.valuesPasteLabel).fill('value\trows\nY\t120\nN\t900\n');
   await entry(about).getByRole('button', { name: c.valuesRead }).click();
-  await entry(about).locator('fieldset.values input[value="Y"]').check();
+  // The 1-or-0 form starts with the column already bound; each value is a labelled box.
+  await expect(entry(about).getByLabel(c.tableLabel, { exact: true })).toHaveValue('THEATRE_CASE');
+  await entry(about).getByLabel(c.valueRows('Y', 120)).check();
   await expect(entry(about).locator('.correction .correction-sentence')).toHaveText(
     "The emergency operation in the anaesthetic's details is 1 where THEATRE_CASE.EMERGENCY_FLAG, reached by matching ANAES_RECORD.CASE_KEY to THEATRE_CASE.CASE_KEY, holds Y, 0 where it holds anything else, and empty where it is empty.");
   await expect(entry(about).locator('.correction-sql')).toContainText("IN ('Y') THEN 1 ELSE 0 END AS is_emergency");
@@ -468,7 +502,7 @@ test('each kind of correction is checked on invented rows before it is kept', as
   await code.press('Tab');
   await entry(about).getByLabel(c.kindLabel).selectOption('map_arterial');
   await expect(entry(about).locator('.correction .correction-sentence')).toHaveText(
-    'The local code of OBS_READING.OBS_TYPE_KEY is translated to map_arterial (52), and every other code is other.');
+    'The local code of OBS_READING.OBS_TYPE_KEY is translated as follows: 52 to a mean arterial pressure from an arterial line, in mmHg (map_arterial). Every other code is other.');
   await check(about, true);
   await keep(about);
   await stage(page, 'c5-kept', '#confirm [data-about="role_reading.kind"]');
@@ -490,13 +524,12 @@ test('each kind of correction is checked on invented rows before it is kept', as
   await expect(broken).toContainText('This change breaks the map in 1 place:');
   await expect(broken).toContainText('readings appear twice, each linked to a second anaesthetic, so a reading no longer links to exactly one anaesthetic.');
   await stage(page, 'c6-broken', '#confirm [data-about="role_reading.anaesthetic_key"]');
-  await entry(about).getByRole('button', { name: c.keep, exact: true }).click();
-  await expect(entry(about).locator('.problem-note')).toContainText('tick Keep it although the check fails and give the reason');
-  await entry(about).getByRole('button', { name: c.checkButton }).click();
-  await expect(entry(about).locator('.check-report')).toBeVisible({ timeout: 120_000 });
+  // After a failed check, only Discard and the ticked keep with its reason are offered.
+  await expect(entry(about).getByRole('button', { name: c.keep, exact: true })).toHaveCount(0);
+  await expect(entry(about).getByRole('button', { name: c.discard })).toBeVisible();
   await entry(about).locator('input.although').check();
   await entry(about).getByLabel(c.reasonLabel).fill('The database team says that each visit holds one anaesthetic at this hospital.');
-  await entry(about).getByRole('button', { name: c.keep, exact: true }).click();
+  await entry(about).getByRole('button', { name: c.keepAlthough }).click();
   await expect(entry(about).locator('.kept-correction')).toContainText('although the check failed');
   await expect(entry(about).locator('.kept-correction')).toContainText('The reason given: The database team says');
   await stage(page, 'c7-kept-failing', '#confirm [data-about="role_reading.anaesthetic_key"]');
@@ -517,4 +550,66 @@ test('each kind of correction is checked on invented rows before it is kept', as
   expect(journal.filter((e) => e.name === 'correction').map((e) => e.passed)).toEqual([true, true, true, true, true, true, true, true, false]);
   expect(readFileSync(join(folder, 'map/role_reading.sql'), 'utf8')).toContain('LEFT JOIN ANAES_RECORD');
   expect(requestsWhileOffline).toEqual([]);
+});
+
+// A Yes on a column that holds codes: the row says what the page assumes, a Yes leads straight on to the 1-or-0 form,
+// the row and the rail say that the codes are not yet translated, the folder is a draft that lists the column, and the
+// translation kept on the proposed column is a confirmation.
+test('a Yes on a column that holds codes leads on to its translation', async ({ page, context, browserName }) => {
+  test.setTimeout(400_000);
+  const c = d.corrections;
+  await loadAndGoOffline(page, context, browserName);
+  await loadDictionary(page);
+  await page.locator('#propose').click();
+  await expect(page.locator('#t-propose-status')).toContainText('The page has proposed', { timeout: 60_000 });
+  await page.locator('#tables-write').click();
+  await page.locator('#tables-paste').fill(tablesResult());
+  await page.locator('#tables-read').click();
+  await expect(page.locator('#t-tables-status')).toContainText('The page has read the result');
+  const row = page.locator('#confirm [data-about="role_patient.is_test"]');
+  await expect(row.locator('.coded .assumed')).toContainText('The page assumes that the test patient in Patients is 1 where PERSON_MASTER.TEST_PERSON_FLAG holds Y, Yes or 1');
+  await expect(row.locator('.coded')).toContainText(d.coded.flag);
+  // The reason for the proposal is the dictionary's matched words, under it.
+  await expect(row.locator('.reason')).toContainText(d.reasonLabel);
+  await stage(page, 'd1-before-yes', '#confirm [data-about="role_patient.is_test"]');
+  await row.getByRole('button', { name: d.yes }).click();
+  await expect(row.locator('.answered')).toContainText('codes not yet translated');
+  await expect(row.locator('.translation')).toContainText(d.coded.flagNext);
+  await expect(row.getByLabel(c.tableLabel, { exact: true })).toHaveValue('PERSON_MASTER');
+  await expect(page.locator('#rail a[href="#step-6"]')).toContainText('1 still to translate');
+  await expect(page.locator('#step-6')).not.toHaveAttribute('data-state', 'done');
+  // Step 9 lists the column and calls the folder a draft until it is translated.
+  await openStep(page, 9);
+  await expect(page.locator('#write-draft-list')).toContainText('The test patient in Patients');
+  await expect(page.locator('#t-write-draft')).toContainText('1 still to translate');
+  await stage(page, 'd1-draft', '#step-9');
+  await page.locator('#write-draft-list a').first().click();
+  await expect(row).toBeInViewport();
+  // The values query, its result read back, and the value that means yes.
+  await row.getByRole('button', { name: c.valuesWrite }).click();
+  await expect(row.locator('pre').first()).toContainText('TOP (50)');
+  await row.getByLabel(c.valuesPasteLabel).fill('value\trows\nY\t20\nN\t1200\n');
+  await row.getByRole('button', { name: c.valuesRead }).click();
+  await expect(row.getByLabel(c.valueRows('N', 1200))).toBeVisible();
+  const values = row.getByLabel(c.flagValuesLabel);
+  await values.fill('Y');
+  await values.press('Tab');
+  await expect(row.getByLabel(c.valueRows('Y', 20))).toBeChecked();
+  await expect(row.getByLabel(c.valueRows('N', 1200))).not.toBeChecked();
+  await expect(row.locator('.correction-sentence')).toContainText('is 1 where PERSON_MASTER.TEST_PERSON_FLAG holds Y, and 0 where it holds anything else or is empty.');
+  await row.getByRole('button', { name: c.checkButton }).click();
+  // The first check of a sitting also builds the map as it stands, so it takes the longest.
+  await expect(row.locator('.check-report')).toBeVisible({ timeout: 300_000 });
+  await expect(row.locator('.passed-means')).toHaveText(c.passedMeans);
+  await stage(page, 'd1-checked', '#confirm [data-about="role_patient.is_test"]');
+  await row.getByRole('button', { name: c.keep, exact: true }).click();
+  // Kept on the proposed column, the translation is a confirmation, not a correction.
+  await expect(row.locator('.answered')).toContainText('Confirmed on');
+  await expect(row).not.toContainText('Corrected to');
+  await expect(row.locator('.translation')).toHaveCount(0);
+  await expect(page.locator('#rail a[href="#step-6"]')).not.toContainText('still to translate');
+  await expect(page.locator('#write-draft-list li')).toHaveCount(0);
+  // Its test query counts 1 and 0 alone, as the form never leaves this flag empty.
+  await expect(row.locator('.probe .note').first()).toHaveText(c.probeWhat.flag_two);
+  await stage(page, 'd1-translated', '#confirm [data-about="role_patient.is_test"]');
 });
