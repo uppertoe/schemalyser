@@ -17,7 +17,7 @@ const shots = process.env.SCREENSHOTS;
 
 test.skip(({ browserName }) => browserName === 'webkit', 'The page refuses to start in WebKit.');
 
-const SUMMARY = 'Schemalyser has read 15 files. It was not able to read 2 of them in full, because each holds a part that Schemalyser could not parse, SQL that is built as text when it runs, a call to a stored procedure, a statement of a kind that Schemalyser does not analyse, or a query whose columns Schemalyser could not match to their tables.';
+const SUMMARY = 'Schemalyser has read 15 files. It was not able to read 2 of them in full. In 1 file, part of the SQL could not be parsed, that is, Schemalyser could not read it as SQL. In 1 file, part of the SQL is built as text when it runs, so Schemalyser cannot see the tables inside it.';
 const TOKEN = 'github_pat_TESTONLY_' + 'x7Q2'.repeat(10);
 const REQUESTS = 'example/analytics-requests';
 const STATE = 'example/schemalyser-state';
