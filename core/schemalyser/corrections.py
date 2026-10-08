@@ -104,7 +104,7 @@ WORDING = {
     "separator": "Please give a separator of at most ten characters, with no line break.",
     "filter_rows": "A filter applies to the rows of a part, so please choose it on the row for the table, at the head of the part.",
     "codes_kind": "A translation of codes suits a column that holds a kind, and {about} is {type_words}.",
-    "codes_unknown": "{kind} is not one of the kinds of this vocabulary.",
+    "codes_unknown": "{kind} is not one of the kinds the page knows for this column.",
     # The sentences that each form means.
     "say_column": "{column} is {source}{how}.",
     "say_flag": "{column} is 1 where {source}{how} holds {values}, and 0 where it holds anything else or is empty.",
@@ -1442,7 +1442,8 @@ def run_check(state, seed=SHADOW_SEED, anaesthetics=SHADOW_ANAESTHETICS):
     for number, kind in enumerate(missing):
         kinds.setdefault(kind, {})["codes"] = [str(9901 + number)]
     if missing:
-        notes.append(WORDING["placeholders"].format(kinds=_and(missing), them="it an invented code" if len(missing) == 1 else "each an invented code"))
+        plain = {"map_arterial": "the mean arterial pressure from an arterial line", "map_cuff": "the mean pressure from a cuff"}
+        notes.append(WORDING["placeholders"].format(kinds=_and([plain.get(k, k) for k in missing]), them="it an invented code" if len(missing) == 1 else "each an invented code"))
     vocabularies = {name: state._vocabulary_codes(name) for name in data["roles"]}
     views = {}
     for name in data["roles"]:

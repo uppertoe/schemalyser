@@ -96,3 +96,11 @@ manifest = {"state": sorted(p for p in copies if p.startswith("state/")),
 (example_out / "dictionary").mkdir(parents=True, exist_ok=True)
 for name in ("invented-dictionary.csv", "invented-tables.csv"):
     shutil.copyfile(FIXTURES / "dictionary" / name, example_out / "dictionary" / name)
+
+# The invented hospital, on which the describe page runs its own queries when the invented dictionary is in use: the
+# invented world's tables and rows as fixtures/make_hospital.py writes them, and the invented catalogue that gives the
+# database's own records of its tables. Every value is invented. The page fetches these files beside the invented
+# dictionary while the tab is online, and the worker builds the database from them.
+hospital_out = example_out / "hospital"
+shutil.copytree(FIXTURES / "hospital", hospital_out)
+shutil.copyfile(FIXTURES / "invented-catalogue.csv", hospital_out / "catalogue.csv")

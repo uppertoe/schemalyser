@@ -1120,3 +1120,31 @@ def describe_probe_query(request):
 def describe_probe_read(request):
     r = json.loads(request)
     return _reply(lambda: {"receipt": _describing().read_probe(r["about"], r["text"])})
+
+
+# The invented hospital, on which the page runs its own queries when the invented dictionary is in use. It is built once
+# for each sitting, from the files that the page fetched beside the invented dictionary, and kept in this worker.
+
+_hospital = None
+
+
+def describe_hospital_build(names, *data):
+    """Builds the invented hospital from its published files: names is a JSON list of their paths, and data their bytes
+    in the same order."""
+    global _hospital
+    from .hospital import HospitalError, InventedHospital
+    if _hospital is not None:
+        return json.dumps({"ok": True, "tables": _hospital.tables})
+    try:
+        _hospital = InventedHospital({path: _bytes(d) for path, d in zip(json.loads(names), data)})
+    except (HospitalError, ValueError, KeyError):
+        return json.dumps({"ok": False, "problem": "hospital"})
+    return json.dumps({"ok": True, "tables": _hospital.tables})
+
+
+def describe_hospital_run(request):
+    """Runs one query that the page has offered on the invented hospital, and reads its result as a paste would be read:
+    request is {"query": its name, "read": the reading, and the reading's own key, year, name or about}."""
+    r = json.loads(request)
+    given = {k: r[k] for k in ("key", "year", "name", "about") if k in r}
+    return _reply(lambda: {"receipt": _describing().run_invented(_hospital, r["query"], r["read"], **given)})

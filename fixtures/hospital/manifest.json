@@ -1,0 +1,578 @@
+{
+ "about": "The invented hospital: every value is invented, and no row describes a real person.",
+ "tables": [
+  {
+   "name": "AIRWAY_DEVICE",
+   "columns": [
+    [
+     "DEVICE_KEY",
+     "BIGINT"
+    ],
+    [
+     "ANAES_KEY",
+     "VARCHAR"
+    ],
+    [
+     "DEVICE_KIND_KEY",
+     "VARCHAR"
+    ],
+    [
+     "PLACED_TS",
+     "TIMESTAMP"
+    ],
+    [
+     "REMOVED_TS",
+     "TIMESTAMP"
+    ]
+   ],
+   "rows": 201
+  },
+  {
+   "name": "ANAES_EVENT",
+   "columns": [
+    [
+     "ANAES_KEY",
+     "VARCHAR"
+    ],
+    [
+     "SEQ",
+     "BIGINT"
+    ],
+    [
+     "EVENT_TYPE_KEY",
+     "VARCHAR"
+    ],
+    [
+     "EVENT_TS",
+     "TIMESTAMP"
+    ]
+   ],
+   "rows": 200
+  },
+  {
+   "name": "ANAES_RECORD",
+   "columns": [
+    [
+     "ANAES_KEY",
+     "VARCHAR"
+    ],
+    [
+     "CASE_KEY",
+     "VARCHAR"
+    ],
+    [
+     "VISIT_KEY",
+     "BIGINT"
+    ],
+    [
+     "RISK_GRADE_CAT",
+     "BIGINT"
+    ],
+    [
+     "ANAES_KIND_CAT",
+     "BIGINT"
+    ],
+    [
+     "ANAES_START_TS",
+     "TIMESTAMP"
+    ],
+    [
+     "ANAES_STOP_TS",
+     "TIMESTAMP"
+    ]
+   ],
+   "rows": 238
+  },
+  {
+   "name": "ANAES_STAFF",
+   "columns": [
+    [
+     "ANAES_KEY",
+     "VARCHAR"
+    ],
+    [
+     "SEQ",
+     "BIGINT"
+    ],
+    [
+     "STAFF_KEY",
+     "VARCHAR"
+    ],
+    [
+     "ROLE_CAT",
+     "BIGINT"
+    ],
+    [
+     "START_TS",
+     "TIMESTAMP"
+    ],
+    [
+     "END_TS",
+     "TIMESTAMP"
+    ]
+   ],
+   "rows": 200
+  },
+  {
+   "name": "CASE_PROC",
+   "columns": [
+    [
+     "CASE_KEY",
+     "VARCHAR"
+    ],
+    [
+     "SEQ",
+     "BIGINT"
+    ],
+    [
+     "PROC_KEY",
+     "VARCHAR"
+    ]
+   ],
+   "rows": 200
+  },
+  {
+   "name": "DIAG_DEF",
+   "columns": [
+    [
+     "DIAG_KEY",
+     "VARCHAR"
+    ],
+    [
+     "DIAG_LABEL",
+     "VARCHAR"
+    ],
+    [
+     "ICD_CODE",
+     "VARCHAR"
+    ]
+   ],
+   "rows": 200
+  },
+  {
+   "name": "DRUG_DEF",
+   "columns": [
+    [
+     "DRUG_KEY",
+     "VARCHAR"
+    ],
+    [
+     "DRUG_LABEL",
+     "VARCHAR"
+    ]
+   ],
+   "rows": 200
+  },
+  {
+   "name": "DRUG_GIVEN",
+   "columns": [
+    [
+     "GIVEN_KEY",
+     "BIGINT"
+    ],
+    [
+     "VISIT_KEY",
+     "BIGINT"
+    ],
+    [
+     "ANAES_KEY",
+     "VARCHAR"
+    ],
+    [
+     "DRUG_KEY",
+     "VARCHAR"
+    ],
+    [
+     "GIVEN_TS",
+     "TIMESTAMP"
+    ],
+    [
+     "DOSE_AMT",
+     "DECIMAL(18,4)"
+    ],
+    [
+     "DOSE_UNIT_CAT",
+     "BIGINT"
+    ],
+    [
+     "ROUTE_CAT",
+     "BIGINT"
+    ],
+    [
+     "ACTION_CAT",
+     "BIGINT"
+    ]
+   ],
+   "rows": 206
+  },
+  {
+   "name": "EVENT_TYPE_DEF",
+   "columns": [
+    [
+     "EVENT_TYPE_KEY",
+     "VARCHAR"
+    ],
+    [
+     "EVENT_LABEL",
+     "VARCHAR"
+    ]
+   ],
+   "rows": 3
+  },
+  {
+   "name": "LK_CASE_STATUS",
+   "columns": [
+    [
+     "CASE_STATUS_CAT",
+     "BIGINT"
+    ],
+    [
+     "LABEL",
+     "VARCHAR"
+    ]
+   ],
+   "rows": 4
+  },
+  {
+   "name": "LK_RISK_GRADE",
+   "columns": [
+    [
+     "RISK_GRADE_CAT",
+     "BIGINT"
+    ],
+    [
+     "LABEL",
+     "VARCHAR"
+    ]
+   ],
+   "rows": 5
+  },
+  {
+   "name": "LK_ROUTE",
+   "columns": [
+    [
+     "ROUTE_CAT",
+     "BIGINT"
+    ],
+    [
+     "LABEL",
+     "VARCHAR"
+    ]
+   ],
+   "rows": 3
+  },
+  {
+   "name": "LK_SERVICE",
+   "columns": [
+    [
+     "SERVICE_CAT",
+     "BIGINT"
+    ],
+    [
+     "LABEL",
+     "VARCHAR"
+    ]
+   ],
+   "rows": 200
+  },
+  {
+   "name": "LK_SEX",
+   "columns": [
+    [
+     "SEX_CAT",
+     "BIGINT"
+    ],
+    [
+     "LABEL",
+     "VARCHAR"
+    ]
+   ],
+   "rows": 2
+  },
+  {
+   "name": "OBS_READING",
+   "columns": [
+    [
+     "SHEET_KEY",
+     "VARCHAR"
+    ],
+    [
+     "SEQ",
+     "BIGINT"
+    ],
+    [
+     "OBS_TYPE_KEY",
+     "VARCHAR"
+    ],
+    [
+     "READ_TS",
+     "TIMESTAMP"
+    ],
+    [
+     "READ_VALUE",
+     "VARCHAR"
+    ],
+    [
+     "ACCEPTED_FLAG",
+     "VARCHAR"
+    ]
+   ],
+   "rows": 7432
+  },
+  {
+   "name": "OBS_SHEET",
+   "columns": [
+    [
+     "SHEET_KEY",
+     "VARCHAR"
+    ],
+    [
+     "VISIT_KEY",
+     "BIGINT"
+    ],
+    [
+     "ANAES_KEY",
+     "VARCHAR"
+    ]
+   ],
+   "rows": 238
+  },
+  {
+   "name": "OBS_TYPE_DEF",
+   "columns": [
+    [
+     "OBS_TYPE_KEY",
+     "VARCHAR"
+    ],
+    [
+     "OBS_LABEL",
+     "VARCHAR"
+    ],
+    [
+     "UNIT_LABEL",
+     "VARCHAR"
+    ]
+   ],
+   "rows": 8
+  },
+  {
+   "name": "PERSON_MASTER",
+   "columns": [
+    [
+     "PERSON_KEY",
+     "VARCHAR"
+    ],
+    [
+     "RECORD_NO",
+     "VARCHAR"
+    ],
+    [
+     "GIVEN_NAME",
+     "VARCHAR"
+    ],
+    [
+     "FAMILY_NAME",
+     "VARCHAR"
+    ],
+    [
+     "BIRTH_TS",
+     "TIMESTAMP"
+    ],
+    [
+     "SEX_CAT",
+     "BIGINT"
+    ],
+    [
+     "TEST_PERSON_FLAG",
+     "VARCHAR"
+    ]
+   ],
+   "rows": 236
+  },
+  {
+   "name": "PERSON_MASTER_2",
+   "columns": [
+    [
+     "PERSON_KEY",
+     "VARCHAR"
+    ],
+    [
+     "GEST_WEEKS",
+     "BIGINT"
+    ],
+    [
+     "BIRTH_WEIGHT_G",
+     "BIGINT"
+    ],
+    [
+     "DEATH_TS",
+     "TIMESTAMP"
+    ]
+   ],
+   "rows": 204
+  },
+  {
+   "name": "PROC_DEF",
+   "columns": [
+    [
+     "PROC_KEY",
+     "VARCHAR"
+    ],
+    [
+     "PROC_LABEL",
+     "VARCHAR"
+    ]
+   ],
+   "rows": 200
+  },
+  {
+   "name": "STAFF_MASTER",
+   "columns": [
+    [
+     "STAFF_KEY",
+     "VARCHAR"
+    ],
+    [
+     "STAFF_LABEL",
+     "VARCHAR"
+    ]
+   ],
+   "rows": 200
+  },
+  {
+   "name": "THEATRE_CASE",
+   "columns": [
+    [
+     "CASE_KEY",
+     "VARCHAR"
+    ],
+    [
+     "VISIT_KEY",
+     "BIGINT"
+    ],
+    [
+     "PERSON_KEY",
+     "VARCHAR"
+    ],
+    [
+     "CASE_DATE",
+     "TIMESTAMP"
+    ],
+    [
+     "CASE_STATUS_CAT",
+     "BIGINT"
+    ],
+    [
+     "ROOM_KEY",
+     "VARCHAR"
+    ],
+    [
+     "SERVICE_CAT",
+     "BIGINT"
+    ],
+    [
+     "EMERGENCY_FLAG",
+     "VARCHAR"
+    ]
+   ],
+   "rows": 237
+  },
+  {
+   "name": "VISIT",
+   "columns": [
+    [
+     "VISIT_KEY",
+     "BIGINT"
+    ],
+    [
+     "PERSON_KEY",
+     "VARCHAR"
+    ],
+    [
+     "ADMIT_TS",
+     "TIMESTAMP"
+    ],
+    [
+     "DISCH_TS",
+     "TIMESTAMP"
+    ],
+    [
+     "WARD_KEY",
+     "BIGINT"
+    ],
+    [
+     "VISIT_KIND_CAT",
+     "BIGINT"
+    ]
+   ],
+   "rows": 237
+  },
+  {
+   "name": "VISIT_DIAGNOSIS",
+   "columns": [
+    [
+     "VISIT_KEY",
+     "BIGINT"
+    ],
+    [
+     "SEQ",
+     "BIGINT"
+    ],
+    [
+     "DIAG_KEY",
+     "VARCHAR"
+    ],
+    [
+     "PRIMARY_FLAG",
+     "VARCHAR"
+    ]
+   ],
+   "rows": 200
+  },
+  {
+   "name": "WARD_DEF",
+   "columns": [
+    [
+     "WARD_KEY",
+     "BIGINT"
+    ],
+    [
+     "WARD_LABEL",
+     "VARCHAR"
+    ]
+   ],
+   "rows": 200
+  }
+ ],
+ "date_columns": [
+  "ADMIT_TS",
+  "ANAES_START_TS",
+  "ANAES_STOP_TS",
+  "BIRTH_TS",
+  "CASE_DATE",
+  "DEATH_TS",
+  "DISCH_TS",
+  "END_TS",
+  "EVENT_TS",
+  "GIVEN_TS",
+  "PLACED_TS",
+  "READ_TS",
+  "REMOVED_TS",
+  "START_TS"
+ ],
+ "whole_columns": [
+  "ACTION_CAT",
+  "ANAES_KIND_CAT",
+  "CASE_STATUS_CAT",
+  "DOSE_UNIT_CAT",
+  "GEST_WEEKS",
+  "RISK_GRADE_CAT",
+  "ROLE_CAT",
+  "ROUTE_CAT",
+  "ROWS",
+  "SEQ",
+  "SERVICE_CAT",
+  "SEX_CAT",
+  "VISIT_KIND_CAT"
+ ]
+}

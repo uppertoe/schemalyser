@@ -158,7 +158,7 @@ test('the record is described, saved as a hospital schema and opened again', asy
   // Some columns confirmed, one corrected by hand after its test on made-up rows, one not sure.
   const tallyText = (await page.locator('#t-tally').textContent())!;
   const total = Number(tallyText.match(/^Of (\d+) columns/)![1]);
-  const tables = Number(tallyText.match(/Of the (\d+) tables of the parts/)![1]);
+  const tables = Number(tallyText.match(/proposed a table for (\d+) parts of the record/)![1]);
   expect(total).toBeGreaterThan(40);
   // The figures count columns only; the tables of the parts are counted apart.
   const tally = (confirmed: number, corrected: number, notSure: number, untranslated: number) =>
@@ -258,7 +258,7 @@ test('the record is described, saved as a hospital schema and opened again', asy
   await expect(page.locator('#t-write-draft')).toContainText('The hospital schema is not yet complete:');
   await expect(page.locator('#t-write-status')).toContainText('The page has saved the hospital schema as a draft (');
   await expect(page.locator('#step-9')).not.toHaveAttribute('data-state', 'done');
-  await expect(page.locator('#rail a[href="#step-9"]')).toContainText(d.savedDraft);
+  await expect(page.locator('#rail a[href="#step-9"]')).toContainText(d.savedDraft(''));
   await stage(page, '9-written', '#step-9');
   const unzipped = join(mkdtempSync(join(tmpdir(), 'hospital-')), 'hospital-schema');
   const zipPath = unzipped + '.schemalyser.zip';
@@ -779,4 +779,145 @@ test('going back online to load the invented dictionary leaves it loadable', asy
   await setOnline(page, context, browserName, true);
   await expect(page.locator('#t-locked')).toBeVisible();
   await expect(page.locator('#invented-load')).toBeDisabled();
+});
+
+// The invented dictionary with the invented hospital: every query that the page writes is run there with Run on the
+// invented hospital, and read as a paste would be, at step 5, for a query of values and a test query at step 6, for
+// every list at step 7 and every count at step 8, so that a person given nothing reaches a complete saved schema.
+test('the invented hospital answers every query, and the walk reaches a complete save', async ({ page, context, browserName }) => {
+  test.setTimeout(900_000);
+  const c = d.corrections;
+  const requestsWhileOffline: string[] = [];
+  let offline = false;
+  page.on('request', (request) => {
+    if (offline && !request.url().startsWith('blob:') && !request.url().startsWith('data:')) requestsWhileOffline.push(request.url());
+  });
+  await page.goto('./');
+  // While the page loads, no step says that it waits for the tab to go offline.
+  await expect(page.locator('#rail')).not.toContainText(d.waitingFor.offline);
+  await expect(page.getByText(d.loaded)).toBeVisible({ timeout: 90_000 });
+  await expect(page.locator('#rail a[href="#step-2"]')).not.toContainText(d.state.waiting);
+  // The choice of database may be made while the tab is online.
+  await page.locator('#way-create').check();
+  await expect(page.locator('#step-2 #database-options input[value="production"]')).toBeEnabled();
+  await page.locator('#t-offline-invented a').click();
+  await page.locator('#invented-load').click();
+  await expect(page.locator('#t-invented-status')).toHaveText(d.inventedLoaded, { timeout: 60_000 });
+  await setOnline(page, context, browserName, false);
+  offline = true;
+  await page.locator('#propose').click();
+  await expect(page.locator('#step-4')).toHaveAttribute('data-state', 'done', { timeout: 60_000 });
+  await expect(page.locator('#receipt-4')).toContainText('The page has proposed a table for');
+
+  // Step 5: the invented hospital answers it, and the rail moves on.
+  await expect(page.locator('#t-tables-what')).toHaveText(d.tablesInvented);
+  const birth = page.locator('#confirm [data-about="role_patient.birth_date"]');
+  await expect(birth.locator('.presence a[href="#step-5"]')).toHaveText('Step 5');
+  await page.locator('#tables-write').click();
+  await page.locator('#tables-invented').click();
+  await expect(page.locator('#t-tables-status')).toContainText('Run on the invented hospital: The page has read the result');
+  await expect(page.locator('#step-5')).toHaveAttribute('data-state', 'done');
+  await expect(birth.locator('.presence')).toHaveText(d.presence.present);
+  await stage(page, 'h5-tables', '#step-5');
+
+  // Step 6: the confidence agrees with its reason, and a Yes on a coded column opens its translation directly.
+  for (const label of await page.locator('#confirm .binding:has(.reason:has-text("its name matches")) .confidence').allTextContents()) {
+    expect(label).not.toContain("the dictionary's words match");
+  }
+  await birth.getByRole('button', { name: d.yes }).click();
+  const row = page.locator('#confirm [data-about="role_patient.is_test"]');
+  await row.getByRole('button', { name: d.yes }).click();
+  await expect(row.locator('.translation-heading')).toHaveText(d.coded.heading);
+  await expect(row.locator('select.correction-form')).toHaveCount(0);
+  await expect(row).not.toContainText(c.intro);
+  // The part's count does not take a column still to translate as answered.
+  await expect(page.locator('#confirm [data-role="role_patient"] .role-count')).toHaveText(/^1 of \d+ answered$/);
+  await row.getByRole('button', { name: c.valuesWrite }).click();
+  await row.locator('.query-block').getByRole('button', { name: d.invented.run }).click();
+  await expect(row).toContainText(d.invented.receipt(''));
+  const ticks = row.locator('fieldset.values input[type=checkbox]');
+  expect(await ticks.count()).toBeGreaterThan(0);
+  // The value that means yes is typed into the box, which ticks it in the list.
+  const yes = (await ticks.first().getAttribute('value'))!;
+  await row.getByLabel(c.flagValuesLabel).fill(yes);
+  await row.getByLabel(c.flagValuesLabel).press('Tab');
+  await expect(ticks.first()).toBeChecked();
+  await expect(row.locator('.correction-sentence')).toBeVisible();
+  await row.getByRole('button', { name: c.checkButton }).click();
+  await expect(row.locator('.check-report')).toBeVisible({ timeout: 300_000 });
+  if (await row.getByRole('button', { name: c.keep, exact: true }).count()) {
+    await row.getByRole('button', { name: c.keep, exact: true }).click();
+  } else {
+    await row.locator('input.although').check();
+    await row.getByLabel(c.reasonLabel).fill('The made-up rows hold this value only.');
+    await row.getByRole('button', { name: c.keepAlthough }).click();
+  }
+  await expect(row.locator('.kept-correction')).toBeVisible();
+  await row.getByRole('button', { name: c.probeWrite }).click();
+  await row.locator('.probe').getByRole('button', { name: d.invented.run }).click();
+  await expect(row.locator('.probe')).toContainText(d.invented.receipt(c.probeRan));
+  await expect(row.locator('.probe table')).toBeVisible();
+  await stage(page, 'h6-translated', '#confirm [data-about="role_patient.is_test"]');
+  // Every other column and table is answered Not sure, which lists it as a question for the database team.
+  const unsure = page.locator('#confirm li.binding[data-answer=""] .answer-unsure:not([disabled])');
+  while (await unsure.count()) {
+    const before = await unsure.count();
+    await unsure.first().click();
+    await expect(unsure).toHaveCount(before - 1);
+  }
+  await expect(page.locator('#step-6')).toHaveAttribute('data-state', 'done');
+
+  // Step 7: every list written, run on the invented hospital and saved.
+  await openStep(page, 7);
+  await page.locator('#year').fill('2024');
+  await page.locator('#year').dispatchEvent('change');
+  const lists = page.locator('#vocabularies section.vocabulary:has(button)');
+  const keys = await lists.evaluateAll((nodes) => nodes.map((node) => (node as HTMLElement).dataset.key!));
+  for (const key of keys) {
+    const list = page.locator(`#vocabularies [data-key="${key}"]`);
+    await list.getByRole('button', { name: d.chartedWrite }).click();
+    await list.getByRole('button', { name: d.invented.run }).click();
+    await expect(list.locator('.status').first()).toContainText('Run on the invented hospital:');
+    if (key === 'role_reading.kind') {
+      await list.locator('select[data-code="52"]').selectOption('map_arterial');
+      await list.locator('select[data-code="51"]').selectOption('map_cuff');
+    }
+    await list.getByRole('button', { name: d.codesSave }).click();
+    await expect(list).toContainText('for this list on');
+  }
+  await expect(page.locator('#step-7')).toHaveAttribute('data-state', 'done');
+  await stage(page, 'h7-codes', '#step-7');
+
+  // Step 8: the three counts, run on the invented hospital and judged.
+  await openStep(page, 8);
+  await page.locator('#counts-write').click();
+  for (const name of ['coverage_by_year', 'repeated_keys', 'readings_by_kind']) {
+    const block = page.locator(`[data-count="${name}"]`);
+    await block.getByRole('button', { name: d.invented.run }).click();
+    await expect(page.locator(`[data-count="${name}"]`)).toContainText('Run on the invented hospital: The page has read');
+    await page.locator(`[data-count="${name}"] input[value="yes"]`).check();
+    await page.locator(`[data-count="${name}"]`).getByRole('button', { name: d.lookRightSave }).click();
+    await expect(page.locator(`[data-count="${name}"]`)).toContainText('this count looks right');
+  }
+  await expect(page.locator('#step-8')).toHaveAttribute('data-state', 'done');
+  await stage(page, 'h8-counts', '#step-8');
+
+  // Step 9: a complete save, which records that each result came from the invented hospital.
+  await openStep(page, 9);
+  await expect(page.locator('#t-write-draft')).toBeHidden();
+  const download = page.waitForEvent('download');
+  await page.locator('#write-save').click();
+  const saved = await download;
+  await expect(page.locator('#t-write-status')).toHaveText(d.saved(''));
+  await expect(page.locator('#step-9')).toHaveAttribute('data-state', 'done');
+  await stage(page, 'h9-saved', '#step-9');
+  const path = join(mkdtempSync(join(tmpdir(), 'hospital-')), 'invented.schemalyser.zip');
+  await saved.saveAs(path);
+  const read = (name: string) => execFileSync('python3', ['-c', 'import sys, zipfile; sys.stdout.write(zipfile.ZipFile(sys.argv[1]).read(sys.argv[2]).decode())', path, name], { encoding: 'utf8' });
+  expect(JSON.parse(read('settings.json')).complete).toBe(true);
+  const entries = JSON.parse(read('journal.json')).entries as { name: string; pasted?: string; from?: string }[];
+  const run = entries.filter((e) => e.pasted);
+  expect(run.length).toBeGreaterThan(5);
+  expect(run.every((e) => e.from === 'invented hospital')).toBe(true);
+  expect(requestsWhileOffline).toEqual([]);
 });

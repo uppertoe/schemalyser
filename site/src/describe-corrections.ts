@@ -24,7 +24,7 @@ interface Step { from: string; table: string; to: string; from2: string; to2: st
 interface Draft {
   form: string; f: Record<string, string>; steps: Step[]; codes: [string, string][];
   preview: { sentence: string; sql: string } | null; problem: string; report: Report | null; reason: string; although: boolean;
-  valuesSql: string; valuesName: string; valueRows: { value: string; rows: number | null }[];
+  valuesSql: string; valuesName: string; valueRows: { value: string; rows: number | null }[]; ran?: boolean;
 }
 type Reply = { ok: boolean; problem?: string; [key: string]: unknown };
 
@@ -46,12 +46,17 @@ export interface Deps {
   close(about: string): void;
   goTo(about: string, text?: string): void;
   step: string;
+  // Whether the invented hospital answers the page's queries, and the running of one there, read as a paste would be.
+  invented(): boolean;
+  runInvented(request: Record<string, unknown>): Promise<Reply>;
 }
 
 const drafts = new Map<string, Draft>();
 const columns = new Map<string, Column[] | 'loading'>();
 const joins = new Map<string, Join[] | 'loading'>();
 const probeSql = new Map<string, string>();
+// The test queries run on the invented hospital: '' once read, or the sentence that says why it could not be run.
+const probeRan = new Map<string, string>();
 let tables: string[] | 'loading' | null = null;
 let deps: Deps;
 let checking = '';
@@ -65,6 +70,7 @@ export function forget() {
   columns.clear();
   joins.clear();
   probeSql.clear();
+  probeRan.clear();
   tables = null;
 }
 
@@ -289,11 +295,13 @@ function columnField(item: CorrectionItem, key: string, table: string, label: st
   return labelled(item.about, key, label, select);
 }
 
-// A query to copy and run, with its SQL behind a disclosure.
-function queryBlock(sql: string, copyLabel: string) {
+// A query to copy and run, with Run on the invented hospital beside the copy while the invented dictionary is in use,
+// and its SQL behind a disclosure.
+function queryBlock(sql: string, copyLabel: string, run?: () => void) {
   const box = deps.el('div', undefined, 'query-block');
   const copy = deps.el('div', undefined, 'actions');
   copy.append(deps.button(copyLabel, () => void navigator.clipboard?.writeText(sql).catch(() => undefined), 'secondary copy-query'));
+  if (run && deps.invented()) copy.append(deps.button(d.invented.run, run, 'run-invented'));
   const details = deps.el('details', undefined, 'query');
   details.append(deps.el('summary', d.showQuery), deps.el('pre', sql, 'code'));
   box.append(copy, details);
@@ -325,7 +333,21 @@ function valuesHelper(item: CorrectionItem, box: HTMLElement, label: string) {
   }, 'secondary'));
   box.append(actions);
   if (draft.valuesSql) {
-    box.append(queryBlock(draft.valuesSql, c.valuesCopy));
+    box.append(queryBlock(draft.valuesSql, c.valuesCopy, async () => {
+      deps.setBusy(true);
+      try {
+        const reply = await deps.runInvented({ query: draft.valuesName, read: 'values' });
+        if (reply.ok) {
+          draft.valueRows = (reply.receipt as { values: Draft['valueRows'] }).values;
+          draft.problem = '';
+          draft.ran = true;
+        } else draft.problem = reply.problem ?? d.invented.failed;
+      } catch {
+        draft.problem = d.invented.failed;
+      }
+      deps.setBusy(false);
+      deps.render();
+    }));
     const [caption, area] = deps.pasteBox(`values-${item.about}`, c.valuesPasteLabel);
     const read = deps.el('div', undefined, 'actions');
     read.append(deps.button(c.valuesRead, async () => {
@@ -333,6 +355,7 @@ function valuesHelper(item: CorrectionItem, box: HTMLElement, label: string) {
         const reply = await parsed('describe_values_read', [JSON.stringify({ name: draft.valuesName, text: area.value })]);
         if (reply.ok) {
           draft.valueRows = reply.values as Draft['valueRows'];
+          draft.ran = false;
           area.value = '';
           draft.problem = '';
         } else draft.problem = reply.problem ?? d.failed;
@@ -345,6 +368,7 @@ function valuesHelper(item: CorrectionItem, box: HTMLElement, label: string) {
   }
   if (draft.valueRows.length) {
     const fieldset = deps.el('fieldset', undefined, 'values');
+    if (draft.ran) fieldset.append(deps.el('p', d.invented.receipt(c.valuesRan(draft.valueRows.length)), 'status good'));
     fieldset.append(deps.el('legend', c.valuesTick));
     const chosen = new Set((draft.f.values ?? '').split(',').map((v) => v.trim()).filter(Boolean));
     for (const row of draft.valueRows) {
@@ -508,26 +532,16 @@ function formFields(item: CorrectionItem, box: HTMLElement) {
   }
 }
 
-// The panel under Choose another.
-export function panel(item: CorrectionItem, plain: () => HTMLElement): HTMLElement {
+// The panel under Choose another. The translation of a column's codes after Yes has one form only, so it offers no
+// choice of the kind of change.
+export function panel(item: CorrectionItem, plain: () => HTMLElement, translate = false): HTMLElement {
   const draft = draftOf(item);
   const box = deps.el('div', undefined, 'correction');
   box.dataset.form = draft.form;
   const forms = formsFor(item);
-  box.append(deps.el('p', c.intro, 'do'));
-  const select = deps.el('select', undefined, 'correction-form');
-  for (const form of forms) select.append(Object.assign(deps.el('option', c.forms[form]), { value: form }));
-  select.value = draft.form;
-  select.addEventListener('change', () => {
-    draft.form = select.value;
-    draft.preview = null;
-    draft.report = null;
-    draft.problem = '';
-    void preview(item);
-  });
-  box.append(labelled(item.about, 'form', c.formLabel, select));
-  box.append(deps.el('p', c.formWhat[draft.form] ?? '', 'note'));
+  if (!translate) box.append(...kindOfChange(item, draft, forms));
   if (!document.getElementById('dl-tables')) {
+
     const list = deps.el('datalist');
     list.id = 'dl-tables';
     document.body.append(list);
@@ -569,6 +583,21 @@ export function panel(item: CorrectionItem, plain: () => HTMLElement): HTMLEleme
   return box;
 }
 
+// The choice of the kind of change, with a sentence on when each suits.
+function kindOfChange(item: CorrectionItem, draft: Draft, forms: string[]): HTMLElement[] {
+  const select = deps.el('select', undefined, 'correction-form');
+  for (const form of forms) select.append(Object.assign(deps.el('option', c.forms[form]), { value: form }));
+  select.value = draft.form;
+  select.addEventListener('change', () => {
+    draft.form = select.value;
+    draft.preview = null;
+    draft.report = null;
+    draft.problem = '';
+    void preview(item);
+  });
+  return [deps.el('p', c.intro, 'do'), labelled(item.about, 'form', c.formLabel, select), deps.el('p', c.formWhat[draft.form] ?? '', 'note')];
+}
+
 // A list of findings, each linked to the row of the column that it concerns where the check names one.
 function list(items: string[], className = 'findings', about: Record<string, string> = {}) {
   const node = deps.el('ul', undefined, className);
@@ -583,7 +612,9 @@ function list(items: string[], className = 'findings', about: Record<string, str
         event.preventDefault();
         deps.goTo(target, text);
       });
+      // Each finding says what to do about it at its row.
       entry.append(link);
+      if (className === 'findings') entry.append(deps.el('span', ` ${c.findingDo}`, 'finding-do'));
     } else entry.textContent = text;
     node.append(entry);
   }
@@ -696,15 +727,31 @@ export function kept(item: CorrectionItem): HTMLElement | null {
   probe.append(actions);
   const sql = probeSql.get(item.about);
   if (sql) {
-    const copy = queryBlock(sql, c.probeCopy);
-    const [caption, area] = deps.pasteBox(`probe-${item.about}`, c.probePasteLabel);
-    const read = deps.el('div', undefined, 'actions');
     const status = deps.el('p', '', 'status problem');
     status.hidden = true;
+    const copy = queryBlock(sql, c.probeCopy, async () => {
+      deps.setBusy(true);
+      try {
+        const reply = await deps.runInvented({ query: `probe-${item.about.replace(/[^\w]+/g, '-').replace(/^-+|-+$/g, '')}`, read: 'probe', about: item.about });
+        probeRan.set(item.about, reply.ok ? '' : reply.problem ?? d.invented.failed);
+      } catch {
+        probeRan.set(item.about, d.invented.failed);
+      }
+      deps.setBusy(false);
+      deps.render();
+    });
+    const [caption, area] = deps.pasteBox(`probe-${item.about}`, c.probePasteLabel);
+    const read = deps.el('div', undefined, 'actions');
+    const ran = probeRan.get(item.about);
+    if (ran) {
+      status.hidden = false;
+      status.textContent = ran;
+    }
     read.append(deps.button(c.probeRead, async () => {
       deps.setBusy(true);
       try {
         const reply = await deps.ask('describe_probe_read', [JSON.stringify({ about: item.about, text: area.value })]);
+        probeRan.delete(item.about);
         if (!reply.ok) {
           status.hidden = false;
           status.textContent = reply.problem ?? d.failed;
@@ -718,6 +765,7 @@ export function kept(item: CorrectionItem): HTMLElement | null {
     probe.append(copy, caption, area, read, status);
   }
   if (held.probed) {
+    if (probeRan.get(item.about) === '') probe.append(deps.el('p', d.invented.receipt(c.probeRan), 'status good'));
     probe.append(deps.grid(held.probed.columns, held.probed.rows));
     if (held.findings.length) probe.append(list(held.findings));
   }

@@ -149,7 +149,13 @@ WORDING = {
     "probe_link": "Of {total} anaesthetics of the year, {linked} have at least one row through this link and {none} have none.",
     "probe_filter": "Of {total} rows read, {passing} pass the filter.",
     "probe_flag": "The flag is 1 in {ones} rows, 0 in {zeros} and empty in {empty}.",
+    "invented_only": "The invented hospital answers only the queries written for the invented dictionary. With a real dictionary, your colleague runs each query on the hospital's database.",
+    "invented_not_offered": "The page has not written this query yet. Write it first, then choose Run on the invented hospital.",
+    "invented_failed": "The invented hospital could not run this query. Write it again and run it once more; if it still fails, answer this item by hand.",
+    "invented_missing": "The invented hospital holds no table {table}, so it cannot run this query. Choose another table or column at step 6, or answer this item by hand.",
 }
+# Where a result came from when it was not pasted: the journal records it beside the result.
+INVENTED_HOSPITAL = "invented hospital"
 FIGURES = {"with_patient": "have a patient whom the hospital schema finds", "with_birth_date": "have a patient with a date of birth",
            "with_stop": "have a recorded stop"}
 COUNT_COLUMNS = {
@@ -323,6 +329,8 @@ class Describe:
         self._baseline = None
         self._checked = {}
         self._graph = None
+        # Where the result being read came from, while the invented hospital answers a query; None for a paste.
+        self.origin = None
 
     # The dictionary.
 
@@ -1540,6 +1548,39 @@ ORDER  BY g.kind;"""
             return
         self.results[name] = (text or "").replace("\r\n", "\n").replace("\r", "\n")
         entry.update({"pasted": _now(), "database": self.settings.get("database"), "version": self.version})
+        if self.origin:
+            entry["from"] = self.origin
+        else:
+            entry.pop("from", None)
+
+    def run_invented(self, hospital, query, read, **given):
+        """Runs a query that the page has offered on the invented hospital, and reads its result exactly as a paste of
+        it would be read, recording in the journal that the result came from the invented hospital. read names the
+        reading: tables, charted (key, year), count (name), values or probe (about). Returns the reading's receipt."""
+        from .hospital import HospitalError
+        if not self.invented or hospital is None:
+            raise DescribeError(WORDING["invented_only"])
+        sql = self.queries.get(query)
+        if sql is None:
+            raise DescribeError(WORDING["invented_not_offered"])
+        try:
+            text = hospital.grid(sql)
+        except HospitalError as error:
+            missing = getattr(error, "table", None)
+            raise DescribeError(WORDING["invented_missing"].format(table=missing) if missing
+                                else WORDING["invented_failed"]) from None
+        readers = {"tables": lambda: self.read_tables(text),
+                   "charted": lambda: self.read_charted(given["key"], text, given["year"]),
+                   "count": lambda: self.read_count(given["name"], text),
+                   "values": lambda: self.read_values(query, text),
+                   "probe": lambda: self.read_probe(given["about"], text)}
+        if read not in readers:
+            raise DescribeError(WORDING["invented_failed"])
+        self.origin = INVENTED_HOSPITAL
+        try:
+            return readers[read]()
+        finally:
+            self.origin = None
 
     def _file(self, name, folder, suffix):
         return f"{folder}/{self.journal[name]['number']:02d}-{name}.{suffix}"
@@ -1922,10 +1963,24 @@ ORDER  BY g.kind;"""
                 "about": about, "attribute": attribute, "meaning": meaning, "type": role_type, "from": item["from"],
                 "table": table, "column": column, "bound": bool(binding) if attribute != "rows" else bool(table),
                 "definition": definition, "says": re.sub(r"\b(match|matches) the role\.$", r"\1 this column.", rolemap.plain(item["says"])), "title": "", "confidence": item.get("confidence") or "",
+                "basis": _basis(item.get("says") or ""),
                 "candidates": candidates, "status": item["status"], "question": rolemap.plain(item.get("question") or ""),
                 "answer": confirmation.get("answer"), "date": confirmation.get("date"),
                 "replacement": confirmation.get("replacement"), "note": confirmation.get("note"),
                 "presence": self.presence(binding if attribute != "rows" else ({"table": table} if table else None))}
+
+
+def _basis(says):
+    """What a proposal rests on, from the sentence that gives its reason, so that the page's confidence agrees with it:
+    "key" for the column that identifies the part's rows, "link" for a link by the same name, "name" where only the
+    names match, and "words" where the dictionary's words match."""
+    if "is the column that identifies a row of the table that holds this part" in says:
+        return "key"
+    if "has the same name as" in says or "is the column that identifies a row of" in says:
+        return "link"
+    if "its name matches" in says or "its name and columns match" in says:
+        return "name"
+    return "words"
 
 
 def _read_dictionary(data, tables, own):

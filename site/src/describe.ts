@@ -13,7 +13,7 @@ interface Presence { state: 'present' | 'missing' | 'large'; missing: string[]; 
 interface Candidate { from: string; replacement: string; definition: string | null }
 interface Item {
   about: string; attribute: string; meaning: string; type: string | null; from: string; table: string | null; column: string | null;
-  bound: boolean; definition: string | null; says: string; confidence: string; candidates: Candidate[]; status: string; question: string;
+  bound: boolean; definition: string | null; says: string; confidence: string; basis: string; candidates: Candidate[]; status: string; question: string;
   answer: string | null; date: string | null; replacement: string | null; presence: Presence | null;
   link: string | null; correction: corrections.CorrectionHeld | null; title: string;
   coding: { form: string; translated: boolean; assumed: string; values: string[]; list?: boolean } | null;
@@ -86,6 +86,8 @@ const changing = new Set<string>();
 const opened = new Set<string>();
 const hidden = new Set<string>();
 let written = false;
+// Whether the worker holds the invented hospital, which answers the page's queries while the invented dictionary is in use.
+let hospitalReady = false;
 // The name of the one file that holds the saved hospital schema.
 const SCHEMA_FILE = 'hospital-schema.schemalyser.zip';
 // Whether the hospital schema last saved was a draft, which leaves step 9 to be done again.
@@ -108,6 +110,16 @@ function status(id: string, value: string, kind: '' | 'good' | 'problem' = '') {
   node.hidden = !value;
   node.textContent = value;
   node.className = `status ${kind}`.trim();
+}
+
+// Whether the invented hospital answers the page's queries: the invented dictionary is in use and the worker holds it.
+function inventedRuns() {
+  return !!model?.dictionary?.invented && hospitalReady;
+}
+
+// Runs a query that the page has written on the invented hospital, and reads its result as a paste of it would be read.
+function runInvented(request: Record<string, unknown>) {
+  return ask('describe_hospital_run', [JSON.stringify(request)]);
 }
 
 // The worker.
@@ -196,6 +208,7 @@ function lock() {
   countQueries = [];
   tablesSql = '';
   written = false;
+  hospitalReady = false;
   for (const input of document.querySelectorAll<HTMLInputElement>('input[type=file]')) input.value = '';
   for (const area of document.querySelectorAll<HTMLTextAreaElement>('textarea')) area.value = '';
   state = 'locked';
@@ -262,13 +275,18 @@ function stepStates() {
     proposed && vocabulariesDone(m!), proposed && countsDone(m!), written && !writtenDraft];
   const waits = STEPS.map((_, i) => {
     if (i === 0) return '';
+    // Until the page has loaded, every step waits for that, and nothing else.
+    if (state === 'loading') return d.waitingFor.loading;
+    if (state !== 'ready') return d.waitingFor.problem;
     // Step 2 is open while the tab is still online, for the invented dictionary; its file controls wait for offline.
-    if (i === 1 && state === 'ready') return '';
+    if (i === 1) return '';
     if (!ready) return d.waitingFor.offline;
     if (i === 3) return m?.dictionary || proposed ? '' : d.waitingFor.dictionary;
     // Step 5 is answered by the data dictionary made from the database, which needs no proposal first.
     if (i === 4 && m?.catalogue_source === 'database') return '';
-    if (i >= 4) return proposed ? '' : d.waitingFor.map;
+    if (i >= 4 && !proposed) return d.waitingFor.map;
+    // With the invented dictionary and no invented hospital, no database can answer step 5, so it says to go on.
+    if (i === 4 && m?.dictionary?.invented && !hospitalReady && !m.catalogue) return d.waitingFor.inventedNoHospital;
     return '';
   });
   const states: StepState[] = STEPS.map((_, i) => {
@@ -320,7 +338,10 @@ function show() {
     step.dataset.open = String(isOpen);
     if (value === 'current') step.setAttribute('aria-current', 'step');
     else step.removeAttribute('aria-current');
-    const word = value === 'available' && OPTIONAL.has(n) ? d.state.optional : d.state[value];
+    // Step 9, once saved as a draft, says so with what is still to answer, rather than that it is ready.
+    const draftLeft = n === '9' && written && writtenDraft && model?.proposed
+      ? d.savedDraft(d.stillToAnswer(model.tally.remaining, model.tally.tables_remaining, model.tally.untranslated)) : '';
+    const word = draftLeft || (value === 'available' && OPTIONAL.has(n) ? d.state.optional : d.state[value]);
     text(`state-${n}`, word);
     const receipt = $(`receipt-${n}`);
     // A folded step shows its receipt when done, and otherwise its first instruction.
@@ -353,7 +374,6 @@ function show() {
       if (n === '6') progress = d.stillToAnswer(t.remaining, t.tables_remaining, t.untranslated);
       if (n === '7' && listsOffered(model)) progress = d.receipt.codes(listsSaved(model), listsOffered(model)).replace(/\.$/, '');
       if (n === '8' && model.counts_offered.length) progress = d.receipt.counts(judged(model), model.counts_offered.length).replace(/\.$/, '');
-      if (n === '9' && written && writtenDraft) progress = d.savedDraft;
     }
     const railWord = value === 'waiting' ? waits[i] : progress ? `${word}: ${progress}` : word;
     link.append(el('span', value === 'done' ? '✓' : value === 'problem' ? '!' : n, 'marker'), el('span', name, 'rail-name'),
@@ -363,7 +383,7 @@ function show() {
   });
   // The check of a saved folder, after the nine steps.
   const restoredMap = !!(model?.restored && (model.restored as { map?: boolean }).map);
-  const checkWait = !ready ? d.waitingFor.offline : restoredMap ? '' : d.waitingFor.folder;
+  const checkWait = state === 'loading' ? d.waitingFor.loading : !ready ? d.waitingFor.offline : restoredMap ? '' : d.waitingFor.folder;
   const check = $('step-check');
   check.dataset.state = checkWait ? 'waiting' : 'available';
   check.dataset.open = String(!checkWait);
@@ -410,6 +430,13 @@ function show() {
   $('t-tables-what').hidden = fromDatabase;
   $('t-tables-answered').hidden = !fromDatabase;
   text('t-tables-answered', d.tablesAnswered);
+  // With the invented dictionary, the invented hospital answers step 5, so the choice of database is not asked.
+  const invented = inventedRuns();
+  text('t-tables-what', invented ? d.tablesInvented : d.tablesWhat);
+  $('f-database').hidden = invented && $('f-database').parentElement === $('database-slot-5');
+  $('tables-invented').hidden = !invented;
+  text('t-codes-what', invented ? d.codesWhatInvented : d.codesWhat);
+  text('t-counts-what', invented ? d.countsWhatInvented : d.countsWhat);
   // The vendor's file adds descriptions to a dictionary made from the database, and is otherwise the dictionary itself.
   text('dictionary-load', model?.dictionary?.source === 'database' ? d.vendorLoad : d.dictionaryLoad);
   const connection = $('t-connection');
@@ -422,8 +449,9 @@ function show() {
       input.disabled = state !== 'ready' || busy;
       continue;
     }
-    // The four ways may be chosen between while the tab is online, since choosing loads nothing.
-    if (input.name === 'way') {
+    // The four ways, and the database the SQL window is connected to, may be chosen while the tab is online, since
+    // choosing loads nothing.
+    if (input.name === 'way' || input.name === 'database') {
       input.disabled = state !== 'ready' || busy;
       continue;
     }
@@ -573,7 +601,9 @@ function proposedLine(item: Item) {
   }
   const settled = item.answer === 'yes' ? d.confirmedLabel : item.answer === 'no' && item.status === 'person' ? d.correctedLabel : d.proposedLabel;
   line.append(el('span', `${settled} `, 'label'), fromNode(rows ? item.table ?? item.from : item.from));
-  if (settled === d.proposedLabel && item.confidence) line.append(el('span', ` ${d.confidence[item.confidence] ?? item.confidence}`, `confidence ${item.confidence}`));
+  // The confidence names what the proposal rests on, so that it agrees with the reason shown under it.
+  const label = d.confidence[item.basis || 'words']?.[item.confidence];
+  if (settled === d.proposedLabel && label) line.append(el('span', ` ${label}`, `confidence ${item.confidence}`));
   return line;
 }
 
@@ -626,8 +656,22 @@ function renderProposal() {
   }
 }
 
-function presenceText(presence: Presence | null, table = false) {
-  if (!presence) return d.presence.unknown;
+// Until step 5 is answered, a column says that step 5 will tell, with a link to it.
+function presenceNode(presence: Presence | null, table = false) {
+  const line = el('p', undefined, `presence ${presence?.state ?? 'unknown'}`);
+  if (presence) {
+    line.textContent = presenceText(presence, table);
+    return line;
+  }
+  const [before, label, after] = d.presence.unknown;
+  const link = el('a', label);
+  link.href = '#step-5';
+  link.addEventListener('click', () => toggleStep('5', true));
+  line.append(document.createTextNode(before), link, document.createTextNode(after));
+  return line;
+}
+
+function presenceText(presence: Presence, table = false) {
   if (presence.state === 'missing') return d.presence.missing(presence.missing);
   if (presence.state === 'large') return d.presence.large(presence.large[0][0], presence.large[0][1]);
   return table ? d.presence.presentTable : d.presence.present;
@@ -724,8 +768,12 @@ function anotherPanel(item: Item) {
     if (written.value.trim() && select) select.value = '';
     sayInForce();
   });
+  // A column or table chosen from the list is used at once, and the page shows what it means.
   select?.addEventListener('change', () => {
-    if (select!.value) written.value = '';
+    if (select!.value) {
+      written.value = '';
+      void corrections.useAlternative(item, select!.value);
+    }
     sayInForce();
   });
   written.addEventListener('kept', sayInForce);
@@ -783,10 +831,11 @@ function renderConfirm() {
     section.dataset.role = role.name;
     const items: Item[] = role.drafted ? role.items : [{
       about: `${role.name} rows`, attribute: 'rows', meaning: role.description, type: null, from: '', table: null, column: null, bound: false,
-      definition: null, says: d.roleUndrafted, confidence: '', candidates: [], status: 'proposed', question: '', answer: null, date: null,
+      definition: null, says: d.roleUndrafted, confidence: '', basis: '', candidates: [], status: 'proposed', question: '', answer: null, date: null,
       replacement: null, presence: null, link: null, correction: null, title: '', coding: null,
     }];
-    const answeredCount = items.filter((item) => item.answer).length;
+    // A column still to translate is not yet answered, as the figures of step 6 count it.
+    const answeredCount = items.filter((item) => item.answer && !untranslated(item)).length;
     const heading = roleHeading(role);
     heading.append(el('span', d.partCount(answeredCount, items.length), 'role-count'));
     const who = d.teamParts.includes(role.name) ? 'team' : 'colleague';
@@ -823,7 +872,7 @@ function renderConfirm() {
       const found = landed.get(item.about);
       if (found) entry.append(el('p', d.landed(found), 'status problem landed'));
       if (!role.drafted) entry.append(el('p', d.roleUndrafted, 'note'));
-      if (role.drafted && item.bound) entry.append(el('p', presenceText(item.presence, item.attribute === 'rows'), `presence ${item.presence?.state ?? 'unknown'}`));
+      if (role.drafted && item.bound) entry.append(presenceNode(item.presence, item.attribute === 'rows'));
       const correction = corrections.kept(item);
       if (correction) entry.append(correction);
       entry.append(answerButtons(item, role.drafted));
@@ -857,8 +906,9 @@ function translation(item: Item) {
     return box;
   }
   corrections.startTranslation(item);
+  box.append(el('h4', d.coded.heading, 'translation-heading'));
   box.append(el('p', item.coding!.form === 'flag' ? d.coded.flagNext : d.coded.kindNextForm, 'do'));
-  box.append(corrections.panel(item, () => anotherPanel(item)));
+  box.append(corrections.panel(item, () => anotherPanel(item), true));
   return box;
 }
 
@@ -881,11 +931,13 @@ function goTo(about: string, finding?: string) {
   window.setTimeout(() => target.classList.remove('sought'), 2500);
 }
 
-// A query to copy and run: the copy button first, and the SQL itself behind a disclosure.
-function queryBlock(sql: string, copyLabel: string, after?: HTMLElement) {
+// A query to copy and run: the copy button first, with Run on the invented hospital beside it while the invented
+// dictionary is in use, and the SQL itself behind a disclosure.
+function queryBlock(sql: string, copyLabel: string, after?: HTMLElement, run?: () => void) {
   const box = el('div', undefined, 'query-block');
   const actions = el('div', undefined, 'actions');
   actions.append(copyButton(copyLabel, () => sql, after));
+  if (run && inventedRuns()) actions.append(button(d.invented.run, run, 'run-invented'));
   const details = el('details', undefined, 'query');
   details.append(el('summary', d.showQuery), el('pre', sql, 'code'));
   box.append(actions, details);
@@ -972,7 +1024,22 @@ function renderVocabularies() {
       render();
     }, sql || vocabulary.rows.length ? 'secondary' : ''));
     if (sql) {
-      section.append(queryBlock(sql, d.chartedCopy, status_));
+      section.append(queryBlock(sql, d.chartedCopy, status_, async () => {
+        setBusy(true);
+        status(status_.id, d.invented.running);
+        try {
+          const reply = await runInvented({ query: `charted-${vocabulary.key.replace('.', '-')}`, read: 'charted', key: vocabulary.key, year: yearValue() });
+          setBusy(false);
+          render();
+          if (reply.ok) {
+            const n = (reply.receipt as { rows: number }).rows;
+            status(status_.id, d.invented.receipt(n ? d.chartedReceipt(n, yearValue()) : d.chartedEmpty(yearValue())), n ? 'good' : 'problem');
+          } else status(status_.id, reply.problem ?? d.invented.failed, 'problem');
+        } catch {
+          setBusy(false);
+          status(status_.id, d.invented.failed, 'problem');
+        }
+      }));
       const [caption, area] = pasteBox(`charted-${vocabulary.key}`, d.chartedPasteLabel);
       section.append(caption, area);
       const read = el('div', undefined, 'actions');
@@ -1062,7 +1129,20 @@ function renderCounts() {
     const status_ = el('p', '', 'status');
     status_.id = `status-count-${query.name}`;
     status_.hidden = true;
-    section.append(queryBlock(query.sql, d.countCopy, status_));
+    section.append(queryBlock(query.sql, d.countCopy, status_, async () => {
+      setBusy(true);
+      status(status_.id, d.invented.running);
+      try {
+        const reply = await runInvented({ query: `count-${query.name}`, read: 'count', name: query.name });
+        setBusy(false);
+        render();
+        if (reply.ok) status(status_.id, d.invented.receipt(d.countReceipt((reply.receipt as { rows: number }).rows)), 'good');
+        else status(status_.id, reply.problem ?? d.invented.failed, 'problem');
+      } catch {
+        setBusy(false);
+        status(status_.id, d.invented.failed, 'problem');
+      }
+    }));
     const [caption, area] = pasteBox(`count-${query.name}`, d.countPasteLabel);
     section.append(caption, area);
     const read = el('div', undefined, 'actions');
@@ -1245,8 +1325,25 @@ $('invented-load').addEventListener('click', async () => {
     // The invented dictionary is public and was fetched online, so loading it does not by itself lock the page; once it
     // is loaded, the page holds a dictionary, and going online again after the tab has been offline locks the page.
     const reply = await ask('describe_dictionary', [file, tables, '{}', file.name, tables.name, d.steps[1], true]);
+    // The invented hospital is fetched now too, while the tab is online, and the worker builds it once and keeps it.
+    if (reply.ok && !hospitalReady) {
+      try {
+        const folder = new URL('./example/hospital/', location.href);
+        const manifest = await (await fetch(new URL('manifest.json', folder))).json() as { tables: { name: string }[] };
+        const names = ['manifest.json', 'catalogue.csv', ...manifest.tables.map((t) => `tables/${t.name}.csv`)];
+        const data = await Promise.all(names.map(async (name) => {
+          const response = await fetch(new URL(name, folder));
+          if (!response.ok) throw new Error(name);
+          return response.blob();
+        }));
+        const built = JSON.parse((await call('describe_hospital_build', [JSON.stringify(names), ...data])).reply as string) as Reply;
+        hospitalReady = built.ok;
+      } catch {
+        hospitalReady = false;
+      }
+    }
     if (reply.ok) {
-      status('t-invented-status', navigator.onLine ? d.inventedLoaded : '', 'good');
+      status('t-invented-status', !hospitalReady ? d.invented.unavailable : navigator.onLine ? d.inventedLoaded : '', hospitalReady ? 'good' : 'problem');
       status('t-database-status', '');
       status('t-dictionary-status', d.dictionaryReceipt(reply.receipt as Parameters<typeof d.dictionaryReceipt>[0]), 'good');
     } else status('t-invented-status', reply.problem ?? d.inventedFailed, 'problem');
@@ -1324,6 +1421,21 @@ $('tables-write').addEventListener('click', async () => {
   render();
 });
 $('tables-copy').addEventListener('click', () => void navigator.clipboard?.writeText(tablesSql).catch(() => undefined));
+// The invented hospital runs the query of tables and columns, and its result is read as a paste of it would be.
+$('tables-invented').addEventListener('click', async () => {
+  setBusy(true);
+  status('t-tables-status', d.invented.running);
+  try {
+    const reply = await runInvented({ query: 'tables-and-columns', read: 'tables' });
+    if (reply.ok) {
+      const receipt = reply.receipt as Parameters<typeof d.tablesReceipt>[0];
+      status('t-tables-status', d.invented.receipt(d.tablesReceipt(receipt)), 'good');
+    } else status('t-tables-status', reply.problem ?? d.invented.failed, 'problem');
+  } catch {
+    status('t-tables-status', d.invented.failed, 'problem');
+  }
+  setBusy(false);
+});
 $('tables-read').addEventListener('click', async () => {
   const area = $<HTMLTextAreaElement>('tables-paste');
   if (!area.value.trim()) return;
@@ -1503,6 +1615,7 @@ const fixed: Record<string, string> = {
   't-database-unsure': d.databaseUnsure,
   'tables-write': d.tablesWrite,
   'tables-copy': d.tablesCopy,
+  'tables-invented': d.invented.run,
   's-tables-query': d.showQuery,
   's-query-safe': d.querySafeSummary,
   't-query-safe': d.querySafe,
@@ -1613,6 +1726,8 @@ corrections.setup({
   },
   goTo,
   step: d.steps[5],
+  invented: inventedRuns,
+  runInvented,
 });
 
 show();
