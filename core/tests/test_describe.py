@@ -327,7 +327,7 @@ def test_a_yes_on_a_column_that_holds_codes_leaves_it_to_translate_and_the_schem
     assert [u["about"] for u in s.untranslated()] == ["role_patient.is_test", "role_reading.kind"]
     files = s.folder_files(date=DATE)
     settings = json.loads(files["settings.json"])
-    assert settings["complete"] is False
+    assert settings["answered"] is False and "complete" not in settings
     assert settings["draft"].startswith("draft: ") and settings["draft"].endswith(" unanswered and 2 columns confirmed whose codes are not yet translated")
     readme = files["README.md"].decode()
     assert "## This hospital schema is a draft" in readme and "The test patient in Patients (`PERSON_MASTER.TEST_PERSON_FLAG`)" in readme
@@ -554,9 +554,9 @@ def test_a_column_that_identifies_a_person_is_never_offered_for_a_flag_a_kind_a_
         if not item["offers_identifying"]:
             assert not any(describe.identifies_person(*reversed(c["from"].split(",")[0].split(".", 1)))
                            for c in item["candidates"] if "." in c["from"].split(",")[0]), about
-    with pytest.raises(describe.DescribeError, match="does not offer columns that identify a person"):
+    with pytest.raises(describe.DescribeError, match="does not offer columns that hold a person.s name"):
         s.correction_preview({"form": "column", "about": "role_drug.route", "replacement": "PERSON_MASTER.FAMILY_NAME"})
-    with pytest.raises(describe.DescribeError, match="does not offer columns that identify a person"):
+    with pytest.raises(describe.DescribeError, match="does not offer columns that hold a person.s name"):
         s.correction_preview({"form": "filter", "about": "role_anaesthetic rows", "table": "VISIT", "column": "PERSON_KEY",
                               "values": ["1"]} | {"table": "PERSON_MASTER", "column": "GIVEN_NAME"})
     with pytest.raises(describe.DescribeError, match="does not list the values"):
@@ -649,3 +649,163 @@ def test_results_from_the_invented_hospital_are_headed_as_such_and_the_database_
         if path.startswith("map/role_"):
             comments = "\n".join(line for line in data.decode().splitlines() if line.startswith("--"))
             assert not re.search(r"\bviews?\b|\bbindings?\b|map\.json|\brole_\w+", comments), path
+
+
+def test_a_kind_chosen_at_step_7_that_the_readings_count_does_not_hold_is_named_and_leads_to_its_list():
+    s = fresh()
+    s.choose_codes("role_reading.kind", {"52": "map_arterial", "51": "map_cuff", "60": "spo2", "77": "other"}, DATE)
+    s.count_queries(2024, "8. Run the counts")
+    s.read_count("readings_by_kind", "kind\treadings\taccepted\twith_value\tanaesthetics\nmap_arterial\t400\t400\t400\t40\n"
+                 "other\t90\t90\t90\t20\n", date=DATE)
+    found = s.findings("readings_by_kind")
+    assert found == ["Codes were chosen at step 7 for the mean arterial pressure from a non-invasive cuff and the oxygen "
+                     "saturation by pulse oximetry, but no readings of those kinds appear in 2024. Look again at those "
+                     "codes at step 7."]
+    assert s.view()["counts"]["readings_by_kind"]["finding_codes"] == {found[0]: "role_reading.kind"}
+    assert not s.view()["counts"]["readings_by_kind"]["finding_about"]
+
+
+def test_a_column_whose_title_names_its_part_is_not_followed_by_the_part_again():
+    assert rolemap.plain_about("role_patient_detail.sex", True) == "The sex at birth"
+    assert rolemap.plain_about("role_patient_detail.birth_weight_grams") == "the birth weight in grams in the patient's details at birth"
+    assert rolemap.plain_about("role_anaesthetic.patient_key") == "the patient's identifier in Anaesthetics"
+
+
+def test_a_date_that_a_person_reads_is_written_as_day_month_and_year():
+    assert describe._day("2026-10-08") == "8 October 2026"
+    assert describe._day("2026-10-08T14:05") == "8 October 2026"
+    s = fresh()
+    files = s.folder_files(date=DATE)
+    assert files["README.md"].decode().count("on 7 October 2026") >= 1
+    assert any(t.decode("utf-8", "replace").startswith("-- Written by Schemalyser test on 7 October 2026.") for p, t in files.items() if p.startswith("map/role_"))
+
+
+# Readiness, where each fact came from, and how the proposals fared.
+
+def _counts_on(s, world, database):
+    s.set_settings(database)
+    for query in s.count_queries(2024, "8. Run the counts"):
+        columns, rows = run(world, query["sql"])
+        s.read_count(query["name"], grid(columns, rows), DATE)
+        s.judge_count(query["name"], "yes", "", DATE)
+
+
+def test_the_saved_schema_names_the_state_each_part_has_reached_and_never_calls_itself_complete(world):
+    s = fresh()
+    s.set_settings(time_zone="Australia/Sydney", daylight_saving=True)
+    s.set_settings(time_zone="not a zone; DROP")
+    files = s.folder_files(date=DATE)
+    settings = json.loads(files["settings.json"])
+    assert settings["time_zone"] == "Australia/Sydney" and settings["daylight_saving"] is True
+    readiness = settings["readiness"]
+    # The three parts that every audit reads run on made-up rows, and nothing has yet been run on a database.
+    assert readiness["reached"] == "runs"
+    assert set(readiness["states"]) == {"runs", "checked against the database", "clinically validated"}
+    for view in rolemap.views():
+        part = readiness["parts"][view]
+        assert part["status"] == "contract" and part["runs"] == DATE and part["checked against the database"] is None
+    assert all(part["clinically validated"] is None for part in readiness["parts"].values())
+    assert {p["status"] for v, p in readiness["parts"].items() if v not in rolemap.views()} == {"draft"}
+    # Counts from a training database check nothing.
+    _counts_on(s, world, "training")
+    assert json.loads(s.folder_files(date=DATE)["settings.json"])["readiness"]["reached"] == "runs"
+    # Counts from the production database, judged to look right, check the parts that they read.
+    _counts_on(s, world, "production")
+    files = s.folder_files(date=DATE)
+    readiness = json.loads(files["settings.json"])["readiness"]
+    assert readiness["reached"] == "checked against the database"
+    assert {v for v, p in readiness["parts"].items() if p["reached"] == "checked against the database"} == set(rolemap.views())
+    readme = files["README.md"].decode()
+    assert "## How far the hospital schema has been checked" in readme
+    assert "The parts that every audit reads have reached the state checked against the database" in readme
+    # A change to the codes after the counts were written leaves the parts unchecked until the counts are run again.
+    s.choose_codes("role_reading.kind", {"52": "map_arterial", "51": "map_cuff"}, DATE)
+    assert json.loads(s.folder_files(date=DATE)["settings.json"])["readiness"]["reached"] == "runs"
+    for name, data in s.folder_files(date=DATE).items():
+        if not name.startswith(("dictionary/", "map/")):
+            assert not re.search(r"\bcomplete\b", data.decode().replace("complete data", "")), name
+    assert s.view()["readiness"]["reached"] == "runs"
+
+
+def test_every_fact_of_the_saved_schema_says_where_it_came_from(world):
+    s = fresh()
+    s.tables_query()
+    s.read_tables(tables_result())
+    s.confirm("role_patient.birth_date", "yes", date=DATE)
+    year = 2024
+    query = s.charted_query("role_reading.kind", year)
+    columns, rows = run(world, query["sql"])
+    s.read_charted("role_reading.kind", grid(columns, rows), year)
+    s.choose_codes("role_reading.kind", {"52": "map_arterial", "51": "map_cuff"}, DATE)
+    _counts_on(s, world, "production")
+    files = s.folder_files(date=DATE)
+    sources = {"complete data", "a sample", "metadata", "a person", "an inference"}
+    journal = {e["name"]: e for e in json.loads(files["journal.json"])["entries"]}
+    assert all(e["provenance"] in sources for e in journal.values())
+    assert journal["dictionary"]["provenance"] == "metadata" and journal["tables-and-columns"]["provenance"] == "metadata"
+    assert journal["count-coverage_by_year"]["provenance"] == "complete data"
+    assert journal["count-readings_by_kind"]["provenance"] == "a sample"
+    assert journal["charted-role_reading-kind"]["provenance"] == "a sample"
+    # The figures from a sample say so wherever they are shown: the result's first line and the judgement.
+    sampled = next(n for n in files if n.startswith("results/") and n.endswith("count-readings_by_kind.tsv"))
+    assert "The figures are from a sample" in files[sampled].decode().split("\n", 1)[0]
+    whole = next(n for n in files if n.startswith("results/") and n.endswith("count-coverage_by_year.tsv"))
+    assert "sample" not in files[whole].decode().split("\n", 1)[0]
+    judgements = json.loads(files["counts/judgements.json"])["counts"]
+    assert judgements["readings_by_kind"]["provenance"] == {"figures": "a sample", "judgement": "a person"}
+    assert json.loads(files["codes/role_reading.kind.json"])["provenance"] == {"rows": "a sample", "chosen": "a person"}
+    data = json.loads(files["map/map.json"])
+    items = [i for r in data["roles"].values() for i in [r["rows"], *r["columns"].values()]]
+    assert all(i["provenance"] in ("a person", "an inference") for i in items)
+    assert data["roles"]["role_patient"]["columns"]["birth_date"]["provenance"] == "a person"
+    assert data["roles"]["role_patient"]["columns"]["death_date"]["provenance"] == "an inference"
+    assert data["kinds"]["map_cuff"]["provenance"] == "a person"
+    assert all(r["provenance"] == "a person" for r in csv.DictReader(io.StringIO(files["confirmations.csv"].decode())))
+    assert json.loads(files["dictionary/dictionary.json"])["provenance"] == "metadata"
+    # The page knows which results came from a sample, and a file opened again restores without the provenance.
+    assert s.view()["provenance"]["count-readings_by_kind"] == "a sample"
+    again = describe.Describe()
+    again.version = "test"
+    again.restore(files)
+    assert again.data == s.data and "provenance" not in json.dumps(again.counts) + json.dumps(again.codes)
+
+
+def test_the_scoreboard_says_how_the_proposals_fared_and_names_no_table_or_column(tmp_path):
+    s = fresh()
+    items = {i["about"]: i for r in s.view()["roles"] for i in r["items"]}
+    listed = next(a for a, i in items.items() if "." in a and not a.startswith(("role_patient.", "role_anaesthetic."))
+                  and i["bound"] and i["candidates"] and "," not in i["candidates"][0]["from"]
+                  and "." in i["candidates"][0]["from"])
+    s.confirm("role_patient.birth_date", "yes", date=DATE)
+    s.confirm("role_patient.death_date", "not sure", date=DATE)
+    s.confirm(listed, "no", items[listed]["candidates"][0]["replacement"], date=DATE)
+    offered = {c["from"].split(",")[0].upper() for c in items["role_anaesthetic.stop_time"]["candidates"]}
+    table = items["role_anaesthetic.stop_time"]["table"]
+    unlisted = next(f"{table}.{c['name']}" for c in s.columns_of(table)["columns"] if f"{table}.{c['name']}".upper() not in offered
+                    and c["name"] != items["role_anaesthetic.stop_time"]["column"] and not c["identifying"])
+    s.confirm("role_anaesthetic.stop_time", "no", unlisted, date=DATE)
+    board = rolemap.scoreboard(s.data)
+    overall = board["overall"]
+    assert (overall["as_proposed"], overall["listed"], overall["unlisted"], overall["not_sure"]) == (1, 1, 1, 1)
+    assert overall["unanswered"] == overall["proposals"] - 4
+    patients = next(p for p in board["parts"] if p["view"] == "role_patient")
+    assert (patients["as_proposed"], patients["not_sure"]) == (1, 1)
+    assert sum(level["corrected"] for level in board["levels"].values()) == 2
+    assert sum(level["answered"] for level in board["levels"].values()) == 3
+    text = board["text"]
+    assert text.startswith("How the proposals fared\n") and "These figures name no table or column, so they may be shared." in text
+    assert "1 was confirmed as proposed, 1 was corrected to an alternative that the page had listed, 1 was corrected to a column or table that the page had not listed, 1 was marked not sure" in text
+    # No table or column of the dictionary appears in it, and no question or exclamation mark.
+    from schemalyser import datadict
+    dictionary = datadict.load(DICTIONARY, TABLES)
+    names = {t.name for t in dictionary.tables()} | {c.name for t in dictionary.tables() for c in t.columns.values()}
+    assert not [n for n in names if re.search(rf"\b{re.escape(n)}\b", text)] and "?" not in text and "!" not in text
+    assert s.view()["scoreboard"] == board["lines"]
+    # The command line gives the same text from the saved file.
+    saved = tmp_path / "hospital-schema.schemalyser.zip"
+    saved.write_bytes(s.folder_zip(date=DATE))
+    out = io.StringIO()
+    from contextlib import redirect_stdout
+    with redirect_stdout(out):
+        rolemap.main(["scoreboard", str(saved)])
+    assert out.getvalue() == text

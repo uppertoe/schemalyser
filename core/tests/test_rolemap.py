@@ -85,9 +85,39 @@ def test_the_contract_holds_three_role_views_and_the_kinds_of_mean_pressure():
     assert rolemap.views() == {
         "role_patient": ["patient_key", "birth_date", "death_date", "is_test"],
         "role_anaesthetic": ["anaesthetic_key", "patient_key", "start_time", "stop_time"],
-        "role_reading": ["anaesthetic_key", "kind", "reading_time", "value", "accepted"]}
+        "role_reading": ["anaesthetic_key", "kind", "reading_time", "value", "accepted", "reading_key", "value_text"]}
     assert {"map_arterial", "map_cuff"} <= set(rolemap.kinds())
     rolemap.check_audit(rolemap.AUDIT.read_text())
+
+
+def test_the_contract_is_version_one_and_marks_its_further_views_as_drafts():
+    model = rolemap.contract()
+    assert model["version"] == "1.0"
+    statuses = rolemap.statuses()
+    assert {name for name, status in statuses.items() if status == "contract"} == set(rolemap.views())
+    assert len([s for s in statuses.values() if s == "draft"]) == 14 and set(statuses.values()) == {"contract", "draft"}
+    # A reading is identified by its own key, because two readings may share their anaesthetic, kind and time, and it
+    # still belongs in the view only through its anaesthetic.
+    reading = next(v for v in model["views"] if v["name"] == "role_reading")
+    assert reading["key"] == ["reading_key"] and rolemap.anchors(reading) == {"anaesthetic_key"}
+    assert "daylight saving" in model["rules"][1] and "value_text" in model["rules"][7]
+    roles = (rolemap.MODEL / "roles.md").read_text()
+    assert "## How each role relates to OMOP" in roles and roles.count("draft, not yet used by any audit") == 14
+
+
+def test_the_count_of_empty_values_gives_each_reason_apart():
+    con = rolemap.role_shadow(seed=1, anaesthetics=0, with_planted=False, extra={"role_reading": [
+        ["A1", "map_cuff", "2024-01-01 10:00:00", 50.0, 1, "R1", None],
+        ["A1", "map_cuff", "2024-01-01 10:05:00", None, 1, "R2", None],
+        ["A1", "map_cuff", "2024-01-01 10:05:00", None, 1, "R3", "cuff off"],
+        ["A1", "map_cuff", "2024-01-01 10:10:00", 12.0, 0, "R4", None]]})
+    run = rolemap.duckdb_runner(con)
+    columns, rows = run(rolemap.count_queries(1, 1)["empty_values_by_reason"]["sql"])
+    assert columns == ["kind", "readings", "not_held", "not_a_number", "not_accepted"]
+    assert [tuple(row) for row in rows] == [("map_cuff", 4, 1, 1, 1)]
+    # Two readings at the same moment are two rows, and their own keys tell them apart.
+    _, repeated = run(rolemap.count_queries(1, 1)["repeated_keys"]["sql"])
+    assert all(row[1] == 0 for row in repeated if row[0] == "role_reading")
 
 
 def test_the_invented_map_is_checked_against_the_catalogue_and_lists_its_open_items():
@@ -98,7 +128,7 @@ def test_the_invented_map_is_checked_against_the_catalogue_and_lists_its_open_it
     # Nothing in the invented map is confirmed yet, so every binding is open, and so is the map's own question. The map
     # supplies the staff and the diagnoses as well, and leaves the fluids and the laboratory results unsupplied, because
     # the invented world records neither.
-    assert len(items) == 3 + 13 + 2 + 1 + 7 + 8
+    assert len(items) == 3 + 13 + 2 + 1 + 9 + 8
     assert {"role_staff", "role_diagnosis"} <= set(roles_map["views"]) and not {"role_fluid", "role_lab"} & set(roles_map["views"])
     assert {"kind map_arterial", "role_anaesthetic.patient_key"} <= {item["about"] for item in items}
 
@@ -117,7 +147,8 @@ def test_the_invented_map_is_checked_against_the_catalogue_and_lists_its_open_it
                      "FROM PERSON_MASTER pm JOIN PERSON_MASTER_2 pm2 ON pm2.PERSON_KEY = pm.PERSON_KEY", "names no table"),
     ("role_patient", "SELECT pm.PERSON_KEY AS patient_key, pm.BIRTH_TS AS birth_date, pm.BIRTH_TS AS death_date, @x AS is_test "
                      "FROM PERSON_MASTER pm", "variable"),
-    ("role_reading", "SELECT r.anaesthetic_key, r.kind, r.reading_time, r.value, r.accepted FROM role_reading r", "not role_reading"),
+    ("role_reading", "SELECT r.anaesthetic_key, r.kind, r.reading_time, r.value, r.accepted, r.reading_key, r.value_text "
+                     "FROM role_reading r", "not role_reading"),
 ])
 def test_a_role_view_that_breaks_a_rule_is_refused(view, sql, says):
     from schemalyser.catalogue import Catalogue
@@ -197,11 +228,16 @@ def test_each_map_reads_the_planted_source_rows_as_the_planted_role_rows(which, 
     cases = rolemap.planted()
     keys = sorted({row[0] for row in cases["role_anaesthetic"]["rows"]})
     for view, key_column in (("role_anaesthetic", "anaesthetic_key"), ("role_reading", "anaesthetic_key")):
-        columns = rolemap.views()[view]
+        # A reading's own key and its text are the hospital's, so the planted rows are compared without them.
+        columns = [c for c in rolemap.views()[view] if c not in ("reading_key", "value_text")]
         _, rows = run(f"SELECT {', '.join(columns)} FROM {view}")
         mine = sorted((tuple(_plain(v) for v in row) for row in rows if _key(row[0]) in keys), key=str)
-        expected = sorted((tuple(_plain(v) for v in row) for row in cases[view]["rows"]), key=str)
+        expected = sorted((tuple(_plain(v) for v in row[:len(columns)]) for row in cases[view]["rows"]), key=str)
         assert mine == expected, view
+    # Every reading has a key, and a value read as a number keeps no text. The worlds' generated tables do not hold
+    # their keys of two columns unique, so the key's uniqueness is the role-level shadow's to show, as above.
+    _, rows = run("SELECT reading_key, value, value_text FROM role_reading")
+    assert all(row[0] for row in rows) and all(row[2] is None for row in rows if row[1] is not None)
     _, rows = run("SELECT patient_key, birth_date, death_date, is_test FROM role_patient")
     patients = {row[0] for row in cases["role_patient"]["rows"]}
     assert sorted((tuple(_plain(v) for v in row) for row in rows if _key(row[0]) in patients), key=str) == \
@@ -274,5 +310,5 @@ def test_the_command_line_checks_a_map_lists_its_open_items_and_compiles_the_aud
         rolemap.main(["open", str(MAP)])
         rolemap.main(["compile", str(MAP)])
     text = out.getvalue()
-    assert "role_reading: one SELECT over OBS_READING, OBS_SHEET" in text and "The map has 34 open items." in text
+    assert "role_reading: one SELECT over OBS_READING, OBS_SHEET" in text and "The map has 36 open items." in text
     assert "kind map_cuff (proposed): Please confirm whether" in text and "WITH (NOLOCK)" in text

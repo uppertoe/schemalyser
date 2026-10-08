@@ -2,6 +2,17 @@
 // the control is; the fuller account of each input sits behind a short disclosure beside it.
 
 const plural = (n: number, one: string, many: string) => `${n.toLocaleString('en-AU')} ${n === 1 ? one : many}`;
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+// A date as a person reads it everywhere on the page: 8 October 2026.
+const day = (iso: string) => {
+  const at = (iso ?? '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return at ? `${Number(at[3])} ${MONTHS[Number(at[2]) - 1]} ${at[1]}` : iso;
+};
+// A date with its time, as 8 October 2026 at 14:05.
+const when = (iso: string) => {
+  const time = (iso ?? '').match(/T(\d{2}:\d{2})/);
+  return time ? `${day(iso)} at ${time[1]}` : day(iso);
+};
 const rows = (n: number) => plural(n, 'row', 'rows');
 const describeVendor = (v: { matched: number; gained: number }) =>
   v.matched
@@ -209,8 +220,8 @@ export const describeStrings = {
   checkPrevious: (pasted: string | null, database: string | null) =>
     pasted
       ? database === 'invented'
-        ? `The invented hospital gave the earlier result below on ${pasted.replace('T', ' at ')}.`
-        : `The earlier result below was pasted on ${pasted.replace('T', ' at ')}${database ? `, from the ${database === 'training' ? 'training' : 'production'} database` : ''}.`
+        ? `The invented hospital gave the earlier result below on ${when(pasted)}.`
+        : `The earlier result below was pasted on ${when(pasted)}${database ? `, from the ${database === 'training' ? 'training' : 'production'} database` : ''}.`
       : 'No result was pasted for this query.',
   checkPasteLabel: "Run the query again on the hospital's database, then paste the new result here with its headers:",
   checkCompare: 'Compare with the earlier result',
@@ -275,7 +286,7 @@ export const describeStrings = {
     "A training database has the hospital's real tables and codes but fictional patients, so its counts mean nothing. On a training database the page still settles what depends on the tables alone, and marks every count to be run again on production.",
   databaseUnsure: 'The page will treat it as the production database. If you later find that it is a training database, change this answer.',
   tablesWrite: 'Write the query',
-  tablesNames: (n: number) => `The query asks about the ${plural(n, 'table', 'tables')} that the proposal names.`,
+  tablesNames: (n: number) => `The query asks about ${plural(n, 'table', 'tables')}, including the lookup tables that give names to codes.`,
   tablesCopy: 'Copy the query',
   showQuery: 'Show the query',
   tablesHow: [
@@ -349,13 +360,15 @@ export const describeStrings = {
     kindNextForm: "To finish this column, translate its codes in the form below, then choose Check this change.",
   },
   landed: (text: string) => `The test on made-up rows found: ${text} Choose another column or table for this row, or Not sure if you cannot tell.`,
-  // The date of an answer, as 7 October.
-  day: (iso: string) => {
-    const at = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (!at) return iso;
-    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-    return `${Number(at[3])} ${months[Number(at[2]) - 1]}${at[1] === String(new Date().getFullYear()) ? '' : ` ${at[1]}`}`;
-  },
+  landedCount: (text: string) => `The count at step 8 found: ${text} Choose another column for this row, or Not sure if you cannot tell.`,
+  // The first row of step 6 that shows each of these says what it means, in one line.
+  glossLink:
+    'Linked by matching A to B means that the rows of one table are joined to the rows of the other where these two columns hold the same value.',
+  glossConfidence:
+    "The confidence beside a proposal says how closely the dictionary matched, and the words after it say what the proposal rests on: the dictionary's own words, the names alone, or the column that identifies the part's rows.",
+  glossLookup: (table: string) => `${table} is a lookup, which is a small table that gives the name for each code.`,
+  // The date that a person reads, as 8 October 2026, everywhere on the page.
+  day,
   answered: {
     yes: (date: string) => `Confirmed on ${date}.`,
     untranslated: (date: string) => `Column confirmed on ${date}; codes not yet translated.`,
@@ -412,7 +425,10 @@ export const describeStrings = {
   chartedColumns: ['Code', 'Times charted', 'Anaesthetics', 'Name', 'Which of the kinds the page knows'],
   notChosen: 'Not chosen',
   codesSave: 'Save these codes',
-  codesSaved: (n: number, date: string) => `The page saved ${plural(n, 'code', 'codes')} for this list on ${date}.`,
+  codesSaved: (n: number, date: string) => `The page saved ${plural(n, 'code', 'codes')} for this list on ${day(date)}.`,
+  // The lists that the page cannot write yet, gathered after the lists that it can.
+  vocabulariesWaiting: 'The page cannot yet write a list for these columns:',
+  vocabularyWaiting: (title: string, reason: string) => `${title}: ${reason}`,
   codesFromRow: 'Go to this list in step 7',
   underTen: 'under 10',
   codesNoneSaved: 'No codes are saved for this list yet.',
@@ -425,7 +441,10 @@ export const describeStrings = {
     'The invented hospital answers these. Choose Write the counts. For each count, choose Run on the invented hospital, then choose Save whether these look right.',
   countsAboutSummary: 'What the counts are for',
   countsAbout:
-    'The counts show whether the hospital schema reaches the record in every year. Each count is rounded down to ten. A year or a group with fewer than ten is left out, and a figure under ten within a group shows as under 10, so that no small number can point to a patient.',
+    "The counts show whether the hospital schema reaches the record in every year. Each count is rounded down to ten. A year or a group with fewer than ten is left out, and a figure under ten within a group shows as under 10. The rounding and the leaving out reduce what a count can disclose, but they do not make the results anonymous, and repeated counts over slightly different groups can reveal more than one count does. The results are therefore for use inside the hospital until the hospital's own rules say otherwise.",
+  // Beside the figures of a count or a list that reads the anaesthetics of one year in #cohort.
+  fromSample: (year: number | string, limit: string) =>
+    `These figures are from a sample: the anaesthetics of ${year}, at most ${limit} of them. They show what is charted, but not how much the whole record holds.`,
   countsWrite: 'Write the counts',
   countsAgain: 'If you change a column or a code, choose Write the counts again.',
   countHeading: {
@@ -453,6 +472,7 @@ export const describeStrings = {
   countRead: 'Read the result',
   countReceipt: (n: number) => `The page has read ${rows(n)} of this count.`,
   countNoFindings: 'The page sees nothing unusual in this count.',
+  countFindingCodes: 'Follow the link to the list at step 7, then choose the kind of each code again, and write the counts again.',
   countFindingDo: 'Follow the link to the column, then choose another column there, and write the counts again.',
   lookRightLegend: 'Record whether these figures look right:',
   lookRightCompare: {
@@ -476,9 +496,29 @@ export const describeStrings = {
     "The file holds the data dictionary, the hospital schema with one SQL file for each part of the record, the hospital's codes, the counts and whether they looked right, every query with its result, your answers in order, and a note that explains each part.",
   writeSave: 'Save the hospital schema',
   writeSaveNote: "Keep the file on the hospital's own storage, because it holds the hospital's data dictionary.",
-  saved: (draft: string) =>
-    `The page has saved the hospital schema${draft ? ` as a draft (${draft})` : ''}. Keep the file on the hospital's own storage.`,
-  draftNote: (unfinished: string) => `The hospital schema is not yet complete: ${unfinished}. You can save it now as a draft, which a note inside the saved file records, and finish it at a later sitting.`,
+  // The receipt of a save names the state of readiness that the parts every audit reads have reached.
+  saved: (draft: string, reached: string | null = 'runs') =>
+    `The page has saved the hospital schema${draft ? ` as a draft (${draft})` : ''}. ${
+      reached === 'checked against the database'
+        ? 'The parts that every audit reads are checked against the database, the second of the three states. None is clinically validated, because only a reconciliation against the clinical record can establish that.'
+        : reached === 'runs'
+          ? 'The parts that every audit reads run on made-up rows, the first of the three states, and have not yet been checked against the database.'
+          : 'The parts that every audit reads have not yet reached the first of the three states, because the test on made-up rows finds a problem in at least one of them.'
+    } Keep the file on the hospital's own storage.`,
+  // Where step 9 begins: the three states of readiness, once.
+  readiness:
+    "The saved file records how far each part of the hospital schema has been checked, in three states. A part runs once it compiles and runs on made-up rows, and it is checked against the database once the counts that read it have been run on the hospital's database and judged to look right. A part is clinically validated only once someone has reconciled a sample of anaesthetics against the clinical record, which the page cannot do, so the page never records that state.",
+  // The time zone of the database's clocks, asked once before the save.
+  timeZoneLegend: "The time zone of the hospital's database",
+  timeZoneWhy:
+    "The hospital schema gives each time as the database holds it, without converting it, so the saved file records the time zone that the database's clocks follow. The page has filled in this computer's time zone. If your colleague knows that the database keeps another, such as UTC, change it here.",
+  timeZoneLabel: 'The time zone, as a name such as Australia/Sydney or UTC:',
+  daylightLabel: "The database's clocks change with daylight saving",
+  // How the proposals fared, under step 9.
+  scoreboardHeading: 'How the proposals fared',
+  scoreboardWhat: "This text counts how the page's proposals fared against your answers. It names no table or column, so it may be shared.",
+  scoreboardCopy: 'Copy the text',
+  draftNote: (unfinished: string) => `Some of the hospital schema is not yet answered: ${unfinished}. You can save it now as a draft, which a note inside the saved file records, and finish it at a later sitting.`,
   draftCodes: 'These columns are answered, but their codes are not yet translated. Each link leads to its row:',
   savedDraft: (left: string) => `Saved as a draft, ${left}`,
   writtenStale: 'You have changed something since the hospital schema was saved, so please save it again.',
@@ -486,7 +526,7 @@ export const describeStrings = {
 
   // 6. Corrections, each a sentence to complete.
   corrections: {
-    intro: 'Choose the kind of change, then complete the sentence. The page writes the SQL for you.',
+    intro: 'Choose the kind of change, then fill in the form below it. The page writes the SQL for you.',
     findingDo: 'Follow the link to its row, then choose another column or table there, or Not sure if you cannot tell.',
     formLabel: 'The kind of change:',
     forms: {
@@ -536,7 +576,7 @@ export const describeStrings = {
     valuesTickFilter: 'Tick each value of the rows to keep:',
     valuesLook: 'The values that this column holds:',
     valuesLookNote: "To see what the chosen column holds, choose Write the query of values, run it in the SQL window connected to the hospital's database, and paste the result here.",
-    withheld: 'The page does not offer columns that identify a person.',
+    withheld: "The page does not offer columns that hold a person's name, address, contact details or medical record number.",
     valuesRan: (n: number) => `The page has read ${plural(n, 'value', 'values')} of this column.`,
     probeRan: 'The page has read the result of the test query.',
     valueRows: (value: string, rows: number | null) => `${value || '(empty)'}${rows === null ? ', in fewer than ten rows' : `, in about ${rows.toLocaleString('en-AU')} rows`}`,
@@ -572,10 +612,12 @@ export const describeStrings = {
     sentenceLabel: 'What this change means:',
     checkingUse: 'The page runs the test on made-up rows before you keep this change.',
     sqlLabel: 'Show the SQL that the page will write',
-    incomplete: 'Complete the sentence, and the page will show what the change means.',
+    incomplete: 'Once the form is filled in, the page shows what the change means.',
+    incompleteColumn: 'Once you choose a column, the page shows what the change means.',
+    incompleteRows: 'Once you choose a table, the page shows what the change means.',
     checkWhat: 'Choose Check this change. The page runs the test on made-up rows: it builds rows with no hospital data in this tab and runs the whole hospital schema, with the change, on them.',
     passedMeans:
-      'This change keeps the hospital schema whole on made-up rows. It does not say whether the column means what you think, which a counting query to run on the database afterwards, and your own knowledge, do.',
+      'This change keeps the hospital schema whole on made-up rows. It does not say whether the column means what you think; a counting query run on the database afterwards, and your own knowledge, decide that.',
     checkButton: 'Check this change',
     checking: 'The page is building the made-up rows and testing every part of the hospital schema.',
     checkSeconds: (seconds: number) => `The test on made-up rows took ${seconds.toLocaleString('en-AU')} seconds.`,
@@ -608,6 +650,7 @@ export const describeStrings = {
     probePasteLabel: 'The result of the test query, copied with its headers:',
     probeRead: 'Read the result of the test query',
     probeNone: 'There is no test query for this kind of change, so the test on made-up rows is its only test.',
+    valuesKept: (n: number) => `Before you kept this change, the query of values showed that the column holds ${plural(n, 'value', 'values')}:`,
     problemLabel: 'The page cannot use the form yet:',
   },
 

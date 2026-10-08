@@ -33,6 +33,7 @@ names and counts only, never a description.
 confirm applies a person's answers to a draft map: yes, no with the replacement, or not sure, each recorded with its
 date, and writes the affected views again from their bindings.
 """
+import copy
 import csv
 import datetime as dt
 import io
@@ -99,6 +100,7 @@ WORDING = {
     "column_says_bare": "The dictionary gives no description of {table}.{column}, and its name matches the role.",
     "key_says": "{table}.{column} is the column that identifies a row of the table that holds this part, which the dictionary describes as \"{quote}\".",
     "key_says_bare": "{table}.{column} is the column that identifies a row of the table that holds this part, and the dictionary gives no description of it.",
+    "key_made_says": "{table} has no single column that identifies a row, so the view makes one value from {columns}, which together are the column that identifies a row of the table that holds this part.",
     "link_says": "{table}.{column} has the same name as {target}, the column that identifies a row of {role}, and the page reaches it {how}.",
     "link_says_quote": "{table}.{column} has the same name as {target}, the column that identifies a row of {role}, and the page reaches it {how}; the dictionary describes {first} as \"{quote}\".",
     "reverse_says": "{table}.{column} is the column that identifies a row of {role}, and the page reaches it {how}. That last link runs from the other side, so a row is repeated wherever one row of {other} has more than one row of {table}.",
@@ -557,6 +559,14 @@ class Proposer:
             entry = self.dictionary.table(base).column(key[0])
             return {"table": self.dictionary.table(base).name, "column": entry.name, "path": [], "data_type": entry.data_type,
                     "score": 1.0, "own_key": True, "matched": set(), "phrase": False, "factor": 1.0}
+        if len(key) > 1 and view.get("key_may_combine") and view["key"] == [column["name"]] and column["name"] not in self._links(view):
+            # A table whose rows are identified by several columns, such as a sheet and a line on it, gives the view's
+            # key as one value made from them all.
+            table = self.dictionary.table(base)
+            entries = [table.column(k) for k in key]
+            return {"table": table.name, "column": entries[-1].name, "path": [], "data_type": "",
+                    "derive": {"form": "key", "with": [e.name for e in entries[:-1]]},
+                    "score": 1.0, "own_key": True, "matched": set(), "phrase": False, "factor": 1.0}
         return None
 
     def _links(self, view):
@@ -647,7 +657,7 @@ class Proposer:
                     # A column in the table itself counts in full, and one that a join reaches counts for less, so
                     # that a table that reaches the whole patient record does not win by that alone.
                     total += max(min(1.0, c["score"] / tops[column["name"]]) * 0.5 ** len(c["path"]) for c in fitting[:10])
-            if len(view["key"]) == 1:
+            if len(view["key"]) == 1 and not view.get("key_may_combine"):
                 # A view of one row for each thing needs a table with a key of one column, and where that thing is
                 # another role's, such as a patient's details, the key should be that role's key.
                 key = table.primary_key()
@@ -707,6 +717,11 @@ class Proposer:
                 continue
             columns = {}
             for column in view["columns"]:
+                if column.get("same_source_as") in columns:
+                    # A column that reads the same source as another, such as the text of a value beside the value as a
+                    # number, is proposed as that column is.
+                    columns[column["name"]] = dict(columns[column["same_source_as"]])
+                    continue
                 columns[column["name"]] = self.column(rows["table"], view, column, bound)
             bound[name] = {c: (p["best"]["table"], p["best"]["column"]) for c, p in columns.items() if p["best"] is not None}
             found[name] = {"rows": rows, "columns": columns}
@@ -776,6 +791,9 @@ def _from_text(candidate):
 def _column_says(dictionary, candidate, view_name, column_name, link=None):
     table, column = candidate["table"], candidate["column"]
     description = dictionary.description(table, column)
+    if candidate.get("own_key") and candidate.get("derive"):
+        named = [f"{table}.{other}" for other in candidate["derive"]["with"]] + [f"{table}.{column}"]
+        return WORDING["key_made_says"].format(table=table, columns=_and(named))
     if candidate.get("own_key"):
         if not description:
             return WORDING["key_says_bare"].format(table=table, column=column)
@@ -821,8 +839,11 @@ def _candidate_entry(dictionary, candidate):
 
 
 def _binding(candidate):
-    return {"table": candidate["table"], "column": candidate["column"], "path": candidate["path"],
-            "data_type": candidate.get("data_type", "")}
+    binding = {"table": candidate["table"], "column": candidate["column"], "path": candidate["path"],
+               "data_type": candidate.get("data_type", "")}
+    if candidate.get("derive"):
+        binding["derive"] = copy.deepcopy(candidate["derive"])
+    return binding
 
 
 def draft(proposal, dictionary, model=None, date=None, world="the hospital"):
@@ -899,11 +920,16 @@ def plan(column, binding, codes=None):
     (render) and the check's model of the binding (corrections.evaluate) read, so that the two cannot drift apart.
 
     It is a tuple whose first item names the operation: raw, date, float, int, const, flag_in, kind, derive_flag,
-    scale or trim, with the operation's own settings after it."""
+    scale, trim, key or held_text, with the operation's own settings after it. key makes one value of a row's key from
+    several columns of its table, and held_text gives the text that a column holds only where it is not a number."""
     kind = column["type"]
     data_type = binding.get("data_type", "") if binding else ""
     found = _type_of(data_type)
     derive = (binding or {}).get("derive")
+    if derive and derive["form"] == "key":
+        return ("key", tuple(derive.get("with") or ()))
+    if column.get("held_text"):
+        return ("held_text",)
     if derive:
         form = derive["form"]
         if form == "flag":
@@ -988,6 +1014,12 @@ def render(step, ref):
         return f"CAST(ROUND({text}, 0) AS int)" if whole else text
     if op == "trim":
         return f"LTRIM(RTRIM(CAST({ref} AS nvarchar(4000))))"
+    if op == "key":
+        alias = ref.rsplit(".", 1)[0]
+        parts = [f"{alias}.{_name(other)}" for other in step[1]] + [ref]
+        return "CONCAT(" + ", '-', ".join(f"CAST({part} AS varchar(254))" for part in parts) + ")"
+    if op == "held_text":
+        return f"CASE WHEN TRY_CAST({ref} AS float) IS NULL THEN CAST({ref} AS nvarchar(4000)) END"
     raise ValueError(op)
 
 
@@ -1092,7 +1124,7 @@ def view_sql(name, role, kinds=None, model=None, vocabularies=None):
         elif not binding.get("derive") and (column["type"] == "kind" or (column["type"] in ("flag", "flag_or_empty") and _category(binding["column"]))):
             vocabulary.append(rolemap.column_title(name, column["name"]))
         lines.append(f"{render(plan(column, binding, codes), ref)} AS {column['name']}")
-        if column["name"] in links and column["name"] in view["key"] and anchor is None:
+        if column["name"] in rolemap.anchors(view) and anchor is None:
             anchor = ref
     for at, column, binding, shared_ref in windows:
         window = binding["window"]
@@ -1103,7 +1135,7 @@ def view_sql(name, role, kinds=None, model=None, vocabularies=None):
                      f"{window_on(alias, window, time_ref)}")
         ref = f"{alias}.{_name(window['output'])}"
         lines[at] = f"{ref} AS {column['name']}"
-        if column["name"] in links and column["name"] in view["key"] and anchor is None:
+        if column["name"] in rolemap.anchors(view) and anchor is None:
             anchor = ref
     conditions = [f"{anchor} IS NOT NULL"] if anchor is not None else []
     for item in (role["rows"].get("binding") or {}).get("filter") or []:

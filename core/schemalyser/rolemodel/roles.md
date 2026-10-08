@@ -4,18 +4,22 @@ This page describes what an anaesthetic record holds, written without reference 
 
 `contract.json`, beside this page, holds the same model as data: every view, its columns, their types, the words that the proposer looks for in a data dictionary, and the vocabularies. When this page and `contract.json` differ, `contract.json` is the one that the code reads, and this page should be corrected to match it.
 
+## The version 1 contract, and the drafts
+
+Version 1.0 of the contract is the three views that the audits read: `role_patient`, `role_anaesthetic` and `role_reading`. Every map supplies them, and an audit may rely on their columns and their rules; a change to any of them is a new version of the contract, which `contract.json` records in its `version`. The fourteen further views are drafts, not yet used by any audit. A map may supply them, and the owner may still change their columns, so no audit should read one until it joins the contract. In `contract.json`, each view carries the status `contract` or `draft`, and each further view below is marked as a draft under its heading.
+
 ## The rules of the record
 
 The role views assume the following of every hospital's record, and a map must make each of them true.
 
 1. One row of `role_anaesthetic` is one anaesthetic, and its key identifies that anaesthetic and no other.
-2. Every time is in local time, as the hospital's clocks showed it. No view converts a time to another zone.
+2. A view gives each time as the source holds it, without conversion. The hospital schema records the time zone that the source's clocks follow, and whether the source applies daylight saving, so that anyone reading a time knows what it means. An audit that needs an elapsed time across a change of daylight saving, such as the minutes of an anaesthetic that ran through the night of the change, must say so and handle it.
 3. A reading, an event, a drug given, a device, a fluid or a person present belongs to an anaesthetic by its link to that anaesthetic, and never because its time falls within the anaesthetic. A ward observation taken in the same hour is not part of the anaesthetic's record.
 4. A laboratory result and a diagnosis belong to the patient and the stay, and not to an anaesthetic. An audit that wants a result or a diagnosis near an anaesthetic chooses its own window around it, such as the 24 hours before the start.
 5. A note belongs to an anaesthetic by its link to that anaesthetic where the hospital's system makes one, and otherwise to the stay or to the patient. A note is never linked to an anaesthetic because of when it was written.
 6. A view keeps the rows that an audit leaves out, such as test patients, anaesthetics with no stop and values that were not accepted, so that the standard counts can see them.
 7. A view never joins in a way that repeats a row of the thing it describes, so that the view's key identifies its row.
-8. An empty value means that the record does not say. A value that the record holds but that cannot be read as the role's type is also empty.
+8. A value that the record does not hold is empty. A value that the record holds but that cannot be read as the role's type is also empty, and `role_reading` then keeps the held text in `value_text`, so that the standard counts can say why a reading's value is empty: because the record holds none, because what it holds is not a number, or because the reading was not accepted.
 9. A key compares equal with itself within one hospital only, and no key is carried from one hospital to another.
 10. A value is in the unit that its role or its kind fixes, and the view converts a value that the hospital holds in another unit. Only a drug's amount and a laboratory result of the kind `other` are given in the unit that the view carries beside them.
 
@@ -25,7 +29,7 @@ The role views assume the following of every hospital's record, and a map must m
 |---|---|
 | key | Any type that compares equal with itself within one hospital, such as a whole number or text. |
 | date | A date without a time. |
-| datetime | A date and a time of day, in local time. |
+| datetime | A date and a time of day, as the source holds it. |
 | number | A number that may hold a fraction. |
 | whole | A whole number. |
 | flag | The whole number 1 or 0, and never empty. |
@@ -81,9 +85,11 @@ Any notes that the shadow holds are invented from templates, so that pattern que
 
 ## The roles
 
-Every map supplies the first three views, which the neonatal audit reads, and their columns do not change. The further views are a starter set for the outcomes and covariates below, which the owner will trim; a map supplies a further view only where the hospital records it. In each table below, "Needed" says whether the audit written so far reads the column.
+Every map supplies the first three views, which the neonatal audit reads, and their columns change only with a new version of the contract. The further views are a starter set for the outcomes and covariates below, which the owner will trim; a map supplies a further view only where the hospital records it. In each table below, "Needed" says whether the audit written so far reads the column.
 
 ### role_patient: one row for each patient
+
+This view is part of the version 1 contract.
 
 This view holds one row for each patient, test and training patients included, so that an audit can leave them out. The hospital usually holds it in the patient table of its system, which has one row for each person. The date of death is often held in a second patient table, or loaded from a registry of deaths.
 
@@ -96,26 +102,34 @@ This view holds one row for each patient, test and training patients included, s
 
 ### role_anaesthetic: one row for each anaesthetic
 
+This view is part of the version 1 contract.
+
 This view holds one row for each episode of anaesthesia or sedation given by an anaesthetist, including those whose start or stop is missing or out of order. The hospital usually holds it in an anaesthetic record or anaesthesia episode of its own, which is linked to a theatre case or to an encounter of its own. It links to `role_patient` by `patient_key`.
 
 | Column | Type | Needed | Meaning |
 |---|---|---|---|
 | anaesthetic_key | key | yes | The hospital's own identifier of the anaesthetic, the same value that `role_reading.anaesthetic_key` holds. |
 | patient_key | key | yes | The patient who had the anaesthetic, as `role_patient.patient_key`. |
-| start_time | datetime | yes | When the anaesthetic started, in local time. |
-| stop_time | datetime | yes | When the anaesthetic stopped, in local time, and empty where no stop was recorded. |
+| start_time | datetime | yes | When the anaesthetic started, as the source holds it. |
+| stop_time | datetime | yes | When the anaesthetic stopped, as the source holds it, and empty where no stop was recorded. |
 
 ### role_reading: one row for each value charted in an anaesthetic's record
 
-This view holds one row for each value charted in an anaesthetic's own record, by a monitor or by hand, including values that were not accepted and values that are not numbers. The hospital usually holds readings in a table of measurements or observations, often the largest in its system, reached from the anaesthetic through the record or sheet on which they were charted. It links to `role_anaesthetic` by `anaesthetic_key`, and its rows are identified by the anaesthetic, the kind and the time.
+This view is part of the version 1 contract.
+
+This view holds one row for each value charted in an anaesthetic's own record, by a monitor or by hand, including values that were not accepted and values that are not numbers. The hospital usually holds readings in a table of measurements or observations, often the largest in its system, reached from the anaesthetic through the record or sheet on which they were charted. It links to `role_anaesthetic` by `anaesthetic_key`, and a reading belongs in the view only through that link. Its rows are identified by `reading_key`.
+
+The anaesthetic, the kind and the time do not identify one measurement, because two readings can legitimately share all three: a value charted twice at one moment, a value and its correction, or two monitors that each send a mean at the same minute. `reading_key` is therefore the hospital's own identifier of the charted value where the record has one. Where it has none, the map makes a value that is unique to each row, usually by joining the columns that together identify a row of the table, such as the sheet and the line on it, and the map must say in its evidence which of the two it gives.
 
 | Column | Type | Needed | Meaning |
 |---|---|---|---|
 | anaesthetic_key | key | yes | The anaesthetic whose record holds the reading, as `role_anaesthetic.anaesthetic_key`. |
 | kind | kind | yes | What was measured, as one of the kinds of readings below. |
-| reading_time | datetime | yes | When the value was taken, in local time, and not when it was filed. |
+| reading_time | datetime | yes | When the value was taken, as the source holds it, and not when it was filed. |
 | value | number | yes | The value as a number in the kind's own unit, and empty where the charted value is not a number. |
 | accepted | flag | yes | 1 where the value counts as valid, and 0 where it was marked as an artefact, rejected or superseded. An empty flag in the source counts as 1. |
+| reading_key | key | no | The hospital's own identifier of the charted value, or, where the record has none, a value that the map makes unique to each row. The map says which. |
+| value_text | text | no | The value as the record holds it, where it cannot be read as a number, and empty where the value is a number or the record holds none. |
 
 The kinds of readings are these. A map gives the hospital's own codes for each kind that it can find, and every other value charted in the record is of the kind `other`.
 
@@ -143,6 +157,8 @@ The kinds of readings are these. A map gives the hospital's own codes for each k
 
 ### role_patient_detail: the patient's details at birth
 
+This view is a draft, not yet used by any audit.
+
 This view holds one row for each patient whose record holds any of these details. The hospital may hold them in a second patient table, in the child's birth history, in the mother's delivery record where that is linked to the baby, or as a measurement charted on the newborn. It links to `role_patient` by `patient_key`.
 
 | Column | Type | Needed | Meaning |
@@ -154,17 +170,21 @@ This view holds one row for each patient whose record holds any of these details
 
 ### role_stay: one row for each hospital stay
 
+This view is a draft, not yet used by any audit.
+
 This view holds one row for each hospital stay, from admission to discharge, day stays included. The hospital usually holds it in its table of hospital encounters or admissions. It links to `role_patient` by `patient_key`, and `role_anaesthetic_detail`, `role_unit_stay`, `role_lab` and `role_diagnosis` link to it by `stay_key`.
 
 | Column | Type | Needed | Meaning |
 |---|---|---|---|
 | stay_key | key | no | The hospital's own identifier of the stay. |
 | patient_key | key | no | The patient whose stay it is, as `role_patient.patient_key`. |
-| admit_time | datetime | no | When the patient was admitted, in local time. |
-| discharge_time | datetime | no | When the patient was discharged, or died in hospital, in local time, and empty while the patient is still in hospital. |
+| admit_time | datetime | no | When the patient was admitted, as the source holds it. |
+| discharge_time | datetime | no | When the patient was discharged, or died in hospital, as the source holds it, and empty while the patient is still in hospital. |
 | unplanned | flag_or_empty | no | 1 for an emergency or other unplanned admission, 0 for a planned one, and empty where the record does not say. The hospital usually records this as an admission type or category, whose values a person translates. |
 
 ### role_anaesthetic_detail: the anaesthetic's covariates
+
+This view is a draft, not yet used by any audit.
 
 This view holds one row for each anaesthetic whose record holds any of these details. The hospital holds them partly in the anaesthetic record and partly in the theatre case or surgical log, with the pre-anaesthetic assessment for the grade, the weight and the height. It links to `role_anaesthetic` by `anaesthetic_key` and to `role_stay` by `stay_key`.
 
@@ -185,6 +205,8 @@ The columns `height_cm` and `location` were added to this view on 7 October 2026
 
 ### role_operation: one row for each procedure done under an anaesthetic
 
+This view is a draft, not yet used by any audit.
+
 This view holds one row for each procedure done under an anaesthetic, so that an anaesthetic for several procedures has several rows. The hospital usually holds the procedures of a theatre case or surgical log, with a lookup table of the procedures that it offers. It links to `role_anaesthetic` by `anaesthetic_key`; at many hospitals that link runs from the anaesthetic record to its theatre case, so the map must take care that a case with two anaesthetics does not repeat its procedures.
 
 | Column | Type | Needed | Meaning |
@@ -197,16 +219,20 @@ This view holds one row for each procedure done under an anaesthetic, so that an
 
 ### role_unit_stay: one row for each period in one unit
 
+This view is a draft, not yet used by any audit.
+
 This view holds one row for each period that a patient spent in one unit during a hospital stay. The hospital usually holds it in the movements of the encounter, with one row for each transfer into or out of a unit and a list of units that says what kind each one is. It links to `role_stay` by `stay_key`.
 
 | Column | Type | Needed | Meaning |
 |---|---|---|---|
 | stay_key | key | no | The hospital stay, as `role_stay.stay_key`. |
 | unit_kind | kind | no | The kind of unit, as one of the kinds of the unit vocabulary. |
-| entered_time | datetime | no | When the patient entered the unit, in local time. |
-| left_time | datetime | no | When the patient left the unit, in local time, and empty while the patient is still there. |
+| entered_time | datetime | no | When the patient entered the unit, as the source holds it. |
+| left_time | datetime | no | When the patient left the unit, as the source holds it, and empty while the patient is still there. |
 
 ### role_event: one row for each milestone of an anaesthetic
+
+This view is a draft, not yet used by any audit.
 
 This view holds one row for each timed milestone of an anaesthetic, and for each complication that the record marks with a time. The hospital usually holds them as events of the anaesthetic record, or as the timing events of the theatre case, each with a code for its kind. A hospital may instead record a complication in a quality or incident record of the anaesthetic, which the map then reads as well. It links to `role_anaesthetic` by `anaesthetic_key`.
 
@@ -214,9 +240,11 @@ This view holds one row for each timed milestone of an anaesthetic, and for each
 |---|---|---|---|
 | anaesthetic_key | key | no | The anaesthetic, as `role_anaesthetic.anaesthetic_key`. |
 | kind | kind | no | The kind of event, as one of the kinds of the event vocabulary. |
-| event_time | datetime | no | When the event happened, in local time. |
+| event_time | datetime | no | When the event happened, as the source holds it. |
 
 ### role_drug: one row for each dose or infusion action
+
+This view is a draft, not yet used by any audit.
 
 This view holds one row for each dose given during an anaesthetic, and for each start, change of rate and stop of an infusion. The hospital usually holds them as administrations in its medication record, linked to their orders, and sometimes as drug values charted on the anaesthetic record. It links to `role_anaesthetic` by `anaesthetic_key`.
 
@@ -228,9 +256,11 @@ This view holds one row for each dose given during an anaesthetic, and for each 
 | amount | number | no | The dose, or the rate of an infusion, as a number in the unit beside it. |
 | unit | text | no | The unit of the amount, as the hospital records it. |
 | route | text | no | The route by which the drug was given, as the hospital records it. |
-| given_time | datetime | no | When the dose was given or the infusion changed, in local time. |
+| given_time | datetime | no | When the dose was given or the infusion changed, as the source holds it. |
 
 ### role_device: one row for each device placed
+
+This view is a draft, not yet used by any audit.
 
 This view holds one row for each airway device, line or catheter placed for an anaesthetic. The hospital usually holds the lines, drains and airways of the patient's record, each with its placement and removal; where the device belongs to the patient rather than to the anaesthetic, the map must find the link. It links to `role_anaesthetic` by `anaesthetic_key`.
 
@@ -240,12 +270,14 @@ The columns `size` and `site` were added to this view on 7 October 2026, a few d
 |---|---|---|---|
 | anaesthetic_key | key | no | The anaesthetic for which the device was placed, as `role_anaesthetic.anaesthetic_key`. |
 | kind | kind | no | The kind of device, as one of the kinds of the device vocabulary. |
-| placed_time | datetime | no | When the device was placed, in local time. |
-| removed_time | datetime | no | When the device was removed, in local time, and empty while it stays in place. |
+| placed_time | datetime | no | When the device was placed, as the source holds it. |
+| removed_time | datetime | no | When the device was removed, as the source holds it, and empty while it stays in place. |
 | size | text | no | The size of the device as the hospital records it, such as the internal diameter of a tube or the gauge of a cannula. The hospital may hold it on the device row or as a property charted when the device was placed. |
 | site | text | no | Where on the body the device was placed, as the hospital records it, such as the left radial artery or the right internal jugular vein. |
 
 ### role_staff: one row for each person attending an anaesthetic
+
+This view is a draft, not yet used by any audit.
 
 This view holds one row for each person who attended an anaesthetic, for each period in which that person was present, so that a handover shows as two rows. The hospital usually holds the staff of the anaesthetic record or of the theatre case, each with a role and a start and end of responsibility, and a list of staff that gives each person's grade. That list usually holds the grade that the person holds today, so the map should say whether the grade on the day can be found. It links to `role_anaesthetic` by `anaesthetic_key`.
 
@@ -255,10 +287,12 @@ This view holds one row for each person who attended an anaesthetic, for each pe
 | person_key | key | no | The hospital's own identifier of the staff member. The view never gives the person's name. |
 | role | kind | no | What the person did at the anaesthetic, as one of the kinds of the staff role vocabulary. |
 | grade | kind | no | The person's grade at the time of the anaesthetic, as one of the kinds of the grade vocabulary. |
-| present_from | datetime | no | When the person took over or joined the care of the patient, in local time. |
-| present_to | datetime | no | When the person handed over or left the care of the patient, in local time, and empty where the record does not say. |
+| present_from | datetime | no | When the person took over or joined the care of the patient, as the source holds it. |
+| present_to | datetime | no | When the person handed over or left the care of the patient, as the source holds it, and empty where the record does not say. |
 
 ### role_fluid: one row for each fluid or blood product given or lost
+
+This view is a draft, not yet used by any audit.
 
 This view holds one row for each volume of fluid or blood product given during an anaesthetic, and for each volume of blood or urine lost. The hospital usually charts intake and output on the anaesthetic record as measurements, with one row for each kind of fluid, and records blood products in its transfusion record as well. Some systems chart a running total rather than each amount, and the map must then give each amount once. It links to `role_anaesthetic` by `anaesthetic_key`.
 
@@ -267,9 +301,11 @@ This view holds one row for each volume of fluid or blood product given during a
 | anaesthetic_key | key | no | The anaesthetic during which the fluid was given or lost, as `role_anaesthetic.anaesthetic_key`. |
 | kind | kind | no | What was given or lost, as one of the kinds of the fluid vocabulary. |
 | volume_ml | number | no | The volume given or lost, in millilitres, as one amount and not as a running total. |
-| given_time | datetime | no | When the volume was given or measured, in local time. |
+| given_time | datetime | no | When the volume was given or measured, as the source holds it. |
 
 ### role_lab: one row for each laboratory or point-of-care result
+
+This view is a draft, not yet used by any audit.
 
 This view holds one row for each laboratory or point-of-care result for the patient, including blood gases. The hospital usually holds the results of its laboratory orders with one row for each component of each result, and often files point-of-care and blood gas results in the same place. The view links to `role_patient` by `patient_key` and to `role_stay` by `stay_key`, and not to an anaesthetic, because a result belongs to the patient. An audit chooses its own window around the anaesthetic, such as the last haemoglobin in the 30 days before the start or the highest lactate in the 24 hours after the stop.
 
@@ -280,11 +316,13 @@ This view holds one row for each laboratory or point-of-care result for the pati
 | kind | kind | no | What was measured, as one of the kinds of the laboratory vocabulary. |
 | value | number | no | The result as a number in the kind's own unit, which the view converts to where the hospital holds another, and empty where the result is not a number. |
 | unit | text | no | The unit in which the hospital recorded the result, as it records it, so that a person can check the conversion. |
-| taken_time | datetime | no | When the specimen was taken, in local time, and not when the result was reported. |
+| taken_time | datetime | no | When the specimen was taken, as the source holds it, and not when the result was reported. |
 
 The units of the laboratory kinds are these: haemoglobin in g/L; lactate, glucose, potassium, sodium and base excess in mmol/L; pCO2 and pO2 in mmHg; creatinine in micromol/L; and pH without a unit.
 
 ### role_diagnosis: one row for each coded diagnosis
+
+This view is a draft, not yet used by any audit.
 
 This view holds one row for each coded diagnosis of the patient. The hospital usually holds coded diagnoses in three places: the diagnoses coded for the stay or its hospital account at discharge, the patient's problem list, and the indication or diagnosis on the theatre booking. Each points at a list of diagnoses that gives the code and the name. A map may supply all three, and an audit chooses among them by `is_principal`, `stay_key` and `recorded_time`. The view links to `role_patient` by `patient_key` and to `role_stay` by `stay_key`.
 
@@ -296,9 +334,11 @@ This view holds one row for each coded diagnosis of the patient. The hospital us
 | code_system | text | no | The classification of the code, such as ICD-10-AM or SNOMED CT, or the hospital's own list. A hospital that uses one classification only may give it as a fixed value. |
 | name | text | no | The name of the diagnosis as the hospital's list gives it. |
 | is_principal | flag_or_empty | no | 1 where the diagnosis is the principal diagnosis of the stay, 0 where it is another, and empty where the record does not say. |
-| recorded_time | datetime | no | When the diagnosis was noted or coded, in local time, and empty where the record does not say. |
+| recorded_time | datetime | no | When the diagnosis was noted or coded, as the source holds it, and empty where the record does not say. |
 
 ### role_note: one row for each note in the record
+
+This view is a draft, not yet used by any audit.
 
 This view holds one row for each piece of free text in the record, with its text joined back into one value. The hospital usually holds notes in a notes table keyed by encounter, with a note type, and often splits the text of one note across several rows with a line number, which the view must join back in order. Some text sits instead in the comment fields of a structured form, which the view also reads. The view links to `role_anaesthetic` by `anaesthetic_key` where the system makes that link, to `role_stay` by `stay_key`, and to `role_patient` by `patient_key`. The text is identifying, as the section on notes above explains.
 
@@ -309,11 +349,13 @@ This view holds one row for each piece of free text in the record, with its text
 | patient_key | key | no | The patient whose note it is, as `role_patient.patient_key`. |
 | stay_key | key | no | The hospital stay to which the note belongs, as `role_stay.stay_key`, and empty where it belongs to no stay, such as a note of a clinic visit. |
 | kind | kind | no | What kind of note it is, as one of the kinds of the note vocabulary. |
-| written_time | datetime | no | When the note was written or signed, in local time, and not when it was last edited. |
+| written_time | datetime | no | When the note was written or signed, as the source holds it, and not when it was last edited. |
 | author_role | kind | no | The grade of the person who wrote the note, as one of the kinds of the grade vocabulary. |
 | text | text | no | The whole text of the note, with its lines joined back in order. |
 
 ### role_finding: one row for each fact found in the record
+
+This view is a draft, not yet used by any audit.
 
 This view holds one row for each fact that the hospital's own process takes from a note or from a structured field, with the method by which it was found. A fact from a structured field has no note, and its `note_key` is empty. The view links to `role_note` by `note_key`, to `role_anaesthetic` by `anaesthetic_key` and to `role_patient` by `patient_key`.
 
@@ -326,7 +368,7 @@ This view holds one row for each fact that the hospital's own process takes from
 | value | text | no | The fact as text, such as 3 for a Mallampati grade, 6 for the hours of fasting, or yes or no for a history. |
 | method | kind | no | How the fact was found, as one of the kinds of the finding method vocabulary. |
 | confidence | number | no | The confidence that the hospital's process gives the fact, from 0 to 1, and empty where it gives none, as for a structured field or a person's reading. |
-| found_time | datetime | no | When the fact was recorded in a structured field, or taken from the note, in local time. |
+| found_time | datetime | no | When the fact was recorded in a structured field, or taken from the note, as the source holds it. |
 
 ## The vocabularies
 
@@ -378,6 +420,30 @@ An audit works out each outcome from the roles, so that no map has to. The start
 | A consultant present | `role_staff.role`, `role_staff.grade` | An anaesthetist of the grade consultant was present at any time during the anaesthetic. |
 | The principal diagnosis | `role_diagnosis.code`, `role_diagnosis.is_principal` | The principal diagnosis of the stay in which the anaesthetic took place. |
 | A fact from the assessment | `role_finding.kind`, `role_finding.value`, `role_finding.method` | A fact such as a recent upper respiratory tract infection or snoring, which the audit may restrict to the methods that it trusts. |
+
+## How each role relates to OMOP
+
+The roles are written for an anaesthetic audit, and the OMOP Common Data Model, version 5.4, is written for observational research across every kind of care. The rule is that every role is either a straightforward projection of OMOP, which a query over an OMOP database could give with no new meaning, or says here exactly what it adds that OMOP does not express. The table below gives, for each view, the OMOP table onto which it projects and what it adds.
+
+| View | OMOP table | A projection, or what the role adds |
+|---|---|---|
+| role_patient | PERSON, with the date of death from DEATH | A projection, except `is_test`. An OMOP conversion leaves test patients out, whereas the role keeps them and marks them, so that the counts can see them. |
+| role_anaesthetic | VISIT_DETAIL, PROCEDURE_OCCURRENCE and EPISODE | The role adds an anaesthetic as one episode with its own identity, its own start and its own stop. OMOP spreads the same thing across a VISIT_DETAIL for the time in theatre, a PROCEDURE_OCCURRENCE for the anaesthetic procedure and, where a conversion builds one, an EPISODE, and none of the three is by itself the anaesthetic that the record holds. |
+| role_reading | MEASUREMENT | The role adds the link from each reading to its anaesthetic by the record on which it was charted, rather than by its time. OMOP links a measurement to a visit or a visit detail, and a query that wants the readings of one anaesthetic must otherwise choose them by time, which rule 3 forbids. The role also keeps whether a value was accepted, which OMOP does not hold; `value_text` is OMOP's `value_source_value`. |
+| role_patient_detail | PERSON, MEASUREMENT and OBSERVATION | A projection: the sex is PERSON's gender, and the gestation and the birth weight are a measurement or an observation of the newborn. |
+| role_stay | VISIT_OCCURRENCE | A projection. Whether the admission was unplanned is the visit's admission source or type. |
+| role_anaesthetic_detail | OBSERVATION, MEASUREMENT and PROCEDURE_OCCURRENCE | The role adds one row for each anaesthetic that gathers its covariates. OMOP holds the ASA grade, the urgency, the weight and the planned destination as separate observations and measurements, tied to the anaesthetic only through EPISODE_EVENT, where a conversion fills it, or by time. |
+| role_operation | PROCEDURE_OCCURRENCE | The role adds the link from each procedure to the anaesthetic under which it was done. OMOP links a procedure to a visit, and two operations of one admission are told apart only by time. |
+| role_unit_stay | VISIT_DETAIL | A projection. |
+| role_event | PROCEDURE_OCCURRENCE, OBSERVATION and CONDITION_OCCURRENCE | The role adds the timed milestones of an anaesthetic, such as induction, incision and extubation, as one vocabulary linked to the anaesthetic. OMOP has no standard home for these milestones, and a complication becomes a condition or an observation with no link to the anaesthetic in which it happened. |
+| role_drug | DRUG_EXPOSURE | The role adds the link to the anaesthetic by the record, and each start, change of rate and stop of an infusion as its own row. OMOP records an exposure with a start and an end, and a change of rate within it is usually lost. |
+| role_device | DEVICE_EXPOSURE | A projection, with the link to the anaesthetic by the record rather than by time. |
+| role_staff | PROVIDER | The role adds each person's periods of presence at an anaesthetic, so that a handover shows. OMOP's PROVIDER describes the person, and a clinical row carries at most one provider, with no times. |
+| role_fluid | DRUG_EXPOSURE, MEASUREMENT and OBSERVATION | A projection: a fluid or blood product given is a drug exposure, and a loss is a measurement or an observation, each with the link to the anaesthetic by the record. |
+| role_lab | MEASUREMENT | A projection. |
+| role_diagnosis | CONDITION_OCCURRENCE | A projection. Whether the diagnosis is principal is the condition's status. |
+| role_note | NOTE | A projection. NOTE's visit detail gives the link to the anaesthetic where the hospital's system makes one. |
+| role_finding | OBSERVATION, with NOTE_NLP for a fact taken from text | The role adds a fact taken from a note or a structured field together with the method by which it was found, and the confidence that the hospital's process gives it. OMOP's NOTE_NLP holds terms found in a note, and an observation holds a fact, but neither says whether a person, a rule or a model found it. |
 
 ## The question that the first three views answer
 

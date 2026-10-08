@@ -48,6 +48,9 @@ export interface Deps {
   values(name: string): { value: string; rows: number | null }[] | null;
   close(about: string): void;
   goTo(about: string, text?: string): void;
+  // The link to a column's row in step 6, and the clearing from each row of a finding that no longer stands.
+  rowHref(about: string): string;
+  standing(findings: string[]): void;
   step: string;
   // Whether the invented hospital answers the page's queries, and the running of one there, read as a paste would be.
   invented(): boolean;
@@ -60,6 +63,8 @@ const joins = new Map<string, Join[] | 'loading'>();
 const probeSql = new Map<string, string>();
 // The test queries run on the invented hospital: '' once read, or the sentence that says why it could not be run.
 const probeRan = new Map<string, string>();
+// The values that the query of values showed for a column before its change was kept, which its row then shows.
+const valuesKept = new Map<string, { value: string; rows: number | null }[]>();
 let tables: string[] | 'loading' | null = null;
 let deps: Deps;
 let checking = '';
@@ -74,6 +79,7 @@ export function forget() {
   joins.clear();
   probeSql.clear();
   probeRan.clear();
+  valuesKept.clear();
   tables = null;
 }
 
@@ -645,7 +651,7 @@ export function panel(item: CorrectionItem, plain: () => HTMLElement, translate 
   box.append(fields);
   if (draft.problem) box.append(deps.el('p', `${c.problemLabel} ${draft.problem}`, 'status problem problem-note'));
   if (!draft.preview) {
-    box.append(deps.el('p', c.incomplete, 'note'));
+    box.append(deps.el('p', draft.form === 'column' ? c.incompleteColumn : draft.form === 'rows' ? c.incompleteRows : c.incomplete, 'note incomplete'));
     return box;
   }
   box.append(deps.el('p', c.sentenceLabel, 'label sentence-label'), deps.el('p', draft.preview.sentence, 'correction-sentence'));
@@ -707,7 +713,7 @@ function list(items: string[], className = 'findings', about: Record<string, str
     const target = about[text];
     if (target) {
       const link = deps.el('a', text, 'finding-link');
-      link.href = '#step-6';
+      link.href = deps.rowHref(target);
       link.dataset.about = target;
       link.addEventListener('click', (event) => {
         event.preventDefault();
@@ -784,8 +790,12 @@ function reportBox(report: Report, item: CorrectionItem, correction: Record<stri
     try {
       const reply = await deps.ask('describe_correction_keep', [JSON.stringify({ correction, although: draft.although, reason: draft.reason })]);
       if (reply.ok) {
+        if (draft.valueRows.length) valuesKept.set(item.about, draft.valueRows);
+        else valuesKept.delete(item.about);
         drafts.delete(item.about);
         deps.close(item.about);
+        // The test with this change is now the latest, so a row keeps only a finding that it still reports.
+        deps.standing([...report.problems, ...report.remaining]);
       } else draft.problem = reply.problem ?? d.failed;
     } catch {
       draft.problem = d.failed;
@@ -811,7 +821,14 @@ export function kept(item: CorrectionItem): HTMLElement | null {
   box.append(deps.el('p', c.kept(d.day(item.date ?? ''), held.check), held.check.startsWith('passed') ? 'status good' : 'status problem'));
   if (held.reason) box.append(deps.el('p', c.keptReason(held.reason), 'note'));
   if (!held.probe) {
-    box.append(deps.el('p', c.probeNone, 'note'));
+    // Where the query of values has just been read for this column, the row shows what it showed instead.
+    const values = valuesKept.get(item.about);
+    if (values?.length) {
+      box.append(deps.el('p', c.valuesKept(values.length), 'note values-kept'));
+      const rows = deps.el('ul', undefined, 'value-list');
+      for (const row of values) rows.append(deps.el('li', c.valueRows(row.value, row.rows)));
+      box.append(rows);
+    } else box.append(deps.el('p', c.probeNone, 'note'));
     return box;
   }
   const probe = deps.el('div', undefined, 'probe');
@@ -886,6 +903,7 @@ export async function checkModel(out: HTMLElement) {
       return;
     }
     const report = reply.report as Report;
+    deps.standing(report.problems);
     out.append(deps.el('p', report.sentence, `status ${report.passed ? 'good' : 'problem'}`));
     if (report.problems.length) out.append(list(report.problems, 'findings', report.about ?? {}));
     if (report.notes.length) out.append(deps.el('p', c.notesLabel), list(report.notes, 'notes', report.about ?? {}));

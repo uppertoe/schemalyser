@@ -72,7 +72,7 @@ def test_the_role_model_keeps_the_audit_views_and_describes_every_further_view_i
     assert rolemap.views() == {
         "role_patient": ["patient_key", "birth_date", "death_date", "is_test"],
         "role_anaesthetic": ["anaesthetic_key", "patient_key", "start_time", "stop_time"],
-        "role_reading": ["anaesthetic_key", "kind", "reading_time", "value", "accepted"]}
+        "role_reading": ["anaesthetic_key", "kind", "reading_time", "value", "accepted", "reading_key", "value_text"]}
     further = set(rolemap.all_views()) - set(rolemap.views())
     assert {"role_stay", "role_anaesthetic_detail", "role_operation", "role_unit_stay", "role_patient_detail",
             "role_event", "role_drug", "role_device", "role_staff", "role_fluid", "role_lab", "role_diagnosis",
@@ -194,6 +194,11 @@ def test_the_proposer_finds_the_invented_map_s_bindings_for_the_audit_views(draf
         for column, evidence in hand["roles"][view]["columns"].items():
             best = proposal[view]["columns"][column]["best"]
             assert best is not None, (view, column)
+            if best.get("derive"):
+                # A key made from several columns names each of them, as the hand-written map does.
+                named = " and ".join(f"{best['table']}.{c}" for c in [*best["derive"]["with"], best["column"]])
+                assert named == evidence["from"], (view, column)
+                continue
             assert f"{best['table']}.{best['column']}" == evidence["from"].split(",")[0], (view, column)
     # The proposer reaches the anaesthetic's patient through its hospital visit, and a reading's anaesthetic through
     # its sheet, each by a key that is the whole primary key of the table it joins.
@@ -232,7 +237,7 @@ def test_the_draft_map_marks_every_binding_as_proposed_and_quotes_the_dictionary
             assert item["status"] == "proposed" and item["question"].startswith("Please "), (view, about)
             assert item["confidence"] in ("high", "medium", "low", "none")
             binding = item["binding"]
-            if binding and "column" in binding and not binding["path"]:
+            if binding and "column" in binding and not binding["path"] and not binding.get("derive"):
                 quoted = dictionary.description(binding["table"], binding["column"]).rstrip(".")
                 assert quoted[:40] in item["says"], (view, about)
     says = data["roles"]["role_patient"]["columns"]["birth_date"]["says"]
@@ -248,6 +253,11 @@ def test_the_draft_map_marks_every_binding_as_proposed_and_quotes_the_dictionary
     reading = (folder / "role_reading.sql").read_text()
     assert "LEFT JOIN OBS_SHEET t1 ON t1.SHEET_KEY = t0.SHEET_KEY" in reading and "WHERE  t1.ANAES_KEY IS NOT NULL" in reading
     assert "CASE WHEN t0.ACCEPTED_FLAG IN ('N', 'No', '0') THEN 0 ELSE 1 END AS accepted" in reading
+    # A reading's key is made from the two columns that identify a row of its table, and its value keeps its text only
+    # where that text is not a number.
+    assert "CONCAT(CAST(t0.SHEET_KEY AS varchar(254)), '-', CAST(t0.SEQ AS varchar(254))) AS reading_key" in reading
+    assert "CASE WHEN TRY_CAST(t0.READ_VALUE AS float) IS NULL THEN CAST(t0.READ_VALUE AS nvarchar(4000)) END AS value_text" in reading
+    assert data["roles"]["role_reading"]["columns"]["reading_key"]["says"].startswith("OBS_READING has no single column that identifies a row")
     assert "The hospital's codes of the mean pressures are not yet chosen" in reading
 
 

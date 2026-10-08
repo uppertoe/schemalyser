@@ -5,7 +5,10 @@ three role views with fixed columns:
 
     role_patient     (patient_key, birth_date, death_date, is_test)
     role_anaesthetic (anaesthetic_key, patient_key, start_time, stop_time)
-    role_reading     (anaesthetic_key, kind, reading_time, value, accepted)
+    role_reading     (anaesthetic_key, kind, reading_time, value, accepted, reading_key, value_text)
+
+These three are version 1.0 of the contract, and each carries the status contract in contract.json; the further views
+carry the status draft, because no audit reads them yet.
 
 An audit, such as rolemodel/neonatal_low_mean_pressure.sql, is one T-SQL SELECT that reads only those views.
 
@@ -43,6 +46,10 @@ nothing was recorded.
     python -m schemalyser.rolemap propose DICTIONARY.csv --catalogue CATALOGUE.csv --out FOLDER [--tables TABLES.csv]
                                           [--model contract.json] [--heading FIELD=HEADING] [--base VIEW=TABLE]
     python -m schemalyser.rolemap confirm MAP CONFIRMATIONS.csv [--catalogue CATALOGUE.csv] [--dictionary DICTIONARY.csv]
+    python -m schemalyser.rolemap scoreboard FILE
+
+scoreboard reads a saved hospital schema, as the one file that the page saves, its folder or its map.json, and prints
+how the proposals fared, as counts that name no table or column.
 
 propose and confirm are written in propose.py, and the dictionary is read by datadict.py.
 """
@@ -68,9 +75,10 @@ MAP_FILE = "map.json"
 STATUSES = ("proposed", "seen", "person", "count")
 CONFIRMED = ("person", "count")
 # The further fields that a draft map from the proposer carries in its evidence: the binding as data, from which the
-# view's SQL is written again after a confirmation, the confidence and the other candidates of the proposal, and the
-# person's answer with its date.
-PROPOSAL_FIELDS = ("binding", "confidence", "candidates", "confirmation")
+# view's SQL is written again after a confirmation, the confidence and the other candidates of the proposal, the
+# person's answer with its date, and where the binding came from (a person, or an inference), which the saved hospital
+# schema adds.
+PROPOSAL_FIELDS = ("binding", "confidence", "candidates", "confirmation", "provenance")
 MEAN_KINDS = ("map_arterial", "map_cuff")
 # The project's least count and the step to which every count is rounded down, as for the check script.
 MINIMUM_COUNT = 10
@@ -143,6 +151,19 @@ def all_views():
     return {view["name"]: [column["name"] for column in view["columns"]] for view in contract()["views"]}
 
 
+def anchors(view):
+    """The columns of a view, as a contract's view gives them, without which a row does not belong in the view: each
+    link that is part of its key, and the anchor that the contract names, as a reading needs its anaesthetic."""
+    links = {link["column"] for link in view.get("links", [])}
+    return ({c for c in view.get("key", []) if c in links} | ({view["anchor"]} if view.get("anchor") else set()))
+
+
+def statuses():
+    """The status of each role view, as {name: "contract" | "draft"}: contract for the views of version 1.0 that the
+    audits read, and draft for a further view that no audit reads yet."""
+    return {view["name"]: view.get("status") or ("contract" if view.get("required") else "draft") for view in contract()["views"]}
+
+
 def kinds():
     return [item["kind"] for item in contract()["kinds"]]
 
@@ -188,7 +209,12 @@ def plain_about(about, start=False):
         found = f"the rows of {view_title(rows.group(1), False)}"
     elif column:
         title = column_title(column.group(1), column.group(2))
-        found = f"{'' if title.startswith('the ') else 'the '}{title} in {view_title(column.group(1), False)}"
+        part = view_title(column.group(1), False)
+        found = f"{'' if title.startswith('the ') else 'the '}{title}"
+        # A column whose title already names its part, as "sex at birth" names the patient's details at birth, is not
+        # followed by the part again.
+        if title.lower().split()[-2:] != part.lower().split()[-2:]:
+            found += f" in {part}"
     else:
         return view_title(about, start)
     return _start(found, start)
@@ -549,8 +575,7 @@ FROM   (SELECT 'role_patient' AS role_view, COUNT(*) AS keys_repeated, COALESCE(
         FROM   (SELECT aa.anaesthetic_key, COUNT(*) AS n FROM role_anaesthetic aa GROUP BY aa.anaesthetic_key HAVING COUNT(*) > 1) k
         UNION ALL
         SELECT 'role_reading', COUNT(*), COALESCE(SUM(k.n), 0)
-        FROM   (SELECT rr.anaesthetic_key, rr.kind, rr.reading_time, COUNT(*) AS n FROM role_reading rr
-                GROUP BY rr.anaesthetic_key, rr.kind, rr.reading_time HAVING COUNT(*) > 1) k) g
+        FROM   (SELECT rr.reading_key, COUNT(*) AS n FROM role_reading rr GROUP BY rr.reading_key HAVING COUNT(*) > 1) k) g
 ORDER  BY g.role_view"""},
         "readings_by_kind_and_year": {
             "says": "This query counts the readings of each kind in each year, and how many of them were accepted, hold a number and belong to an anaesthetic that role_anaesthetic holds.",
@@ -571,6 +596,22 @@ FROM   (SELECT r.kind,
         GROUP  BY r.kind, YEAR(r.reading_time)) g
 WHERE  g.readings >= {least}
 ORDER  BY g.kind, g.reading_year"""},
+        "empty_values_by_reason": {
+            "says": "This query counts, for each kind of reading, the readings with an empty value by reason: the record holds no value, the value it holds is not a number, or the reading was not accepted.",
+            "sql": f"""SELECT g.kind,
+       {_rounded('readings', step)},
+       {_rounded('not_held', step)},
+       {_rounded('not_a_number', step)},
+       {_rounded('not_accepted', step)}
+FROM   (SELECT r.kind,
+               COUNT(*) AS readings,
+               SUM(CASE WHEN r.value IS NULL AND r.value_text IS NULL THEN 1 ELSE 0 END) AS not_held,
+               SUM(CASE WHEN r.value IS NULL AND r.value_text IS NOT NULL THEN 1 ELSE 0 END) AS not_a_number,
+               SUM(CASE WHEN r.accepted = 0 THEN 1 ELSE 0 END) AS not_accepted
+        FROM   role_reading r
+        GROUP  BY r.kind) g
+WHERE  g.readings >= {least}
+ORDER  BY g.kind"""},
         "gaps_between_readings": {
             "says": "This query counts the gaps between consecutive mean pressures of the same kind within one anaesthetic, in bands, by kind and year.",
             "sql": f"""SELECT g.kind,
@@ -707,6 +748,135 @@ def read_counts(results, step=MINIMUM_COUNT):
     return {"findings": findings, "flagged_years": flagged, "coverage": coverage}
 
 
+# How the proposals fared. The scoreboard reads only the answers and the proposals' own records in map.json, and its
+# sentences give counts and the plain names of the parts, never a table, a column or a code, so that it may be shared.
+
+SCORE_LEVELS = ("high", "medium", "low")
+SCORE_WORDING = {
+    "heading": "How the proposals fared",
+    "overall": "Across the hospital schema, the page made {proposals}. Of these, {as_proposed} confirmed as proposed, "
+               "{listed} corrected to an alternative that the page had listed, {unlisted} corrected to a column or table "
+               "that the page had not listed, {not_sure} marked not sure, and {unanswered} no answer yet.",
+    "part": "In {part}, the page made {proposals}. Of these, {as_proposed} confirmed as proposed, {listed} corrected to "
+            "an alternative that the page had listed, {unlisted} corrected to a column or table that the page had not "
+            "listed, {not_sure} marked not sure, and {unanswered} no answer yet.",
+    "none": "The page made no proposal from the dictionary, so there is nothing to report yet.",
+    "level": "Of the {answered} made with {level} confidence that {have} been confirmed or corrected, {corrected} corrected, "
+             "which is {share} per cent.",
+    "level_none": "No proposal made with {level} confidence has yet been confirmed or corrected.",
+    "nothing": "The page proposed nothing for {count}, and a person has since chosen one for {chosen} of them.",
+    "shared": "These figures name no table or column, so they may be shared.",
+}
+
+
+def _were(n):
+    return f"{n:,} {'was' if n == 1 else 'were'}"
+
+
+def _had(n):
+    return f"{n:,} {'has' if n == 1 else 'have'}"
+
+
+def _head(text):
+    """The table, or the table and column, at the start of a replacement or a candidate's from text, in capitals."""
+    found = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)(?:\.([A-Za-z_][A-Za-z0-9_]*))?", text or "")
+    if not found:
+        return ""
+    return ".".join(part.upper() for part in found.groups() if part)
+
+
+def _fared(item):
+    """How one proposal fared: as_proposed, listed, unlisted, not_sure or unanswered."""
+    confirmation = item.get("confirmation") or {}
+    answer = confirmation.get("answer")
+    if answer == "yes":
+        return "as_proposed"
+    if answer == "not sure":
+        return "not_sure"
+    if answer == "no":
+        wanted = _head(confirmation.get("replacement") or "")
+        listed = {_head(candidate.get("from") or "") for candidate in item.get("candidates") or []}
+        return "listed" if wanted and wanted in listed else "unlisted"
+    return "unanswered"
+
+
+def scoreboard(data):
+    """How the proposals of a hospital schema fared, from its map.json as data: for each part and overall, how many were
+    confirmed as proposed, corrected to an alternative that the page had listed, corrected to one it had not, marked
+    not sure, and left without an answer; and, at each level of confidence, the share of those answered that were
+    corrected. A binding that no proposal made, such as one written by hand, is not counted. Returns {"parts",
+    "overall", "levels", "nothing", "lines", "text"}; the lines give counts and the plain names of the parts only."""
+    empty = {"proposals": 0, "as_proposed": 0, "listed": 0, "unlisted": 0, "not_sure": 0, "unanswered": 0}
+    overall, parts = dict(empty), []
+    levels = {level: {"answered": 0, "corrected": 0} for level in SCORE_LEVELS}
+    nothing = {"count": 0, "chosen": 0}
+    for view in [name for name in all_views() if name in (data or {}).get("roles", {})]:
+        role = data["roles"][view]
+        part = dict(empty)
+        for item in [role["rows"], *role["columns"].values()]:
+            if "confidence" not in item:
+                continue
+            fared = _fared(item)
+            if item["confidence"] not in SCORE_LEVELS:
+                nothing["count"] += 1
+                nothing["chosen"] += fared in ("listed", "unlisted")
+                continue
+            part["proposals"] += 1
+            part[fared] += 1
+            if fared in ("as_proposed", "listed", "unlisted"):
+                levels[item["confidence"]]["answered"] += 1
+                levels[item["confidence"]]["corrected"] += fared != "as_proposed"
+        if part["proposals"]:
+            parts.append({"view": view, "title": view_title(view), **part})
+            for key in empty:
+                overall[key] += part[key]
+
+    def sentence(template, counts, **more):
+        return template.format(proposals=f"{counts['proposals']:,} {'proposal' if counts['proposals'] == 1 else 'proposals'}",
+                               as_proposed=_were(counts["as_proposed"]), listed=_were(counts["listed"]),
+                               unlisted=_were(counts["unlisted"]), not_sure=_were(counts["not_sure"]),
+                               unanswered=_had(counts["unanswered"]), **more)
+    lines = [SCORE_WORDING["heading"], ""]
+    if not overall["proposals"]:
+        lines.append(SCORE_WORDING["none"])
+    else:
+        lines.append(sentence(SCORE_WORDING["overall"], overall))
+        lines.append("")
+        lines += [sentence(SCORE_WORDING["part"], part, part=view_title(part["view"], False)) for part in parts]
+        lines.append("")
+        for level in SCORE_LEVELS:
+            held = levels[level]
+            if held["answered"]:
+                share = round(100 * held["corrected"] / held["answered"])
+                lines.append(SCORE_WORDING["level"].format(answered=f"{held['answered']:,} {'proposal' if held['answered'] == 1 else 'proposals'}",
+                                                           level=level, corrected=_were(held["corrected"]), share=share,
+                                                           have="has" if held["answered"] == 1 else "have"))
+            else:
+                lines.append(SCORE_WORDING["level_none"].format(level=level))
+        if nothing["count"]:
+            lines.append(SCORE_WORDING["nothing"].format(count=f"{nothing['count']:,} {'column' if nothing['count'] == 1 else 'columns'}",
+                                                         chosen=f"{nothing['chosen']:,}"))
+    lines += ["", SCORE_WORDING["shared"]]
+    return {"parts": parts, "overall": overall, "levels": levels, "nothing": nothing, "lines": lines,
+            "text": "\n".join(lines) + "\n"}
+
+
+def read_saved_map(path):
+    """map.json from a saved hospital schema: the one file that the page saves, its folder, or map.json itself."""
+    import zipfile
+    path = Path(path)
+    try:
+        if path.is_dir():
+            inner = path / "map" / MAP_FILE
+            return json.loads(decode((inner if inner.exists() else path / MAP_FILE).read_bytes()))
+        if zipfile.is_zipfile(path):
+            with zipfile.ZipFile(path) as archive:
+                return json.loads(decode(archive.read(f"map/{MAP_FILE}")))
+        return json.loads(decode(path.read_bytes()))
+    except (OSError, KeyError, ValueError, zipfile.BadZipFile):
+        raise MapError(WORDING["map_json"].format(where=str(path.name))) from None
+
+
 # Running queries over the role views.
 
 def duckdb_runner(con, date_columns=frozenset(), roles_map=None):
@@ -793,7 +963,7 @@ def planted():
 
 
 def generated_rows(seed=1, anaesthetics=400, first_year=2019, last_year=2025):
-    """Plausible synthetic rows of the three role views, from a seed: {view: [row, ...]}.
+    """Plausible synthetic rows of the three views of the contract, from a seed: {view: [row, ...]}.
 
     A share of the anaesthetics are neonatal; every anaesthetic has a cuff mean every three to five minutes, and some
     have an arterial mean every minute; a few readings were not accepted, a few anaesthetics have no stop, and a few
@@ -842,6 +1012,9 @@ def generated_rows(seed=1, anaesthetics=400, first_year=2019, last_year=2025):
         while moment <= stop:
             rows_r.append([key, "other", moment.isoformat(sep=" "), float(rng.randrange(80, 170)), 1])
             moment += dt.timedelta(minutes=5)
+    # Each reading has its own key, as the hospital's own identifier of a charted value would be, and every value
+    # here is a number, so none keeps its text.
+    rows_r = [row + [f"R{number:07d}", None] for number, row in enumerate(rows_r, 1)]
     return {"role_patient": patients, "role_anaesthetic": rows_a, "role_reading": rows_r}
 
 
@@ -959,6 +1132,8 @@ def main(argv=None):
     shadow.add_argument("--target", type=Path, help="an OMOP target query to run through the conversion on the same rows")
     listing = commands.add_parser("open", help="list a map's open items")
     listing.add_argument("map", type=Path)
+    scoring = commands.add_parser("scoreboard", help="say how the proposals of a saved hospital schema fared, as counts only")
+    scoring.add_argument("file", type=Path, help="the saved hospital schema, its folder, or its map.json")
     proposing = commands.add_parser(
         "propose", help="propose a draft map from a data dictionary, a catalogue and the role model",
         description="Schemalyser reads the data dictionary, keeps only the tables and columns that the catalogue holds, and "
@@ -1019,6 +1194,8 @@ def main(argv=None):
                 print("")
                 print("The target query through the conversion, on the same rows:")
                 print(_table(done["target"]["columns"], done["target"]["rows"]))
+        elif args.command == "scoreboard":
+            print(scoreboard(read_saved_map(args.file))["text"], end="")
         elif args.command == "open":
             for item in open_items(read_map(args.map)):
                 print(f"{item['about']} ({item['status']}): {item['question']}")

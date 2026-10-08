@@ -27,6 +27,8 @@ interface Vocabulary {
 interface CountHeld {
   columns: string[] | null; rows: string[][] | null; looks_right: string | null; note: string | null; date: string | null; findings: string[];
   finding_about?: Record<string, string>;
+  // The list of codes at step 7 that a finding of a count leads to, as {finding: key}.
+  finding_codes?: Record<string, string>;
   database: string | null;
 }
 interface Tally {
@@ -42,8 +44,11 @@ interface Model {
   untranslated: { about: string; title: string; from: string }[]; unfinished: string; counts_offered: string[];
   questions: { about: string; title: string; question: string; meaning: string }[]; catalogue: boolean;
   catalogue_source: 'database' | 'query' | null; vocabularies: Vocabulary[]; counts: Record<string, CountHeld>;
-  settings: { made: string | null; updated: string | null; database: string | null; year: number | null };
+  settings: { made: string | null; updated: string | null; database: string | null; year: number | null; time_zone?: string | null; daylight_saving?: boolean | null };
   restored: Record<string, unknown> | null;
+  // The state of readiness that the last save recorded, the lines of how the proposals fared, and where the result of
+  // each query came from (a sample, complete data or metadata).
+  readiness?: { reached: string | null } | null; scoreboard?: string[]; provenance?: Record<string, string>;
   values: Record<string, { value: string; rows: number | null }[]>; anaesthetic_table: string | null; bases: Record<string, string>;
 }
 interface CountQuery { name: string; safe: boolean; sql: string; tables: [string, number | null][] }
@@ -93,8 +98,9 @@ let hospitalReady = false;
 const SCHEMA_FILE = 'hospital-schema.schemalyser.zip';
 // Whether the hospital schema last saved was a draft, which leaves step 9 to be done again.
 let writtenDraft = false;
-// The text of a finding of a check, shown at the row that its link leads to.
-const landed = new Map<string, string>();
+// The text of a finding, shown at the row that its link leads to, with where it came from: the test of the whole
+// hospital schema on made-up rows, or a count at step 8.
+const landed = new Map<string, { text: string; from: 'test' | 'count' }>();
 // Whether something has changed since the hospital schema was saved, which makes step 9 to be done again.
 let changedSinceWritten = false;
 // The calls that change nothing that the saved hospital schema holds.
@@ -206,6 +212,8 @@ function lock() {
   for (const waiting of pending.values()) waiting.reject();
   pending.clear();
   model = null;
+  stillStanding = null;
+  landed.clear();
   corrections.forget();
   changing.clear();
   openAnother.clear();
@@ -541,7 +549,23 @@ function render() {
   text('t-model-check-what', answeredAny ? d.corrections.modelCheckWhatAfter : d.corrections.modelCheckWhat);
   text('model-check', d.corrections.modelCheck);
   renderDraft();
+  renderSaving();
   show();
+}
+
+// Step 9 asks once for the time zone of the database's clocks, filled in from this computer, and shows how the
+// proposals fared.
+function renderSaving() {
+  const zone = $<HTMLInputElement>('time-zone');
+  const daylight = $<HTMLInputElement>('daylight-saving');
+  if (!zone.value) {
+    zone.value = model?.settings.time_zone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC';
+    const year = new Date().getFullYear();
+    daylight.checked = model?.settings.daylight_saving ?? new Date(year, 0, 1).getTimezoneOffset() !== new Date(year, 6, 1).getTimezoneOffset();
+  }
+  const lines = model?.proposed ? model.scoreboard ?? [] : [];
+  $('b-scoreboard').hidden = !lines.length;
+  $('scoreboard').textContent = lines.join('\n');
 }
 
 // Step 9 says what keeps the folder a draft, and lists each column whose codes are not yet translated.
@@ -558,7 +582,7 @@ function renderDraft() {
   for (const column of untranslated) {
     const item = el('li');
     const link = el('a', column.title);
-    link.href = '#step-6';
+    link.href = rowHref(column.about);
     link.addEventListener('click', (event) => {
       event.preventDefault();
       goTo(column.about);
@@ -849,6 +873,12 @@ function renderConfirm() {
   const box = $('confirm');
   box.replaceChildren();
   if (!model?.proposed) return;
+  // A finding of a count stands only while the count still holds it.
+  const counted = new Set(Object.values(model.counts).flatMap((held) => held.findings ?? []));
+  for (const [about, found] of landed) if (found.from === 'count' && !counted.has(found.text)) landed.delete(about);
+  // The tables that give the names of codes, which the first row that names one says what they are.
+  const lookups = new Set(model.vocabularies.map((v) => v.lookup?.[0]).filter((t): t is string => !!t));
+  const glossed = { link: false, confidence: false, lookup: false };
   for (const role of model.roles) {
     const section = el('section', undefined, 'role');
     section.dataset.role = role.name;
@@ -866,6 +896,7 @@ function renderConfirm() {
     const list = el('ul', undefined, 'bindings');
     for (const item of items) {
       const entry = el('li', undefined, 'binding');
+      entry.id = rowId(item.about);
       entry.dataset.about = item.about;
       entry.dataset.answer = item.answer ?? '';
       entry.append(el('p', attributeName(item), item.attribute === 'rows' ? 'attribute rows' : 'attribute'));
@@ -874,6 +905,25 @@ function renderConfirm() {
       // A corrected column shows what it was corrected to, and no longer the proposal with its confidence.
       if (!(said && item.answer === 'no')) entry.append(proposedLine(item));
       if (said) entry.append(said);
+      // The first row that shows a link, a confidence or a lookup says in one line what it means.
+      if (!glossed.link && entry.querySelector('.from code + code, .from code ~ code')) {
+        glossed.link = true;
+        entry.append(el('p', d.glossLink, 'note gloss gloss-link'));
+      }
+      if (!glossed.confidence && entry.querySelector('.proposed .confidence')) {
+        glossed.confidence = true;
+        entry.append(el('p', d.glossConfidence, 'note gloss gloss-confidence'));
+      }
+      if (!glossed.lookup) {
+        const vocabulary = model.vocabularies.find((v) => v.key === item.about);
+        const named = [item.from, ...item.candidates.map((c) => c.from)].join(' ').toUpperCase();
+        const lookup = (vocabulary?.lookup && !vocabulary.reason ? vocabulary.lookup[0] : '')
+          || [...lookups].find((table) => new RegExp(`\\b${table.toUpperCase().replace(/[^\w]/g, '\\$&')}\\.`).test(named)) || '';
+        if (lookup) {
+          glossed.lookup = true;
+          entry.append(el('p', d.glossLookup(lookup), 'note gloss gloss-lookup'));
+        }
+      }
       // The reason for a proposal is the dictionary's own words that matched, shown under it.
       if (role.drafted && item.bound && !item.correction && item.status === 'proposed') {
         const reason = el('p', undefined, 'reason');
@@ -893,7 +943,7 @@ function renderConfirm() {
         entry.append(coded);
       }
       const found = landed.get(item.about);
-      if (found) entry.append(el('p', d.landed(found), 'status problem landed'));
+      if (found) entry.append(el('p', found.from === 'count' ? d.landedCount(found.text) : d.landed(found.text), 'status problem landed'));
       if (!role.drafted) entry.append(el('p', d.roleUndrafted, 'note'));
       if (role.drafted && item.bound) entry.append(presenceNode(item.presence, item.attribute === 'rows'));
       const correction = corrections.kept(item);
@@ -917,14 +967,7 @@ function translation(item: Item) {
   if (item.coding!.form === 'kind' && item.coding!.list) {
     box.append(el('p', d.coded.kindNext, 'do'));
     const actions = el('div', undefined, 'actions');
-    actions.append(button(d.codesFromRow, () => {
-      opened.add('7');
-      hidden.delete('7');
-      show();
-      const target = document.querySelector<HTMLElement>(`#vocabularies [data-key="${CSS.escape(item.about)}"]`);
-      target?.scrollIntoView({ block: 'start' });
-      target?.querySelector<HTMLElement>('button')?.focus({ preventScroll: true });
-    }, 'translate-codes'));
+    actions.append(button(d.codesFromRow, () => goToList(item.about), 'translate-codes'));
     box.append(actions);
     return box;
   }
@@ -936,12 +979,13 @@ function translation(item: Item) {
 }
 
 // Takes the person to the row of one column in step 6, from a finding of a check, and repeats the finding there.
-function goTo(about: string, finding?: string) {
+function goTo(about: string, finding?: string, from: 'test' | 'count' = 'test') {
   const target = document.querySelector<HTMLElement>(`#confirm [data-about="${CSS.escape(about)}"]`)
     ?? document.querySelector<HTMLElement>(`#confirm [data-about="${CSS.escape(about.split(/[ .]/)[0])} rows"]`);
   if (!target) return;
-  if (finding) {
-    landed.set(target.dataset.about!, finding);
+  // A finding of an earlier test that the latest test no longer reports is not shown at the row.
+  if (finding && !(from === 'test' && stillStanding && !stillStanding.has(finding))) {
+    landed.set(target.dataset.about!, { text: finding, from });
     render();
     return goTo(about);
   }
@@ -952,6 +996,36 @@ function goTo(about: string, finding?: string) {
   target.scrollIntoView({ block: 'start' });
   target.querySelector<HTMLElement>('button')?.focus({ preventScroll: true });
   window.setTimeout(() => target.classList.remove('sought'), 2500);
+}
+
+// The id of a column's row in step 6, which a link to it carries, so that the link leads there without the script too.
+function rowId(about: string) {
+  return `row-${about.replace(/[^\w]+/g, '-')}`;
+}
+
+// The link to the row of a column, or to its part's table where the column has no row of its own.
+function rowHref(about: string) {
+  const items = (model?.roles ?? []).flatMap((role) => role.items.map((item) => item.about));
+  return `#${rowId(items.includes(about) ? about : `${about.split(/[ .]/)[0]} rows`)}`;
+}
+
+// The findings of the test on made-up rows that still stand after the latest test; a row shows no other.
+let stillStanding: Set<string> | null = null;
+function standing(findings: string[]) {
+  const still = new Set(findings);
+  stillStanding = still;
+  for (const [about, found] of landed) if (found.from === 'test' && !still.has(found.text)) landed.delete(about);
+  render();
+}
+
+// Takes the person to one list of codes at step 7.
+function goToList(key: string) {
+  opened.add('7');
+  hidden.delete('7');
+  show();
+  const target = document.querySelector<HTMLElement>(`#vocabularies [data-key="${CSS.escape(key)}"]`);
+  target?.scrollIntoView({ block: 'start' });
+  target?.querySelector<HTMLElement>('button')?.focus({ preventScroll: true });
 }
 
 // A query to copy and run: the copy button first, with Run on the invented hospital beside it while the invented
@@ -1017,15 +1091,14 @@ function renderVocabularies() {
   const box = $('vocabularies');
   box.replaceChildren();
   if (!model?.proposed) return;
-  for (const vocabulary of model.vocabularies) {
+  // A list that the page cannot write yet is not shown as a list, so that the lists shown are the lists that the rail
+  // counts; the columns that wait are named together after them, each with the reason.
+  const waiting = model.vocabularies.filter((v) => v.reason);
+  for (const vocabulary of model.vocabularies.filter((v) => !v.reason)) {
     const section = el('section', undefined, 'add vocabulary');
     section.dataset.key = vocabulary.key;
+    section.id = `list-${vocabulary.key.replace(/[^\w]+/g, '-')}`;
     section.append(el('h3', d.vocabularyHeading(vocabulary.title || vocabulary.key)));
-    if (vocabulary.reason) {
-      section.append(el('p', d.vocabularyReason[vocabulary.reason] ?? vocabulary.reason, 'note'));
-      box.append(section);
-      continue;
-    }
     section.append(el('p', d.vocabularyBound(vocabulary.bound, vocabulary.lookup ? vocabulary.lookup.join('.') : null)));
     const meanings = el('details', undefined, 'about');
     meanings.append(el('summary', d.kindsSummary));
@@ -1108,7 +1181,11 @@ function renderVocabularies() {
         select.value = vocabulary.chosen[row.code] ?? '';
         body[i].lastElementChild!.replaceChildren(select);
       });
-      section.append(frame, el('p', d.codesOther, 'note'));
+      section.append(frame);
+      if (model?.provenance?.[`charted-${vocabulary.key.replace('.', '-')}`] === 'a sample') {
+        section.append(el('p', d.fromSample(vocabulary.year ?? yearValue(), (5000).toLocaleString('en-AU')), 'note sample-note'));
+      }
+      section.append(el('p', d.codesOther, 'note'));
       const save = el('div', undefined, 'actions');
       save.append(button(d.codesSave, async () => {
         const chosen: Record<string, string> = {};
@@ -1124,6 +1201,17 @@ function renderVocabularies() {
       const count = Object.keys(vocabulary.chosen).length;
       section.append(el('p', vocabulary.date ? d.codesSaved(count, vocabulary.date) : d.codesNoneSaved, vocabulary.date ? 'status good' : 'note'));
     }
+    box.append(section);
+  }
+  if (waiting.length) {
+    const section = el('section', undefined, 'add vocabularies-waiting');
+    const list = el('ul');
+    for (const vocabulary of waiting) {
+      const item = el('li', d.vocabularyWaiting(vocabulary.title || vocabulary.key, d.vocabularyReason[vocabulary.reason] ?? vocabulary.reason));
+      item.dataset.key = vocabulary.key;
+      list.append(item);
+    }
+    section.append(el('p', d.vocabulariesWaiting, 'note'), list);
     box.append(section);
   }
 }
@@ -1212,20 +1300,33 @@ function renderCounts() {
       const titles = new Map((model.roles ?? []).map((r) => [r.name, r.title || r.name]));
       const rows = held.rows.map((row) => row.map((cell) => titles.get(cell) ?? cell));
       section.append(grid(held.columns, rows, held.columns.map((_, at) => at).filter((at) => at > 0)));
+      // The figures of a count that reads one year's anaesthetics in #cohort say that they are from a sample.
+      if (model.provenance?.[`count-${query.name}`] === 'a sample') section.append(el('p', d.fromSample(yearValue(), (5000).toLocaleString('en-AU')), 'note sample-note'));
       // A finding that names a column of step 6 links to it.
       const findings = el('ul', undefined, 'findings');
       for (const finding of held.findings) {
         const entry = el('li');
         const target = held.finding_about?.[finding];
+        const list = held.finding_codes?.[finding];
         if (target) {
           const link = el('a', finding, 'finding-link');
-          link.href = '#step-6';
+          link.href = rowHref(target);
           link.dataset.about = target;
           link.addEventListener('click', (event) => {
             event.preventDefault();
-            goTo(target, finding);
+            goTo(target, finding, 'count');
           });
           entry.append(link, el('span', ` ${d.countFindingDo}`, 'finding-do'));
+        } else if (list) {
+          // Kinds chosen at step 7 that the count does not hold lead back to their list.
+          const link = el('a', finding, 'finding-link codes-link');
+          link.href = `#list-${list.replace(/[^\w]+/g, '-')}`;
+          link.dataset.key = list;
+          link.addEventListener('click', (event) => {
+            event.preventDefault();
+            goToList(list);
+          });
+          entry.append(link, el('span', ` ${d.countFindingCodes}`, 'finding-do'));
         } else entry.textContent = finding;
         findings.append(entry);
       }
@@ -1528,6 +1629,9 @@ $('model-check').addEventListener('click', async () => {
   setBusy(false);
 });
 $('questions-copy').addEventListener('click', () => void navigator.clipboard?.writeText($('questions').textContent ?? '').catch(() => undefined));
+$('scoreboard-copy').addEventListener('click', () => {
+  void navigator.clipboard?.writeText($('scoreboard').textContent ?? '').then(() => status('t-scoreboard-copied', d.copied, 'good'), () => undefined);
+});
 
 $('year').addEventListener('change', async () => {
   try {
@@ -1549,6 +1653,8 @@ $('counts-write').addEventListener('click', async () => {
 $('write-save').addEventListener('click', async () => {
   setBusy(true);
   try {
+    // The time zone of the database's clocks goes into the saved file with everything else.
+    await ask('describe_settings', [JSON.stringify({ timeZone: $<HTMLInputElement>('time-zone').value, daylightSaving: $<HTMLInputElement>('daylight-saving').checked })]);
     const reply = await call('describe_schema_zip');
     const zip = reply.zip as Uint8Array<ArrayBuffer>;
     const link = el('a');
@@ -1558,7 +1664,9 @@ $('write-save').addEventListener('click', async () => {
     URL.revokeObjectURL(link.href);
     written = true;
     writtenDraft = !!model?.unfinished;
-    status('t-write-status', d.saved(model?.unfinished ?? ''), 'good');
+    // The save records the state of readiness that each part has reached, which the receipt names.
+    await ask('describe_model');
+    status('t-write-status', d.saved(model?.unfinished ?? '', model?.readiness?.reached ?? null), 'good');
   } catch {
     status('t-write-status', d.writeFailed, 'problem');
   }
@@ -1716,6 +1824,14 @@ const fixed: Record<string, string> = {
   't-write-about': d.writeAbout,
   'write-save': d.writeSave,
   't-write-save-note': d.writeSaveNote,
+  't-readiness': d.readiness,
+  'l-time-zone': d.timeZoneLegend,
+  't-time-zone-why': d.timeZoneWhy,
+  'l-time-zone-name': d.timeZoneLabel,
+  'l-daylight-saving': d.daylightLabel,
+  'h-scoreboard': d.scoreboardHeading,
+  't-scoreboard-what': d.scoreboardWhat,
+  'scoreboard-copy': d.scoreboardCopy,
 };
 for (const [id, value] of Object.entries(fixed)) text(id, value);
 d.steps.forEach((heading, i) => text(`h-step-${i + 1}`, heading));
@@ -1794,6 +1910,8 @@ corrections.setup({
     changing.delete(about);
   },
   goTo,
+  rowHref,
+  standing,
   step: d.steps[5],
   invented: inventedRuns,
   runInvented,

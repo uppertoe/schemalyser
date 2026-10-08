@@ -1019,7 +1019,7 @@ def describe_confirm(request):
 
 def describe_settings(request):
     r = json.loads(request)
-    return _reply(lambda: _describing().set_settings(r.get("database"), r.get("year")))
+    return _reply(lambda: _describing().set_settings(r.get("database"), r.get("year"), r.get("timeZone"), r.get("daylightSaving")))
 
 
 def describe_charted_query(request):

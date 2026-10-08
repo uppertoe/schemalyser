@@ -203,6 +203,9 @@ def named_columns(binding):
         for a, b in propose.step_pairs(step):
             found += [(step[0], a), (step[2], b)]
     if binding.get("column"):
+        derive = binding.get("derive") or {}
+        if derive.get("form") == "key":
+            found += [(binding["table"], other) for other in derive.get("with") or []]
         found.append((binding["table"], binding["column"]))
     window = binding.get("window")
     if window:
@@ -253,7 +256,12 @@ def check_shape(binding, where):
         path_of(binding["path"])
     derive = binding.get("derive")
     if derive is not None:
-        if not isinstance(derive, dict) or derive.get("form") not in DERIVED:
+        if isinstance(derive, dict) and derive.get("form") == "key":
+            # A key made from several columns of the binding's own table, which the proposer writes and no form offers.
+            if not isinstance(derive.get("with"), list) or not derive["with"]:
+                bad("a key made from several columns lists the columns besides its own")
+            names(*derive["with"])
+        elif not isinstance(derive, dict) or derive.get("form") not in DERIVED:
             bad(f"a derived value is one of {', '.join(DERIVED)}")
         if derive["form"] == "flag" and (not isinstance(derive.get("values"), list) or not derive["values"]):
             bad("a derived flag lists its values")
@@ -802,7 +810,7 @@ def _key_columns(state):
         spec = state.views[name]
         for column in spec["key"]:
             binding = role["columns"][column].get("binding")
-            if binding and not binding.get("path") and not binding.get("window") and len(spec["key"]) == 1:
+            if binding and not binding.get("path") and not binding.get("window") and not binding.get("derive") and len(spec["key"]) == 1:
                 found.add((binding["table"].upper(), binding["column"].upper()))
     return found
 
@@ -860,6 +868,8 @@ class Shadow:
             return (float(value) - offset) / factor
         if op == "trim":
             return f"  {value} "
+        if op == "held_text":
+            return value
         return value
 
     # Placing the role rows.
@@ -1081,7 +1091,7 @@ class Shadow:
         links = {link["column"] for link in spec.get("links", [])}
         anchor = None
         for column in spec["columns"]:
-            if column["name"] in links and column["name"] in spec["key"] and role["columns"][column["name"]].get("binding"):
+            if column["name"] in rolemap.anchors(spec) and role["columns"][column["name"]].get("binding"):
                 anchor = column["name"]
                 break
         found, outside = [], 0
@@ -1110,6 +1120,10 @@ class Shadow:
                     windows.append((column, binding, raw))
                 elif binding.get("joined"):
                     out[column["name"]] = self._joined(binding, raw)
+                elif (binding.get("derive") or {}).get("form") == "key":
+                    # A key made from several columns: each as text, joined by a hyphen, an empty one as nothing.
+                    parts = [*(binding["derive"].get("with") or []), binding["column"]]
+                    out[column["name"]] = "-".join(_text(end.get(part.upper())) or "" if end is not None else "" for part in parts)
                 else:
                     out[column["name"]] = evaluate(propose.plan(column, binding, self.codes_of(view_name, column)), raw)
             dropped = False
@@ -1275,6 +1289,8 @@ def evaluate(step, raw):
         return int(round(number)) if whole else number
     if op == "trim":
         return None if raw is None else _text(raw).strip(" ")
+    if op == "held_text":
+        return None if raw is None or _float(raw) is not None else _text(raw)
     return raw
 
 
@@ -1328,7 +1344,8 @@ def role_rows(state, seed=SHADOW_SEED, anaesthetics=SHADOW_ANAESTHETICS):
         moment = start
         while moment <= stop:
             rows["role_reading"].append({"anaesthetic_key": key, "kind": "map_cuff", "reading_time": moment,
-                                         "value": round(rng.gauss(60, 5), 1), "accepted": 1})
+                                         "value": round(rng.gauss(60, 5), 1), "accepted": 1,
+                                         "reading_key": f"{key}-{len(rows['role_reading'])}", "value_text": None})
             moment += dt.timedelta(minutes=5)
     first = anaesthetic_rows[:FURTHER_ANAESTHETICS]
     for name, role in state.data["roles"].items():

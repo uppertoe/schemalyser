@@ -290,5 +290,6 @@ def test_the_note_on_the_page_is_the_note_in_the_documents():
     strings = (ROOT / "site" / "src" / "strings.ts").read_text()
     found = re.search(r"const NOTE = `(.*?)`;", strings, re.S).group(1)
     assert found == note
-    for claim in ("schema lock", "about five million rows", "invented examples", "[approval reference]", "OMOP anaesthesia layer"):
+    for claim in ("schema lock", "about five million rows", "invented examples", "[approval reference]", "OMOP anaesthesia layer",
+                  "do not make the results anonymous", "repeated counts over slightly different groups"):
         assert claim in note

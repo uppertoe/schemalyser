@@ -225,9 +225,10 @@ test('the record is described, saved as a hospital schema and opened again', asy
   await readings.locator('select[data-code="52"]').selectOption('map_arterial');
   await readings.locator('select[data-code="51"]').selectOption('map_cuff');
   await readings.getByRole('button', { name: d.codesSave }).click();
-  await expect(page.locator('[data-key="role_reading.kind"]')).toContainText('The page saved 2 codes for this list on');
-  // Step 7 is done only when every list is saved, and the rail says how many are.
+  await expect(page.locator('[data-key="role_reading.kind"]')).toContainText(/The page saved 2 codes for this list on \d{1,2} [A-Z][a-z]+ \d{4}\./);
+  // Step 7 is done only when every list is saved, and the rail says how many are: the lists shown are the lists counted.
   const lists = await page.locator('#vocabularies section.vocabulary:has(button)').count();
+  await expect(page.locator('#vocabularies h3')).toHaveCount(lists);
   await expect(page.locator('#rail a[href="#step-7"]')).toContainText(d.receipt.codes(1, lists).replace(/\.$/, ''));
   await expect(page.locator('#step-7')).not.toHaveAttribute('data-state', 'done');
   await stage(page, '7-codes', '[data-key="role_reading.kind"]');
@@ -260,7 +261,13 @@ test('the record is described, saved as a hospital schema and opened again', asy
   const saved = await download;
   expect(saved.suggestedFilename()).toBe('hospital-schema.schemalyser.zip');
   // With columns still to answer, the hospital schema is saved as a draft and step 9 is not done.
-  await expect(page.locator('#t-write-draft')).toContainText('The hospital schema is not yet complete:');
+  await expect(page.locator('#t-write-draft')).toContainText('Some of the hospital schema is not yet answered:');
+  // Step 9 explains the three states once, asks for the time zone, and says how the proposals fared, naming no column.
+  await expect(page.locator('#t-readiness')).toHaveText(d.readiness);
+  await expect(page.locator('#time-zone')).not.toHaveValue('');
+  await expect(page.locator('#b-scoreboard h3')).toHaveText(d.scoreboardHeading);
+  await expect(page.locator('#scoreboard')).toContainText('These figures name no table or column, so they may be shared.');
+  await expect(page.locator('#scoreboard')).not.toContainText('PERSON_MASTER');
   await expect(page.locator('#t-write-status')).toContainText('The page has saved the hospital schema as a draft (');
   await expect(page.locator('#step-9')).not.toHaveAttribute('data-state', 'done');
   await expect(page.locator('#rail a[href="#step-9"]')).toContainText(d.savedDraft(''));
@@ -279,12 +286,19 @@ test('the record is described, saved as a hospital schema and opened again', asy
   expect(readFileSync(join(unzipped, 'map/role_anaesthetic.sql'), 'utf8')).not.toContain('No person has confirmed');
   const settings = JSON.parse(readFileSync(join(unzipped, 'settings.json'), 'utf8'));
   expect(settings.year).toBe(2024);
-  expect(settings.complete).toBe(false);
+  expect(settings.answered).toBe(false);
+  expect(settings.complete).toBeUndefined();
+  expect(settings.time_zone).toBeTruthy();
+  expect(settings.readiness.parts.role_reading.status).toBe('contract');
+  expect(settings.readiness.parts.role_reading['clinically validated']).toBeNull();
+  expect(Object.keys(settings.readiness.states)).toEqual(['runs', 'checked against the database', 'clinically validated']);
   expect(settings.invented).toBeUndefined();
   expect(settings.draft).toMatch(/^draft: [\d,]+ columns and [\d,]+ tables unanswered/);
   const readme = readFileSync(join(unzipped, 'README.md'), 'utf8');
   expect(readme).toContain('## This hospital schema is a draft');
   expect(readme).toContain("It must stay on the hospital's own storage.");
+  expect(readme).toContain('## How far the hospital schema has been checked');
+  expect(readme).not.toMatch(/\bcomplete\b(?! data)/);
   // The hospital schema says how many columns a person has answered for, and the README speaks of parts and the
   // hospital schema, not of roles, bindings, maps or folders.
   expect(JSON.parse(readFileSync(join(unzipped, 'map/map.json'), 'utf8')).description).toContain('A person has since answered for');
@@ -368,8 +382,15 @@ test('each kind of correction is tested on made-up rows before it is kept', asyn
   expect(await page.locator('#model-check-result').innerText()).not.toMatch(/\brole_[a-z]|contract/);
   const finding = page.locator('#model-check-result a.finding-link').first();
   const sought = (await finding.getAttribute('data-about'))!;
+  // Each finding carries the id of its row, so that its link leads there without the script too.
+  const soughtId = await page.locator(`#confirm [data-about="${sought}"]`).getAttribute('id');
+  expect(soughtId).toBeTruthy();
+  await expect(finding).toHaveAttribute('href', `#${soughtId}`);
   await finding.click();
   await expect(page.locator(`#confirm [data-about="${sought}"]`)).toBeInViewport();
+  // The first row that shows a link, and the first that shows a confidence, each say once what it means.
+  await expect(page.locator('#confirm .gloss-link')).toHaveCount(1);
+  await expect(page.locator('#confirm .gloss-confidence')).toHaveCount(1);
   await stage(page, 'c0-model-check', '#step-6');
 
   const entry = (about: string) => page.locator(`#confirm [data-about="${about}"]`);
@@ -443,12 +464,16 @@ test('each kind of correction is tested on made-up rows before it is kept', asyn
   await column(about, c.columnLabel, 'BIRTH_TS');
   await check(about, true);
   await keep(about);
+  // A finding of the test of the whole schema, landed at its row, is cleared once a kept change mends it.
   about = 'role_drug.unit';
+  await page.locator(`#model-check-result a.finding-link[data-about="${about}"]`).first().click();
+  await expect(entry(about).locator('.landed')).toHaveCount(1);
   await open(about, 'trim');
   await table(about, c.tableLabel, 'DRUG_GIVEN');
   await column(about, c.columnLabel, 'DOSE_UNIT_CAT');
   await expect(await check(about, true)).toContainText('This change also mends 1 problem that was there before it.');
   await keep(about);
+  await expect(entry(about).locator('.landed')).toHaveCount(0);
 
   // Only some of the rows, kept and probed.
   about = 'role_anaesthetic rows';
@@ -559,7 +584,9 @@ test('each kind of correction is tested on made-up rows before it is kept', asyn
   await step(2).getByLabel(c.stepToColumn).selectOption('VISIT_KEY');
   await column(about, c.finalColumn('ANAES_RECORD'), 'ANAES_KEY');
   const broken = await check(about, false);
-  await expect(broken).toContainText('This change breaks the hospital schema in 1 place:');
+  // The repeated readings also repeat the reading's own key, which the test names as a second place.
+  await expect(broken).toContainText('This change breaks the hospital schema in 2 places:');
+  await expect(broken).toContainText('values of the column that identifies a row appear more than once');
   await expect(broken).toContainText('readings appear twice, each linked to a second anaesthetic, so a reading no longer links to exactly one anaesthetic.');
   await stage(page, 'c6-broken', '#confirm [data-about="role_reading.anaesthetic_key"]');
   // After a failed test, only Discard and the ticked keep with its reason are offered.
@@ -581,7 +608,7 @@ test('each kind of correction is tested on made-up rows before it is kept', asyn
   await saved.saveAs(unzipped + '.zip');
   execFileSync('python3', ['-c', 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])', unzipped + '.zip', unzipped]);
   const confirmations = readFileSync(join(unzipped, 'confirmations.csv'), 'utf8');
-  expect(confirmations.split('\n')[0]).toBe('attribute,answer,replacement,date,note,version,correction,test,reason');
+  expect(confirmations.split('\n')[0]).toBe('attribute,answer,replacement,date,note,version,correction,test,reason,provenance');
   expect(confirmations).toContain('failed: In Readings charted during an anaesthetic');
   expect(confirmations).toContain('The database team says that each visit holds one anaesthetic at this hospital.');
   const journal = JSON.parse(readFileSync(join(unzipped, 'journal.json'), 'utf8')).entries as { name: string; passed?: boolean }[];
@@ -874,6 +901,8 @@ test('the invented hospital answers every query, and the walk reaches a complete
   // none of the columns that identify a person, and says so; the table of routes lists its columns with their words.
   const route = page.locator('#confirm [data-about="role_drug.route"]');
   await route.locator('.answer-another').click();
+  // Until a column is chosen there is no sentence, and the page says what choosing one does.
+  await expect(route.locator('.correction .incomplete')).toHaveText(c.incompleteColumn);
   const pickTable = route.locator('.chooser input');
   await expect(pickTable).toHaveValue('DRUG_GIVEN');
   await pickTable.fill('PERSON_MASTER');
@@ -900,6 +929,9 @@ test('the invented hospital answers every query, and the walk reaches a complete
   await expect(route).toContainText('Corrected to');
   // Problems that stood before the change are not hidden behind a plain pass.
   await expect(route.locator('.kept-correction')).toContainText(/broke nothing new; \d+ problems? (was|were) there before it and remains?\./);
+  // The row says what the query of values showed, rather than that there is no test query.
+  await expect(route.locator('.kept-correction')).toContainText(c.valuesKept(3));
+  await expect(route.locator('.kept-correction')).not.toContainText(c.probeNone);
   await stage(page, 'h6-route', '#confirm [data-about="role_drug.route"]');
   // Every other column and table is answered Not sure, which lists it as a question for the database team.
   const unsure = page.locator('#confirm li.binding[data-answer=""] .answer-unsure:not([disabled])');
@@ -970,6 +1002,9 @@ test('the invented hospital answers every query, and the walk reaches a complete
   await coverageBlock.getByRole('button', { name: d.lookRightSave }).click();
   await expect(coverageBlock).toContainText('this count looks right');
   await expect(page.locator('#step-8')).toHaveAttribute('data-state', 'done');
+  // The figures of the count that reads one year's anaesthetics say that they are from a sample, and the others do not.
+  await expect(page.locator('[data-count="readings_by_kind"] .sample-note')).toHaveText(d.fromSample(2024, '5,000'));
+  await expect(coverageBlock.locator('.sample-note')).toHaveCount(0);
   await stage(page, 'h8-counts', '#step-8');
 
   // Step 9: a complete save, which records that each result came from the invented hospital.
@@ -978,13 +1013,19 @@ test('the invented hospital answers every query, and the walk reaches a complete
   const download = page.waitForEvent('download');
   await page.locator('#write-save').click();
   const saved = await download;
-  await expect(page.locator('#t-write-status')).toHaveText(d.saved(''));
+  // The receipt names the state reached: the invented hospital's counts check nothing against a real database.
+  await expect(page.locator('#t-write-status')).toHaveText(d.saved('', 'runs'));
   await expect(page.locator('#step-9')).toHaveAttribute('data-state', 'done');
   await stage(page, 'h9-saved', '#step-9');
   const path = join(mkdtempSync(join(tmpdir(), 'hospital-')), 'invented.schemalyser.zip');
   await saved.saveAs(path);
   const read = (name: string) => execFileSync('python3', ['-c', 'import sys, zipfile; sys.stdout.write(zipfile.ZipFile(sys.argv[1]).read(sys.argv[2]).decode())', path, name], { encoding: 'utf8' });
-  expect(JSON.parse(read('settings.json')).complete).toBe(true);
+  expect(JSON.parse(read('settings.json')).answered).toBe(true);
+  expect(JSON.parse(read('settings.json')).readiness.reached).toBe('runs');
+  // Each journal entry says where its result came from, and the count of one year's readings is from a sample.
+  const sources = Object.fromEntries((JSON.parse(read('journal.json')).entries as { name: string; provenance: string }[]).map((e) => [e.name, e.provenance]));
+  expect(sources['count-readings_by_kind']).toBe('a sample');
+  expect(sources['count-coverage_by_year']).toBe('complete data');
   const entries = JSON.parse(read('journal.json')).entries as { name: string; pasted?: string; from?: string }[];
   const run = entries.filter((e) => e.pasted);
   expect(run.length).toBeGreaterThan(5);

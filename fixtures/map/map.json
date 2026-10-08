@@ -62,7 +62,13 @@
                   "question": "Please confirm whether READ_VALUE holds the mean in mmHg for both observation types."},
         "accepted": {"status": "seen", "from": "OBS_READING.ACCEPTED_FLAG",
                      "says": "A reading flagged N was not accepted, and an empty flag counts as accepted, as the team's queries treat it.",
-                     "question": "Please confirm whether an empty ACCEPTED_FLAG means that the value was accepted."}
+                     "question": "Please confirm whether an empty ACCEPTED_FLAG means that the value was accepted."},
+        "reading_key": {"status": "proposed", "from": "OBS_READING.SHEET_KEY and OBS_READING.SEQ",
+                        "says": "A reading has no key of one column, so the map makes one value from the sheet and the line on it, which together identify a row.",
+                        "question": "Please confirm whether the sheet and the line together identify one reading, with no line repeated on a sheet."},
+        "value_text": {"status": "proposed", "from": "OBS_READING.READ_VALUE",
+                       "says": "The value as charted is kept as text where it cannot be read as a number, and left empty where it is a number.",
+                       "question": "Please confirm whether READ_VALUE holds words as well as numbers, such as a note that a reading was not taken."}
       }
     },
     "role_staff": {

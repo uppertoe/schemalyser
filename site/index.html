@@ -318,10 +318,21 @@
             <button type="button" class="toggle link" id="toggle-9"></button>
             <div class="body">
               <p id="t-write-what" class="do"></p>
+              <p id="t-readiness" class="note"></p>
               <p id="t-write-draft" class="status draft-note" hidden></p>
               <p id="t-write-draft-codes" class="note" hidden></p>
               <ul id="write-draft-list" class="findings"></ul>
               <div id="b-write">
+                <!-- The time zone of the database's clocks, which the saved file records, asked once before the save. -->
+                <fieldset class="time-zone" id="f-time-zone">
+                  <legend id="l-time-zone"></legend>
+                  <p id="t-time-zone-why" class="note"></p>
+                  <div class="field">
+                    <label for="time-zone" id="l-time-zone-name"></label>
+                    <input type="text" id="time-zone" autocomplete="off" spellcheck="false" />
+                  </div>
+                  <label class="option"><input type="checkbox" id="daylight-saving" /> <span id="l-daylight-saving"></span></label>
+                </fieldset>
                 <div class="actions"><button type="button" id="write-save"></button></div>
                 <p id="t-write-save-note" class="note"></p>
                 <details class="about">
@@ -330,6 +341,13 @@
                 </details>
                 <p id="t-write-status" class="status" hidden role="status"></p>
               </div>
+              <section class="add scoreboard" id="b-scoreboard" hidden>
+                <h3 id="h-scoreboard"></h3>
+                <p id="t-scoreboard-what" class="note"></p>
+                <pre id="scoreboard" class="code"></pre>
+                <div class="actions"><button type="button" id="scoreboard-copy" class="secondary"></button></div>
+                <p id="t-scoreboard-copied" class="status" hidden role="status"></p>
+              </section>
             </div>
           </li>
         </ol>

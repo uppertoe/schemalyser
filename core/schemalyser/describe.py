@@ -12,7 +12,8 @@ they settle is written to the hospital folder:
     counts/NAME.tsv                 the result of each count, as pasted
     counts/judgements.json          whether each count looked right, with a note and its date
     dictionary/                     the dictionary's own files, only where a person ticked the box to keep them
-    settings.json                   the tool's version, the dates, the database and the year of the lists
+    settings.json                   the tool's version, the dates, the database, the year of the lists, the time zone
+                                    of the database's clocks, and the state of readiness that each part has reached
 
 The dictionary is licensed. It is read here, in the browser's worker or on the hospital's own machine, and nothing
 from it leaves except into the hospital folder: map.json quotes it as evidence, and the dictionary's own files are
@@ -49,7 +50,21 @@ LEAST = 10
 FOLDER_FORMAT = 1
 DICTIONARY_FOLDER = "dictionary"
 SAFE_COUNTS = ("coverage_by_year", "repeated_keys")
-CONFIRMATION_FIELDS = ("attribute", "answer", "replacement", "date", "note", "version", "correction", "test", "reason")
+CONFIRMATION_FIELDS = ("attribute", "answer", "replacement", "date", "note", "version", "correction", "test", "reason",
+                       "provenance")
+# Where each fact of the saved hospital schema came from: the whole of a table, a sample of it (the anaesthetics of one
+# year in #cohort), the database's own records of its tables or the data dictionary, a person's answer or judgement,
+# or the page's own proposal.
+COMPLETE, SAMPLE, METADATA, PERSON, INFERENCE = "complete data", "a sample", "metadata", "a person", "an inference"
+# The three states of readiness, in order. The page can reach the first two, and never the third.
+RUNS, CHECKED, VALIDATED = "runs", "checked against the database", "clinically validated"
+READINESS = (RUNS, CHECKED, VALIDATED)
+# The parts of the record that each count of step 8 reads.
+COUNT_PARTS = {"coverage_by_year": ("role_patient", "role_anaesthetic"), "repeated_keys": ("role_patient", "role_anaesthetic"),
+               "readings_by_kind": ("role_anaesthetic", "role_reading")}
+# The databases whose figures can check a part: a training database's patients are fictional, and the invented
+# hospital is made up.
+REAL_DATABASES = ("production", "unsure")
 # The most distinct values that the query of values returns.
 MOST_VALUES = 50
 PROBE_COLUMNS = {"link": ("anaesthetics", "with_rows", "without_rows"), "filter": ("rows_read", "passing"),
@@ -171,12 +186,17 @@ WORDING = {
     "described_all": "Schemalyser proposed this draft hospital schema from a data dictionary on {date}. A person has since answered for every one of its {total} columns and tables.",
     "described_codes": " {count} still {hold} codes that a person has not yet translated.",
     "draft": "draft: {parts}",
+    "state_runs": "The part compiles and runs on made-up rows, by the test on made-up rows.",
+    "state_checked": "The counts that read the part have been run on the hospital's database and judged to look right.",
+    "state_validated": "A sample of anaesthetics has been reconciled against the clinical record. The page cannot do this, so it never records this state; the hospital's own reconciliation does.",
+    "sample_stamp": " The figures are from a sample: the anaesthetics of one year in #cohort, at most {limit}.",
     "probe_few": "Fewer than ten anaesthetics came back, so the test query says too little to judge the link.",
     "probe_link": "Of {total} anaesthetics of the year, {linked} have at least one row through this link and {none} have none.",
     "probe_filter": "Of {total} rows read, {passing} pass the filter.",
     "probe_flag": "The flag is 1 in {ones} rows, 0 in {zeros} and empty in {empty}.",
-    "identifying": "The page does not offer columns that identify a person, and {name} is one, so the page cannot use it here.",
-    "identifying_values": "The page does not list the values of {name}, because it is a column that identifies a person.",
+    "identifying": "The page does not offer columns that hold a person's name, address, contact details or medical record number, and {name} is one, so the page cannot use it here.",
+    "identifying_values": "The page does not list the values of {name}, because it holds a person's name, address, contact details or medical record number.",
+    "kinds_absent": "Codes were chosen at step 7 for {kinds}, but no readings of {those} appear in {year}. Look again at {codes} at step 7.",
     "invented_only": "The invented hospital answers only the queries written for the invented dictionary. With a real dictionary, your colleague runs each query on the hospital's database.",
     "invented_not_offered": "The page has not written this query yet. Write it first, then choose Run on the invented hospital.",
     "invented_failed": "The invented hospital could not run this query. Write it again and run it once more; if it still fails, answer this item by hand.",
@@ -233,6 +253,16 @@ def _count_words(n, one, many):
 
 def _now():
     return dt.datetime.now().isoformat(timespec="minutes")
+
+
+MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November",
+          "December")
+
+
+def _day(iso):
+    """A date as a person reads it, as 8 October 2026, from one written as 2026-10-08."""
+    found = re.match(r"(\d{4})-(\d{2})-(\d{2})", str(iso or ""))
+    return f"{int(found.group(3))} {MONTHS[int(found.group(2)) - 1]} {found.group(1)}" if found else str(iso or "")
 
 
 def _where(conditions):
@@ -339,7 +369,10 @@ class Describe:
         self.sizes = {}
         self.codes = {}
         self.counts = {}
-        self.settings = {"format": FOLDER_FORMAT, "made": None, "updated": None, "database": None, "year": None}
+        self.settings = {"format": FOLDER_FORMAT, "made": None, "updated": None, "database": None, "year": None,
+                         "time_zone": None, "daylight_saving": None}
+        # The readiness that the last save recorded, which the page names in its receipt.
+        self._readiness = None
         self.restored = None
         self._scratch = None
         self._lookups = {}
@@ -413,7 +446,7 @@ class Describe:
         hospital. The page shows it before anything is loaded, unrecorded; it is recorded with the other queries once its
         result is read, so that the saved hospital schema holds what was run."""
         if not record:
-            stamp = f"-- {WORDING['stamp_query'].format(version=self.version or 'unknown', date=_today())}"
+            stamp = f"-- {WORDING['stamp_query'].format(version=self.version or 'unknown', date=_day(_today()))}"
             return {"sql": stamp + "\n" + first_ask.database_query()}
         return {"sql": self.offer("data-dictionary", step, first_ask.database_query())}
 
@@ -1469,7 +1502,7 @@ class Describe:
                 codes = sorted((c for c, k in chosen.items() if k == kind), key=str)
                 if codes:
                     kinds[kind] = {"codes": codes, "status": "person", "from": source,
-                                   "says": WORDING["codes_says"].format(count=len(codes), codes="code" if len(codes) == 1 else "codes", date=date),
+                                   "says": WORDING["codes_says"].format(count=len(codes), codes="code" if len(codes) == 1 else "codes", date=_day(date)),
                                    "confirmation": {"answer": "yes", "date": date}}
                 elif kind in rolemap.MEAN_KINDS:
                     kinds[kind] = {"codes": [], "status": "proposed", "from": source, "says": WORDING["codes_none"],
@@ -1600,6 +1633,10 @@ ORDER  BY g.kind;"""
         held.update({"looks_right": looks_right, "note": " ".join((note or "").split())[:400], "judged": date or _today(),
                      "database": self.settings.get("database") or "unsure"})
 
+    def finding_codes(self, name):
+        """The list of codes at step 7 that each finding of a count leads to, as {finding: key}."""
+        return {f: "role_reading.kind" for f in self.findings(name) if f.endswith("at step 7.") and f.startswith("Codes were chosen")}
+
     def finding_about(self, name):
         """The column of step 6 that each finding of a count leads to, as {finding: about}."""
         return {f: "role_anaesthetic.patient_key" for f in self.findings(name) if f.endswith("Look again at the patient's identifier in Anaesthetics at step 6.")}
@@ -1629,6 +1666,18 @@ ORDER  BY g.kind;"""
                         found.append(WORDING["cliff"].format(year=r["start_year"], count=f"{r.get(figure) or 0:,}", total=f"{r['anaesthetics']:,}",
                                                              what=what, best_count=f"{best.get(figure) or 0:,}",
                                                              best_total=f"{best['anaesthetics']:,}", best_year=best["start_year"]))
+        elif name == "readings_by_kind":
+            # A kind chosen at step 7 of which the count holds no readings at all, which usually means a wrong code.
+            chosen = [k for k in dict.fromkeys(((self.codes.get("role_reading.kind") or {}).get("chosen") or {}).values()) if k != "other"]
+            seen = {str(r.get("kind")) for r in records}
+            absent = [k for k in chosen if k not in seen]
+            if absent:
+                meanings = {k["kind"]: k["meaning"] for k in self.model["kinds"]}
+                year = (self.journal.get("count-readings_by_kind") or {}).get("year") or self.settings.get("year")
+                found.append(WORDING["kinds_absent"].format(
+                    kinds=_and(_kind_words(meanings.get(k), k) for k in absent),
+                    those="that kind" if len(absent) == 1 else "those kinds", year=year or "the year chosen",
+                    codes="that code" if len(absent) == 1 else "those codes"))
         elif name == "repeated_keys":
             for r in records:
                 if (r.get("keys_repeated") or 0) > 0:
@@ -1643,10 +1692,14 @@ ORDER  BY g.kind;"""
         entry = self.journal.get(name)
         if entry is None:
             entry = self.journal[name] = {"number": len(self.journal) + 1, "name": name}
-        stamp = f"-- {WORDING['stamp_query'].format(version=self.version or 'unknown', date=_today())}"
+        stamp = f"-- {WORDING['stamp_query'].format(version=self.version or 'unknown', date=_day(_today()))}"
         text = stamp + "\n" + sql
         entry.update({"step": step, "offered": _now(), "version": self.version,
                       **{k: v for k, v in extra.items() if v is not None}})
+        if name.startswith("count-") and self.data is not None:
+            # The schema as it stood when the count was written, so that a count written before a later change is
+            # not taken as having checked the part.
+            entry["schema"] = self._schema_mark()
         for key in [k for k, v in extra.items() if v is None]:
             entry.pop(key, None)
         self.queries[name] = text
@@ -1701,6 +1754,79 @@ ORDER  BY g.kind;"""
                                    "note": " ".join((note or "").split())[:400], "version": self.version,
                                    "correction": "", "test": "", "reason": ""})
 
+    # Where each fact came from, and how far each part has been checked.
+
+    def _schema_mark(self):
+        """A fingerprint of what the views are written from: the bindings, the kinds' codes and the codes chosen."""
+        roles = {name: {"rows": role["rows"].get("binding"), "columns": {c: e.get("binding") for c, e in role["columns"].items()}}
+                 for name, role in (self.data or {}).get("roles", {}).items()}
+        kinds = {k: v.get("codes") for k, v in (self.data or {}).get("kinds", {}).items()}
+        chosen = {k: v.get("chosen") for k, v in self.codes.items()}
+        return hashlib.sha256(json.dumps([roles, kinds, chosen], sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
+
+    def provenance(self, name):
+        """Where the result of a query came from: the database's own records of its tables (metadata), a sample of
+        the anaesthetics of one year in #cohort, or the whole of the tables it reads (complete data)."""
+        if name in ("data-dictionary", "tables-and-columns"):
+            return METADATA
+        return SAMPLE if "#cohort" in (self.queries.get(name) or "") else COMPLETE
+
+    @staticmethod
+    def _binding_provenance(item):
+        """Where a binding came from: a person's answer, or the page's own proposal."""
+        return PERSON if item.get("status") == "person" or (item.get("confirmation") or {}).get("answer") else \
+            COMPLETE if item.get("status") == "count" else INFERENCE
+
+    def _checked_parts(self):
+        """{part: date} for each part whose every count has been run on a real database, on the schema as it now
+        stands, and judged to look right."""
+        mark = self._schema_mark() if self.data is not None else None
+        found = {}
+        for view in {v for parts in COUNT_PARTS.values() for v in parts}:
+            dates = []
+            for name, parts in COUNT_PARTS.items():
+                if view not in parts:
+                    continue
+                held, entry = self.counts.get(name) or {}, self.journal.get(f"count-{name}") or {}
+                if not (held.get("rows") and held.get("looks_right") == "yes" and entry.get("pasted")
+                        and entry.get("from") != INVENTED_HOSPITAL and entry.get("database") in REAL_DATABASES
+                        and entry.get("schema") == mark):
+                    dates = None
+                    break
+                dates.append(str(held.get("judged") or held.get("date") or "")[:10])
+            if dates:
+                found[view] = max(dates)
+        return found
+
+    def readiness(self, date=None):
+        """How far each part of the hospital schema has been checked, in the three states: runs, checked against the
+        database, and clinically validated, which the page never records. Each part gives the date on which it reached
+        each state, or None. The whole schema has reached the state that every part of the version 1 contract has."""
+        date = date or _today()
+        if self.data is None:
+            return None
+        report = self._baseline_check()
+        contract = [v for v, status in rolemap.statuses().items() if status == "contract"]
+        failing = set()
+        for problem in report["problems"]:
+            about = (report.get("about") or {}).get(problem)
+            # A problem that names no part, such as the test audit's answer, falls on the parts that every audit reads.
+            failing |= {about.split(" ")[0].split(".")[0]} if about else set(contract)
+        checked = self._checked_parts()
+        parts = {}
+        for view in [v for v in rolemap.all_views() if v in self.data["roles"]]:
+            runs = date if view not in failing else None
+            reached_checked = checked.get(view) if runs else None
+            parts[view] = {"status": rolemap.statuses()[view], "reached": CHECKED if reached_checked else RUNS if runs else None,
+                           RUNS: runs, CHECKED: reached_checked, VALIDATED: None}
+        order = {None: 0, RUNS: 1, CHECKED: 2}
+        held = [parts[v]["reached"] for v in contract if v in parts]
+        reached = min(held, key=lambda state: order[state]) if len(held) == len(contract) else None
+        self._readiness = {"reached": reached, "states": {RUNS: WORDING["state_runs"], CHECKED: WORDING["state_checked"],
+                                                         VALIDATED: WORDING["state_validated"]},
+                           "parts": parts, "date": date}
+        return self._readiness
+
     # The hospital folder.
 
     def _work_folder(self, name="map"):
@@ -1738,9 +1864,18 @@ ORDER  BY g.kind;"""
             text += WORDING["described_codes"].format(count=f"{n:,} {'column' if n == 1 else 'columns'}", hold="holds" if n == 1 else "hold")
         return text
 
-    def _map_files(self, stamp=""):
+    def _map_files(self, stamp="", provenance=False):
         self.data["description"] = self._described()
-        files = {rolemap.MAP_FILE: json.dumps(self.data, indent=2, ensure_ascii=False) + "\n"}
+        data = self.data
+        if provenance:
+            # Each binding and each kind says where it came from: a person's answer, or the page's own proposal.
+            data = copy.deepcopy(self.data)
+            for role in data["roles"].values():
+                for item in [role["rows"], *role["columns"].values()]:
+                    item["provenance"] = self._binding_provenance(item)
+            for item in data["kinds"].values():
+                item["provenance"] = self._binding_provenance(item)
+        files = {rolemap.MAP_FILE: json.dumps(data, indent=2, ensure_ascii=False) + "\n"}
         for name in self.data["roles"]:
             files[f"{name}.sql"] = (stamp + "\n" if stamp else "") + self.view_sql(name)
         return files
@@ -1756,9 +1891,9 @@ ORDER  BY g.kind;"""
         the pasted results, whose first line does, and the dictionary's own files, which are kept exactly as given."""
         date = date or _today()
         files = {}
-        stamp = f"-- {WORDING['stamp_file'].format(version=self.version or 'unknown', date=date)}"
+        stamp = f"-- {WORDING['stamp_file'].format(version=self.version or 'unknown', date=_day(date))}"
         if self.data is not None:
-            for name, text in self._map_files(stamp).items():
+            for name, text in self._map_files(stamp, provenance=True).items():
                 files[f"map/{name}"] = text.encode("utf-8")
         for name, text in self.queries.items():
             files[self._file(name, "queries", "sql")] = text.encode("utf-8")
@@ -1766,18 +1901,23 @@ ORDER  BY g.kind;"""
             entry = self.journal[name]
             stamp = "stamp_invented" if entry.get("from") == INVENTED_HOSPITAL else "stamp_result"
             first = "# " + WORDING[stamp].format(version=entry.get("version") or self.version or "unknown",
-                                                 date=(entry.get("pasted") or date)[:10])
+                                                 date=_day((entry.get("pasted") or date)[:10]))
+            if self.provenance(name) == SAMPLE:
+                first += WORDING["sample_stamp"].format(limit=f"{COHORT_LIMIT:,}")
             files[self._file(name, "results", "tsv")] = (first + "\n" + text.rstrip("\n") + "\n").encode("utf-8")
         for key, held in sorted(self.codes.items()):
-            files[f"codes/{key}.json"] = self._json({"view": key.split(".")[0], "column": key.split(".")[1], **held}, date)
-        judgements = {name: {k: held.get(k) for k in ("date", "looks_right", "note", "judged", "database") if held.get(k) is not None}
+            files[f"codes/{key}.json"] = self._json({"view": key.split(".")[0], "column": key.split(".")[1], **held,
+                                                     "provenance": {"rows": SAMPLE, "chosen": PERSON}}, date)
+        judgements = {name: {**{k: held.get(k) for k in ("date", "looks_right", "note", "judged", "database") if held.get(k) is not None},
+                             "provenance": {"figures": self.provenance(f"count-{name}"),
+                                            **({"judgement": PERSON} if held.get("looks_right") else {})}}
                       for name, held in sorted(self.counts.items())}
         if judgements:
             files["counts/judgements.json"] = self._json({"counts": judgements}, date)
         out = io.StringIO()
         writer = csv.writer(out, lineterminator="\n")
         writer.writerow(list(CONFIRMATION_FIELDS))
-        writer.writerows([c.get(k) or "" for k in CONFIRMATION_FIELDS] for c in self.confirmations)
+        writer.writerows([c.get(k) or (PERSON if k == "provenance" else "") for k in CONFIRMATION_FIELDS] for c in self.confirmations)
         files["confirmations.csv"] = out.getvalue().encode("utf-8")
         kept = bool(self.dictionary_files)
         if kept:
@@ -1795,23 +1935,28 @@ ORDER  BY g.kind;"""
             files[f"{DICTIONARY_FOLDER}/dictionary.json"] = self._json(
                 {"file": meta["name"], "tables": meta.get("tables_name"), "headings": meta.get("headings") or {},
                  **({"source": "database"} if self.dictionary_source == "database" else {}), **vendor,
-                 **({"invented": True} if self.invented else {})}, date)
+                 **({"invented": True} if self.invented else {}), "provenance": METADATA}, date)
         entries = sorted(self.journal.values(), key=lambda e: e["number"])
         journal = []
         if self.dictionary_entry:
-            journal.append(self.dictionary_entry)
-        journal += [dict(entry) for entry in self.corrections]
+            journal.append({**self.dictionary_entry, "provenance": METADATA})
+        journal += [{**entry, "provenance": PERSON} for entry in self.corrections]
         for entry in entries:
             item = {k: v for k, v in entry.items() if k != "number"}
             item["query"] = self._file(entry["name"], "queries", "sql")
             item["result"] = self._file(entry["name"], "results", "tsv") if entry["name"] in self.results else None
+            item["provenance"] = self.provenance(entry["name"])
             journal.append({"number": entry["number"], **item})
         files["journal.json"] = self._json({"entries": journal}, date)
         settings = dict(self.settings)
         unfinished = self.unfinished()
-        settings["complete"] = self.data is not None and not unfinished
+        # Every column answered is not the same as complete: how far the schema has been checked is its readiness.
+        settings["answered"] = self.data is not None and not unfinished
         if unfinished:
             settings["draft"] = WORDING["draft"].format(parts=unfinished)
+        readiness = self.readiness(date)
+        if readiness is not None:
+            settings["readiness"] = readiness
         settings.update({"dictionary": {"kept": kept, **({k: v for k, v in (self.dictionary_receipt() or {}).items()
                                                           if k in ("tables", "columns", "file", "tablesFile")})}})
         if self.invented:
@@ -1821,7 +1966,8 @@ ORDER  BY g.kind;"""
         files["settings.json"] = self._json(settings, date)
         training = [self._file(e["name"], "queries", "sql") for e in entries if e.get("database") == "training"]
         files["README.md"] = readme(sorted(files), self.version, date, kept, training, unfinished,
-                                    self.untranslated() if self.data is not None else [], self.invented).encode("utf-8")
+                                    self.untranslated() if self.data is not None else [], self.invented,
+                                    readiness).encode("utf-8")
         return files
 
     def folder_zip(self, date=None):
@@ -1851,7 +1997,7 @@ ORDER  BY g.kind;"""
         self.journal, self.queries, self.results, self.values, self.probes = {}, {}, {}, {}, {}
         self._checked, self._baseline = {}, None
         held = _json_of(files.get("settings.json"))
-        for key in ("made", "updated", "database", "year"):
+        for key in ("made", "updated", "database", "year", "time_zone", "daylight_saving"):
             if key in held:
                 self.settings[key] = held[key]
         if has_dictionary:
@@ -1881,6 +2027,10 @@ ORDER  BY g.kind;"""
             (folder / rolemap.MAP_FILE).write_bytes(bytes(files["map/map.json"]))
             try:
                 self.data = rolemap.read_map_json(folder)
+                # Where each binding came from is written at each save, and is not part of the schema itself.
+                for item in [i for role in self.data["roles"].values() for i in [role["rows"], *role["columns"].values()]] \
+                        + list(self.data["kinds"].values()):
+                    item.pop("provenance", None)
                 found["map"] = True
             except rolemap.MapError:
                 found["problem"] = WORDING["folder_unreadable"]
@@ -1894,22 +2044,22 @@ ORDER  BY g.kind;"""
             if match:
                 held = _json_of(data)
                 if held:
-                    self.codes[match.group(1)] = {k: v for k, v in held.items() if k not in ("view", "column", "tool", "version", "written")}
+                    self.codes[match.group(1)] = {k: v for k, v in held.items() if k not in ("view", "column", "tool", "version", "written", "provenance")}
                     found["codes"] += 1
         judgements = _json_of(files.get("counts/judgements.json")).get("counts") or {}
         for name, held in judgements.items():
             if name in COUNT_COLUMNS:
-                self.counts[name] = dict(held)
+                self.counts[name] = {k: v for k, v in held.items() if k != "provenance"}
         for entry in (_json_of(files.get("journal.json")).get("entries") or []):
             if entry.get("name") == "correction":
-                self.corrections.append({k: v for k, v in entry.items()})
+                self.corrections.append({k: v for k, v in entry.items() if k != "provenance"})
                 continue
             if entry.get("name") == "dictionary" and self.dictionary_entry is not None:
                 self.dictionary_entry.update({k: v for k, v in entry.items() if k.startswith("vendor_")})
             if entry.get("name") == "dictionary" or "number" not in entry:
                 continue
             name = entry["name"]
-            self.journal[name] = {k: v for k, v in entry.items() if k not in ("query", "result")}
+            self.journal[name] = {k: v for k, v in entry.items() if k not in ("query", "result", "provenance")}
             query = files.get(entry.get("query") or "")
             if query is not None:
                 self.queries[name] = _text(query)
@@ -1931,7 +2081,7 @@ ORDER  BY g.kind;"""
                     self.values[name] = [{"value": r[0], "rows": _number(r[1])} for r in read_grid(text, ("value", "rows"))[1]]
                 elif name.startswith("count-") and name[6:] in COUNT_COLUMNS:
                     self.read_count(name[6:], text, (entry.get("pasted") or "")[:10] or None, record=False)
-                    self.counts[name[6:]].update(judgements.get(name[6:]) or {})
+                    self.counts[name[6:]].update({k: v for k, v in (judgements.get(name[6:]) or {}).items() if k != "provenance"})
                     found["counts"] += 1
             except DescribeError:
                 pass
@@ -2009,11 +2159,18 @@ ORDER  BY g.kind;"""
         after_columns, after = read_grid(text, before_columns)
         return {"differences": _grid_differences(before_columns, before, after), "previous": True}
 
-    def set_settings(self, database=None, year=None):
+    def set_settings(self, database=None, year=None, time_zone=None, daylight_saving=None):
         if database in ("production", "training", "unsure"):
             self.settings["database"] = database
         if year is not None and re.fullmatch(r"(19|20)\d\d", str(year)):
             self.settings["year"] = int(year)
+        # The time zone that the database's clocks follow, as a name such as Australia/Sydney or UTC, which a person
+        # gives once; the views give each time as the database holds it, so the saved schema says what that means.
+        if time_zone is not None and re.fullmatch(r"[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}", str(time_zone).strip()) \
+                and len(str(time_zone).strip()) <= 64:
+            self.settings["time_zone"] = str(time_zone).strip()
+        if daylight_saving is not None:
+            self.settings["daylight_saving"] = bool(daylight_saving)
 
     # The model that the page shows.
 
@@ -2044,8 +2201,12 @@ ORDER  BY g.kind;"""
                 "tally": tally, "questions": self.questions(), "catalogue": self.catalogue is not None,
                 "catalogue_source": self.catalogue_source if self.catalogue is not None else None,
                 "vocabularies": self.vocabularies(), "values": self.values, "counts": {k: {kk: v.get(kk) for kk in ("columns", "rows", "looks_right", "note", "date", "database")}
-                                                                | {"findings": self.findings(k), "finding_about": self.finding_about(k)} for k, v in self.counts.items()},
-                "settings": {k: self.settings.get(k) for k in ("made", "updated", "database", "year")},
+                                                                | {"findings": self.findings(k), "finding_about": self.finding_about(k),
+                                                                   "finding_codes": self.finding_codes(k)} for k, v in self.counts.items()},
+                "settings": {k: self.settings.get(k) for k in ("made", "updated", "database", "year", "time_zone", "daylight_saving")},
+                "readiness": self._readiness,
+                "scoreboard": rolemap.scoreboard(self.data)["lines"] if self.data is not None else [],
+                "provenance": {name: self.provenance(name) for name in self.journal},
                 "anaesthetic_table": ((self.data or {}).get("roles", {}).get("role_anaesthetic") or {}).get("rows", {}).get("binding", {}).get("table"),
                 "bases": {name: role["rows"]["binding"]["table"] for name, role in (self.data or {}).get("roles", {}).items()
                           if role["rows"].get("binding")},
@@ -2090,6 +2251,15 @@ ORDER  BY g.kind;"""
                 "answer": confirmation.get("answer"), "date": confirmation.get("date"),
                 "replacement": confirmation.get("replacement"), "note": confirmation.get("note"),
                 "presence": self.presence(binding if attribute != "rows" else ({"table": table} if table else None))}
+
+
+def _kind_words(meaning, kind):
+    """A kind of reading named in a sentence, from its meaning: "A mean arterial pressure from a non-invasive cuff, in
+    mmHg." becomes "the mean arterial pressure from a non-invasive cuff"."""
+    if not meaning:
+        return kind
+    words = re.sub(r",\s*in [^,]+\.?$", "", meaning.strip()).rstrip(". ")
+    return re.sub(r"^(A|An)\s+", "the ", words)
 
 
 def _basis(says):
@@ -2247,8 +2417,27 @@ README = {
     "files": "## What each part of the file holds",
     "rerun": "## Queries to run again on production",
     "draft": "## This hospital schema is a draft",
-    "draft_text": "The hospital schema is not yet complete ({parts}). To finish it, open the page Describe the record, "
-                  "open this file at step 3 and carry on from step 6.",
+    "draft_text": "Some of the hospital schema is not yet answered ({parts}). To finish it, open the page Describe the "
+                  "record, open this file at step 3 and carry on from step 6.",
+    "readiness": "## How far the hospital schema has been checked",
+    "readiness_text": "Schemalyser records how far each part of the hospital schema has been checked, in three states. A "
+                      "part runs once it compiles and runs on made-up rows. It is checked against the database once the "
+                      "counts that read it have been run on the hospital's database and judged to look right. It is "
+                      "clinically validated only once a sample of anaesthetics has been reconciled against the clinical "
+                      "record, which the page cannot do, so this file never records that state.",
+    "readiness_reached": "The parts that every audit reads have reached the state {state}, on the dates below.",
+    "readiness_none": "The parts that every audit reads have not yet reached the first state, because the test on made-up "
+                      "rows finds a problem in at least one of them.",
+    "readiness_part": "- {title} ({status}): {states}.",
+    "readiness_part_none": "- {title} ({status}): no state reached yet.",
+    "provenance": "## Where each fact came from",
+    "provenance_text": "Every fact in this file says where it came from. In journal.json, map/map.json, codes/, "
+                       "counts/judgements.json and confirmations.csv, the field headed provenance gives one of five "
+                       "sources: complete data, for a count over the whole of the tables it reads; a sample, for a count "
+                       "over the anaesthetics of one year in #cohort, whose figures show what is charted but not how "
+                       "much; metadata, for the data dictionary and the database's own records of its tables; a person, "
+                       "for an answer, a choice of codes or a judgement; and an inference, for the page's own proposal "
+                       "that no person has yet answered. The first line of each result taken from a sample says so.",
     "draft_codes": "These columns are answered, but the codes that they hold are not yet translated, so their views give "
                    "nothing useful until a person translates them:",
     "remake": "## How to check or remake the hospital schema",
@@ -2274,7 +2463,9 @@ README = {
 README_FILES = [
     ("settings.json", "The tool's version, the dates on which the hospital schema was made and last changed, the database that "
                       "the queries were run on (production, training, or invented where the invented hospital ran them), "
-                      "and the year of the lists."),
+                      "the year of the lists, the time zone that the database's clocks follow and whether they change "
+                      "with daylight saving, whether every column has an answer, and the state of readiness that each "
+                      "part has reached, with its date."),
     ("journal.json", "One entry for each step that took something in: the step's heading, the query file, the result "
                      "file, the database, when the result was pasted or run, whether it came from the invented hospital "
                      "rather than a paste, and the tool's version. For the dictionary, it "
@@ -2306,16 +2497,26 @@ README_FILES = [
 ]
 
 
-def readme(paths, version, date, kept, training=(), unfinished="", untranslated=(), invented=False):
+def readme(paths, version, date, kept, training=(), unfinished="", untranslated=(), invented=False, readiness=None):
     """README.md of the hospital folder, which says what each file is, how it was made and how to remake it. training
     lists the queries whose results came from a training database, which are to be run again on production."""
     lines = [README["invented"], ""] if invented else []
-    lines += [README["title"], "", README["stamp"].format(version=version or "unknown", date=date), "", README["intro"], "",
+    lines += [README["title"], "", README["stamp"].format(version=version or "unknown", date=_day(date)), "", README["intro"], "",
               README["storage"], ""]
     if unfinished:
         lines += [README["draft"], "", README["draft_text"].format(parts=unfinished), ""]
         if untranslated:
             lines += [README["draft_codes"], ""] + [f"- {u['title']} (`{u['from']}`)" for u in untranslated] + [""]
+    if readiness is not None:
+        lines += [README["readiness"], "", README["readiness_text"], ""]
+        lines += [README["readiness_reached"].format(state=readiness["reached"]) if readiness["reached"] else README["readiness_none"], ""]
+        for view, part in readiness["parts"].items():
+            status = "read by every audit" if part["status"] == "contract" else "not yet read by any audit"
+            states = [f"{state} on {_day(part[state])}" for state in READINESS if part.get(state)]
+            lines.append(README["readiness_part"].format(title=rolemap.view_title(view), status=status, states=_and(states))
+                         if states else README["readiness_part_none"].format(title=rolemap.view_title(view), status=status))
+        lines += [""]
+    lines += [README["provenance"], "", README["provenance_text"], ""]
     lines += [README["files"], ""]
     for name, what in README_FILES:
         present = any(p == name or (name.endswith("/") and p.startswith(name))
