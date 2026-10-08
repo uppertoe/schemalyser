@@ -411,6 +411,18 @@ class Describe:
                                                    "dictionary": f"{DICTIONARY_FOLDER}/{self.dictionary_files['name']}"})
         return {**self.dictionary_receipt(), "sized": len(self.sizes)}
 
+    def upload(self, data, tables=None, headings=None, name="dictionary.csv", tables_name="tables.csv", step=""):
+        """Reads a dictionary file that a person already has, as (kind, receipt): a result of the data dictionary query
+        saved earlier makes the dictionary from the database ("database"); a vendor's export adds its descriptions to a
+        dictionary made from the database ("vendor"), and is otherwise read as the dictionary itself ("dictionary")."""
+        first = _text(bytes(data)[:20000]).lstrip("\ufeff").split("\n", 1)[0].replace("\r", "")
+        cells = {c.strip().strip('"').upper() for c in first.split("\t" if "\t" in first else ",")}
+        if set(first_ask.DATABASE_LAYOUT) <= cells:
+            return "database", self.load_from_database(data, name, step)
+        if self.dictionary is not None and self.dictionary_source == "database":
+            return "vendor", self.add_descriptions(data, tables, headings, name, tables_name)
+        return "dictionary", self.load_dictionary(data, tables, headings, name, tables_name, step)
+
     def add_descriptions(self, data, tables=None, headings=None, name="vendor-dictionary.csv", tables_name="vendor-tables.csv",
                          record=True):
         """Adds the vendor's descriptions to the data dictionary made from the database: each table and column of the

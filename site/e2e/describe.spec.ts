@@ -95,6 +95,7 @@ async function loadAndGoOffline(page: Page, context: import('@playwright/test').
 }
 
 async function loadDictionary(page: Page) {
+  await page.locator('#way-upload').check();
   await page.locator('#dictionary').setInputFiles(fixtures + 'dictionary/invented-dictionary.csv');
   await page.locator('#dictionary-tables').setInputFiles(fixtures + 'dictionary/invented-tables.csv');
   await page.locator('#dictionary-load').click();
@@ -691,6 +692,17 @@ test('the data dictionary is made from the database and answers step 5', async (
   test.setTimeout(240_000);
   await loadAndGoOffline(page, context, browserName);
   await expect(page.locator('#h-choice-database')).toHaveText(d.choiceDatabase);
+  // Step 2 is one choice of four ways, all four in view, with creating it from the database chosen once offline.
+  await expect(page.locator('#t-dictionary-what')).toHaveText(d.dictionaryWhat);
+  const ways = page.locator('#way-options .way-option');
+  await expect(ways).toHaveCount(4);
+  for (const [i, [, heading, sentence]] of d.ways.entries()) {
+    await expect(ways.nth(i)).toBeVisible();
+    await expect(ways.nth(i)).toContainText(heading);
+    await expect(ways.nth(i)).toContainText(sentence);
+  }
+  await expect(page.locator('#way-create')).toBeChecked();
+  await expect(page.locator('#c-upload')).toBeHidden();
   const query = page.locator('#database-query');
   for (const part of ['FROM INFORMATION_SCHEMA.COLUMNS AS c', 'sys.partitions', 'INFORMATION_SCHEMA.KEY_COLUMN_USAGE', "N'MS_Description'"]) {
     await expect(query).toContainText(part);
@@ -723,6 +735,8 @@ test('the data dictionary is made from the database and answers step 5', async (
   await expect(value.locator('.answered')).toContainText('Confirmed on');
   // The vendor's descriptions, added to the dictionary made from the database.
   await openStep(page, 2);
+  await page.locator('#way-upload').check();
+  await expect(page.locator('#c-database')).toBeHidden();
   await page.locator('#dictionary').setInputFiles(fixtures + 'dictionary/invented-dictionary.csv');
   await page.locator('#dictionary-load').click();
   await expect(page.locator('#t-vendor-status')).toHaveText(d.vendorReceipt({ matched: 98, gained: 82 }));
@@ -738,6 +752,7 @@ test('the data dictionary is made from the database and answers step 5', async (
 test('going back online to load the invented dictionary leaves it loadable', async ({ page, context, browserName }) => {
   test.setTimeout(240_000);
   await loadAndGoOffline(page, context, browserName);
+  await page.locator('#way-invented').check();
   await page.locator('#invented-load').click();
   await expect(page.locator('#t-invented-status')).toHaveText(d.inventedOnlineOnly);
   await setOnline(page, context, browserName, true);

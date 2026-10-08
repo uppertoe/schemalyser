@@ -76,6 +76,8 @@ let countQueries: CountQuery[] = [];
 let tablesSql = '';
 // The data dictionary query, which is the same for every hospital and is fetched from the worker once it is ready.
 let dictionarySql = '';
+// The way of giving the page the data dictionary that a person chose at step 2, or null until one is chosen by hand.
+let wayChosen: string | null = null;
 let databaseChoice: string | null = null;
 const openAnother = new Set<string>();
 // The columns whose answer a person has asked to change, which show their choices again.
@@ -390,9 +392,16 @@ function show() {
     text('t-offline-invented', d.inventedLoaded);
     status('t-invented-status', d.inventedLoaded, 'good');
   } else if ($('t-offline-invented').textContent === d.inventedLoaded) {
-    linked('t-offline-invented', d.offlineInvented, '2');
+    linked('t-offline-invented', d.offlineInvented, '2', () => (wayChosen = 'invented'));
     if ($('t-invented-status').textContent === d.inventedLoaded) status('t-invented-status', '');
   }
+  // Step 2 shows the controls of one way at a time. Until a person chooses, the way follows what is loaded, and
+  // otherwise the invented dictionary while the tab is online and creating it from the database once it is offline.
+  const source = model?.dictionary?.source;
+  const way = wayChosen ?? (source === 'invented' ? 'invented' : source === 'database' ? 'create' : source === 'file' ? 'upload' : source === 'saved' ? 'saved'
+    : state === 'ready' && online && !model?.dictionary ? 'invented' : 'create');
+  for (const panel of document.querySelectorAll<HTMLElement>('#step-2 .choice[data-way]')) panel.hidden = panel.dataset.way !== way;
+  for (const radio of document.querySelectorAll<HTMLInputElement>('input[name=way]')) radio.checked = radio.value === way;
   // The choice of database stands in step 2 until a dictionary that needs step 5's own query is loaded.
   const fromDatabase = model?.catalogue_source === 'database';
   const slot = $(model?.dictionary && !fromDatabase && model.dictionary.source !== 'database' ? 'database-slot-5' : 'database-slot-2');
@@ -410,6 +419,11 @@ function show() {
     if (input.closest('#step-1') || input.classList.contains('toggle')) continue;
     // The invented dictionary is loaded while the tab is online, so its button needs only the page to be ready.
     if (input.id === 'invented-load') {
+      input.disabled = state !== 'ready' || busy;
+      continue;
+    }
+    // The four ways may be chosen between while the tab is online, since choosing loads nothing.
+    if (input.name === 'way') {
       input.disabled = state !== 'ready' || busy;
       continue;
     }
@@ -1182,37 +1196,30 @@ $('dictionary-load').addEventListener('click', async () => {
   for (const input of document.querySelectorAll<HTMLInputElement>('#headings input')) if (input.value.trim()) headings[input.dataset.field!] = input.value.trim();
   setBusy(true);
   workerHasFiles = true;
-  // Beside a dictionary made from the database, the vendor's file adds its descriptions.
-  if (model?.dictionary?.source === 'database') {
-    status('t-vendor-status', d.dictionaryReading);
-    try {
-      const reply = await ask('describe_dictionary_vendor', [file, tables ?? undefined, JSON.stringify(headings), file.name, tables?.name ?? undefined]);
-      if (reply.ok) {
-        const receipt = reply.receipt as Parameters<typeof d.databaseReceipt>[0];
-        status('t-vendor-status', receipt.vendor ? d.vendorReceipt(receipt.vendor) : '', 'good');
-        status('t-database-status', d.databaseReceipt(receipt), 'good');
-      } else {
-        status('t-vendor-status', reply.problem ?? d.dictionaryFailed, 'problem');
-        if (/heading/.test(reply.problem ?? '')) $<HTMLDetailsElement>('d-headings').open = true;
-      }
-    } catch {
-      status('t-vendor-status', d.dictionaryFailed, 'problem');
-    }
-    setBusy(false);
-    return;
-  }
-  status('t-dictionary-status', d.dictionaryReading);
+  // The file is read as what it is: a saved result of the data dictionary query, a vendor's export that adds its
+  // descriptions to a dictionary made from the database, or otherwise the dictionary itself.
+  status('t-vendor-status', d.dictionaryReading);
   try {
-    const reply = await ask('describe_dictionary', [file, tables ?? undefined, JSON.stringify(headings), file.name, tables?.name ?? undefined, d.steps[1]]);
+    const reply = await ask('describe_dictionary_upload', [file, tables ?? undefined, JSON.stringify(headings), file.name, tables?.name ?? undefined, d.steps[1]]);
     status('t-invented-status', '');
-    if (reply.ok) status('t-database-status', '');
-    if (reply.ok) status('t-dictionary-status', d.dictionaryReceipt(reply.receipt as Parameters<typeof d.dictionaryReceipt>[0]), 'good');
-    else {
-      status('t-dictionary-status', reply.problem ?? d.dictionaryFailed, 'problem');
+    if (reply.ok) {
+      const kind = reply.kind as string;
+      const receipt = reply.receipt as Parameters<typeof d.dictionaryReceipt>[0];
+      if (kind === 'dictionary') {
+        status('t-vendor-status', '');
+        status('t-database-status', '');
+        status('t-dictionary-status', d.dictionaryReceipt(receipt), 'good');
+      } else {
+        status('t-dictionary-status', '');
+        status('t-database-status', d.databaseReceipt(receipt), 'good');
+        status('t-vendor-status', kind === 'vendor' && receipt.vendor ? d.vendorReceipt(receipt.vendor) : d.databaseReceipt(receipt), 'good');
+      }
+    } else {
+      status('t-vendor-status', reply.problem ?? d.dictionaryFailed, 'problem');
       if (/heading/.test(reply.problem ?? '')) $<HTMLDetailsElement>('d-headings').open = true;
     }
   } catch {
-    status('t-dictionary-status', d.dictionaryFailed, 'problem');
+    status('t-vendor-status', d.dictionaryFailed, 'problem');
   }
   setBusy(false);
 });
@@ -1461,7 +1468,6 @@ const fixed: Record<string, string> = {
   't-database-large': d.databaseLarge,
   's-database-large-how': d.databaseLargeSummary,
   'l-database-file': d.databaseFileLabel,
-  't-choice-real-alone': d.choiceRealAlone,
   't-choice-invented': d.choiceInventedWhat,
   'h-choice-real': d.choiceReal,
   't-choice-real': d.choiceRealWhat,
@@ -1548,13 +1554,35 @@ $('headings').replaceChildren(...d.headingFields.map(([field, label]) => {
   return box;
 }));
 // A sentence with a link to a step, which opens that step.
-function linked(id: string, [before, label, after]: string[], n: string) {
+function linked(id: string, [before, label, after]: string[], n: string, then?: () => void) {
   const link = el('a', label);
   link.href = `#step-${n}`;
-  link.addEventListener('click', () => toggleStep(n, true));
+  link.addEventListener('click', () => {
+    then?.();
+    toggleStep(n, true);
+  });
   $(id).replaceChildren(document.createTextNode(before), link, document.createTextNode(after));
 }
-linked('t-offline-invented', d.offlineInvented, '2');
+linked('t-offline-invented', d.offlineInvented, '2', () => (wayChosen = 'invented'));
+// Step 2's four ways, as one choice: a radio for each, with its heading and one sentence, all in view at once.
+$('way-options').replaceChildren(...d.ways.map(([key, heading, sentence]) => {
+  const option = el('label', undefined, 'way-option');
+  option.htmlFor = `way-${key}`;
+  const radio = el('input');
+  radio.type = 'radio';
+  radio.name = 'way';
+  radio.id = `way-${key}`;
+  radio.value = key;
+  radio.addEventListener('change', () => {
+    wayChosen = key;
+    show();
+  });
+  const words = el('span', undefined, 'way-words');
+  words.append(el('strong', heading, 'way-heading'), el('span', sentence, 'way-sentence'));
+  option.append(radio, words);
+  return option;
+}));
+for (const heading of document.querySelectorAll('#step-2 .choice h3')) heading.classList.add('visually-hidden');
 linked('t-choice-saved', d.choiceSavedWhat, '3');
 text('t-version', d.version(__VERSION__));
 renderDatabase();

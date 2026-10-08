@@ -960,6 +960,18 @@ def describe_dictionary_vendor(data, tables, headings, name, tables_name):
         name or "vendor-dictionary.csv", tables_name or "vendor-tables.csv")})
 
 
+def describe_dictionary_upload(data, tables, headings, name, tables_name, step):
+    """Reads a dictionary file that a person already has: a saved result of the data dictionary query, or a vendor's
+    export, which adds its descriptions to a dictionary made from the database or is otherwise the dictionary itself."""
+    d = _describing()
+
+    def work():
+        kind, receipt = d.upload(_bytes(data), _bytes(tables) if tables is not None else None, json.loads(headings or "{}"),
+                                 name or "dictionary.csv", tables_name or "tables.csv", step)
+        return {"kind": kind, "receipt": receipt}
+    return _reply(work)
+
+
 # The paths that a saved hospital schema holds. Anything else inside the file is let go of at once.
 _SCHEMA_PATH = re.compile(r"(settings\.json|journal\.json|confirmations\.csv|map/map\.json|codes/role_\w+\.\w+\.json|"
                           r"counts/judgements\.json|queries/\d\d-[\w.-]+\.sql|results/\d\d-[\w.-]+\.tsv|"

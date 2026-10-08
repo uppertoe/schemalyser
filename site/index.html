@@ -65,12 +65,14 @@
             <p class="waiting" id="waiting-2"></p>
             <button type="button" class="toggle link" id="toggle-2"></button>
             <div class="body">
-              <p id="t-dictionary-what" class="do"></p>
-              <!-- Four ways to begin. The first makes the data dictionary from the database with one query; the second adds the
-                   vendor's descriptions to it, or is the dictionary itself; the third loads the invented dictionary; the fourth
-                   leads to step 3. -->
+              <!-- One choice of four: create the dictionary from the database, upload a file, use the invented dictionary, or open a
+                   saved hospital schema. The four headings stay in view, and only the chosen one's controls are shown. -->
+              <fieldset class="ways" id="ways">
+                <legend id="t-dictionary-what" class="do"></legend>
+                <div class="way-options" id="way-options"></div>
+              </fieldset>
               <div class="choices">
-                <section class="choice" id="c-database" aria-labelledby="h-choice-database">
+                <section class="choice" id="c-database" data-way="create" aria-labelledby="h-choice-database">
                   <h3 id="h-choice-database"></h3>
                   <p id="t-database-origin" class="origin"></p>
                   <!-- The choice of database stands here before anything has been run, and moves to step 5 when step 5 asks its own query. -->
@@ -109,10 +111,9 @@
                   </ol>
                   <p id="t-database-status" class="status" hidden role="status"></p>
                 </section>
-                <section class="choice" aria-labelledby="h-choice-real">
+                <section class="choice" id="c-upload" data-way="upload" aria-labelledby="h-choice-real">
                   <h3 id="h-choice-real"></h3>
                   <p id="t-choice-real" class="note"></p>
-                  <p id="t-choice-real-alone" class="note"></p>
                   <div class="field">
                     <label for="dictionary" id="l-dictionary"></label>
                     <input type="file" id="dictionary" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain" />
@@ -137,13 +138,13 @@
                   <div class="actions"><button type="button" id="dictionary-load" disabled></button></div>
                   <p id="t-vendor-status" class="status" hidden role="status"></p>
                 </section>
-                <section class="choice" aria-labelledby="h-choice-invented">
+                <section class="choice" id="c-invented" data-way="invented" aria-labelledby="h-choice-invented">
                   <h3 id="h-choice-invented"></h3>
                   <p id="t-choice-invented" class="note"></p>
                   <div class="actions"><button type="button" id="invented-load" class="secondary"></button></div>
                   <p id="t-invented-status" class="status" hidden role="status"></p>
                 </section>
-                <section class="choice" aria-labelledby="h-choice-saved">
+                <section class="choice" id="c-saved" data-way="saved" aria-labelledby="h-choice-saved">
                   <h3 id="h-choice-saved"></h3>
                   <p id="t-choice-saved" class="note"></p>
                 </section>

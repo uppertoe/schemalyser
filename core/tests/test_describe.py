@@ -519,3 +519,16 @@ def test_a_vendor_file_alone_is_the_dictionary_and_leaves_step_5_to_its_query():
         s.add_descriptions(DICTIONARY.read_bytes())
     s.read_tables(tables_result())
     assert s.view()["catalogue_source"] == "query"
+
+
+def test_an_uploaded_file_is_read_as_what_it_is():
+    s = describe.Describe()
+    # A vendor's export with nothing loaded is the dictionary itself.
+    assert s.upload(DICTIONARY.read_bytes(), TABLES.read_bytes())[0] == "dictionary"
+    assert s.view()["catalogue_source"] is None
+    # A result of the data dictionary query saved earlier makes the dictionary from the database, whatever was loaded.
+    kind, receipt = s.upload(database_result(",").encode(), name="saved-result.csv")
+    assert kind == "database" and receipt["source"] == "database" and s.view()["catalogue_source"] == "database"
+    # A vendor's export beside it adds its descriptions.
+    kind, receipt = s.upload(DICTIONARY.read_bytes(), None, {}, "vendor.csv")
+    assert kind == "vendor" and receipt["described"] == 98 and receipt["vendor"]["matched"] == 98

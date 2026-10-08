@@ -16,7 +16,7 @@ const databaseReceipt = (r: { tables: number; columns: number; described: number
       : `The page has made the data dictionary from the database: ${plural(r.columns, 'column', 'columns')} in ${plural(r.tables, 'table', 'tables')}, with descriptions for ${r.described.toLocaleString('en-AU')} of them.`,
     r.vendor ? describeVendor(r.vendor) : '',
     r.described * 4 < r.columns
-      ? "Few columns have a description, so the proposals rest on the names of tables and columns and will need more correcting. If the hospital's team that looks after the record system can export the vendor's descriptions, add them with the second choice below."
+      ? "Few columns have a description, so the proposals rest on the names of tables and columns and will need more correcting. If the hospital's team that looks after the record system can export the vendor's descriptions, add them with Upload a dictionary file you already have."
       : '',
   ].filter(Boolean).join(' ');
 
@@ -73,7 +73,7 @@ export const describeStrings = {
   offlineWhat: 'Wait for the page to load, then take this tab offline. Your SQL window stays connected.',
   loading: 'The page is loading. Keep it online until it says that it has finished.',
   loaded: 'The page has finished loading. Take this tab offline now.',
-  offlineInvented: ['If you want to try the page with the invented dictionary rather than a real one, load it at ', 'step 2', ' now, before you take the tab offline.'],
+  offlineInvented: ['If you want to try the page first, choose Use the invented dictionary to try the page at ', 'step 2', ' now, before you take the tab offline.'],
   // Once the invented dictionary has loaded while the tab is online, in step 1 and in step 2.
   inventedLoaded: 'The invented dictionary is loaded. Now take this tab offline and carry on at step 4.',
   loadFailed: 'The page has not been able to load. If the tab is online, reload it to try again.',
@@ -91,9 +91,16 @@ export const describeStrings = {
   policySummary: 'How the page makes sure that nothing can leave it',
 
   // 2. The dictionary.
-  dictionaryWhat: 'Choose whichever of these four fits this sitting. At most hospitals, your colleague makes the data dictionary from the database with the first.',
+  dictionaryWhat: 'Give the page the data dictionary in one of four ways:',
+  // The four ways, each a heading and one sentence; only the chosen one's controls are shown beneath.
+  ways: [
+    ['create', 'Create it from the database', "Your colleague runs one query on the hospital's database, and the page makes the data dictionary from its result."],
+    ['upload', 'Upload a dictionary file you already have', "Choose a file that the hospital's team that looks after the record system has exported from the vendor's dictionary, or a result of the query in the first way that you saved earlier."],
+    ['invented', 'Use the invented dictionary to try the page', 'The page fetches the dictionary of a made-up hospital from this site while the tab is still online.'],
+    ['saved', 'Open a saved hospital schema', 'If the page saved a hospital schema at an earlier sitting, open it at step 3.'],
+  ] as [string, string, string][],
   // Beside each input, where it comes from: run on the database, asked of someone, or made here.
-  choiceDatabase: 'Make the data dictionary from the database',
+  choiceDatabase: 'Create it from the database',
   databaseOrigin:
     "Run this on the database. Your colleague copies the query below, runs it in the SQL window connected to the hospital's database, and brings the result back here in one of the two ways below.",
   databaseCopy: 'Copy the query',
@@ -118,22 +125,20 @@ export const describeStrings = {
   databaseReading: 'The page is making the data dictionary from the result.',
   databaseReceipt,
   databaseUnreadable: "The page could not read this as the result of the data dictionary query. Make sure that it is the result of the query shown here, with its headers, then paste it or choose the file again.",
-  choiceReal: "Add the vendor's descriptions",
+  choiceReal: 'Upload a dictionary file you already have',
   choiceRealWhat:
-    "If the hospital's team that looks after the record system can export the vendor's own data dictionary, which describes every column in words, choose that file here as well. Ask them for a table with three columns: the table name, the column name and the description. It makes the proposals much better. The export is the vendor's licensed material: it stays in this browser and in the saved hospital schema, which stays on hospital storage.",
-  choiceRealAlone:
-    "If you have not made the data dictionary from the database, the page reads this file as the data dictionary itself. Step 5 then asks for one more query, to check which of the tables exist.",
-  choiceInvented: 'I want to try the page first.',
+    "Ask the hospital's team that looks after the record system for the vendor's own data dictionary, exported as a table with three columns: the table name, the column name and the description. If you have already created the data dictionary from the database, the page adds the file's descriptions to it, which makes the proposals much better. If you have not, the page reads the file as the data dictionary itself, and step 5 then asks for one more query to check which tables exist. A result of the query in the first way, saved earlier as a file, is read just as if it had been pasted there. The vendor's export is licensed material: it stays in this browser and in the saved hospital schema, which stays on hospital storage.",
+  choiceInvented: 'Use the invented dictionary to try the page',
   choiceInventedWhat:
     'Made here. The invented dictionary describes a made-up hospital, and the page fetches it from this site, so load it while the tab is still online, then take the tab offline.',
   inventedLoad: 'Load the invented dictionary',
-  choiceSaved: 'I have a saved hospital schema.',
+  choiceSaved: 'Open a saved hospital schema',
   choiceSavedWhat: ['Made here. The page saved this file at step 9 of an earlier sitting. Open it at ', 'step 3', '.'],
   inventedOnlineOnly:
     'The invented dictionary can only be loaded while the tab is online. Go back online, load it, then take the tab offline again.',
   inventedLoading: 'The page is loading the invented dictionary.',
   inventedFailed: 'The page has not been able to fetch the invented dictionary. If the tab is still online, reload the page and try again.',
-  dictionaryLabel: "The vendor's file, with one row for each column:",
+  dictionaryLabel: 'The dictionary file, with one row for each column:',
   dictionaryAbout:
     "The vendor's data dictionary describes every table and column of the reporting database in words. The hospital's team that looks after the record system exports it from the vendor's dictionary tool as a CSV or tab-separated file with a row of headings, such as TABLE_NAME, COLUMN_NAME and DESCRIPTION. The page uses the descriptions to propose where each part of the record is held, and shows each one beside its column. The page reads the file in this tab only and sends it nowhere.",
   tablesLabel: "The vendor's file of tables, if the team can export one, with one row for each table:",
