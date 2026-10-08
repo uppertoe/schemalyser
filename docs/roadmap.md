@@ -30,7 +30,7 @@ Done means that the reconciliation has been completed and its findings written d
 
 One command runs the whole OMOP side on the invented source. It builds an OMOP CDM 5.4 instance from the published field list, runs the real conversion and the real release script, checks the planted scenarios against their expected rows, reconciles the source with the target, runs the DataQualityDashboard on the output, and writes one machine-readable report. The expected rows are written independently of the conversion, as the planted scenarios already are, so that a mistake in a step cannot also be a mistake in its test. The DataQualityDashboard is run rather than reimplemented, and the transformation that runs in the test is exactly the one that the release script carries into the hospital.
 
-Done means that the command gives a pass or a failure with one report file, that the report holds the outcome of every planted scenario, the reconciliation of source to target and the DataQualityDashboard's findings, that a test fails if the test run and the release script would run different SQL, and that the command runs in the project's continuous testing.
+Done means that the command gives a pass or a failure with one report file, that its full profile runs with the pinned Athena vocabulary and records the release that it used, that the report holds the outcome of every planted scenario, the reconciliation of source to target and the DataQualityDashboard's findings, that a test fails if the test run and the release script would run different SQL, and that the command runs in the project's continuous testing.
 
 ### 5. The export for work with a language model
 

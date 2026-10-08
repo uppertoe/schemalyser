@@ -39,14 +39,25 @@ def propose(labels, vocabulary, domain="Drug", concept_class="Ingredient", coded
     con.execute("CREATE TABLE labels (code VARCHAR, label VARCHAR)")
     if labels:
         con.executemany("INSERT INTO labels VALUES (?, ?)", labels)
-    con.execute(f"CREATE VIEW concept AS SELECT * FROM {_table(vocabulary / 'CONCEPT.csv')}")
+    # A working copy of a whole Athena download, as the testbed builds it, holds the same tables as text in vocabulary.duckdb.
+    copy = vocabulary / "vocabulary.duckdb"
+    if copy.is_file():
+        con.execute(f"ATTACH '{str(copy).replace(chr(39), chr(39) * 2)}' AS athena (READ_ONLY)")
+
+    def table(name):
+        return f"athena.{name.lower()}" if copy.is_file() else _table(vocabulary / f"{name}.csv")
+
+    def held(name):
+        return copy.is_file() or (vocabulary / f"{name}.csv").exists()
+
+    con.execute(f"CREATE VIEW concept AS SELECT * FROM {table('CONCEPT')}")
     named = "SELECT l.code, c.concept_id FROM labels l JOIN concept c ON lower(c.concept_name) = lower(l.label) WHERE c.domain_id = ?"
     parameters = [domain]
     if coded_in:
         named = "SELECT l.code, c.concept_id FROM labels l JOIN concept c ON upper(c.concept_code) = upper(l.label) WHERE c.vocabulary_id = ?"
         parameters = [coded_in]
-    elif (vocabulary / "CONCEPT_SYNONYM.csv").exists():
-        con.execute(f"CREATE VIEW synonym AS SELECT * FROM {_table(vocabulary / 'CONCEPT_SYNONYM.csv')}")
+    elif held("CONCEPT_SYNONYM"):
+        con.execute(f"CREATE VIEW synonym AS SELECT * FROM {table('CONCEPT_SYNONYM')}")
         named += (" UNION SELECT l.code, c.concept_id FROM labels l JOIN synonym s ON lower(s.concept_synonym_name) = lower(l.label) "
                   "JOIN concept c ON c.concept_id = s.concept_id WHERE c.domain_id = ?")
         parameters.append(domain)
@@ -55,8 +66,8 @@ def propose(labels, vocabulary, domain="Drug", concept_class="Ingredient", coded
         "t.standard_concept = 'S' AND t.concept_class_id = ?", concept_class)
     targets = f"SELECT n.code, t.concept_id, t.concept_name, t.vocabulary_id FROM named n JOIN concept t ON t.concept_id = n.concept_id WHERE {wanted}"
     parameters = [wanted_value]
-    if (vocabulary / "CONCEPT_RELATIONSHIP.csv").exists():
-        con.execute(f"CREATE VIEW relationship AS SELECT * FROM {_table(vocabulary / 'CONCEPT_RELATIONSHIP.csv')}")
+    if held("CONCEPT_RELATIONSHIP"):
+        con.execute(f"CREATE VIEW relationship AS SELECT * FROM {table('CONCEPT_RELATIONSHIP')}")
         targets += (" UNION SELECT n.code, t.concept_id, t.concept_name, t.vocabulary_id FROM named n "
                     "JOIN relationship r ON r.concept_id_1 = n.concept_id AND r.relationship_id = 'Maps to' "
                     "AND (r.invalid_reason IS NULL OR r.invalid_reason = '') "

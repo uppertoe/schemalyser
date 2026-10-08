@@ -1,6 +1,6 @@
 # OMOP testbed report
 
-The run in the full profile did not pass, because the Data Quality Dashboard reported 7 failures that dqd-expectations.json does not permit (standardConceptRecordCompleteness on CONDITION_OCCURRENCE.CONDITION_CONCEPT_ID, standardConceptRecordCompleteness on DRUG_EXPOSURE.DRUG_CONCEPT_ID, standardConceptRecordCompleteness on PROCEDURE_OCCURRENCE.PROCEDURE_CONCEPT_ID, sourceValueCompleteness on CONDITION_OCCURRENCE.CONDITION_SOURCE_VALUE, sourceValueCompleteness on DRUG_EXPOSURE.DRUG_SOURCE_VALUE, sourceValueCompleteness on MEASUREMENT.MEASUREMENT_SOURCE_VALUE, sourceValueCompleteness on PROCEDURE_OCCURRENCE.PROCEDURE_SOURCE_VALUE). 10 of 11 judged checks passed, and the run took 252.9 seconds.
+The run in the full profile did not pass, because the Data Quality Dashboard reported 7 failures that dqd-expectations.json does not permit (standardConceptRecordCompleteness on DRUG_EXPOSURE.DRUG_CONCEPT_ID, standardConceptRecordCompleteness on PROCEDURE_OCCURRENCE.PROCEDURE_CONCEPT_ID, sourceValueCompleteness on MEASUREMENT.MEASUREMENT_SOURCE_VALUE, sourceValueCompleteness on PROCEDURE_OCCURRENCE.PROCEDURE_SOURCE_VALUE, plausibleGender on PROCEDURE_OCCURRENCE.PROCEDURE_CONCEPT_ID for the concept 4310552, plausibleGenderUseDescendants on CONDITION_OCCURRENCE.CONDITION_CONCEPT_ID for the concept 4090861, 4025213, plausibleGenderUseDescendants on PROCEDURE_OCCURRENCE.PROCEDURE_CONCEPT_ID for the concept 4250917, 4077750, 4043199, 4040577). 10 of 11 judged checks passed, and the run took 425.3 seconds.
 
 The conversion ran 22 of 22 steps cleanly over 24 tables containing 1,731 rows.
 20 of 20 planted scenarios passed against their written expectations.
@@ -8,12 +8,14 @@ The reconciliation traced 20 of 22 steps and accounted for every excluded row in
 In 1 of the traced steps (measurement_blood_pressure_through_anaesthetic.sql), a source row gave several target rows, as testbed.json allows.
 Counted step by step, the tables that the traced steps start from held 13,004 rows, of which 4,833 reached a target and 8,171 were left out by a join or a condition, and the steps wrote 4,854 rows from them.
 9 of 9 gates passed, and 2 of 2 counts ran.
-The Data Quality Dashboard ran 2,374 checks: 1,176 passed, 13 failed, 33 could not run and 1,152 did not apply. Of the 46 that failed or could not run, 39 are expected, with a reason in dqd-expectations.json, and 7 are not.
+The Data Quality Dashboard ran 2,374 checks: 1,180 passed, 13 failed, 33 could not run, 0 did not finish within 300 seconds and 1,148 did not apply. Of the 46 that failed, could not run or did not finish, 39 are expected, with a reason in dqd-expectations.json, and 7 are not.
 Release equivalence passed: on SQL Server, the release script produced the same derived rows and scenario rows as DuckDB.
 
 ## Versions
 
-Schemalyser is schemalyser 0.1.0, the CDM is version 5.4, the vocabulary is the SQL Server harness's sample subset of 5 public concepts, not an Athena release, and DuckDB is version 1.5.1.
+Schemalyser is schemalyser 0.1.0, the CDM is version 5.4, the vocabulary is the Athena release v5.0 29-AUG-26, of 2026-08-29, and DuckDB is version 1.5.1.
+
+The testbed reused its working copy of the Athena download in 0.0 seconds, with 4,254,036 concepts and 3,476,264 'Maps to' rows, and loaded the concepts that the CDM names into its tables in 0.9 seconds.
 
 ## Checks
 
@@ -124,22 +126,22 @@ The release script carries 12 of 12 steps, 9 gates and 2 counts, and it is in re
 
 ## Data Quality Dashboard
 
-The dashboard ran 2,374 checks in 159.3 seconds: 1,176 passed, 13 failed, 33 could not run and 1,152 did not apply. Its results are in dqd/out/dqd_results.json.
+The dashboard ran 2,374 checks in 294.8 seconds: 1,180 passed, 13 failed, 33 could not run, 0 did not finish within 300 seconds and 1,148 did not apply. It read the vocabulary from the schema cdm, which holds v5.0 29-AUG-26. Its results are in dqd/out/dqd_results.json.
 
-| Category | Checks | Passed | Failed | Could not run | Not applicable |
-|---|---:|---:|---:|---:|---:|
-| Completeness | 501 | 275 | 10 | 11 | 205 |
-| Conformance | 1060 | 685 | 3 | 18 | 354 |
-| Plausibility | 813 | 216 | 0 | 4 | 593 |
+| Category | Checks | Passed | Failed | Could not run | Did not finish | Not applicable |
+|---|---:|---:|---:|---:|---:|---:|
+| Completeness | 501 | 278 | 7 | 11 | 0 | 205 |
+| Conformance | 1060 | 685 | 3 | 18 | 0 | 354 |
+| Plausibility | 813 | 217 | 3 | 4 | 0 | 589 |
 
 7 of the checks that failed or could not run are not permitted by dqd-expectations.json, and each of them fails the full profile:
-- standardConceptRecordCompleteness on CONDITION_OCCURRENCE.CONDITION_CONCEPT_ID (Completeness): failed, with 46 of 50 rows in breach.
-- standardConceptRecordCompleteness on DRUG_EXPOSURE.DRUG_CONCEPT_ID (Completeness): failed, with 41 of 41 rows in breach.
-- standardConceptRecordCompleteness on PROCEDURE_OCCURRENCE.PROCEDURE_CONCEPT_ID (Completeness): failed, with 48 of 148 rows in breach.
-- sourceValueCompleteness on CONDITION_OCCURRENCE.CONDITION_SOURCE_VALUE (Completeness): failed, with 26 of 27 rows in breach.
-- sourceValueCompleteness on DRUG_EXPOSURE.DRUG_SOURCE_VALUE (Completeness): failed, with 32 of 32 rows in breach.
+- standardConceptRecordCompleteness on DRUG_EXPOSURE.DRUG_CONCEPT_ID (Completeness): failed, with 5 of 41 rows in breach.
+- standardConceptRecordCompleteness on PROCEDURE_OCCURRENCE.PROCEDURE_CONCEPT_ID (Completeness): failed, with 15 of 148 rows in breach.
 - sourceValueCompleteness on MEASUREMENT.MEASUREMENT_SOURCE_VALUE (Completeness): failed, with 1 of 7 rows in breach.
-- sourceValueCompleteness on PROCEDURE_OCCURRENCE.PROCEDURE_SOURCE_VALUE (Completeness): failed, with 27 of 30 rows in breach.
+- sourceValueCompleteness on PROCEDURE_OCCURRENCE.PROCEDURE_SOURCE_VALUE (Completeness): failed, with 9 of 30 rows in breach.
+- plausibleGender on PROCEDURE_OCCURRENCE.PROCEDURE_CONCEPT_ID for the concept 4310552 (Plausibility): failed, with 1 of 1 rows in breach.
+- plausibleGenderUseDescendants on CONDITION_OCCURRENCE.CONDITION_CONCEPT_ID for the concept 4090861, 4025213 (Plausibility): failed, with 2 of 3 rows in breach.
+- plausibleGenderUseDescendants on PROCEDURE_OCCURRENCE.PROCEDURE_CONCEPT_ID for the concept 4250917, 4077750, 4043199, 4040577 (Plausibility): failed, with 1 of 2 rows in breach.
 
 39 are expected, each for the reason given:
 - cdmDatatype on COHORT.COHORT_DEFINITION_ID, cdmDatatype on COHORT.SUBJECT_ID, cdmTable on COHORT, isRequired on COHORT.COHORT_DEFINITION_ID and 11 more (15 checks): The conversion does not build COHORT, which holds the cohorts that ATLAS generates, so the dashboard finds the table missing and cannot run its field checks on it.
@@ -151,13 +153,13 @@ The dashboard ran 2,374 checks in 159.3 seconds: 1,176 passed, 13 failed, 33 cou
 
 ## Release equivalence
 
-The check passed. The release script ran on SQL Server, all 36 OMOP objects matched DuckDB's by row count and checksum, and all 19 planted scenarios, with 77 expectations, were met on both engines.
+The check passed. The release script ran on SQL Server, all 38 OMOP objects matched DuckDB's by row count and checksum, and all 19 planted scenarios, with 77 expectations, were met on both engines.
 
 ## SQL Server
 
 The harness reports: agrees with DuckDB.
 
-- OMOP objects compared: 36; identical: 36; different: 0.
+- OMOP objects compared: 38; identical: 38; different: 0.
 - Steps that failed or wrote a different number of rows: 0.
 - Gates passed on SQL Server: 9 of 9; gates whose outcome differs from DuckDB's or did not pass: 0.
 - Counts that differ between the engines or could not be compared: 0 of 2.

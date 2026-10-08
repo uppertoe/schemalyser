@@ -105,13 +105,138 @@ def _vocabulary(out):
     return module.sample_vocabulary(out / "vocabulary")
 
 
-def _load_vocabulary(con, folder):
-    """Loads the subset's concepts into the CDM's vocabulary tables, so that the CDM handed to the dashboard holds them."""
+# The Athena vocabulary. The download is licensed, so it stays on this machine: the testbed reads it from the folder
+# that SCHEMALYSER_ATHENA names, or from reference/athena, and keeps its own working copy beside it, never in --out.
+ATHENA_FOLDER = ROOT / "reference" / "athena"
+VOCABULARIES = ("athena", "sample")
+# The tables of the download that the conversion's lookups read. CONCEPT_RELATIONSHIP keeps only its 'Maps to' rows,
+# which are the only ones the lookups follow; the dashboard reads the whole download from PostgreSQL instead.
+CONVERSION_TABLES = ("CONCEPT", "CONCEPT_RELATIONSHIP", "CONCEPT_SYNONYM", "VOCABULARY", "DOMAIN", "CONCEPT_CLASS", "RELATIONSHIP")
+# The tables that the dashboard reads from its vocabulary schema, in the order that they are loaded.
+DASHBOARD_TABLES = ("VOCABULARY", "DOMAIN", "CONCEPT_CLASS", "RELATIONSHIP", "CONCEPT", "CONCEPT_SYNONYM",
+                    "CONCEPT_RELATIONSHIP", "CONCEPT_ANCESTOR")
+# The schema into which the testbed loads the download when the OMOP database's cdm schema holds a different release.
+VOCABULARY_SCHEMA = "testbed_vocabulary"
+
+
+class VocabularyRefused(ValueError):
+    """The vocabulary that a run asked for cannot be used."""
+
+
+def athena_folder():
+    return Path(os.environ.get("SCHEMALYSER_ATHENA", ATHENA_FOLDER))
+
+
+def athena_release(folder):
+    """The release of an Athena download, from its own VOCABULARY.csv: {"name", "date", "version"}, or None without the file.
+
+    The row for the vocabulary 'None' names the release of the standardised vocabularies as a whole, such as
+    'v5.0 29-AUG-26', whose date is the release's date.
+    """
+    path = Path(folder) / "VOCABULARY.csv"
+    if not path.is_file():
+        return None
+    with open(path, newline="", encoding="utf-8") as f:
+        rows = {row["vocabulary_id"]: row for row in csv.DictReader(f, delimiter="\t", quoting=csv.QUOTE_NONE)}
+    version = (rows.get("None") or {}).get("vocabulary_version") or ""
+    found = re.search(r"(\d{1,2})-([A-Z]{3})-(\d{2,4})", version.upper())
+    date = None
+    if found:
+        day, month, year = found.groups()
+        try:
+            date = datetime.strptime(f"{day}-{month.title()}-{year[-2:]}", "%d-%b-%y").date().isoformat()
+        except ValueError:
+            date = None
+    return {"name": rows.get("None", {}).get("vocabulary_name") or "OMOP Standardized Vocabularies",
+            "version": version or None, "date": date}
+
+
+def _download_key(folder):
+    """A key for a download that changes when any of its files does: the size and time of each, and VOCABULARY.csv itself."""
+    found = hashlib.sha256((Path(folder) / "VOCABULARY.csv").read_bytes())
+    for path in sorted(Path(folder).glob("*.csv")):
+        stat = path.stat()
+        found.update(f"{path.name}\0{stat.st_size}\0{int(stat.st_mtime)}\0".encode())
+    return found.hexdigest()
+
+
+def athena_working_copy(folder, cache=None):
+    """The conversion's working copy of an Athena download: a folder holding vocabulary.duckdb and VOCABULARY.csv.
+
+    The copy holds the tables that the conversion's lookups read, with CONCEPT_RELATIONSHIP cut to its 'Maps to' rows,
+    every value as text as the download writes it. It is built once for each download, beside the download, and reused
+    while the download is unchanged. Returns (the folder, {"built": bool, "seconds", "rows": {table: rows}}).
+    """
+    folder = Path(folder)
+    missing = [name for name in CONVERSION_TABLES if not (folder / f"{name}.csv").is_file()]
+    if missing:
+        raise VocabularyRefused(f"the Athena download in the folder that SCHEMALYSER_ATHENA names, or in reference/athena, "
+                                f"lacks {', '.join(f'{name}.csv' for name in missing)}")
+    key = _download_key(folder)
+    cache = Path(cache) if cache else folder.parent / "athena-working-copy"
+    target = cache / key[:16]
+    database = target / "vocabulary.duckdb"
+    started = time.monotonic()
+    if (target / "complete").is_file():
+        with duckdb.connect(str(database), read_only=True) as con:
+            rows = {name: con.execute(f"SELECT COUNT(*) FROM {name.lower()}").fetchone()[0] for name in CONVERSION_TABLES}
+        return target, {"built": False, "seconds": round(time.monotonic() - started, 1), "rows": rows}
+    target.mkdir(parents=True, exist_ok=True)
+    database.unlink(missing_ok=True)
+    rows = {}
+    with duckdb.connect(str(database)) as con:
+        con.execute("SET enable_progress_bar = false")
+        for name in CONVERSION_TABLES:
+            source = f"read_csv({_text(str(folder / f'{name}.csv'))}, delim='\\t', quote='', escape='', header=true, all_varchar=true)"
+            where = " WHERE relationship_id = 'Maps to'" if name == "CONCEPT_RELATIONSHIP" else ""
+            con.execute(f"CREATE TABLE {name.lower()} AS SELECT * FROM {source}{where}")
+            rows[name] = con.execute(f"SELECT COUNT(*) FROM {name.lower()}").fetchone()[0]
+        con.execute("CREATE INDEX concept_by_id ON concept (concept_id)")
+    shutil.copyfile(folder / "VOCABULARY.csv", target / "VOCABULARY.csv")
+    (target / "complete").write_text(json.dumps(rows) + "\n", encoding="utf-8")
+    return target, {"built": True, "seconds": round(time.monotonic() - started, 1), "rows": rows}
+
+
+def _text(value):
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _referenced_concepts(con, tables):
+    """Every concept that a CDM table or the mapping table names, as a set of integers."""
+    found = set()
+    for table, fields in tables.items():
+        for name, _, _ in fields:
+            if name.endswith("concept_id") and table not in ("concept", "concept_relationship", "concept_synonym", "concept_ancestor",
+                                                             "drug_strength", "concept_class", "domain", "relationship", "vocabulary"):
+                found.update(value for (value,) in con.execute(
+                    f'SELECT DISTINCT TRY_CAST("{name}" AS BIGINT) FROM {OMOP_SCHEMA}."{table}" WHERE "{name}" IS NOT NULL').fetchall()
+                    if value)
+    return found
+
+
+def _load_vocabulary(con, folder, tables=None):
+    """Loads concepts into the CDM's vocabulary tables, so that the CDM handed to the dashboard holds them.
+
+    From the sample, every concept is loaded. From an Athena working copy, only the concepts that the CDM's tables and the
+    mapping table name are loaded, with their 'Maps to' rows and their synonyms, since the whole download would not fit
+    the testbed's database in memory and the dashboard reads the whole of it from PostgreSQL.
+    """
     # The sandbox's connection may not read files itself, so the rows are read here and inserted.
+    database = Path(folder) / "vocabulary.duckdb"
     loaded = {}
+    wanted = sorted(_referenced_concepts(con, tables)) if database.is_file() and tables else None
     for table in ("concept", "concept_relationship", "concept_synonym"):
-        with open(folder / f"{table.upper()}.csv", newline="", encoding="utf-8") as f:
-            rows = list(csv.DictReader(f, delimiter="\t", quoting=csv.QUOTE_NONE))
+        if database.is_file():
+            column = "concept_id_1" if table == "concept_relationship" else "concept_id"
+            with duckdb.connect(str(database), read_only=True) as source:
+                source.execute("CREATE TEMP TABLE wanted (concept_id VARCHAR)")
+                source.executemany("INSERT INTO wanted VALUES (?)", [[str(value)] for value in wanted or []])
+                cursor = source.execute(f"SELECT t.* FROM {table} t JOIN wanted w ON w.concept_id = t.{column} ORDER BY ALL")
+                names = [d[0] for d in cursor.description]
+                rows = [dict(zip(names, row)) for row in cursor.fetchall()]
+        else:
+            with open(folder / f"{table.upper()}.csv", newline="", encoding="utf-8") as f:
+                rows = list(csv.DictReader(f, delimiter="\t", quoting=csv.QUOTE_NONE))
         for row in rows:
             for name in ("valid_start_date", "valid_end_date"):
                 if row.get(name):
@@ -122,6 +247,25 @@ def _load_vocabulary(con, folder):
                             [[row[name] or None for name in names] for row in rows])
         loaded[table] = con.execute(f"SELECT COUNT(*) FROM {OMOP_SCHEMA}.{table}").fetchone()[0]
     return loaded
+
+
+def choose_vocabulary(profile, vocabulary=None):
+    """The vocabulary for a run: the one asked for, or else the sample for the fast profile and Athena for the full profile.
+
+    The full profile takes the sample only when it is asked for by name, and refuses a missing Athena download rather
+    than falling back to the sample, because the sample's five concepts leave most of the CDM's concepts at 0.
+    """
+    chosen = vocabulary or ("athena" if profile == "full" else "sample")
+    if chosen not in VOCABULARIES:
+        raise VocabularyRefused(f"the vocabulary must be one of {', '.join(VOCABULARIES)}")
+    if chosen == "athena" and athena_release(athena_folder()) is None:
+        raise VocabularyRefused(
+            "the full profile reads the pinned Athena vocabulary, and no Athena download was found in the folder that "
+            "SCHEMALYSER_ATHENA names or in reference/athena. If you mean to run it with the sample of five concepts, "
+            "pass --vocabulary sample, and the dashboard will then report the concepts that the sample leaves at 0"
+            if profile == "full" else
+            "no Athena download was found in the folder that SCHEMALYSER_ATHENA names or in reference/athena")
+    return chosen
 
 
 # The reconciliation.
@@ -431,17 +575,19 @@ def release_check(folder, world, steps, report):
 # The inputs for the Data Quality Dashboard.
 
 DQD_SCRIPT = """# Runs the Data Quality Dashboard on the testbed's tables, once load_postgresql.sql has loaded them.
-# The tables are in the schema {schema}, and the vocabulary is read from the OMOP database's own cdm schema.
+# The tables are in the schema {schema}, and the vocabulary is read from the schema {vocabulary}.
 password <- trimws(readChar("/run/pg-password.txt", file.info("/run/pg-password.txt")$size))
 DatabaseConnector::downloadJdbcDrivers(dbms = "postgresql", pathToDriver = "/jdbc")
 connectionDetails <- DatabaseConnector::createConnectionDetails(
   dbms = "postgresql", user = "postgres", password = password,
   server = paste0(Sys.getenv("PG_HOST", "host.docker.internal"), "/postgres"),
-  port = as.integer(Sys.getenv("PG_PORT", "5432")), pathToDriver = "/jdbc")
+  port = as.integer(Sys.getenv("PG_PORT", "5432")), pathToDriver = "/jdbc",
+  # PostgreSQL cancels any one query of the dashboard that runs longer than this, and the dashboard records that check as an error.
+  extraSettings = paste0("options=-c%20statement_timeout%3D", Sys.getenv("DQD_CHECK_MILLISECONDS", "300000")))
 dir.create("/out", showWarnings = FALSE, recursive = TRUE)
 DataQualityDashboard::executeDqChecks(
   connectionDetails = connectionDetails,
-  cdmDatabaseSchema = "{schema}", resultsDatabaseSchema = "{schema}_results", vocabDatabaseSchema = "cdm",
+  cdmDatabaseSchema = "{schema}", resultsDatabaseSchema = "{schema}_results", vocabDatabaseSchema = "{vocabulary}",
   cdmSourceName = "Schemalyser testbed", cdmVersion = "{cdm}",
   numThreads = 1, sqlOnly = FALSE, outputFolder = "/out", outputFile = "dqd_results.json",
   verboseMode = FALSE, writeToTable = TRUE, writeTableName = "dqdashboard_results",
@@ -449,6 +595,13 @@ DataQualityDashboard::executeDqChecks(
   tablesToExclude = c("CONCEPT", "VOCABULARY", "CONCEPT_ANCESTOR", "CONCEPT_RELATIONSHIP", "CONCEPT_CLASS",
                       "CONCEPT_SYNONYM", "RELATIONSHIP", "DOMAIN"))
 """
+def write_dqd_script(out, vocabulary_schema):
+    """Writes dqd/run_dqd.R, which reads the vocabulary from vocabulary_schema."""
+    (out / "dqd").mkdir(exist_ok=True)
+    (out / "dqd" / "run_dqd.R").write_text(DQD_SCRIPT.format(schema=POSTGRESQL_SCHEMA, cdm=CDM_VERSION, vocabulary=vocabulary_schema),
+                                           encoding="utf-8")
+
+
 DQD_COMMAND = ("docker run --rm --platform linux/amd64 -e PG_PORT=PORT -v \"$PWD/dqd/run_dqd.R:/run_dqd.R:ro\" "
                "-v \"PASSWORD_FILE:/run/pg-password.txt:ro\" -v jdbc-drivers-data:/jdbc -v \"$PWD/dqd/out:/out\" "
                "broadsea-broadsea-run-dqd Rscript /run_dqd.R")
@@ -480,8 +633,7 @@ def dqd_inputs(conversion, folder, out):
     # The testbed owns its schema, so a second load replaces the first rather than adding to it.
     lines[2:2] = [f"DROP SCHEMA IF EXISTS {POSTGRESQL_SCHEMA} CASCADE;", f"CREATE SCHEMA IF NOT EXISTS {POSTGRESQL_SCHEMA}_results;"]
     (csv_folder / "load_postgresql.sql").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    (out / "dqd").mkdir(exist_ok=True)
-    (out / "dqd" / "run_dqd.R").write_text(DQD_SCRIPT.format(schema=POSTGRESQL_SCHEMA, cdm=CDM_VERSION), encoding="utf-8")
+    write_dqd_script(out, "cdm")
     return {"status": "not run", "reason": "the fast profile does not run it",
             "duckdb_file": "testbed_cdm.duckdb", "duckdb_schema": "cdm", "csv_folder": "csv", "tables_exported": len(files),
             "load": "(cd csv && psql -h 127.0.0.1 -p PORT -U postgres -f load_postgresql.sql)",
@@ -516,24 +668,32 @@ def _expected(row, expectations):
                  and fits(e.get("field"), row.get("cdmFieldName"))), None)
 
 
+def _timed_out(row):
+    """Whether a check that could not run was stopped by the per-check time limit."""
+    return "statement timeout" in str(row.get("error") or "").lower()
+
+
 def dqd_results(path, expectations=None):
     """The dashboard's results file, counted by outcome and by category, with each failure set against the expectations.
 
-    A check that failed or could not run is expected when an entry of the expectations matches it, and unexpected otherwise.
+    A check that failed, could not run, or did not finish within the per-check time limit is expected when an entry of the
+    expectations matches it, and unexpected otherwise.
     """
     data = json.loads(Path(path).read_text(encoding="utf-8"))
-    blank = {"checks": 0, "passed": 0, "failed": 0, "could_not_run": 0, "not_applicable": 0}
+    blank = {"checks": 0, "passed": 0, "failed": 0, "could_not_run": 0, "did_not_finish": 0, "not_applicable": 0}
     found, by_category, failures = dict(blank), {}, []
     for row in data.get("CheckResults") or []:
-        outcome = ("could_not_run" if _flag(row.get("isError")) else "not_applicable" if _flag(row.get("notApplicable"))
+        outcome = (("did_not_finish" if _timed_out(row) else "could_not_run") if _flag(row.get("isError"))
+                   else "not_applicable" if _flag(row.get("notApplicable"))
                    else "failed" if _flag(row.get("failed")) else "passed")
         category = by_category.setdefault(row.get("category") or "no category", dict(blank))
         for counted in (found, category):
             counted["checks"] += 1
             counted[outcome] += 1
-        if outcome in ("failed", "could_not_run"):
+        if outcome in ("failed", "could_not_run", "did_not_finish"):
             match = _expected(row, expectations)
             failures.append({"check": row.get("checkName"), "table": row.get("cdmTableName"), "field": row.get("cdmFieldName"),
+                             "concept": row.get("conceptId"), "unit": row.get("unitConceptId"),
                              "category": row.get("category"), "outcome": outcome.replace("_", " "),
                              "violated_rows": row.get("numViolatedRows"), "denominator_rows": row.get("numDenominatorRows"),
                              "expected": match is not None, "reason": match["reason"] if match else None})
@@ -544,21 +704,92 @@ def dqd_results(path, expectations=None):
 
 def _failure_name(failure):
     place = ".".join(part for part in (failure["table"], failure["field"]) if part)
+    if failure.get("concept") not in (None, "", "NA"):
+        place += f" for the concept {failure['concept']}" + (f" in the unit {failure['unit']}" if failure.get("unit") not in (None, "", "NA") else "")
     return f"{failure['check']} on {place}" if place else failure["check"]
 
 
-def run_dqd(out, inputs, expectations=None):
+# The longest that one of the dashboard's queries may run, in seconds, before PostgreSQL cancels it and the dashboard
+# records that check as an error, which the testbed reports as did not finish. SCHEMALYSER_DQD_CHECK_SECONDS changes it.
+DQD_CHECK_SECONDS = 300
+# The longest that the whole dashboard may run, in seconds, before the testbed stops its container.
+DQD_RUN_SECONDS = 3600
+
+
+def dashboard_vocabulary(query, vocabulary, release):
+    """Where the dashboard reads the vocabulary: {"schema", "release", "reused", "reason"}.
+
+    query runs one SQL statement on the OMOP database and returns its first value, or None. With the Athena vocabulary, the
+    OMOP database's cdm schema is reused when it holds the same release; the testbed's own schema is reused next, and
+    otherwise the download must be loaded into the testbed's schema, which the caller does. With the sample, the dashboard
+    reads the cdm schema, as before, whatever release it holds.
+    """
+    def held(schema):
+        return query(f"SELECT vocabulary_version FROM {schema}.vocabulary WHERE vocabulary_id = 'None'")
+    in_cdm = held("cdm")
+    if vocabulary != "athena":
+        return {"schema": "cdm", "release": in_cdm, "reused": True,
+                "reason": "the run uses the sample, so the dashboard reads whatever release the OMOP database's cdm schema holds"}
+    wanted = (release or {}).get("version")
+    if wanted and in_cdm == wanted:
+        return {"schema": "cdm", "release": in_cdm, "reused": True,
+                "reason": "the OMOP database's cdm schema holds the same release as the Athena download"}
+    if wanted and held(VOCABULARY_SCHEMA) == wanted:
+        return {"schema": VOCABULARY_SCHEMA, "release": wanted, "reused": True,
+                "reason": f"the testbed's schema {VOCABULARY_SCHEMA} already holds the same release as the Athena download"}
+    return {"schema": VOCABULARY_SCHEMA, "release": wanted, "reused": False,
+            "reason": f"the OMOP database's cdm schema holds {in_cdm or 'no vocabulary'}, so the download is loaded into {VOCABULARY_SCHEMA}"}
+
+
+def vocabulary_load_script(folder, schema=VOCABULARY_SCHEMA):
+    """A psql script that loads the dashboard's vocabulary tables of an Athena download into schema, replacing what it held."""
+    fields = _definitions_by_table()
+    lines = ["\\set ON_ERROR_STOP on", f"DROP SCHEMA IF EXISTS {schema} CASCADE;", f"CREATE SCHEMA {schema};"]
+    for name in DASHBOARD_TABLES:
+        table = name.lower()
+        columns = ",\n".join(f'  "{field}" {kind}' for field, kind in fields[table])
+        lines.append(f"CREATE TABLE {schema}.{table} (\n{columns}\n);")
+        path = str((Path(folder) / f"{name}.csv").resolve()).replace("'", "''")
+        lines.append(f"\\copy {schema}.{table} FROM '{path}' WITH (FORMAT csv, DELIMITER E'\\t', QUOTE E'\\b', HEADER true)")
+    lines += [f"CREATE INDEX ON {schema}.concept (concept_id);", f"CREATE INDEX ON {schema}.concept_ancestor (descendant_concept_id);",
+              f"CREATE INDEX ON {schema}.concept_relationship (concept_id_1);", f"ANALYZE;"]
+    return "\n".join(lines) + "\n"
+
+
+def _definitions_by_table():
+    found = {}
+    for row in convert._definitions():
+        kind = convert.POSTGRESQL_TYPES.get(row["datatype"], row["datatype"])
+        found.setdefault(row["table"], []).append((row["field"], kind))
+    return found
+
+
+def paused_seconds(wall, monotonic):
+    """The seconds for which the machine slept while the dashboard ran, or 0.
+
+    On a Mac, the monotonic clock stops while the machine sleeps and the wall clock does not, so the difference between
+    them is the time asleep. A difference of under a minute is taken to be noise.
+    """
+    gap = wall - monotonic
+    return round(gap) if gap >= 60 else 0
+
+
+def run_dqd(out, inputs, expectations=None, vocabulary="sample", release=None, folder=None):
     """Loads the testbed's tables into the OMOP database and runs the dashboard's image on them, as docs/testbed.md describes.
 
     It needs psql, Docker with the Broadsea image for the dashboard, the OMOP database listening on 127.0.0.1 at the port
     that SCHEMALYSER_PG_PORT names (55440 by default), and its password in reference/pg-password.txt or the file that
     SCHEMALYSER_PG_PASSWORD_FILE names. The password is passed through the environment and a read-only mount, and never printed.
+
+    Each of the dashboard's queries may run for DQD_CHECK_SECONDS, after which PostgreSQL cancels it and the check is
+    reported as did not finish, and the whole dashboard may run for DQD_RUN_SECONDS, after which its container is stopped.
     """
     port = os.environ.get("SCHEMALYSER_PG_PORT", PG_PORT)
     password_file = Path(os.environ.get("SCHEMALYSER_PG_PASSWORD_FILE", PG_PASSWORD_FILE))
+    check_seconds = int(os.environ.get("SCHEMALYSER_DQD_CHECK_SECONDS", DQD_CHECK_SECONDS))
 
-    def not_run(reason):
-        return dict(inputs, status="not run", reason=reason)
+    def not_run(reason, **more):
+        return dict(inputs, status="not run", reason=reason, **more)
 
     for tool in ("psql", "docker"):
         if shutil.which(tool) is None:
@@ -569,36 +800,75 @@ def run_dqd(out, inputs, expectations=None):
         return not_run(f"Docker does not hold the image {DQD_IMAGE}, which Broadsea builds with its dqd profile")
     env = dict(os.environ, PGPASSWORD=password_file.read_text(encoding="utf-8").strip())
     psql = ["psql", "-h", "127.0.0.1", "-p", port, "-U", "postgres", "-d", "postgres", "-q", "-v", "ON_ERROR_STOP=1"]
+
+    def query(sql):
+        done = subprocess.run([*psql, "-At", "-c", sql], env=env, capture_output=True, text=True, timeout=60, check=False)
+        return done.stdout.strip() or None if done.returncode == 0 else None
+
+    def failed_with(done):
+        text = (done.stderr or done.stdout).strip()
+        return _clip(text.splitlines()[-1] if text else "no output")
+
+    name = f"schemalyser-dqd-{os.getpid()}"
     try:
+        chosen = dashboard_vocabulary(query, vocabulary, release)
+        chosen["seconds"] = 0.0
+        if not chosen["reused"]:
+            started = time.monotonic()
+            script = out / "dqd" / "load_vocabulary.sql"
+            script.write_text(vocabulary_load_script(folder), encoding="utf-8")
+            loaded = subprocess.run([*psql, "-f", str(script)], env=env, capture_output=True, text=True, timeout=7200, check=False)
+            if loaded.returncode != 0:
+                return not_run(f"the Athena vocabulary could not be loaded into {VOCABULARY_SCHEMA} ({failed_with(loaded)})",
+                               vocabulary_schema=chosen)
+            chosen["seconds"] = round(time.monotonic() - started, 1)
+        write_dqd_script(out, chosen["schema"])
         loaded = subprocess.run([*psql, "-f", "load_postgresql.sql"], cwd=out / "csv", env=env, capture_output=True, text=True,
                                 timeout=900, check=False)
         if loaded.returncode != 0:
-            return not_run("the tables could not be loaded into the OMOP database ("
-                           + _clip((loaded.stderr or loaded.stdout).strip().splitlines()[-1] if (loaded.stderr or loaded.stdout).strip() else "no output") + ")")
+            return not_run(f"the tables could not be loaded into the OMOP database ({failed_with(loaded)})", vocabulary_schema=chosen)
         results = out / "dqd" / "out" / "dqd_results.json"
         results.parent.mkdir(parents=True, exist_ok=True)
         results.unlink(missing_ok=True)
-        started = time.monotonic()
-        done = subprocess.run(["docker", "run", "--rm", "--platform", "linux/amd64", "-e", f"PG_PORT={port}",
-                               "-v", f"{(out / 'dqd' / 'run_dqd.R').resolve()}:/run_dqd.R:ro",
-                               "-v", f"{password_file.resolve()}:/run/pg-password.txt:ro", "-v", "jdbc-drivers-data:/jdbc",
-                               "-v", f"{results.parent.resolve()}:/out", DQD_IMAGE, "Rscript", "/run_dqd.R"],
-                              capture_output=True, text=True, timeout=3600, check=False)
+        started, wall = time.monotonic(), time.time()
+        # On a Mac, caffeinate keeps the machine awake while the dashboard runs. A Mac that sleeps pauses Docker's virtual
+        # machine, and a check then seems to stall for as long as the machine slept; caffeinate cannot prevent the sleep of
+        # a closed lid on battery, so the report also records any pause it finds.
+        awake = ["caffeinate", "-i", "-s"] if shutil.which("caffeinate") else []
+        try:
+            done = subprocess.run([*awake, "docker", "run", "--rm", "--name", name, "--platform", "linux/amd64", "-e", f"PG_PORT={port}",
+                                   "-e", f"DQD_CHECK_MILLISECONDS={check_seconds * 1000}",
+                                   "-v", f"{(out / 'dqd' / 'run_dqd.R').resolve()}:/run_dqd.R:ro",
+                                   "-v", f"{password_file.resolve()}:/run/pg-password.txt:ro", "-v", "jdbc-drivers-data:/jdbc",
+                                   "-v", f"{results.parent.resolve()}:/out", DQD_IMAGE, "Rscript", "/run_dqd.R"],
+                                  capture_output=True, text=True, timeout=DQD_RUN_SECONDS, check=False)
+        except subprocess.TimeoutExpired:
+            subprocess.run(["docker", "stop", name], capture_output=True, check=False)
+            return not_run(f"the dashboard had not finished after {DQD_RUN_SECONDS} seconds, so its container was stopped; "
+                           f"its log is in dqd/out", vocabulary_schema=chosen)
     except (OSError, subprocess.TimeoutExpired) as error:
         return not_run(_clip(str(error)))
     (out / "dqd" / "dqd.txt").write_text(done.stdout + done.stderr, encoding="utf-8")
     if done.returncode != 0 or not results.exists():
-        return not_run(f"the dashboard's image stopped with exit code {done.returncode}; its output is in dqd/dqd.txt")
-    return dict(inputs, status="ran", reason=None, seconds=round(time.monotonic() - started, 1),
-                results_file="dqd/out/dqd_results.json", output="dqd/dqd.txt", **dqd_results(results, expectations))
+        return not_run(f"the dashboard's image stopped with exit code {done.returncode}; its output is in dqd/dqd.txt",
+                       vocabulary_schema=chosen)
+    paused = paused_seconds(time.time() - wall, time.monotonic() - started)
+    return dict(inputs, status="ran", reason=None, seconds=round(time.monotonic() - started, 1), check_seconds=check_seconds,
+                paused_seconds=paused,
+                vocabulary_schema=chosen, results_file="dqd/out/dqd_results.json", output="dqd/dqd.txt",
+                **dqd_results(results, expectations))
 
 
 # SQL Server.
 
-def run_sqlserver(world_folder, folder, rows, out):
-    """Runs the SQL Server harness over the same world and conversion, and keeps its summary. It needs the container that its README describes."""
+def run_sqlserver(world_folder, folder, rows, out, vocabulary=None):
+    """Runs the SQL Server harness over the same world and conversion, and keeps its summary. It needs the container that its README describes.
+
+    vocabulary is the working copy of the Athena download that the DuckDB run used, or None for the sample.
+    """
     target = out / "sqlserver"
-    command = [sys.executable, str(HARNESS), "--rows", str(rows), "--skip-safeguards", "--sample-vocabulary",
+    command = [sys.executable, str(HARNESS), "--rows", str(rows), "--skip-safeguards",
+               *(["--vocabulary", str(vocabulary)] if vocabulary else ["--sample-vocabulary"]),
                "--conversion", str(folder), "--out", str(target)]
     if not (world_folder / "invented-catalogue.csv").exists():
         command.insert(2, str(world_folder))
@@ -741,23 +1011,42 @@ def judge(checks, profile):
 
 # The run.
 
-def _versions(vocabulary):
+def _versions(vocabulary, athena=None):
     project = tomllib.loads((ROOT / "core" / "pyproject.toml").read_text())["project"]
-    concepts = len((vocabulary / "CONCEPT.csv").read_text(encoding="utf-8").splitlines()) - 1
-    return {"tool": f"schemalyser {project['version']}", "cdm": CDM_VERSION, "cdm_fields_sha256": _digest([convert.FIELDS]),
-            "vocabulary": f"the SQL Server harness's sample subset of {concepts} public concepts, not an Athena release",
-            "vocabulary_sha256": _digest(list(vocabulary.glob("*.csv"))),
-            "duckdb": duckdb.__version__, "sqlglot": sqlglot.__version__, "python": sys.version.split()[0]}
+    found = {"tool": f"schemalyser {project['version']}", "cdm": CDM_VERSION, "cdm_fields_sha256": _digest([convert.FIELDS])}
+    if athena:
+        release = athena["release"]
+        found.update(vocabulary=f"the Athena release {release['version']}, of {release['date']}",
+                     vocabulary_release=release, vocabulary_sha256=_digest([vocabulary / "VOCABULARY.csv"]),
+                     vocabulary_sha256_covers="VOCABULARY.csv of the download, whose versions name the release")
+    else:
+        concepts = len((vocabulary / "CONCEPT.csv").read_text(encoding="utf-8").splitlines()) - 1
+        found.update(vocabulary=f"the SQL Server harness's sample subset of {concepts} public concepts, not an Athena release",
+                     vocabulary_release=None, vocabulary_sha256=_digest(list(vocabulary.glob("*.csv"))))
+    return dict(found, duckdb=duckdb.__version__, sqlglot=sqlglot.__version__, python=sys.version.split()[0])
 
 
-def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, profile="fast", dqd_expectations=None):
-    """Runs every stage and writes report.json and report.md to out. Returns the report."""
+def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, profile="fast", dqd_expectations=None,
+        vocabulary_choice=None):
+    """Runs every stage and writes report.json and report.md to out. Returns the report.
+
+    vocabulary_choice is athena or sample; when left out, the fast profile takes the sample and the full profile Athena.
+    """
     started = time.monotonic()
+    choice = choose_vocabulary(profile, vocabulary_choice)
     world, world_folder, folder = resolve_world(world_name)
     folder = Path(conversion_folder).resolve() if conversion_folder else folder
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
-    vocabulary = _vocabulary(out)
+    athena = None
+    if choice == "athena":
+        download = athena_folder()
+        vocabulary, prepared = athena_working_copy(download)
+        athena = {"release": athena_release(download), "working_copy": prepared,
+                  "tables_for_the_conversion": [name.lower() for name in CONVERSION_TABLES],
+                  "note": "CONCEPT_RELATIONSHIP keeps only its 'Maps to' rows; the download stays on this machine."}
+    else:
+        vocabulary = _vocabulary(out)
     steps = json.loads((folder / "conversion.json").read_text())
     expectation_path = world_folder / EXPECTATIONS
     expectations = json.loads(expectation_path.read_text()) if expectation_path.exists() else None
@@ -774,8 +1063,11 @@ def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, prof
         # A scenario that exists to make a gate fail runs alone, so that its failure does not stop the main run.
         _, alone = convert.run(world, folder, rows, vocabulary, scenarios=[scenario["name"]])
         scenarios.append(_scenario(alone["scenarios"][0], alone["gates"]))
-    vocabulary_rows = _load_vocabulary(conversion.con, vocabulary)
-    concepts = conversion.concept_problems(vocabulary / "CONCEPT.csv")
+    loading = time.monotonic()
+    vocabulary_rows = _load_vocabulary(conversion.con, vocabulary, conversion.tables)
+    concepts = conversion.concept_problems(vocabulary / ("vocabulary.duckdb" if athena else "CONCEPT.csv"))
+    if athena:
+        athena["seconds_to_load_into_the_cdm"] = round(time.monotonic() - loading, 1)
 
     # 5: the reconciliation. 6: the release script with its gates and counts. 7: the dashboard's inputs.
     reconciliation = reconcile(conversion, folder, steps, report["steps"], expectations)
@@ -786,10 +1078,10 @@ def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, prof
         (out / "release" / "source_manifest.csv").write_text(manifest, encoding="utf-8")
     dqd = dqd_inputs(conversion, folder, out)
     if profile == "full":
-        dqd = run_dqd(out, dqd, permitted)
+        dqd = run_dqd(out, dqd, permitted, choice, athena["release"] if athena else None, athena_folder() if athena else None)
     dqd["expectations"] = ({"file": dqd_path.name, "entries": len(permitted), "sha256": _digest([dqd_path])}
                            if dqd_path else None)
-    sqlserver = run_sqlserver(world_folder, folder, rows, out) if engine == "sqlserver" else None
+    sqlserver = run_sqlserver(world_folder, folder, rows, out, vocabulary if athena else None) if engine == "sqlserver" else None
     equivalence = release_equivalence(sqlserver)
 
     failures = convert.failures(report)
@@ -818,8 +1110,9 @@ def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, prof
     passed = sum(1 for s in scenarios if s["outcome"] == "passed")
     if dqd["status"] == "ran":
         dqd_sentence = (f"The Data Quality Dashboard ran {dqd['checks']:,} checks: {dqd['passed']:,} passed, {dqd['failed']:,} failed, "
-                        f"{dqd['could_not_run']:,} could not run and {dqd['not_applicable']:,} did not apply. Of the "
-                        f"{dqd['expected_failures'] + dqd['unexpected_failures']:,} that failed or could not run, "
+                        f"{dqd['could_not_run']:,} could not run, {dqd['did_not_finish']:,} did not finish within "
+                        f"{dqd['check_seconds']} seconds and {dqd['not_applicable']:,} did not apply. Of the "
+                        f"{dqd['expected_failures'] + dqd['unexpected_failures']:,} that failed, could not run or did not finish, "
                         f"{dqd['expected_failures']:,} are expected, with a reason in "
                         f"{dqd['expectations']['file'] if dqd['expectations'] else 'no expectations file'}, and "
                         f"{dqd['unexpected_failures']:,} are not.")
@@ -849,7 +1142,7 @@ def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, prof
         ],
     }
     result = {
-        "versions": _versions(vocabulary),
+        "versions": _versions(vocabulary, athena),
         "world": {"folder": world_folder.name, "conversion": folder.name, "rows": rows,
                   "catalogue_sha256": _digest([world.catalogue_path]),
                   "conversion_sha256": _digest([p for p in folder.rglob("*") if p.is_file()]),
@@ -863,6 +1156,7 @@ def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, prof
                     "sqlserver": sqlserver},
         "build": {"sentence": report["built"], "mapping_rows": report["mappings"],
                   "derived_mappings": [{k: item[k] for k in ("vocabulary", "matched")} for item in report["derived"]],
+                  "vocabulary": choice, "athena": athena,
                   "vocabulary_rows": vocabulary_rows, "concept_notes": len(concepts), "unmapped": report["unmapped"]},
         "steps": [{"file": step["file"], "layer": step["layer"], "table": result_["table"], "status": result_["status"],
                    "rows": result_["rows"], "sha256": _digest([folder / step["file"]])}
@@ -889,7 +1183,15 @@ def markdown(report):
     lines += [*s["sentences"], ""]
     v = report["versions"]
     lines += ["## Versions", "", (f"Schemalyser is {v['tool']}, the CDM is version {v['cdm']}, the vocabulary is {v['vocabulary']}, "
-                                  f"and DuckDB is version {v['duckdb']}."), "", "## Checks", ""]
+                                  f"and DuckDB is version {v['duckdb']}."), ""]
+    athena = report["build"].get("athena")
+    if athena:
+        prepared = athena["working_copy"]
+        lines += [(f"The testbed {'built' if prepared['built'] else 'reused'} its working copy of the Athena download in "
+                   f"{prepared['seconds']} seconds, with {prepared['rows']['CONCEPT']:,} concepts and "
+                   f"{prepared['rows']['CONCEPT_RELATIONSHIP']:,} 'Maps to' rows, and loaded the concepts that the CDM names into "
+                   f"its tables in {athena.get('seconds_to_load_into_the_cdm', 0)} seconds."), ""]
+    lines += ["## Checks", ""]
     for check in report["checks"]:
         mark = check.get("state") or ("not judged in this profile" if check["passed"] is None else "passed" if check["passed"] else "failed")
         lines.append(f"- {check['check']}: {mark}.")
@@ -932,10 +1234,15 @@ def markdown(report):
     lines += ["", "## Data Quality Dashboard", ""]
     if dqd["status"] == "ran":
         lines += [(f"The dashboard ran {dqd['checks']:,} checks in {dqd['seconds']} seconds: {dqd['passed']:,} passed, {dqd['failed']:,} "
-                   f"failed, {dqd['could_not_run']:,} could not run and {dqd['not_applicable']:,} did not apply. Its results are in "
-                   f"{dqd['results_file']}."), "", "| Category | Checks | Passed | Failed | Could not run | Not applicable |",
-                  "|---|---:|---:|---:|---:|---:|"]
-        lines += [f"| {name} | {n['checks']} | {n['passed']} | {n['failed']} | {n['could_not_run']} | {n['not_applicable']} |"
+                   f"failed, {dqd['could_not_run']:,} could not run, {dqd['did_not_finish']:,} did not finish within {dqd['check_seconds']} "
+                   f"seconds and {dqd['not_applicable']:,} did not apply. It read the vocabulary from the schema "
+                   f"{dqd['vocabulary_schema']['schema']}, which holds {dqd['vocabulary_schema']['release'] or 'no named release'}. "
+                   f"Its results are in {dqd['results_file']}."
+                   + (f" The machine slept for {dqd['paused_seconds']:,} seconds while it ran, so any check that seemed to stall "
+                      f"in that time was waiting for the machine rather than for PostgreSQL." if dqd.get("paused_seconds") else "")), "",
+                  "| Category | Checks | Passed | Failed | Could not run | Did not finish | Not applicable |",
+                  "|---|---:|---:|---:|---:|---:|---:|"]
+        lines += [f"| {name} | {n['checks']} | {n['passed']} | {n['failed']} | {n['could_not_run']} | {n['did_not_finish']} | {n['not_applicable']} |"
                   for name, n in dqd["by_category"].items()]
         lines.append("")
         unexpected = [f for f in dqd["failures"] if not f["expected"]]
@@ -981,9 +1288,13 @@ def main():
                         help="the dashboard failures that are permitted; the world's dqd-expectations.json when left out")
     runner.add_argument("--profile", choices=("fast", "full"), default="fast",
                         help="full also runs the Data Quality Dashboard and requires it and release equivalence to pass")
+    runner.add_argument("--vocabulary", choices=VOCABULARIES,
+                        help="athena reads the Athena download in reference/athena, or in the folder that SCHEMALYSER_ATHENA names; "
+                             "sample uses five public concepts. The fast profile takes the sample and the full profile Athena")
     args = parser.parse_args()
     try:
-        report = run(args.world, args.out, args.rows, args.engine, args.conversion, args.profile, args.dqd_expectations)
+        report = run(args.world, args.out, args.rows, args.engine, args.conversion, args.profile, args.dqd_expectations,
+                     args.vocabulary)
     except (convert.ScenarioError, ValueError, FileNotFoundError) as error:
         raise SystemExit(f"schemalyser.testbed: {error}")
     for sentence in report["summary"]["sentences"]:

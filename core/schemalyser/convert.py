@@ -609,7 +609,17 @@ class Conversion:
         used = self.concepts_used()
         wanted = {concept for counts in used.values() for concept in counts if concept}
         known = {}
-        with open(concept_file, newline="", encoding="utf-8") as f:
+        if Path(concept_file).suffix == ".duckdb":
+            # A working copy of a whole Athena download, as the testbed builds it, holds CONCEPT as text.
+            with duckdb.connect(str(concept_file), read_only=True) as source:
+                source.execute("CREATE TEMP TABLE wanted (concept_id VARCHAR)")
+                source.executemany("INSERT INTO wanted VALUES (?)", [[str(concept)] for concept in wanted])
+                for concept, name, domain_id, standard in source.execute(
+                        "SELECT c.concept_id, c.concept_name, c.domain_id, c.standard_concept FROM concept c "
+                        "JOIN wanted w ON w.concept_id = c.concept_id").fetchall():
+                    known[int(concept)] = (name, domain_id, standard or "")
+            concept_file = None
+        with open(concept_file, newline="", encoding="utf-8") if concept_file else io.StringIO("concept_id\tconcept_name\tdomain_id\tstandard_concept\n") as f:
             reader = csv.reader(f, delimiter="\t", quoting=csv.QUOTE_NONE)
             header = [name.lower() for name in next(reader)]
             at = {name: header.index(name) for name in ("concept_id", "concept_name", "domain_id", "standard_concept")}

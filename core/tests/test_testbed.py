@@ -146,7 +146,8 @@ def test_the_dashboard_results_are_counted_by_category(tmp_path):
         {"category": "Completeness", "failed": 0, "passed": 0, "isError": 0, "notApplicable": 1}]}))
     found = testbed.dqd_results(path)
     assert (found["checks"], found["passed"], found["failed"], found["could_not_run"], found["not_applicable"]) == (4, 1, 1, 1, 1)
-    assert found["by_category"]["Conformance"] == {"checks": 2, "passed": 1, "failed": 1, "could_not_run": 0, "not_applicable": 0}
+    assert found["by_category"]["Conformance"] == {"checks": 2, "passed": 1, "failed": 1, "could_not_run": 0, "did_not_finish": 0,
+                                                   "not_applicable": 0}
 
 
 def test_the_inputs_for_the_dashboard_are_written_and_it_is_marked_not_run(ran):
@@ -232,3 +233,112 @@ def test_release_equivalence_reads_the_harness_summary_json(tmp_path):
     fallback = testbed.release_equivalence({"exit_code": 0, "summary": SUMMARY, "summary_json": None})
     assert fallback["state"] == "passed" and fallback["source"] == "the printed summary"
     assert fallback["detail"].startswith("The harness wrote no summary.json, so the check read its printed summary instead.")
+
+
+# The vocabulary option.
+
+def _download(folder, version="v5.0 29-AUG-26"):
+    """A small download in the layout of Athena's: the sample's concepts, a few more rows, and the files the testbed reads."""
+    from schemalyser import testbed as t
+    t._vocabulary(folder.parent / "sample")
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in ("CONCEPT", "CONCEPT_SYNONYM"):
+        (folder / f"{name}.csv").write_text((folder.parent / "sample" / "vocabulary" / f"{name}.csv").read_text())
+    relationship = (folder.parent / "sample" / "vocabulary" / "CONCEPT_RELATIONSHIP.csv").read_text()
+    (folder / "CONCEPT_RELATIONSHIP.csv").write_text(relationship + "45542411\t45542411\tMapped from\t19700101\t20991231\t\n")
+    (folder / "VOCABULARY.csv").write_text("vocabulary_id\tvocabulary_name\tvocabulary_reference\tvocabulary_version\tvocabulary_concept_id\n"
+                                           f"None\tOMOP Standardized Vocabularies\tOMOP generated\t{version}\t44819096\n"
+                                           "RxNorm\tRxNorm (NLM)\thttp://www.nlm.nih.gov/research/umls/rxnorm\tRxNorm 20260601\t44819104\n")
+    (folder / "DOMAIN.csv").write_text("domain_id\tdomain_name\tdomain_concept_id\nDrug\tDrug\t13\n")
+    (folder / "CONCEPT_CLASS.csv").write_text("concept_class_id\tconcept_class_name\tconcept_class_concept_id\nIngredient\tIngredient\t44819247\n")
+    (folder / "RELATIONSHIP.csv").write_text("relationship_id\trelationship_name\tis_hierarchical\tdefines_ancestry\treverse_relationship_id\t"
+                                             "relationship_concept_id\nMaps to\tNon-standard to Standard map (OMOP)\t0\t0\tMapped from\t44818977\n")
+    return folder
+
+
+def test_the_profile_chooses_the_vocabulary_and_the_full_profile_refuses_a_missing_download(tmp_path, monkeypatch):
+    monkeypatch.setenv("SCHEMALYSER_ATHENA", str(tmp_path / "absent"))
+    assert testbed.choose_vocabulary("fast") == "sample"
+    assert testbed.choose_vocabulary("full", "sample") == "sample"
+    with pytest.raises(testbed.VocabularyRefused, match="pass --vocabulary sample"):
+        testbed.choose_vocabulary("full")
+    with pytest.raises(testbed.VocabularyRefused):
+        testbed.choose_vocabulary("fast", "athena")
+    monkeypatch.setenv("SCHEMALYSER_ATHENA", str(_download(tmp_path / "athena")))
+    assert testbed.choose_vocabulary("full") == "athena"
+
+
+def test_the_release_is_read_from_the_download_and_its_working_copy_is_built_once(tmp_path):
+    folder = _download(tmp_path / "athena")
+    assert testbed.athena_release(folder) == {"name": "OMOP Standardized Vocabularies", "version": "v5.0 29-AUG-26", "date": "2026-08-29"}
+    copy, built = testbed.athena_working_copy(folder, tmp_path / "copies")
+    assert built["built"] and built["rows"]["CONCEPT"] == 5
+    # Only the 'Maps to' rows are kept.
+    assert built["rows"]["CONCEPT_RELATIONSHIP"] == 1
+    again, reused = testbed.athena_working_copy(folder, tmp_path / "copies")
+    assert again == copy and not reused["built"] and reused["rows"] == built["rows"]
+    # The lookups read the working copy as they read the download's own files.
+    from schemalyser import mapping
+    matched, _ = mapping.propose([("7", "paracetamol")], copy)
+    assert matched["7"][0] == 1125315
+    coded, _ = mapping.propose([("9", "K42.9")], copy, "Condition", coded_in="ICD10")
+    assert coded["9"][0] == 4245842
+
+
+def test_a_fast_run_with_the_athena_vocabulary_records_its_release(tmp_path, monkeypatch):
+    monkeypatch.setenv("SCHEMALYSER_ATHENA", str(_download(tmp_path / "athena")))
+    report = testbed.run("fixtures", tmp_path / "out", rows=60, vocabulary_choice="athena")
+    assert report["summary"]["outcome"] == "passed", [c for c in report["checks"] if c["passed"] is False]
+    assert report["versions"]["vocabulary"] == "the Athena release v5.0 29-AUG-26, of 2026-08-29"
+    assert report["versions"]["vocabulary_release"]["date"] == "2026-08-29"
+    assert report["build"]["vocabulary"] == "athena" and report["build"]["athena"]["working_copy"]["rows"]["CONCEPT"] == 5
+    # The CDM holds only the concepts that its tables name, and the derived mappings match those of the sample.
+    assert 0 < report["build"]["vocabulary_rows"]["concept"] <= 5
+    assert sum(item["matched"] for item in report["build"]["derived_mappings"]) > 0
+    # The licensed download is never copied into the output folder, and the report names no folder of this machine.
+    assert not list((tmp_path / "out").rglob("CONCEPT.csv"))
+    assert str(tmp_path) not in (tmp_path / "out" / "report.json").read_text()
+
+
+def test_the_dashboard_reads_a_matching_release_where_it_already_is():
+    def database(held):
+        return lambda sql: held.get(sql.split(" FROM ")[1].split(".")[0])
+    release = {"version": "v5.0 29-AUG-26"}
+    assert testbed.dashboard_vocabulary(database({"cdm": "v5.0 29-AUG-26"}), "athena", release)["schema"] == "cdm"
+    other = testbed.dashboard_vocabulary(database({"cdm": "v5.0 01-JAN-25"}), "athena", release)
+    assert other["schema"] == testbed.VOCABULARY_SCHEMA and not other["reused"]
+    kept = testbed.dashboard_vocabulary(database({"cdm": "v5.0 01-JAN-25", testbed.VOCABULARY_SCHEMA: "v5.0 29-AUG-26"}), "athena", release)
+    assert kept["schema"] == testbed.VOCABULARY_SCHEMA and kept["reused"]
+    assert testbed.dashboard_vocabulary(database({}), "sample", None)["schema"] == "cdm"
+    script = testbed.vocabulary_load_script(Path("/somewhere/athena"))
+    assert script.count("\\copy ") == len(testbed.DASHBOARD_TABLES) and "DROP SCHEMA IF EXISTS testbed_vocabulary CASCADE;" in script
+
+
+# The per-check time limit.
+
+def test_a_check_stopped_by_the_time_limit_is_reported_as_did_not_finish(tmp_path):
+    path = tmp_path / "dqd_results.json"
+    path.write_text(json.dumps({"CheckResults": [
+        {"checkName": "plausibleValueLow", "cdmTableName": "MEASUREMENT", "cdmFieldName": "MEASUREMENT_CONCEPT_ID",
+         "conceptId": "3027018", "unitConceptId": "8541", "category": "Plausibility", "failed": 0, "isError": 1, "notApplicable": 0,
+         "error": "org.postgresql.util.PSQLException: ERROR: canceling statement due to statement timeout"},
+        {"checkName": "isRequired", "cdmTableName": "COHORT", "cdmFieldName": "COHORT_DEFINITION_ID", "category": "Conformance",
+         "failed": 0, "isError": 1, "notApplicable": 0, "error": "ERROR: relation \"testbed.cohort\" does not exist"}]}))
+    found = testbed.dqd_results(path)
+    assert (found["did_not_finish"], found["could_not_run"]) == (1, 1)
+    stopped = next(f for f in found["failures"] if f["outcome"] == "did not finish")
+    assert testbed._failure_name(stopped) == ("plausibleValueLow on MEASUREMENT.MEASUREMENT_CONCEPT_ID for the concept 3027018 "
+                                              "in the unit 8541")
+    assert not stopped["expected"] and found["unexpected_failures"] == 2
+
+
+def test_the_dashboard_script_sets_the_per_check_time_limit(tmp_path):
+    testbed.write_dqd_script(tmp_path, "cdm")
+    script = (tmp_path / "dqd" / "run_dqd.R").read_text()
+    assert "statement_timeout" in script and 'Sys.getenv("DQD_CHECK_MILLISECONDS"' in script
+    assert 'vocabDatabaseSchema = "cdm"' in script
+
+
+def test_a_sleep_of_the_machine_during_the_dashboard_is_measured():
+    assert testbed.paused_seconds(3600.4, 3600.0) == 0
+    assert testbed.paused_seconds(3437 + 280.0, 280.0) == 3437
