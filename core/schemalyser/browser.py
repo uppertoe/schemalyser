@@ -939,6 +939,27 @@ def describe_dictionary(data, tables, headings, name, tables_name, step, invente
         tables_name or "tables.csv", step, invented=bool(invented))})
 
 
+def describe_dictionary_query(step):
+    """The data dictionary query, which is the same for every hospital."""
+    return _reply(lambda: _describing().dictionary_query(step, record=False))
+
+
+def describe_dictionary_database(data, name, step):
+    """Makes the data dictionary from the result of the data dictionary query: the bytes of a saved file, or the
+    text pasted from the results grid."""
+    d = _describing()
+    return _reply(lambda: {"receipt": d.load_from_database(data if isinstance(data, str) else _bytes(data),
+                                                           name or "data-dictionary.csv", step)})
+
+
+def describe_dictionary_vendor(data, tables, headings, name, tables_name):
+    """Adds the vendor's descriptions, from the bytes of a chosen file, to the data dictionary made from the database."""
+    d = _describing()
+    return _reply(lambda: {"receipt": d.add_descriptions(
+        _bytes(data), _bytes(tables) if tables is not None else None, json.loads(headings or "{}"),
+        name or "vendor-dictionary.csv", tables_name or "vendor-tables.csv")})
+
+
 # The paths that a saved hospital schema holds. Anything else inside the file is let go of at once.
 _SCHEMA_PATH = re.compile(r"(settings\.json|journal\.json|confirmations\.csv|map/map\.json|codes/role_\w+\.\w+\.json|"
                           r"counts/judgements\.json|queries/\d\d-[\w.-]+\.sql|results/\d\d-[\w.-]+\.tsv|"

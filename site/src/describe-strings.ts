@@ -3,6 +3,22 @@
 
 const plural = (n: number, one: string, many: string) => `${n.toLocaleString('en-AU')} ${n === 1 ? one : many}`;
 const rows = (n: number) => plural(n, 'row', 'rows');
+const describeVendor = (v: { matched: number; gained: number }) =>
+  v.matched
+    ? `The vendor's file has added a description to ${plural(v.gained, 'column', 'columns')} that had none.`
+    : "The vendor's file matched none of the database's tables and columns by name, so it has added no description.";
+
+// The receipt of the data dictionary made from the database, with the vendor's descriptions where they were added.
+const databaseReceipt = (r: { tables: number; columns: number; described: number; saved?: boolean; vendor?: { matched: number; gained: number } | null }) =>
+  [
+    r.saved
+      ? `The page has read the data dictionary from the saved schema. It was made from the database and holds ${plural(r.columns, 'column', 'columns')} in ${plural(r.tables, 'table', 'tables')}, with descriptions for ${r.described.toLocaleString('en-AU')} of them.`
+      : `The page has made the data dictionary from the database: ${plural(r.columns, 'column', 'columns')} in ${plural(r.tables, 'table', 'tables')}, with descriptions for ${r.described.toLocaleString('en-AU')} of them.`,
+    r.vendor ? describeVendor(r.vendor) : '',
+    r.described * 4 < r.columns
+      ? "Few columns have a description, so the proposals rest on the names of tables and columns and will need more correcting. If the hospital's team that looks after the record system can export the vendor's descriptions, add them with the second choice below."
+      : '',
+  ].filter(Boolean).join(' ');
 
 export const describeStrings = {
   title: 'Describe the record',
@@ -58,6 +74,8 @@ export const describeStrings = {
   loading: 'The page is loading. Keep it online until it says that it has finished.',
   loaded: 'The page has finished loading. Take this tab offline now.',
   offlineInvented: ['If you want to try the page with the invented dictionary rather than a real one, load it at ', 'step 2', ' now, before you take the tab offline.'],
+  // Once the invented dictionary has loaded while the tab is online, in step 1 and in step 2.
+  inventedLoaded: 'The invented dictionary is loaded. Now take this tab offline and carry on at step 4.',
   loadFailed: 'The page has not been able to load. If the tab is online, reload it to try again.',
   offlineHowSummary: 'How to take this tab offline',
   offlineHow: [
@@ -73,23 +91,54 @@ export const describeStrings = {
   policySummary: 'How the page makes sure that nothing can leave it',
 
   // 2. The dictionary.
-  dictionaryWhat: 'Choose whichever of these three fits this sitting.',
-  choiceReal: 'I have the data dictionary.',
-  choiceRealWhat: "Choose the file your colleague exported from the vendor's dictionary.",
+  dictionaryWhat: 'Choose whichever of these four fits this sitting. At most hospitals, your colleague makes the data dictionary from the database with the first.',
+  // Beside each input, where it comes from: run on the database, asked of someone, or made here.
+  choiceDatabase: 'Make the data dictionary from the database',
+  databaseOrigin:
+    "Run this on the database. Your colleague copies the query below, runs it in the SQL window connected to the hospital's database, and brings the result back here in one of the two ways below.",
+  databaseCopy: 'Copy the query',
+  databaseSafeSummary: 'Why this query is safe on production, and what it returns',
+  databaseReturns:
+    "The query returns one row for each column of every table and view: the table, the column, its data type, whether it is part of its table's primary key, the number of rows in the table, and the description that the database holds for the column, which is empty where it holds none. The page reads the result as the data dictionary. Because the result also says which tables exist and how large they are, it answers step 5 at the same time. The result stays in this tab and in the saved hospital schema.",
+  databaseBack:
+    'Once the query has finished, bring the result here in whichever of these two ways suits its size. A result of more than about 20,000 rows is easier to save as a file than to paste.',
+  databaseSmall: 'For a small database, copy the result with headers and paste it here.',
+  databaseSmallHow:
+    'In SQL Server Management Studio, click the empty square at the top left of the results grid, then right-click it and choose Copy with Headers. Paste the result into the box below and choose Read the result.',
+  databasePasteLabel: 'The result, copied with its headers:',
+  databaseRead: 'Read the result',
+  databaseLarge: 'For a large one, save the result as a file, then choose it here.',
+  databaseLargeSummary: 'How to save the result as a file in SQL Server Management Studio',
+  databaseLargeHow: [
+    'Before the first time, open the Tools menu and choose Options, then Query Results, SQL Server and Results to Grid. Tick Include column headers when copying or saving the results, and choose OK. You need do this only once.',
+    'Once the query has run, right-click the results grid, choose Save Results As, choose CSV as the type of file, and save it. Then choose the file below.',
+    'If the result is too large to show in the grid, open the Query menu before you run the query, choose Results To and then Results to File. When you run the query, SQL Server Management Studio asks where to save the result. For this way, also set two things once, under Tools, Options, Query Results, SQL Server and Results to Text: set Output format to Tab delimited, and set Maximum number of characters displayed in each column to 8192, so that long descriptions are kept whole.',
+  ],
+  databaseFileLabel: 'The saved result:',
+  databaseReading: 'The page is making the data dictionary from the result.',
+  databaseReceipt,
+  databaseUnreadable: "The page could not read this as the result of the data dictionary query. Make sure that it is the result of the query shown here, with its headers, then paste it or choose the file again.",
+  choiceReal: "Add the vendor's descriptions",
+  choiceRealWhat:
+    "If the hospital's team that looks after the record system can export the vendor's own data dictionary, which describes every column in words, choose that file here as well. Ask them for a table with three columns: the table name, the column name and the description. It makes the proposals much better. The export is the vendor's licensed material: it stays in this browser and in the saved hospital schema, which stays on hospital storage.",
+  choiceRealAlone:
+    "If you have not made the data dictionary from the database, the page reads this file as the data dictionary itself. Step 5 then asks for one more query, to check which of the tables exist.",
   choiceInvented: 'I want to try the page first.',
+  choiceInventedWhat:
+    'Made here. The invented dictionary describes a made-up hospital, and the page fetches it from this site, so load it while the tab is still online, then take the tab offline.',
   inventedLoad: 'Load the invented dictionary',
   choiceSaved: 'I have a saved hospital schema.',
-  choiceSavedWhat: ['Open it at ', 'step 3', '.'],
+  choiceSavedWhat: ['Made here. The page saved this file at step 9 of an earlier sitting. Open it at ', 'step 3', '.'],
   inventedOnlineOnly:
     'The invented dictionary can only be loaded while the tab is online. Go back online, load it, then take the tab offline again.',
   inventedLoading: 'The page is loading the invented dictionary.',
   inventedFailed: 'The page has not been able to fetch the invented dictionary. If the tab is still online, reload the page and try again.',
-  dictionaryLabel: 'The dictionary file, with one row for each column:',
+  dictionaryLabel: "The vendor's file, with one row for each column:",
   dictionaryAbout:
-    "The data dictionary is the vendor's own description of every table and column of the reporting database. The colleague exports it from the vendor's dictionary tool as a CSV or tab-separated file with a row of headings. The page uses it to propose where each part of the record is held, and shows its definition beside each column. The dictionary is licensed, so the page reads it in this tab only and sends it nowhere. A copy goes into the saved hospital schema, which stays on the hospital's own storage.",
-  tablesLabel: 'The tables file, if you have one, with one row for each table:',
+    "The vendor's data dictionary describes every table and column of the reporting database in words. The hospital's team that looks after the record system exports it from the vendor's dictionary tool as a CSV or tab-separated file with a row of headings, such as TABLE_NAME, COLUMN_NAME and DESCRIPTION. The page uses the descriptions to propose where each part of the record is held, and shows each one beside its column. The page reads the file in this tab only and sends it nowhere.",
+  tablesLabel: "The vendor's file of tables, if the team can export one, with one row for each table:",
   tablesAbout:
-    "This optional file comes from the same tool. It gives each table's description and the column that identifies its rows, which help the page choose the right table and find how the tables link.",
+    "This optional file comes from the same export. It gives each table's description and the column that identifies its rows, which help the page choose the right table and find how the tables link.",
   headingsSummary: 'If the page cannot find the headings',
   headingsWhat:
     'The page looks for the usual headings, such as TABLE_NAME, COLUMN_NAME and DESCRIPTION. If your file uses others, write them here exactly as they appear in its first row, and leave the rest empty.',
@@ -101,11 +150,15 @@ export const describeStrings = {
     ['key', 'The heading that marks the identifying column:'],
   ] as [string, string][],
   dictionaryLoad: 'Load the dictionary',
+  vendorLoad: 'Add the descriptions',
   dictionaryReading: 'The page is reading the dictionary.',
-  dictionaryReceipt: (r: { tables: number; columns: number; described: number; keyed: number; skipped: number; source?: string | null }) =>
-    `The page has read ${r.source === 'invented' ? 'the invented dictionary' : r.source === 'saved' ? 'the dictionary from the saved schema' : 'the dictionary'}: ${plural(r.columns, 'column', 'columns')} in ${plural(r.tables, 'table', 'tables')}.${
-      r.described === r.columns ? '' : ` ${plural(r.described, 'column has', 'columns have')} a description.`
-    }${r.skipped ? ` The page left out ${rows(r.skipped)} whose names are not plain table and column names.` : ''}`,
+  vendorReceipt: (vendor: { matched: number; gained: number }) => describeVendor(vendor),
+  dictionaryReceipt: (r: { tables: number; columns: number; described: number; keyed: number; skipped: number; source?: string | null; saved?: boolean; vendor?: { matched: number; gained: number } | null }) =>
+    r.source === 'database'
+      ? databaseReceipt(r)
+      : `The page has read ${r.source === 'invented' ? 'the invented dictionary' : r.source === 'saved' ? 'the dictionary from the saved schema' : 'the dictionary'}: ${plural(r.columns, 'column', 'columns')} in ${plural(r.tables, 'table', 'tables')}.${
+        r.described === r.columns ? '' : ` ${plural(r.described, 'column has', 'columns have')} a description.`
+      }${r.skipped ? ` The page left out ${rows(r.skipped)} whose names are not plain table and column names.` : ''}`,
   dictionaryFailed: 'The page could not read this file as a dictionary. Make sure that it is the CSV export, then choose it again.',
 
   // 3. The saved hospital schema.
@@ -146,7 +199,7 @@ export const describeStrings = {
     pasted
       ? `The earlier result below was pasted on ${pasted.replace('T', ' at ')}${database ? `, from the ${database === 'training' ? 'training' : 'production'} database` : ''}.`
       : 'No result was pasted for this query.',
-  checkPasteLabel: 'Run the query again and paste the new result here, with its headers:',
+  checkPasteLabel: "Run the query again on the hospital's database, then paste the new result here with its headers:",
   checkCompare: 'Compare with the earlier result',
   checkNoChange: 'The new result is the same as the earlier one.',
   checkChanges: 'The new result differs from the earlier one:',
@@ -187,7 +240,9 @@ export const describeStrings = {
   alternativesLabel: 'Other columns that came close',
 
   // 5. The tables and columns query.
-  tablesWhat: 'Choose the database, then choose Write the query. Run the query in your SQL window, paste the result below and choose Read the result.',
+  tablesWhat:
+    "Run this on the database. Choose the database, then choose Write the query. Your colleague runs the query in the SQL window connected to the hospital's database, pastes the result below and chooses Read the result.",
+  tablesAnswered: 'Answered by the data dictionary made from the database: every proposed table exists; the large ones are marked.',
   databaseLegend: 'The database that your SQL window is connected to:',
   databaseOptions: [
     ['production', 'The production reporting database, or a refreshed copy of it'],
@@ -208,7 +263,8 @@ export const describeStrings = {
     'Paste the result into the box below and choose Read the result.',
   ],
   querySafeSummary: 'Why this query is safe on production',
-  querySafe: "The query reads only SQL Server's own list of tables and columns, and never a row of any table.",
+  querySafe:
+    "The query reads only the database's own records of its tables, and never a row of any table. It may take a minute on a large database, and it needs no special permission beyond reading the database.",
   tablesPasteLabel: 'The result, copied with its headers:',
   tablesRead: 'Read the result',
   tablesReceipt: (r: { tables: number; columns: number; sized: number; asked: number; absent: number }) =>
@@ -300,7 +356,7 @@ export const describeStrings = {
 
   // 7. The codes.
   codesWhat:
-    "Some columns hold the hospital's own codes, such as the kind of each reading. For each list below, choose Write the list, run it in your SQL window, paste the result and choose Read the list. Then choose what each code means and choose Save these codes.",
+    "Run these on the database. Some columns hold the hospital's own codes, such as the kind of each reading. For each list below, choose Write the list, run it in the SQL window connected to the hospital's database, paste the result and choose Read the list. Then choose what each code means and choose Save these codes.",
   codesAboutSummary: 'How the list works, and why it is safe',
   codesSafe: (limit: string) =>
     `The list counts the codes used on the anaesthetics of the year above, with their names. It runs in two parts: part 1 puts at most ${limit} anaesthetics of that year into a temporary table, #cohort, and part 2 reads only their rows, never the whole of a large table.`,
@@ -335,7 +391,8 @@ export const describeStrings = {
   kindMeaning: (kind: string, meaning: string) => `${kind}: ${meaning}`,
 
   // 8. The counts.
-  countsWhat: 'Choose Write the counts. For each count, choose Copy the count, run it, paste its result and choose Read the result, then choose Save the judgement.',
+  countsWhat:
+    "Run these on the database. Choose Write the counts. For each count, choose Copy the count, run it in the SQL window connected to the hospital's database, paste its result and choose Read the result, then choose Save the judgement.",
   countsAboutSummary: 'What the counts are for',
   countsAbout:
     'The counts show whether the hospital schema reaches the record in every year. Each count is rounded down to ten. A year or a group with fewer than ten is left out, and a figure under ten within a group shows as under 10, so that no small number can point to a patient.',
@@ -437,7 +494,7 @@ export const describeStrings = {
     chooseColumn: 'Choose a column',
     valuesLabel: 'holds any of these values, separated by commas',
     flagValuesLabel: 'It is 1 where the column holds any of these values, separated by commas, and 0 otherwise',
-    valuesNote: 'To pick from the values that the column actually holds, choose Write the query of values, run it and paste the result.',
+    valuesNote: "To pick from the values that the column actually holds, choose Write the query of values, run it in the SQL window connected to the hospital's database, and paste the result here.",
     valuesWrite: 'Write the query of values',
     valuesCopy: 'Copy the query of values',
     valuesPasteLabel: 'The result of the query of values, copied with its headers:',
@@ -500,10 +557,10 @@ export const describeStrings = {
       'Before you change anything, you can run the test on made-up rows on the hospital schema as it stands, to see what is already wrong. The page builds rows with no hospital data and runs every part of the schema on them. Each finding links to its column below.',
     modelCheckWhatAfter: 'The test on made-up rows runs the hospital schema with every answer and change so far. Each finding links to its column below.',
     probeWhat: {
-      link: 'Run this test query to try the link on the database. It counts the anaesthetics of {year}, the year chosen in step 7, that have at least one row through the link, and those with none.',
-      filter: 'Run this test query to count the rows read and how many of them pass the filter.',
-      flag: 'Run this test query to count the rows in which the flag is 1, 0 and empty.',
-      flag_two: 'Run this test query to count the rows in which the flag is 1 and 0. The form never leaves this flag empty.',
+      link: "Run this test query in the SQL window connected to the hospital's database to try the link. It counts the anaesthetics of {year}, the year chosen in step 7, that have at least one row through the link, and those with none.",
+      filter: "Run this test query in the SQL window connected to the hospital's database. It counts the rows read and how many of them pass the filter.",
+      flag: "Run this test query in the SQL window connected to the hospital's database. It counts the rows in which the flag is 1, 0 and empty.",
+      flag_two: "Run this test query in the SQL window connected to the hospital's database. It counts the rows in which the flag is 1 and 0. The form never leaves this flag empty.",
     } as Record<string, string>,
     probeWrite: 'Write the test query',
     probeCopy: 'Copy the test query',

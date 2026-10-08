@@ -66,12 +66,53 @@
             <button type="button" class="toggle link" id="toggle-2"></button>
             <div class="body">
               <p id="t-dictionary-what" class="do"></p>
-              <!-- Three ways to begin, one line each. The first takes a real dictionary, the second the invented one, and the
-                   third leads to step 3. -->
+              <!-- Four ways to begin. The first makes the data dictionary from the database with one query; the second adds the
+                   vendor's descriptions to it, or is the dictionary itself; the third loads the invented dictionary; the fourth
+                   leads to step 3. -->
               <div class="choices">
+                <section class="choice" id="c-database" aria-labelledby="h-choice-database">
+                  <h3 id="h-choice-database"></h3>
+                  <p id="t-database-origin" class="origin"></p>
+                  <!-- The choice of database stands here before anything has been run, and moves to step 5 when step 5 asks its own query. -->
+                  <div id="database-slot-2"></div>
+                  <div class="actions"><button type="button" id="database-copy" class="secondary copy-query"></button></div>
+                  <p id="t-database-copied" class="status" hidden role="status"></p>
+                  <details class="query">
+                    <summary id="s-database-query"></summary>
+                    <pre id="database-query" class="code"></pre>
+                  </details>
+                  <details class="about">
+                    <summary id="s-database-safe"></summary>
+                    <p id="t-database-safe" class="note"></p>
+                    <p id="t-database-returns" class="note"></p>
+                  </details>
+                  <p id="t-database-back" class="do-also"></p>
+                  <ol class="guide-steps result-ways">
+                    <li>
+                      <p id="t-database-small" class="way"></p>
+                      <p id="t-database-small-how" class="note"></p>
+                      <label for="database-paste" id="l-database-paste"></label>
+                      <textarea id="database-paste" rows="4" spellcheck="false" autocomplete="off"></textarea>
+                      <div class="actions"><button type="button" id="database-read"></button></div>
+                    </li>
+                    <li>
+                      <p id="t-database-large" class="way"></p>
+                      <details class="about">
+                        <summary id="s-database-large-how"></summary>
+                        <ol id="t-database-large-how" class="guide-steps"></ol>
+                      </details>
+                      <div class="field">
+                        <label for="database-file" id="l-database-file"></label>
+                        <input type="file" id="database-file" accept=".csv,.tsv,.txt,.rpt,text/csv,text/tab-separated-values,text/plain" />
+                      </div>
+                    </li>
+                  </ol>
+                  <p id="t-database-status" class="status" hidden role="status"></p>
+                </section>
                 <section class="choice" aria-labelledby="h-choice-real">
                   <h3 id="h-choice-real"></h3>
                   <p id="t-choice-real" class="note"></p>
+                  <p id="t-choice-real-alone" class="note"></p>
                   <div class="field">
                     <label for="dictionary" id="l-dictionary"></label>
                     <input type="file" id="dictionary" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain" />
@@ -94,9 +135,11 @@
                     <div id="headings"></div>
                   </details>
                   <div class="actions"><button type="button" id="dictionary-load" disabled></button></div>
+                  <p id="t-vendor-status" class="status" hidden role="status"></p>
                 </section>
                 <section class="choice" aria-labelledby="h-choice-invented">
                   <h3 id="h-choice-invented"></h3>
+                  <p id="t-choice-invented" class="note"></p>
                   <div class="actions"><button type="button" id="invented-load" class="secondary"></button></div>
                   <p id="t-invented-status" class="status" hidden role="status"></p>
                 </section>
@@ -157,8 +200,10 @@
             <button type="button" class="toggle link" id="toggle-5"></button>
             <div class="body">
               <p id="t-tables-what" class="do"></p>
+              <p id="t-tables-answered" class="status good" hidden></p>
               <div id="b-tables">
-                <fieldset class="database">
+                <div id="database-slot-5"></div>
+                <fieldset class="database" id="f-database">
                   <legend id="l-database"></legend>
                   <div id="database-options"></div>
                   <p id="t-database-unsure" class="note" hidden></p>

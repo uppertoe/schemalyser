@@ -386,3 +386,136 @@ def test_a_count_leaves_out_a_small_group_and_leaves_empty_a_small_figure_within
     s.read_count("coverage_by_year", "start_year\tanaesthetics\twith_patient\twith_birth_date\twith_death_date\ttest_patients\twith_stop\tstop_before_start\n"
                  "2023\t400\t400\t400\t20\t0\t390\t0\n2024\t20\tNULL\t20\tNULL\tNULL\t20\tNULL\n", DATE)
     assert not any("have a patient whom" in f for f in s.findings("coverage_by_year"))
+
+
+# The data dictionary made from the database: the one query of every table, its result pasted or saved as a file, the
+# vendor's descriptions added to it, and step 5 answered by it.
+
+# The tables whose columns carry a description in the database's own records, in the made-up result below. The rest
+# have none, as most of a vendor's tables do.
+DESCRIBED = {"PERSON_MASTER", "THEATRE_CASE", "ANAES_RECORD", "OBS_READING", "OBS_TYPE_DEF"}
+
+
+def database_result(delimiter="\t", sizes=None):
+    """The data dictionary query's result for the invented world: the catalogue, a size for each table, the key flag and
+    the dictionary's description for the tables in DESCRIBED. With "\\t" it is the grid as copied with its headers;
+    with "," it is the file that SQL Server Management Studio saves, which does not quote a value that holds a comma."""
+    from schemalyser import datadict, first_ask
+    dictionary = datadict.load(DICTIONARY, TABLES)
+    sizes = sizes or {"OBS_READING": 25_000_000}
+    lines = [delimiter.join(first_ask.DATABASE_LAYOUT)]
+    for row in csv.DictReader(CATALOGUE.open()):
+        table = dictionary.table(row["TABLE_NAME"])
+        entry = table.column(row["COLUMN_NAME"]) if table else None
+        words = dictionary.description(row["TABLE_NAME"], row["COLUMN_NAME"]) if row["TABLE_NAME"] in DESCRIBED else ""
+        cells = [row[k] or "NULL" for k in first_ask.QUERY_ORDER]
+        key = "YES" if table is not None and entry is not None and entry.name in table.primary_key() else "NO"
+        lines.append(delimiter.join(cells + [str(sizes.get(row["TABLE_NAME"], 1200)), key, words or "NULL"]))
+    return "\n".join(lines) + "\n\n(98 rows affected)\n\nCompletion time: 2026-10-08T10:00:00\n"
+
+
+def test_the_data_dictionary_query_reads_every_table_from_the_database_s_own_records():
+    import sqlglot
+    from schemalyser import first_ask
+    s = describe.Describe()
+    s.version = "test"
+    sql = s.dictionary_query("2. Load the data dictionary")["sql"]
+    assert sql.startswith("-- Written by Schemalyser test on ")
+    for part in ("FROM INFORMATION_SCHEMA.COLUMNS AS c", "sys.partitions", "p.index_id IN (0, 1)", "SUM(p.rows)",
+                 "INFORMATION_SCHEMA.KEY_COLUMN_USAGE", "INFORMATION_SCHEMA.TABLE_CONSTRAINTS", "'PRIMARY KEY'",
+                 "LEFT JOIN sys.extended_properties", "N'MS_Description'", "AS DESCRIPTION", "AS IS_PRIMARY_KEY",
+                 "AS TABLE_ROWS", "DATA_TYPE", "IS_NULLABLE", "ORDINAL_POSITION"):
+        assert part in sql, part
+    # Every table: the query names no table and narrows to none.
+    assert "TABLE_NAME IN" not in sql and "WHERE c." not in sql
+    assert not any(name in sql for name in ("PERSON_MASTER", "THEATRE_CASE", "OBS_READING"))
+    assert "never a row of any table" in " ".join(line[3:] for line in sql.splitlines() if line.startswith("-- "))
+    statements = [t for t in sqlglot.parse(sql, read="tsql") if t is not None]
+    assert len(statements) == 1 and statements[0].key == "select"
+    assert sql == s.dictionary_query()["sql"] and first_ask.database_query() in sql
+
+
+@pytest.mark.parametrize("delimiter", ["\t", ","])
+def test_the_result_pasted_or_saved_makes_the_dictionary_and_answers_step_5(delimiter):
+    s = describe.Describe()
+    s.version = "test"
+    text = database_result(delimiter)
+    receipt = s.load_from_database(("﻿" + text).encode("utf-8"), "result.csv", "2. Load the data dictionary")
+    assert receipt["source"] == "database" and receipt["columns"] == 98 and receipt["tables"] == 25
+    described = sum(1 for row in csv.DictReader(CATALOGUE.open()) if row["TABLE_NAME"] in DESCRIBED)
+    assert receipt["described"] == described and 0 < described < 98
+    assert receipt["sized"] == 25 and receipt["keyed"] >= 20
+    # A description that holds a comma, which the saved file does not quote, is read whole.
+    assert s.dictionary.description("PERSON_MASTER", "PERSON_KEY") == \
+        "The unique ID of the patient record for this row. Other tables use this column to link to PERSON_MASTER."
+    assert s.dictionary.description("VISIT_DIAGNOSIS", "VISIT_KEY") == ""
+    assert s.dictionary.table("PERSON_MASTER").primary_key() == ("PERSON_KEY",)
+    # The same result is the result of the tables and columns query, so step 5 is answered.
+    model = s.view()
+    assert model["catalogue"] and model["catalogue_source"] == "database"
+    s.propose(date=DATE)
+    items = {i["about"]: i for r in s.view()["roles"] for i in r["items"]}
+    assert items["role_reading.value"]["presence"]["state"] == "large"
+    assert all(i["presence"]["state"] != "missing" for i in items.values() if i["presence"])
+    # The pasted grid and the saved file give the same dictionary.
+    other = describe.Describe()
+    other.load_from_database(database_result("\t" if delimiter == "," else ","))
+    assert other.dictionary_files["data"] == s.dictionary_files["data"]
+
+
+def test_a_result_without_its_headers_says_how_to_include_them():
+    s = describe.Describe()
+    body = database_result().split("\n", 1)[1]
+    with pytest.raises(describe.DescribeError, match="Include column headers"):
+        s.load_from_database(body.encode())
+    with pytest.raises(describe.DescribeError, match="data dictionary query"):
+        s.load_from_database(b"")
+
+
+def test_the_vendor_s_descriptions_are_added_by_name_without_regard_to_case_and_saved_with_the_schema():
+    s = describe.Describe()
+    s.version = "test"
+    s.load_from_database(database_result().encode(), step="2. Load the data dictionary")
+    before = s.dictionary_receipt()["described"]
+    # The vendor's export spells the names in lower case, and describes a table that the database does not hold.
+    vendor = DICTIONARY.read_text().split("\n")
+    vendor = "\n".join([vendor[0]] + [line.lower() if i % 2 else line for i, line in enumerate(vendor[1:], 1)]
+                       + ["NO_SUCH_TABLE,NO_SUCH_COLUMN,VARCHAR,NO,A table that this database does not hold."])
+    receipt = s.add_descriptions(vendor.encode(), None, {}, "vendor.csv")
+    assert receipt["described"] == 98 and receipt["vendor"] == {"file": "vendor.csv", "matched": 98, "gained": 98 - before}
+    assert s.dictionary.table("NO_SUCH_TABLE") is None and receipt["tables"] == 25
+    assert s.dictionary.description("VISIT_DIAGNOSIS", "VISIT_KEY")
+    assert s.view()["catalogue_source"] == "database"
+    s.propose(date=DATE)
+    files = s.folder_files(DATE)
+    assert {"dictionary/data-dictionary.csv", "dictionary/vendor.csv", "queries/01-data-dictionary.sql"} <= set(files)
+    info = json.loads(files["dictionary/dictionary.json"])
+    assert info["source"] == "database" and info["vendor"] == "vendor.csv"
+    entry = json.loads(files["journal.json"])["entries"][0]
+    assert entry["vendor_file"] == "vendor.csv" and entry["vendor_gained"] == 98 - before
+    # A new sitting opens the saved schema with nothing else, and step 5 is answered again.
+    again = describe.Describe()
+    found = again.restore(files)
+    assert found["dictionary"] and found["map"] and not found["needs_dictionary"]
+    restored = again.dictionary_receipt()
+    assert restored["saved"] and restored["source"] == "database" and restored["described"] == 98
+    assert restored["vendor"]["gained"] == 98 - before
+    assert again.view()["catalogue_source"] == "database" and again.sizes["OBS_READING"] == 25_000_000
+    # The check against the database compares a new result of the query with the one that made the dictionary.
+    check = {q["name"]: q for q in again.check()["queries"]}
+    assert check["data-dictionary"]["rows"]
+    fewer = "\n".join(line for line in database_result().split("\n") if "\tVISIT_DIAGNOSIS\t" not in line)
+    assert again.compare("data-dictionary", fewer)["differences"] == \
+        ["The table VISIT_DIAGNOSIS was in the earlier result and is not in the new one."]
+
+
+def test_a_vendor_file_alone_is_the_dictionary_and_leaves_step_5_to_its_query():
+    s = describe.Describe()
+    with pytest.raises(describe.DescribeError, match="made from the database"):
+        s.add_descriptions(DICTIONARY.read_bytes())
+    s.load_dictionary(DICTIONARY.read_bytes(), TABLES.read_bytes())
+    assert s.view()["catalogue_source"] is None and not s.view()["catalogue"]
+    with pytest.raises(describe.DescribeError, match="made from the database"):
+        s.add_descriptions(DICTIONARY.read_bytes())
+    s.read_tables(tables_result())
+    assert s.view()["catalogue_source"] == "query"

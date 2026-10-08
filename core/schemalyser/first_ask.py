@@ -42,6 +42,95 @@ WORDING = {
 }
 
 
+# The data dictionary query: every column of every table and view in the database, in the ten fields of the tables and
+# columns query, then whether the column is in its table's primary key and the description that the database holds for
+# it. Its result is the data dictionary made from the database, which the dictionary loader reads by these headings.
+KEY_COLUMN = "IS_PRIMARY_KEY"
+DESCRIPTION_COLUMN = "DESCRIPTION"
+DATABASE_LAYOUT = LAYOUT + (KEY_COLUMN, DESCRIPTION_COLUMN)
+DATABASE_WORDING = {
+    "comment": "This is the data dictionary query. It lists every column of every table and view in this database, with "
+               "its data type, whether it is part of its table's primary key, the number of rows in the table from SQL "
+               "Server's own records, rounded down to the nearest ten, and the description that the database holds for "
+               "the column, which is empty where it holds none. It reads only the database's own records of its tables "
+               "and never a row of any table. It may take a minute on a large database, and it needs no special "
+               "permission beyond reading the database.",
+}
+
+
+def database_query():
+    """The data dictionary query, as T-SQL text. It names no table of the hospital's and takes no input."""
+    import textwrap
+    lines = [f"-- {line}" for line in textwrap.wrap(DATABASE_WORDING["comment"], WIDTH - 3)]
+    named = "OBJECT_ID(QUOTENAME(c.TABLE_SCHEMA) + N'.' + QUOTENAME(c.TABLE_NAME))"
+    lines += [
+        "SELECT c.TABLE_SCHEMA, c.TABLE_NAME, c.COLUMN_NAME, c.ORDINAL_POSITION, c.DATA_TYPE,",
+        "       c.CHARACTER_MAXIMUM_LENGTH, c.NUMERIC_PRECISION, c.NUMERIC_SCALE, c.IS_NULLABLE,",
+        f"       (s.row_count / 10) * 10 AS {SIZE_COLUMN},",
+        f"       CASE WHEN k.COLUMN_NAME IS NULL THEN 'NO' ELSE 'YES' END AS {KEY_COLUMN},",
+        "       REPLACE(REPLACE(REPLACE(CAST(e.value AS nvarchar(4000)), CHAR(13), N' '), CHAR(10), N' '), CHAR(9), N' ')",
+        f"           AS {DESCRIPTION_COLUMN}",
+        "FROM INFORMATION_SCHEMA.COLUMNS AS c",
+        "LEFT JOIN (SELECT p.object_id, SUM(p.rows) AS row_count",
+        "           FROM sys.partitions AS p",
+        "           WHERE p.index_id IN (0, 1)",
+        "           GROUP BY p.object_id) AS s",
+        f"       ON s.object_id = {named}",
+        "LEFT JOIN (SELECT u.TABLE_SCHEMA, u.TABLE_NAME, u.COLUMN_NAME",
+        "           FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS AS t",
+        "           JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE AS u",
+        "             ON u.CONSTRAINT_SCHEMA = t.CONSTRAINT_SCHEMA AND u.CONSTRAINT_NAME = t.CONSTRAINT_NAME",
+        "            AND u.TABLE_SCHEMA = t.TABLE_SCHEMA AND u.TABLE_NAME = t.TABLE_NAME",
+        "           WHERE t.CONSTRAINT_TYPE = 'PRIMARY KEY') AS k",
+        "       ON k.TABLE_SCHEMA = c.TABLE_SCHEMA AND k.TABLE_NAME = c.TABLE_NAME AND k.COLUMN_NAME = c.COLUMN_NAME",
+        "LEFT JOIN sys.extended_properties AS e",
+        "       ON e.class = 1 AND e.name = N'MS_Description'",
+        f"      AND e.major_id = {named}",
+        f"      AND e.minor_id = COLUMNPROPERTY({named}, c.COLUMN_NAME, 'ColumnId')",
+        "ORDER BY c.TABLE_SCHEMA, c.TABLE_NAME, c.ORDINAL_POSITION;",
+    ]
+    return "\n".join(lines)
+
+
+def database_rows(text):
+    """The rows of the data dictionary query's result, each as the twelve values of DATABASE_LAYOUT in that order.
+
+    The result may be pasted from the results grid, which separates its values by tabs, or saved as a file, as a CSV
+    or with tabs. The first row must be the headings, in any order. SQL Server Management Studio does not quote a value
+    that holds a comma when it saves a CSV, so a row with more values than headings has its extra values joined back
+    into the description, which is the last column the query returns. NULL is read as empty, and the lines that SQL
+    Server adds about the rows affected and the time of completion are left out. Raises FirstAskError.
+    """
+    text = (text or "").lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [line for line in text.split("\n") if line.strip()]
+    if not lines:
+        raise FirstAskError("no rows")
+    delimiter = "\t" if "\t" in lines[0] else ","
+    if delimiter == "\t":
+        rows = [line.split("\t") for line in lines]
+    else:
+        rows = list(csv.reader(io.StringIO("\n".join(lines))))
+    head = [cell.strip().upper() for cell in rows[0]]
+    if not set(DATABASE_LAYOUT) <= set(head):
+        raise FirstAskError("headings")
+    at = [head.index(name) for name in DATABASE_LAYOUT]
+    last = head.index(DESCRIPTION_COLUMN) == len(head) - 1
+    kept = []
+    for row in rows[1:]:
+        if len(row) > len(head) and last:
+            row = row[:len(head) - 1] + [delimiter.join(row[len(head) - 1:])]
+        cells = [cell.strip() for cell in row]
+        if len(cells) == 1 and re.fullmatch(r"\(\d+ rows? affected\)|Completion time:.*", cells[0]):
+            continue
+        if all(re.fullmatch(r"-*", cell) for cell in cells):
+            continue    # the line that some of SQL Server's tools print under the headings
+        cells += [""] * (len(head) - len(cells))
+        kept.append(["" if cells[i] == "NULL" else cells[i] for i in at])
+    if not kept:
+        raise FirstAskError("no rows")
+    return kept
+
+
 def _plain(name):
     return isinstance(name, str) and len(name) <= 128 and bool(NAME.match(name)) and "\n" not in name
 

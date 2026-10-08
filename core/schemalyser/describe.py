@@ -25,6 +25,7 @@ readings before the cohort has been narrowed (see scripts.py for why).
 """
 import copy
 import csv
+import dataclasses
 import datetime as dt
 import io
 import json
@@ -84,6 +85,14 @@ WORDING = {
     "codes_says": "A person chose {count} local {codes} for this kind from the list of what is charted on {date}.",
     "codes_none": "No local code has been chosen for this kind yet.",
     "codes_question": "Please choose the local codes of this kind from the list of what is charted.",
+    "database_headings": "The page could not find the headings of the data dictionary query in the first row. In SQL "
+                         "Server Management Studio, open Tools, then Options, Query Results, SQL Server and Results to "
+                         "Grid, tick Include column headers when copying or saving the results, run the query again, "
+                         "then paste or save the result again.",
+    "database_unreadable": "The page could not read this as the result of the data dictionary query. Make sure that it "
+                           "is the result of the query shown here, with its headers, then paste it or choose the file again.",
+    "no_database_dictionary": "The page adds the vendor's descriptions to a data dictionary made from the database, and "
+                              "none is loaded yet.",
     "not_found": "The dictionary holds no column {name}.",
     "not_found_catalogue": "The result of the tables and columns query holds no column {name}.",
     "not_a_name": "Please write the replacement as TABLE.COLUMN, such as the name of a table, a full stop and the name of one of its columns.",
@@ -282,6 +291,13 @@ class Describe:
         # Where the dictionary came from: "file" when a person chose it, "invented", or "saved" when a saved hospital
         # schema held it.
         self.dictionary_source = None
+        # Whether the dictionary was read again from a saved hospital schema, and the vendor's descriptions added to a
+        # dictionary made from the database, as {"file", "matched", "gained"}.
+        self.dictionary_saved = False
+        self.vendor = None
+        # Where the result of the tables and columns came from: "database" when the data dictionary query gave it, and
+        # "query" when the tables and columns query of step 5 did.
+        self.catalogue_source = None
         self.proposer = None
         self.data = None
         self.catalogue = None
@@ -313,21 +329,12 @@ class Describe:
     def load_dictionary(self, data, tables=None, headings=None, name="dictionary.csv", tables_name="tables.csv", step="",
                         invented=False, source=None):
         own = {k: v for k, v in (headings or {}).items() if v}
-        try:
-            dictionary = datadict.load(bytes(data), bytes(tables) if tables is not None else None, own)
-        except datadict.DictionaryError as error:
-            message = str(error)
-            first = _text(bytes(data)[:20000]).split("\n", 1)[0]
-            delimiter = max(("\t", ",", ";", "|"), key=first.count)
-            found = [h.strip() for h in next(csv.reader(io.StringIO(first), delimiter=delimiter), [])][:60]
-            found = [h for h in found if len(h) <= 64 and re.fullmatch(r"[\w .()/-]+", h)]
-            lacking = re.match(r"Schemalyser could not find a heading for the (.+?) in", message)
-            if lacking:
-                message = WORDING["headings"].format(fields=lacking.group(1))
-            elif message.startswith("The dictionary has no heading"):
-                message = message + " Please check the heading's spelling, then load the file again."
-            raise DescribeError(message) from None
+        dictionary = _read_dictionary(data, tables, own)
         self.dictionary = dictionary
+        self.dictionary_saved = source == "saved"
+        self.vendor = None
+        if self.catalogue_source == "database":
+            self.catalogue, self.sizes, self.catalogue_text, self.catalogue_source = None, {}, "", None
         self.invented = bool(invented)
         self.dictionary_source = source or ("invented" if invented else "file")
         self.proposer = None
@@ -358,7 +365,92 @@ class Describe:
                 "described": described, "keyed": keyed, "skipped": self.dictionary.skipped,
                 "file": self.dictionary_files["name"] if self.dictionary_files else "",
                 "tablesFile": (self.dictionary_files or {}).get("tables_name"),
-                "invented": self.invented, "source": self.dictionary_source}
+                "invented": self.invented, "source": self.dictionary_source, "saved": self.dictionary_saved,
+                "vendor": dict(self.vendor) if self.vendor else None}
+
+    # The data dictionary made from the database.
+
+    def dictionary_query(self, step="", record=True):
+        """The data dictionary query, offered at step 2. It names nothing of the hospital's, so it is the same for every
+        hospital. The page shows it before anything is loaded, unrecorded; it is recorded with the other queries once its
+        result is read, so that the saved hospital schema holds what was run."""
+        if not record:
+            stamp = f"-- {WORDING['stamp_query'].format(version=self.version or 'unknown', date=_today())}"
+            return {"sql": stamp + "\n" + first_ask.database_query()}
+        return {"sql": self.offer("data-dictionary", step, first_ask.database_query())}
+
+    def load_from_database(self, data, name="data-dictionary.csv", step="", record=True):
+        """Makes the data dictionary from the result of the data dictionary query, pasted or saved as a file, and reads
+        the same result as the result of the tables and columns query, so that step 5 is answered at once. The
+        dictionary's file is the result in a plain CSV with the query's twelve headings."""
+        text = _text(bytes(data) if not isinstance(data, str) else data)
+        try:
+            rows = first_ask.database_rows(text)
+        except first_ask.FirstAskError as error:
+            raise DescribeError(WORDING["database_headings" if str(error) == "headings" else "database_unreadable"]) from None
+        out = io.StringIO()
+        writer = csv.writer(out, lineterminator="\n")
+        writer.writerow(first_ask.DATABASE_LAYOUT)
+        writer.writerows(rows)
+        canonical = out.getvalue().encode("utf-8")
+        try:
+            self.load_dictionary(canonical, name=_safe_file(name, "data-dictionary.csv"), step=step, source="database")
+        except DescribeError:
+            raise DescribeError(WORDING["database_unreadable"]) from None
+        self.dictionary_saved = not record
+        try:
+            self.read_tables(_tsv(list(first_ask.LAYOUT), [row[:len(first_ask.LAYOUT)] for row in rows]), record=False)
+        except DescribeError:
+            raise DescribeError(WORDING["database_unreadable"]) from None
+        self.catalogue_source = "database"
+        if record:
+            if "data-dictionary" not in self.journal:
+                self.dictionary_query(step)
+            self.journal["data-dictionary"].update({"pasted": _now(), "database": self.settings.get("database"),
+                                                   "version": self.version,
+                                                   "dictionary": f"{DICTIONARY_FOLDER}/{self.dictionary_files['name']}"})
+        return {**self.dictionary_receipt(), "sized": len(self.sizes)}
+
+    def add_descriptions(self, data, tables=None, headings=None, name="vendor-dictionary.csv", tables_name="vendor-tables.csv",
+                         record=True):
+        """Adds the vendor's descriptions to the data dictionary made from the database: each table and column of the
+        vendor's file that the database holds, matched by name without regard to case, gives its description, and its
+        primary key where the database declares none. Nothing the database does not hold is added."""
+        if self.dictionary is None or self.dictionary_source != "database":
+            raise DescribeError(WORDING["no_database_dictionary"])
+        own = {k: v for k, v in (headings or {}).items() if v}
+        vendor = _read_dictionary(data, tables, own)
+        matched = gained = 0
+        for table in self.dictionary.tables():
+            theirs = vendor.table(table.name)
+            if theirs is None:
+                continue
+            if theirs._description:
+                table._description = theirs._description
+            for key, entry in list(table.columns.items()):
+                other = theirs.column(entry.name)
+                if other is None:
+                    continue
+                matched += 1
+                if other._description:
+                    gained += not entry._description
+                    table.columns[key] = dataclasses.replace(entry, _description=other._description)
+            if not table.primary_key() and theirs.primary_key():
+                key = tuple(table.column(k).name for k in theirs.primary_key() if table.column(k) is not None)
+                if len(key) == len(theirs.primary_key()):
+                    table.key = key
+        self.proposer = None
+        self._lookups = {}
+        self.vendor = {"file": _safe_file(name, "vendor-dictionary.csv"), "matched": matched, "gained": gained}
+        self.dictionary_files.update({"vendor_name": self.vendor["file"], "vendor_data": bytes(data),
+                                      "vendor_tables_name": _safe_file(tables_name, "vendor-tables.csv") if tables is not None else None,
+                                      "vendor_tables_data": bytes(tables) if tables is not None else None,
+                                      "vendor_headings": own})
+        if record and self.dictionary_entry is not None:
+            self.dictionary_entry.update({"vendor_file": self.vendor["file"], "vendor_bytes": len(bytes(data)),
+                                          "vendor_sha256": hashlib.sha256(bytes(data)).hexdigest(),
+                                          "vendor_matched": matched, "vendor_gained": gained})
+        return self.dictionary_receipt()
 
     # The proposal.
 
@@ -451,6 +543,7 @@ class Describe:
             if catalogue.table(row[1]) is not None and row[-1].isdecimal():
                 sizes[catalogue.table(row[1]).name.upper()] = int(row[-1])
         self.catalogue, self.sizes = catalogue, sizes
+        self.catalogue_source = "query"
         self.catalogue_text = _tsv(list(first_ask.LAYOUT), rows)
         if record:
             self.pasted("tables-and-columns", text)
@@ -1527,8 +1620,16 @@ ORDER  BY g.kind;"""
             files[f"{DICTIONARY_FOLDER}/{meta['name']}"] = meta["data"]
             if meta.get("tables_data") is not None:
                 files[f"{DICTIONARY_FOLDER}/{meta['tables_name']}"] = meta["tables_data"]
+            vendor = {}
+            if meta.get("vendor_data") is not None:
+                files[f"{DICTIONARY_FOLDER}/{meta['vendor_name']}"] = meta["vendor_data"]
+                vendor = {"vendor": meta["vendor_name"], "vendor_headings": meta.get("vendor_headings") or {}}
+                if meta.get("vendor_tables_data") is not None:
+                    files[f"{DICTIONARY_FOLDER}/{meta['vendor_tables_name']}"] = meta["vendor_tables_data"]
+                    vendor["vendor_tables"] = meta["vendor_tables_name"]
             files[f"{DICTIONARY_FOLDER}/dictionary.json"] = self._json(
                 {"file": meta["name"], "tables": meta.get("tables_name"), "headings": meta.get("headings") or {},
+                 **({"source": "database"} if self.dictionary_source == "database" else {}), **vendor,
                  **({"invented": True} if self.invented else {})}, date)
         entries = sorted(self.journal.values(), key=lambda e: e["number"])
         journal = []
@@ -1586,9 +1687,17 @@ ORDER  BY g.kind;"""
         if has_dictionary:
             tables = files.get(f"{DICTIONARY_FOLDER}/{info['tables']}") if info.get("tables") else None
             try:
-                self.load_dictionary(files[f"{DICTIONARY_FOLDER}/{info['file']}"], tables, info.get("headings") or {},
-                                     info["file"], info.get("tables") or "tables.csv",
-                                     invented=bool(info.get("invented") or held.get("invented")), source="saved")
+                if info.get("source") == "database":
+                    self.load_from_database(files[f"{DICTIONARY_FOLDER}/{info['file']}"], info["file"], record=False)
+                    vendor = files.get(f"{DICTIONARY_FOLDER}/{info.get('vendor')}") if info.get("vendor") else None
+                    if vendor is not None:
+                        vendor_tables = files.get(f"{DICTIONARY_FOLDER}/{info['vendor_tables']}") if info.get("vendor_tables") else None
+                        self.add_descriptions(vendor, vendor_tables, info.get("vendor_headings") or {}, info["vendor"],
+                                              info.get("vendor_tables") or "vendor-tables.csv", record=False)
+                else:
+                    self.load_dictionary(files[f"{DICTIONARY_FOLDER}/{info['file']}"], tables, info.get("headings") or {},
+                                         info["file"], info.get("tables") or "tables.csv",
+                                         invented=bool(info.get("invented") or held.get("invented")), source="saved")
                 found["dictionary"] = True
             except DescribeError:
                 pass
@@ -1625,6 +1734,8 @@ ORDER  BY g.kind;"""
             if entry.get("name") == "correction":
                 self.corrections.append({k: v for k, v in entry.items()})
                 continue
+            if entry.get("name") == "dictionary" and self.dictionary_entry is not None:
+                self.dictionary_entry.update({k: v for k, v in entry.items() if k.startswith("vendor_")})
             if entry.get("name") == "dictionary" or "number" not in entry:
                 continue
             name = entry["name"]
@@ -1694,6 +1805,8 @@ ORDER  BY g.kind;"""
         for entry in sorted(self.journal.values(), key=lambda e: e["number"]):
             name = entry["name"]
             previous = self.results.get(name)
+            if name == "data-dictionary" and self.catalogue_source == "database":
+                previous = self.catalogue_text
             columns, rows = [], []
             if previous:
                 try:
@@ -1711,6 +1824,13 @@ ORDER  BY g.kind;"""
         """The differences between a query's earlier result and a new one, as sentences: a table or column that has
         gone, a row that has gone or come, and a count that has changed by more than a tenth."""
         previous = self.results.get(name)
+        if name == "data-dictionary" and self.catalogue_source == "database":
+            try:
+                rows = first_ask.database_rows(text)
+            except first_ask.FirstAskError:
+                raise DescribeError("unreadable") from None
+            fresh = _tsv(list(first_ask.LAYOUT), [row[:len(first_ask.LAYOUT)] for row in rows])
+            return {"differences": _tables_differences(self.catalogue_text, fresh), "previous": True}
         if previous is None:
             return {"differences": [], "previous": False}
         if name == "tables-and-columns":
@@ -1752,6 +1872,7 @@ ORDER  BY g.kind;"""
         tally = self.tally()
         return {"dictionary": self.dictionary_receipt(), "proposed": self.data is not None, "roles": roles,
                 "tally": tally, "questions": self.questions(), "catalogue": self.catalogue is not None,
+                "catalogue_source": self.catalogue_source if self.catalogue is not None else None,
                 "vocabularies": self.vocabularies(), "values": self.values, "counts": {k: {kk: v.get(kk) for kk in ("columns", "rows", "looks_right", "note", "date", "database")}
                                                                 | {"findings": self.findings(k)} for k, v in self.counts.items()},
                 "settings": {k: self.settings.get(k) for k in ("made", "updated", "database", "year")},
@@ -1793,6 +1914,20 @@ ORDER  BY g.kind;"""
                 "answer": confirmation.get("answer"), "date": confirmation.get("date"),
                 "replacement": confirmation.get("replacement"), "note": confirmation.get("note"),
                 "presence": self.presence(binding if attribute != "rows" else ({"table": table} if table else None))}
+
+
+def _read_dictionary(data, tables, own):
+    """A dictionary read from the bytes of its file and of its tables' file, with an error a person can act on."""
+    try:
+        return datadict.load(bytes(data), bytes(tables) if tables is not None else None, own)
+    except datadict.DictionaryError as error:
+        message = str(error)
+        lacking = re.match(r"Schemalyser could not find a heading for the (.+?) in", message)
+        if lacking:
+            message = WORDING["headings"].format(fields=lacking.group(1))
+        elif message.startswith("The dictionary has no heading"):
+            message = message + " Please check the heading's spelling, then load the file again."
+        raise DescribeError(message) from None
 
 
 def _binding_form(binding):
@@ -1973,7 +2108,9 @@ README_FILES = [
                "chosen for each kind."),
     ("counts/judgements.json", "For each count, whether it looked right to the two of you, any note, and the database, "
                                "production or training, whose figures were judged."),
-    ("dictionary/", "The dictionary's own files, exactly as they were loaded."),
+    ("dictionary/", "The dictionary's own files. Where the data dictionary was made from the database, it is the "
+                    "result of the data dictionary query as a CSV, and any file of the vendor's descriptions is kept "
+                    "exactly as it was loaded. Otherwise the files are exactly as they were loaded."),
 ]
 
 

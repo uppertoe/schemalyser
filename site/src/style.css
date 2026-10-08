@@ -1295,6 +1295,8 @@ html:has(body.describe) {
 }
 
 .describe .choice {
+  /* A grid item may otherwise grow to the width of the query inside it, past the edge of a phone. */
+  min-width: 0;
   padding: 0.75rem 0.9rem 0.2rem;
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -1307,6 +1309,31 @@ html:has(body.describe) {
 
 .describe .choice > .note {
   margin: 0 0 0.6rem;
+}
+
+/* Where an input comes from, at the head of its choice: run on the database, or made here. */
+
+.describe .choice > .origin {
+  margin: 0 0 0.6rem;
+  max-width: 44rem;
+}
+
+.describe .result-ways {
+  margin-top: 0.4rem;
+}
+
+.describe .result-ways > li {
+  margin: 0 0 0.9rem;
+}
+
+.describe .result-ways .way {
+  margin: 0 0 0.3rem;
+  font-weight: 600;
+}
+
+.describe .result-ways textarea {
+  width: 100%;
+  box-sizing: border-box;
 }
 
 /* The progress of step 6, held at the top of the step while its list scrolls. */

@@ -33,10 +33,14 @@ interface Tally {
   tables: number; tables_remaining: number;
 }
 interface Model {
-  dictionary: { tables: number; columns: number; described: number; keyed: number; skipped: number; invented: boolean; source: string | null } | null;
+  dictionary: {
+    tables: number; columns: number; described: number; keyed: number; skipped: number; invented: boolean; source: string | null;
+    saved: boolean; vendor: { file: string; matched: number; gained: number } | null;
+  } | null;
   proposed: boolean; roles: Role[]; tally: Tally;
   untranslated: { about: string; title: string; from: string }[]; unfinished: string; counts_offered: string[];
-  questions: { about: string; title: string; question: string; meaning: string }[]; catalogue: boolean; vocabularies: Vocabulary[]; counts: Record<string, CountHeld>;
+  questions: { about: string; title: string; question: string; meaning: string }[]; catalogue: boolean;
+  catalogue_source: 'database' | 'query' | null; vocabularies: Vocabulary[]; counts: Record<string, CountHeld>;
   settings: { made: string | null; updated: string | null; database: string | null; year: number | null };
   restored: Record<string, unknown> | null;
   values: Record<string, { value: string; rows: number | null }[]>; anaesthetic_table: string | null; bases: Record<string, string>;
@@ -70,6 +74,8 @@ const pending = new Map<number, { resolve: (value: Record<string, unknown>) => v
 const chartedSql = new Map<string, string>();
 let countQueries: CountQuery[] = [];
 let tablesSql = '';
+// The data dictionary query, which is the same for every hospital and is fetched from the worker once it is ready.
+let dictionarySql = '';
 let databaseChoice: string | null = null;
 const openAnother = new Set<string>();
 // The columns whose answer a person has asked to change, which show their choices again.
@@ -87,7 +93,7 @@ const landed = new Map<string, string>();
 // Whether something has changed since the hospital schema was saved, which makes step 9 to be done again.
 let changedSinceWritten = false;
 // The calls that change nothing that the saved hospital schema holds.
-const READING = new Set(['describe_model', 'describe_check', 'describe_compare']);
+const READING = new Set(['describe_model', 'describe_check', 'describe_compare', 'describe_dictionary_query']);
 // The sentence that says why an answer could not be recorded, beside the binding it was given for.
 const problems = new Map<string, string>();
 
@@ -132,6 +138,11 @@ function onMessage(event: MessageEvent) {
   if (message.type === 'ready') {
     state = 'ready';
     worker?.postMessage({ type: 'describe', call: 'describe_begin', args: [__VERSION__], id: 0 });
+    void ask('describe_dictionary_query', [d.steps[1]]).then((reply) => {
+      dictionarySql = (reply.sql as string) ?? '';
+      $('database-query').textContent = dictionarySql;
+      show();
+    }, () => undefined);
   } else if (message.type === 'policy-failed') {
     state = 'load-failed';
     text('t-load-failed', strings.policyFailed);
@@ -189,8 +200,15 @@ function lock() {
   render();
 }
 
+// The page lets go of everything when the tab comes back online, so that nothing loaded or pasted while it was offline can
+// leave. Before anything is loaded there is nothing to let go of, so the tab may go back online to fetch the invented
+// dictionary, which is public; once that or anything else is loaded, going online again locks the page.
+function holdsAnything() {
+  return workerHasFiles || !!model?.dictionary || !!model?.restored;
+}
+
 window.addEventListener('online', () => {
-  if (state === 'ready' && workerHasFiles) lock();
+  if (state === 'ready' && holdsAnything()) lock();
   show();
 });
 window.addEventListener('offline', show);
@@ -246,6 +264,8 @@ function stepStates() {
     if (i === 1 && state === 'ready') return '';
     if (!ready) return d.waitingFor.offline;
     if (i === 3) return m?.dictionary || proposed ? '' : d.waitingFor.dictionary;
+    // Step 5 is answered by the data dictionary made from the database, which needs no proposal first.
+    if (i === 4 && m?.catalogue_source === 'database') return '';
     if (i >= 4) return proposed ? '' : d.waitingFor.map;
     return '';
   });
@@ -261,7 +281,7 @@ function stepStates() {
     m?.dictionary ? d.dictionaryReceipt(m.dictionary) : '',
     statusText('t-folder-status') || d.receipt.folder,
     m ? d.receipt.proposed(m.roles.filter((r) => r.drafted).length, m.roles.length) : '',
-    statusText('t-tables-status') || d.receipt.tables,
+    m?.catalogue_source === 'database' ? d.tablesAnswered : statusText('t-tables-status') || d.receipt.tables,
     m ? d.receipt.confirmed(m.tally.total, m.roles.filter((r) => !r.drafted).length) : '',
     m ? d.receipt.codes(listsSaved(m), listsOffered(m)) : '',
     m ? d.receipt.counts(judged(m), m.counts_offered.length) : '',
@@ -290,7 +310,10 @@ function show() {
   STEPS.forEach((n, i) => {
     const value = states[i];
     const step = $(`step-${n}`);
-    const isOpen = value === 'problem' || (value === 'current' && !hidden.has(n)) || (value !== 'waiting' && opened.has(n));
+    // While the tab is online with nothing loaded, step 2 stays open beside step 1, so that the invented dictionary
+    // can be loaded; once it is loaded, step 2 stays open to say what to do next until the tab goes offline.
+    const online2 = n === '2' && state === 'ready' && online && !hidden.has(n) && (!model?.dictionary || model.dictionary.source === 'invented');
+    const isOpen = value === 'problem' || (value === 'current' && !hidden.has(n)) || (value !== 'waiting' && opened.has(n)) || online2;
     step.dataset.state = value;
     step.dataset.open = String(isOpen);
     if (value === 'current') step.setAttribute('aria-current', 'step');
@@ -361,6 +384,25 @@ function show() {
   $('b-loaded').hidden = !(state === 'ready' && online);
   $('t-offline-done').hidden = !ready;
   $('t-locked').hidden = state !== 'locked';
+  // Once the invented dictionary has loaded while the tab is online, step 1 and step 2 say what to do next.
+  const inventedOnline = state === 'ready' && online && model?.dictionary?.source === 'invented';
+  if (inventedOnline) {
+    text('t-offline-invented', d.inventedLoaded);
+    status('t-invented-status', d.inventedLoaded, 'good');
+  } else if ($('t-offline-invented').textContent === d.inventedLoaded) {
+    linked('t-offline-invented', d.offlineInvented, '2');
+    if ($('t-invented-status').textContent === d.inventedLoaded) status('t-invented-status', '');
+  }
+  // The choice of database stands in step 2 until a dictionary that needs step 5's own query is loaded.
+  const fromDatabase = model?.catalogue_source === 'database';
+  const slot = $(model?.dictionary && !fromDatabase && model.dictionary.source !== 'database' ? 'database-slot-5' : 'database-slot-2');
+  if ($('f-database').parentElement !== slot) slot.append($('f-database'));
+  $('b-tables').hidden = fromDatabase;
+  $('t-tables-what').hidden = fromDatabase;
+  $('t-tables-answered').hidden = !fromDatabase;
+  text('t-tables-answered', d.tablesAnswered);
+  // The vendor's file adds descriptions to a dictionary made from the database, and is otherwise the dictionary itself.
+  text('dictionary-load', model?.dictionary?.source === 'database' ? d.vendorLoad : d.dictionaryLoad);
   const connection = $('t-connection');
   connection.textContent = online ? strings.connected : strings.isOffline;
   connection.dataset.online = String(online);
@@ -369,6 +411,11 @@ function show() {
     // The invented dictionary is loaded while the tab is online, so its button needs only the page to be ready.
     if (input.id === 'invented-load') {
       input.disabled = state !== 'ready' || busy;
+      continue;
+    }
+    // The data dictionary query names nothing of the hospital's, so it may be copied while the tab is online.
+    if (input.id === 'database-copy') {
+      input.disabled = state !== 'ready' || !dictionarySql;
       continue;
     }
     input.disabled = !ready || busy || input.dataset.unusable === 'true' || (input.id === 'dictionary-load' && !$<HTMLInputElement>('dictionary').files?.length);
@@ -1093,6 +1140,39 @@ function renderDatabase() {
 
 // The inputs.
 
+// The data dictionary made from the database: its query copied, and its result pasted or chosen as a saved file.
+$('database-copy').addEventListener('click', () => {
+  void navigator.clipboard?.writeText(dictionarySql).then(() => status('t-database-copied', d.copied, 'good'), () => undefined);
+});
+
+async function fromDatabase(data: string | File, name: string) {
+  setBusy(true);
+  status('t-database-status', d.databaseReading);
+  workerHasFiles = true;
+  try {
+    const reply = await ask('describe_dictionary_database', [data, name, d.steps[1]]);
+    if (reply.ok) {
+      status('t-database-status', d.databaseReceipt(reply.receipt as Parameters<typeof d.databaseReceipt>[0]), 'good');
+      status('t-dictionary-status', '');
+      status('t-vendor-status', '');
+      $<HTMLTextAreaElement>('database-paste').value = '';
+    } else status('t-database-status', reply.problem ?? d.databaseUnreadable, 'problem');
+  } catch {
+    status('t-database-status', d.databaseUnreadable, 'problem');
+  }
+  $<HTMLInputElement>('database-file').value = '';
+  setBusy(false);
+}
+
+$('database-read').addEventListener('click', () => {
+  const pasted = $<HTMLTextAreaElement>('database-paste').value;
+  if (pasted.trim() && open()) void fromDatabase(pasted, 'data-dictionary.csv');
+});
+$('database-file').addEventListener('change', () => {
+  const file = $<HTMLInputElement>('database-file').files?.[0];
+  if (file && open()) void fromDatabase(file, 'data-dictionary.csv');
+});
+
 $('dictionary').addEventListener('change', show);
 $('dictionary-load').addEventListener('click', async () => {
   const file = $<HTMLInputElement>('dictionary').files?.[0];
@@ -1101,11 +1181,31 @@ $('dictionary-load').addEventListener('click', async () => {
   const headings: Record<string, string> = {};
   for (const input of document.querySelectorAll<HTMLInputElement>('#headings input')) if (input.value.trim()) headings[input.dataset.field!] = input.value.trim();
   setBusy(true);
-  status('t-dictionary-status', d.dictionaryReading);
   workerHasFiles = true;
+  // Beside a dictionary made from the database, the vendor's file adds its descriptions.
+  if (model?.dictionary?.source === 'database') {
+    status('t-vendor-status', d.dictionaryReading);
+    try {
+      const reply = await ask('describe_dictionary_vendor', [file, tables ?? undefined, JSON.stringify(headings), file.name, tables?.name ?? undefined]);
+      if (reply.ok) {
+        const receipt = reply.receipt as Parameters<typeof d.databaseReceipt>[0];
+        status('t-vendor-status', receipt.vendor ? d.vendorReceipt(receipt.vendor) : '', 'good');
+        status('t-database-status', d.databaseReceipt(receipt), 'good');
+      } else {
+        status('t-vendor-status', reply.problem ?? d.dictionaryFailed, 'problem');
+        if (/heading/.test(reply.problem ?? '')) $<HTMLDetailsElement>('d-headings').open = true;
+      }
+    } catch {
+      status('t-vendor-status', d.dictionaryFailed, 'problem');
+    }
+    setBusy(false);
+    return;
+  }
+  status('t-dictionary-status', d.dictionaryReading);
   try {
     const reply = await ask('describe_dictionary', [file, tables ?? undefined, JSON.stringify(headings), file.name, tables?.name ?? undefined, d.steps[1]]);
     status('t-invented-status', '');
+    if (reply.ok) status('t-database-status', '');
     if (reply.ok) status('t-dictionary-status', d.dictionaryReceipt(reply.receipt as Parameters<typeof d.dictionaryReceipt>[0]), 'good');
     else {
       status('t-dictionary-status', reply.problem ?? d.dictionaryFailed, 'problem');
@@ -1135,10 +1235,12 @@ $('invented-load').addEventListener('click', async () => {
       return new File([await response.blob()], name);
     };
     const [file, tables] = await Promise.all([take('invented-dictionary.csv'), take('invented-tables.csv')]);
-    workerHasFiles = true;
+    // The invented dictionary is public and was fetched online, so loading it does not by itself lock the page; once it
+    // is loaded, the page holds a dictionary, and going online again after the tab has been offline locks the page.
     const reply = await ask('describe_dictionary', [file, tables, '{}', file.name, tables.name, d.steps[1], true]);
     if (reply.ok) {
-      status('t-invented-status', '');
+      status('t-invented-status', navigator.onLine ? d.inventedLoaded : '', 'good');
+      status('t-database-status', '');
       status('t-dictionary-status', d.dictionaryReceipt(reply.receipt as Parameters<typeof d.dictionaryReceipt>[0]), 'good');
     } else status('t-invented-status', reply.problem ?? d.inventedFailed, 'problem');
   } catch {
@@ -1164,7 +1266,11 @@ $('schema-file').addEventListener('change', async () => {
       if (restored.needs_dictionary) status('t-folder-status', d.folderNeedsDictionary, 'problem');
       else {
         status('t-folder-status', [restored.problem, d.folderReceipt(restored)].filter(Boolean).join(' '), restored.map ? 'good' : '');
-        if (restored.dictionary && model?.dictionary) status('t-dictionary-status', d.dictionaryReceipt(model.dictionary), 'good');
+        if (restored.dictionary && model?.dictionary) {
+          const fromDb = model.dictionary.source === 'database';
+          status(fromDb ? 't-database-status' : 't-dictionary-status', d.dictionaryReceipt(model.dictionary), 'good');
+          status(fromDb ? 't-dictionary-status' : 't-database-status', '');
+        }
       }
     }
   } catch {
@@ -1340,6 +1446,23 @@ const fixed: Record<string, string> = {
   's-policy': d.policySummary,
   't-policy-held': strings.policyHeld,
   't-dictionary-what': d.dictionaryWhat,
+  'h-choice-database': d.choiceDatabase,
+  't-database-origin': d.databaseOrigin,
+  'database-copy': d.databaseCopy,
+  's-database-query': d.showQuery,
+  's-database-safe': d.databaseSafeSummary,
+  't-database-safe': d.querySafe,
+  't-database-returns': d.databaseReturns,
+  't-database-back': d.databaseBack,
+  't-database-small': d.databaseSmall,
+  't-database-small-how': d.databaseSmallHow,
+  'l-database-paste': d.databasePasteLabel,
+  'database-read': d.databaseRead,
+  't-database-large': d.databaseLarge,
+  's-database-large-how': d.databaseLargeSummary,
+  'l-database-file': d.databaseFileLabel,
+  't-choice-real-alone': d.choiceRealAlone,
+  't-choice-invented': d.choiceInventedWhat,
   'h-choice-real': d.choiceReal,
   't-choice-real': d.choiceRealWhat,
   'h-choice-invented': d.choiceInvented,
@@ -1410,6 +1533,7 @@ for (const [id, value] of Object.entries(fixed)) text(id, value);
 d.steps.forEach((heading, i) => text(`h-step-${i + 1}`, heading));
 $('t-offline-how').replaceChildren(...d.offlineHow.map((sentence) => el('li', sentence)));
 $('t-tables-how').replaceChildren(...d.tablesHow.map((sentence) => el('li', sentence)));
+$('t-database-large-how').replaceChildren(...d.databaseLargeHow.map((sentence) => el('li', sentence)));
 $('headings').replaceChildren(...d.headingFields.map(([field, label]) => {
   const box = el('div', undefined, 'field');
   const caption = el('label', label);

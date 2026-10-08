@@ -27,6 +27,26 @@ function tablesResult() {
   return [[...head.split(','), 'TABLE_ROWS'].join('\t'), ...rows].join('\n');
 }
 
+// The result of the data dictionary query for the invented world, as SQL Server Management Studio copies it with its
+// headers: the catalogue, a size for each table, the key flag, and the dictionary's own description for the columns of
+// a few tables only, as a database that holds few descriptions of its own would give. The readings are large.
+const DESCRIBED = new Set(['PERSON_MASTER', 'OBS_READING', 'OBS_TYPE_DEF']);
+function dictionaryResult() {
+  const words = new Map<string, { key: string; description: string }>();
+  for (const line of readFileSync(fixtures + 'dictionary/invented-dictionary.csv', 'utf8').trim().split('\n').slice(1)) {
+    const [table, column, , key, ...rest] = line.split(',');
+    words.set(`${table}.${column}`, { key, description: rest.join(',').replace(/^"|"$/g, '') });
+  }
+  const [head, ...lines] = readFileSync(fixtures + 'invented-catalogue.csv', 'utf8').trim().split('\n');
+  const rows = lines.map((line) => {
+    const cells = line.split(',').map((cell) => cell || 'NULL');
+    const held = words.get(`${cells[1]}.${cells[2]}`);
+    return [...cells, cells[1] === 'OBS_READING' ? '25000000' : '1200', held?.key === 'YES' ? 'YES' : 'NO',
+      DESCRIBED.has(cells[1]) && held ? held.description : 'NULL'].join('\t');
+  });
+  return [[...head.split(','), 'TABLE_ROWS', 'IS_PRIMARY_KEY', 'DESCRIPTION'].join('\t'), ...rows, '', '(98 rows affected)'].join('\n');
+}
+
 const charted = [
   'code\tcharted\tanaesthetics\tname',
   '52\t4210\t380\tMean arterial pressure, arterial line',
@@ -639,6 +659,7 @@ test('the invented dictionary is loaded while online and marks the saved schema 
   await expect(page.locator('#step-2 .body')).toBeVisible();
   await expect(page.locator('#dictionary')).toBeDisabled();
   await expect(page.locator('#h-choice-real')).toHaveText(d.choiceReal);
+  await expect(page.locator('#h-choice-database')).toHaveText(d.choiceDatabase);
   await page.locator('#invented-load').click();
   const receipt = d.dictionaryReceipt({ tables: 25, columns: 98, described: 98, keyed: 25, skipped: 0, source: 'invented' });
   await expect(page.locator('#t-dictionary-status')).toHaveText(receipt);
@@ -662,4 +683,85 @@ test('the invented dictionary is loaded while online and marks the saved schema 
   expect(read('README.md').split('\n')[0]).toBe('This file was made with the invented dictionary, for practice, and describes no hospital.');
   expect(JSON.parse(read('settings.json')).invented).toBe(true);
   expect(JSON.parse(read('journal.json')).entries[0].invented).toBe(true);
+});
+
+// The data dictionary made from the database: the one query, offered before anything is loaded, its result pasted with
+// its headers, the receipt, step 5 answered at once, a column proposed and confirmed, and the vendor's descriptions added.
+test('the data dictionary is made from the database and answers step 5', async ({ page, context, browserName }) => {
+  test.setTimeout(240_000);
+  await loadAndGoOffline(page, context, browserName);
+  await expect(page.locator('#h-choice-database')).toHaveText(d.choiceDatabase);
+  const query = page.locator('#database-query');
+  for (const part of ['FROM INFORMATION_SCHEMA.COLUMNS AS c', 'sys.partitions', 'INFORMATION_SCHEMA.KEY_COLUMN_USAGE', "N'MS_Description'"]) {
+    await expect(query).toContainText(part);
+  }
+  await expect(query).not.toContainText('TABLE_NAME IN');
+  await expect(page.locator('#t-database-safe')).toHaveText(d.querySafe);
+  await expect(page.locator('#t-database-small')).toHaveText(d.databaseSmall);
+  await expect(page.locator('#t-database-large')).toHaveText(d.databaseLarge);
+  await expect(page.locator('#database-file')).toBeEnabled();
+  // The choice of database stands in step 2, before the query is run.
+  await page.locator('#step-2 #database-options input[value="production"]').check();
+  await page.locator('#database-paste').fill(dictionaryResult());
+  await page.locator('#database-read').click();
+  const receipt = d.databaseReceipt({ tables: 25, columns: 98, described: 16 });
+  await expect(page.locator('#t-database-status')).toHaveText(receipt);
+  await expect(page.locator('#t-database-status')).toContainText('Few columns have a description');
+  await expect(page.locator('#dictionary-load')).toHaveText(d.vendorLoad);
+  await stage(page, 'm2-database', '#step-2');
+  // Step 5 is done at once, and offers no query of its own.
+  await expect(page.locator('#step-5')).toHaveAttribute('data-state', 'done');
+  await expect(page.locator('#receipt-5')).toHaveText(d.tablesAnswered);
+  await page.locator('#propose').click();
+  await expect(page.locator('#t-propose-status')).toContainText('The page has proposed', { timeout: 60_000 });
+  await openStep(page, 5);
+  await expect(page.locator('#t-tables-answered')).toHaveText(d.tablesAnswered);
+  await expect(page.locator('#tables-write')).toBeHidden();
+  const value = page.locator('#confirm [data-about="role_reading.value"]');
+  await expect(value).toContainText(d.presence.large('OBS_READING', 25_000_000));
+  await value.getByRole('button', { name: d.yes }).click();
+  await expect(value.locator('.answered')).toContainText('Confirmed on');
+  // The vendor's descriptions, added to the dictionary made from the database.
+  await openStep(page, 2);
+  await page.locator('#dictionary').setInputFiles(fixtures + 'dictionary/invented-dictionary.csv');
+  await page.locator('#dictionary-load').click();
+  await expect(page.locator('#t-vendor-status')).toHaveText(d.vendorReceipt({ matched: 98, gained: 82 }));
+  await expect(page.locator('#t-database-status')).toHaveText(d.databaseReceipt({ tables: 25, columns: 98, described: 98, vendor: { matched: 98, gained: 82 } }));
+  await expect(page.locator('#step-5')).toHaveAttribute('data-state', 'done');
+  await expect(value.locator('.answered')).toContainText('Confirmed on');
+  await stage(page, 'm6-confirmed', '#confirm [data-about="role_reading.value"]');
+});
+
+// The owner's path: the page loaded and taken offline, the invented dictionary asked for and refused because the tab is
+// offline, the tab taken back online as the page says, and the invented dictionary loaded. Going online with nothing
+// loaded does not lock the page; going online once something is loaded does.
+test('going back online to load the invented dictionary leaves it loadable', async ({ page, context, browserName }) => {
+  test.setTimeout(240_000);
+  await loadAndGoOffline(page, context, browserName);
+  await page.locator('#invented-load').click();
+  await expect(page.locator('#t-invented-status')).toHaveText(d.inventedOnlineOnly);
+  await setOnline(page, context, browserName, true);
+  await expect(page.locator('#t-connection')).toHaveText('This page is online.');
+  await expect(page.locator('#t-locked')).toBeHidden();
+  await expect(page.locator('#step-1')).toHaveAttribute('data-state', 'current');
+  await expect(page.locator('#invented-load')).toBeVisible();
+  await expect(page.locator('#invented-load')).toBeEnabled();
+  // The real files are never taken while the tab is online.
+  await expect(page.locator('#dictionary')).toBeDisabled();
+  await expect(page.locator('#database-file')).toBeDisabled();
+  await expect(page.locator('#database-paste')).toBeDisabled();
+  await page.locator('#invented-load').click();
+  await expect(page.locator('#t-dictionary-status')).toHaveText(
+    d.dictionaryReceipt({ tables: 25, columns: 98, described: 98, keyed: 25, skipped: 0, source: 'invented' }));
+  await expect(page.locator('#t-invented-status')).toHaveText(d.inventedLoaded);
+  await expect(page.locator('#t-offline-invented')).toHaveText(d.inventedLoaded);
+  await stage(page, 'o1-invented-online', '#step-2');
+  await setOnline(page, context, browserName, false);
+  await expect(page.locator('#receipt-1')).toHaveText(d.offlineDone);
+  await page.locator('#propose').click();
+  await expect(page.locator('#step-4')).toHaveAttribute('data-state', 'done', { timeout: 60_000 });
+  // Now that the page holds something, going online again locks it.
+  await setOnline(page, context, browserName, true);
+  await expect(page.locator('#t-locked')).toBeVisible();
+  await expect(page.locator('#invented-load')).toBeDisabled();
 });
