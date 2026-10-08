@@ -73,6 +73,82 @@ def test_the_reconciliation_sums_agree(ran):
     assert [d["rows"] for d in person["dropped"]] == [1] and "TEST_PERSON_FLAG" in person["dropped"][0]["by"]
 
 
+def test_the_reconciliation_says_which_steps_it_traced_and_which_it_could_not(ran):
+    _, report = ran
+    coverage = report["reconciliation"]["coverage"]
+    steps = report["reconciliation"]["steps"]
+    assert coverage["outcome"] == "passed" and coverage["unexplained"]["count"] == 0
+    assert coverage["accounted"]["count"] + coverage["fan_out_confirmed"]["count"] + coverage["not_traced"]["count"] == len(steps)
+    assert {item["step"] for item in coverage["not_traced"]["steps"]} == {e["step"] for e in steps if not e["traced"]}
+    assert all(item["reason"] for item in coverage["not_traced"]["steps"])
+    assert "measurement_blood_pressure_through_anaesthetic.sql" in {item["step"] for item in coverage["fan_out_confirmed"]["steps"]}
+    sentence = next(s for s in report["summary"]["sentences"] if s.startswith("The reconciliation traced"))
+    k = coverage["not_traced"]["count"]
+    assert sentence.startswith(f"The reconciliation traced {coverage['traced']} of {len(steps)} steps and accounted for every excluded row in them; "
+                               f"{k} steps could not be traced (")
+    assert sentence.endswith("so their rows are not reconciled.")
+
+
+def test_an_unexplained_discrepancy_fails_the_reconciliation():
+    entry = {"step": "a.sql", "traced": True, "start_agrees": True, "sums_agree": True, "matches_the_run": True,
+             "source_rows_with_several_target_rows": 2, "as_expected": False, "expected": "at most one target row for each source row"}
+    found = testbed.coverage([entry, {"step": "b.sql", "traced": False, "reason": "the step reads no table"}], [])
+    assert found["outcome"] == "failed" and found["unexplained"]["items"][0]["step"] == "a.sql"
+    sentence = testbed.coverage_sentences(found, {"source_rows": 3, "reached": 3, "dropped": 0, "target_rows": 5})[0]
+    assert "in 0 of them; 1 discrepancy is unexplained (a.sql); 1 step could not be traced (b.sql), so its rows are not reconciled." in sentence
+    assert testbed.judge([{"check": "the reconciliation found no unexplained discrepancy", "passed": False}], "fast") != "passed"
+
+
+def test_the_fast_profile_passes_without_the_dashboard_or_sql_server(ran):
+    _, report = ran
+    assert report["summary"]["profile"] == "fast"
+    checks = {c["check"]: c for c in report["checks"]}
+    assert checks["the Data Quality Dashboard ran"]["passed"] is None
+    assert checks["release equivalence"]["state"] == "not run on SQL Server" and checks["release equivalence"]["passed"] is None
+
+
+SUMMARY = ["OMOP objects compared: 41; identical: 41; different: 0.",
+           "Steps that failed or wrote a different number of rows: 0.",
+           "Gates passed on SQL Server: 6 of 6; gates whose outcome differs from DuckDB's or did not pass: 0.",
+           "Reasons that the DuckDB run itself was not clean: 0.",
+           "Expectations of the planted scenarios not met on both engines: 0 of 23."]
+
+
+def test_release_equivalence_reads_the_harness_summary():
+    assert testbed.release_equivalence(None)["state"] == "not run on SQL Server"
+    assert testbed.release_equivalence({"exit_code": 0, "summary": SUMMARY})["state"] == "passed"
+    differs = [line.replace("identical: 41; different: 0", "identical: 39; different: 2") for line in SUMMARY]
+    assert testbed.release_equivalence({"exit_code": 1, "summary": differs})["state"] == "failed"
+    stopped = [line.replace("rows: 0.", "rows: 1.") if line.startswith("Steps") else
+               line.replace("0 of 23", "0 of 0") for line in SUMMARY]
+    assert testbed.release_equivalence({"exit_code": 1, "summary": stopped})["state"] == "failed"
+    assert testbed.release_equivalence({"status": "not run", "reason": "no container", "summary": []})["state"] == "failed"
+
+
+def test_the_full_profile_requires_the_dashboard_and_release_equivalence():
+    clean = [{"check": "every step ran cleanly", "passed": True}]
+    ran = {"check": "the Data Quality Dashboard ran", "passed": True}
+    missing = {"check": "the Data Quality Dashboard ran", "passed": False}
+    equal = testbed.release_equivalence({"exit_code": 0, "summary": SUMMARY})
+    unrun = testbed.release_equivalence(None)
+    assert testbed.judge(clean + [dict(missing, passed=None), unrun], "fast") == "passed"
+    assert testbed.judge(clean + [missing, equal], "full") == "failed: the Data Quality Dashboard did not run"
+    assert testbed.judge(clean + [ran, unrun], "full") == "failed: release equivalence was not run on SQL Server"
+    assert testbed.judge(clean + [ran, equal], "full") == "passed"
+
+
+def test_the_dashboard_results_are_counted_by_category(tmp_path):
+    path = tmp_path / "dqd_results.json"
+    path.write_text(json.dumps({"CheckResults": [
+        {"category": "Conformance", "failed": 0, "passed": 1, "isError": 0, "notApplicable": 0},
+        {"category": "Conformance", "failed": 1, "passed": 0, "isError": 0, "notApplicable": 0},
+        {"category": "Plausibility", "failed": 1, "passed": 0, "isError": 1, "notApplicable": 0},
+        {"category": "Completeness", "failed": 0, "passed": 0, "isError": 0, "notApplicable": 1}]}))
+    found = testbed.dqd_results(path)
+    assert (found["checks"], found["passed"], found["failed"], found["could_not_run"], found["not_applicable"]) == (4, 1, 1, 1, 1)
+    assert found["by_category"]["Conformance"] == {"checks": 2, "passed": 1, "failed": 1, "could_not_run": 0, "not_applicable": 0}
+
+
 def test_the_inputs_for_the_dashboard_are_written_and_it_is_marked_not_run(ran):
     out, report = ran
     assert report["dqd"]["status"] == "not run"

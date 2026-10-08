@@ -1,6 +1,6 @@
 """Runs the OMOP testbed: one pass over a synthetic world that builds, converts, checks and reconciles.
 
-    python -m schemalyser.testbed run --world fixtures --out FOLDER [--rows 200] [--engine duckdb|sqlserver]
+    python -m schemalyser.testbed run --world fixtures --out FOLDER [--rows 200] [--engine duckdb|sqlserver] [--profile fast|full]
 
 The testbed adds no conversion logic of its own. It calls convert.run, which builds the synthetic source
 from the world's definition, creates the tables of OMOP CDM 5.4 from the published field list, plants the
@@ -14,8 +14,16 @@ What the testbed adds is the account of the run:
 - a reconciliation of source to target for each step, made by running the step's own SELECT again with
   its inner joins and its WHERE conditions applied one at a time, so that every source row that does not
   reach the target is put down to the join or the condition that left it out;
-- the inputs for the Data Quality Dashboard, which needs R and is therefore not run here;
+- the reconciliation's coverage: the steps traced with every excluded row accounted for, the steps traced with the
+  fan-out that testbed.json allows, the steps that could not be traced, each with its reason, and any discrepancy
+  that the reconciliation cannot explain;
+- the inputs for the Data Quality Dashboard, and in the full profile its results;
+- the release equivalence check, which reads the SQL Server harness's summary;
 - report.json for a machine and report.md for a person.
+
+The fast profile, the default, runs everything above apart from the dashboard, and passes when every judged check
+passes. The full profile also loads the tables into the OMOP database and runs the dashboard's Broadsea image, and it
+passes only when the dashboard ran and release equivalence passed, which needs --engine sqlserver.
 
 A world's testbed.json, where it has one, says which steps may write more than one row for a single row
 of the table they start from. Every other step is expected to write at most one. A world without the file
@@ -30,6 +38,9 @@ import csv
 import hashlib
 import itertools
 import json
+import os
+import re
+import shutil
 import subprocess
 import sys
 import time
@@ -292,8 +303,82 @@ def reconcile(conversion, folder, steps, results, expectations):
               "steps_with_unexpected_several_rows": [e["step"] for e in traced if e.get("as_expected") is False],
               "all_sums_agree": all(e["sums_agree"] and e["start_agrees"] and e["matches_the_run"] for e in traced)
                                 and all(t["agree"] for t in targets)}
-    return {"totals": totals, "steps": traced_steps, "source_tables": sources, "target_tables": targets,
+    return {"totals": totals, "coverage": coverage(traced_steps, targets), "steps": traced_steps, "source_tables": sources,
+            "target_tables": targets,
             "note": "A gate removes no rows: it fails the run. Every row left out is put down to a join or a condition of a step."}
+
+
+def _discrepancies(entry):
+    """What a traced step's figures leave unexplained, as sentences; none when every row is accounted for."""
+    found = []
+    if not entry["start_agrees"]:
+        found.append("the step's SELECT, with its joins made left joins and no WHERE, did not keep every row of the table it starts from")
+    if not entry["sums_agree"]:
+        found.append("the rows left out and the rows that reached the target do not add up to the rows of the table it starts from")
+    if not entry["matches_the_run"]:
+        found.append(f"the trace gives {entry['target_rows']} target rows, and the run wrote {entry['written']}")
+    if entry["source_rows_with_several_target_rows"]:
+        if entry["as_expected"] is None:
+            found.append("some source rows gave several target rows, and the world has no testbed.json to say whether they may")
+        elif not entry["as_expected"]:
+            found.append("some source rows gave several target rows, and testbed.json expects at most one")
+    return found
+
+
+def coverage(steps, targets):
+    """Which steps the reconciliation accounted for in full, which it confirmed as fanning out, which it could not trace, and what it cannot explain."""
+    accounted, fan_out, not_traced, unexplained = [], [], [], []
+    for entry in steps:
+        if not entry["traced"]:
+            not_traced.append({"step": entry["step"], "reason": entry["reason"]})
+        elif found := _discrepancies(entry):
+            unexplained.append({"step": entry["step"], "reason": "; ".join(found)})
+        elif entry["source_rows_with_several_target_rows"]:
+            fan_out.append({"step": entry["step"], "expected": entry["expected"],
+                            "source_rows_with_several_target_rows": entry["source_rows_with_several_target_rows"]})
+        else:
+            accounted.append(entry["step"])
+    for table in targets:
+        if not table["agree"]:
+            unexplained.append({"table": table["table"], "reason": f"the steps wrote {table['rows_from_steps']} rows to the table, "
+                                                                  f"and it holds {table['rows_held']}"})
+    return {"steps": len(steps), "traced": len(steps) - len(not_traced),
+            "accounted": {"count": len(accounted), "steps": accounted},
+            "fan_out_confirmed": {"count": len(fan_out), "steps": fan_out},
+            "not_traced": {"count": len(not_traced), "steps": not_traced},
+            "unexplained": {"count": len(unexplained), "items": unexplained},
+            "outcome": "passed" if not unexplained else "failed"}
+
+
+def _names(items):
+    return ", ".join(item if isinstance(item, str) else item.get("step") or item.get("table") for item in items)
+
+
+def coverage_sentences(c, totals):
+    """The reconciliation's coverage in plain sentences, which never count an untraced step as reconciled."""
+    traced, steps, k = c["traced"], c["steps"], c["not_traced"]["count"]
+    unexplained = c["unexplained"]["items"]
+    traced_steps = [item for item in unexplained if "step" in item]
+    if not unexplained:
+        first = f"The reconciliation traced {traced} of {steps} steps and accounted for every excluded row in them"
+    else:
+        first = (f"The reconciliation traced {traced} of {steps} steps and accounted for every excluded row in "
+                 f"{traced - len(traced_steps)} of them; {len(unexplained)} "
+                 f"{'discrepancy is' if len(unexplained) == 1 else 'discrepancies are'} unexplained ({_names(unexplained)})")
+    if k == 0:
+        first += ", and every step could be traced."
+    else:
+        first += (f"; {k} {'step' if k == 1 else 'steps'} could not be traced ({_names(c['not_traced']['steps'])}), "
+                  f"so {'its' if k == 1 else 'their'} rows are not reconciled.")
+    sentences = [first]
+    f = c["fan_out_confirmed"]
+    if f["count"]:
+        sentences.append(f"In {f['count']} of the traced steps ({_names(f['steps'])}), a source row gave several target rows, "
+                         "as testbed.json allows.")
+    sentences.append(f"Counted step by step, the tables that the traced steps start from held {totals['source_rows']:,} rows, of which "
+                     f"{totals['reached']:,} reached a target and {totals['dropped']:,} were left out by a join or a condition, "
+                     f"and the steps wrote {totals['target_rows']:,} rows from them.")
+    return sentences
 
 
 # The scenarios.
@@ -393,10 +478,81 @@ def dqd_inputs(conversion, folder, out):
     (csv_folder / "load_postgresql.sql").write_text("\n".join(lines) + "\n", encoding="utf-8")
     (out / "dqd").mkdir(exist_ok=True)
     (out / "dqd" / "run_dqd.R").write_text(DQD_SCRIPT.format(schema=POSTGRESQL_SCHEMA, cdm=CDM_VERSION), encoding="utf-8")
-    return {"status": "not run", "reason": "R is not available here, so the Data Quality Dashboard runs afterwards in the Broadsea environment.",
+    return {"status": "not run", "reason": "the fast profile does not run it",
             "duckdb_file": "testbed_cdm.duckdb", "duckdb_schema": "cdm", "csv_folder": "csv", "tables_exported": len(files),
             "load": "(cd csv && psql -h 127.0.0.1 -p PORT -U postgres -f load_postgresql.sql)",
             "command": DQD_COMMAND, "script": "dqd/run_dqd.R"}
+
+
+DQD_IMAGE = "broadsea-broadsea-run-dqd"
+# The OMOP database of the ATLAS setup, which the dashboard's image reaches as host.docker.internal.
+PG_PORT = "55440"
+PG_PASSWORD_FILE = ROOT / "reference" / "pg-password.txt"
+
+
+def _flag(value):
+    return str(value).strip().lower() in ("1", "true", "yes")
+
+
+def dqd_results(path):
+    """The dashboard's results file, counted by outcome and by category."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    blank = {"checks": 0, "passed": 0, "failed": 0, "could_not_run": 0, "not_applicable": 0}
+    found, by_category = dict(blank), {}
+    for row in data.get("CheckResults") or []:
+        outcome = ("could_not_run" if _flag(row.get("isError")) else "not_applicable" if _flag(row.get("notApplicable"))
+                   else "failed" if _flag(row.get("failed")) else "passed")
+        category = by_category.setdefault(row.get("category") or "no category", dict(blank))
+        for counted in (found, category):
+            counted["checks"] += 1
+            counted[outcome] += 1
+    return dict(found, by_category=dict(sorted(by_category.items())))
+
+
+def run_dqd(out, inputs):
+    """Loads the testbed's tables into the OMOP database and runs the dashboard's image on them, as docs/testbed.md describes.
+
+    It needs psql, Docker with the Broadsea image for the dashboard, the OMOP database listening on 127.0.0.1 at the port
+    that SCHEMALYSER_PG_PORT names (55440 by default), and its password in reference/pg-password.txt or the file that
+    SCHEMALYSER_PG_PASSWORD_FILE names. The password is passed through the environment and a read-only mount, and never printed.
+    """
+    port = os.environ.get("SCHEMALYSER_PG_PORT", PG_PORT)
+    password_file = Path(os.environ.get("SCHEMALYSER_PG_PASSWORD_FILE", PG_PASSWORD_FILE))
+
+    def not_run(reason):
+        return dict(inputs, status="not run", reason=reason)
+
+    for tool in ("psql", "docker"):
+        if shutil.which(tool) is None:
+            return not_run(f"{tool} is not available here")
+    if not password_file.is_file():
+        return not_run("the password file for the OMOP database is missing")
+    if subprocess.run(["docker", "image", "inspect", DQD_IMAGE], capture_output=True, check=False).returncode != 0:
+        return not_run(f"Docker does not hold the image {DQD_IMAGE}, which Broadsea builds with its dqd profile")
+    env = dict(os.environ, PGPASSWORD=password_file.read_text(encoding="utf-8").strip())
+    psql = ["psql", "-h", "127.0.0.1", "-p", port, "-U", "postgres", "-d", "postgres", "-q", "-v", "ON_ERROR_STOP=1"]
+    try:
+        loaded = subprocess.run([*psql, "-f", "load_postgresql.sql"], cwd=out / "csv", env=env, capture_output=True, text=True,
+                                timeout=900, check=False)
+        if loaded.returncode != 0:
+            return not_run("the tables could not be loaded into the OMOP database ("
+                           + _clip((loaded.stderr or loaded.stdout).strip().splitlines()[-1] if (loaded.stderr or loaded.stdout).strip() else "no output") + ")")
+        results = out / "dqd" / "out" / "dqd_results.json"
+        results.parent.mkdir(parents=True, exist_ok=True)
+        results.unlink(missing_ok=True)
+        started = time.monotonic()
+        done = subprocess.run(["docker", "run", "--rm", "--platform", "linux/amd64", "-e", f"PG_PORT={port}",
+                               "-v", f"{(out / 'dqd' / 'run_dqd.R').resolve()}:/run_dqd.R:ro",
+                               "-v", f"{password_file.resolve()}:/run/pg-password.txt:ro", "-v", "jdbc-drivers-data:/jdbc",
+                               "-v", f"{results.parent.resolve()}:/out", DQD_IMAGE, "Rscript", "/run_dqd.R"],
+                              capture_output=True, text=True, timeout=3600, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return not_run(_clip(str(error)))
+    (out / "dqd" / "dqd.txt").write_text(done.stdout + done.stderr, encoding="utf-8")
+    if done.returncode != 0 or not results.exists():
+        return not_run(f"the dashboard's image stopped with exit code {done.returncode}; its output is in dqd/dqd.txt")
+    return dict(inputs, status="ran", reason=None, seconds=round(time.monotonic() - started, 1),
+                results_file="dqd/out/dqd_results.json", output="dqd/dqd.txt", **dqd_results(results))
 
 
 # SQL Server.
@@ -422,6 +578,66 @@ def run_sqlserver(world_folder, folder, rows, out):
             "output": "sqlserver/harness.txt"}
 
 
+def _summary_numbers(summary, start):
+    """The numbers in the harness's summary line that begins with start, or None when the summary has no such line."""
+    line = next((line for line in summary if line.startswith(start)), None)
+    return [int(n) for n in re.findall(r"\d+", line[len(start):])] if line is not None else None
+
+
+def release_equivalence(sqlserver):
+    """The release equivalence check, read from the SQL Server harness's summary.
+
+    It passes only when the harness reports that the release script, executed on SQL Server, produced the same derived
+    rows and the same scenario rows as DuckDB: every OMOP object compared is identical, no step failed and the release
+    script ran to its end, the DuckDB run was clean, and every expectation of the planted scenarios was met on both engines.
+    """
+    check = {"check": "release equivalence"}
+    if sqlserver is None:
+        return dict(check, state="not run on SQL Server", passed=None,
+                    detail="The testbed ran on DuckDB alone; --engine sqlserver runs the harness that this check reads.")
+    summary = sqlserver.get("summary") or []
+    objects = _summary_numbers(summary, "OMOP objects compared:")
+    steps = _summary_numbers(summary, "Steps that failed or wrote a different number of rows:")
+    duckdb_clean = _summary_numbers(summary, "Reasons that the DuckDB run itself was not clean:")
+    scenarios = _summary_numbers(summary, "Expectations of the planted scenarios not met on both engines:")
+    if None in (objects, steps, duckdb_clean, scenarios):
+        return dict(check, state="failed", passed=False,
+                    detail="The harness gave no summary, so it has not shown that SQL Server agrees with DuckDB. "
+                           + (sqlserver.get("reason") or ""))
+    problems = []
+    if objects[0] == 0 or objects[2]:
+        problems.append(f"{objects[2]} of {objects[0]} OMOP objects differ between the engines")
+    if steps[0]:
+        problems.append(f"{steps[0]} steps failed or wrote a different number of rows, or the release script stopped")
+    if duckdb_clean[0]:
+        problems.append(f"the DuckDB run was not clean for {duckdb_clean[0]} reasons")
+    if scenarios[1] == 0 or scenarios[0]:
+        problems.append(f"{scenarios[0]} of {scenarios[1]} expectations of the planted scenarios were not met on both engines")
+    if problems:
+        return dict(check, state="failed", passed=False, detail="; ".join(problems).capitalize() + ".")
+    return dict(check, state="passed", passed=True,
+                detail=(f"The release script ran on SQL Server, all {objects[0]} OMOP objects matched DuckDB's, and all "
+                        f"{scenarios[1]} expectations of the planted scenarios were met on both engines."))
+
+
+def judge(checks, profile):
+    """The run's outcome: passed, or failed with each reason. The full profile requires the dashboard and release equivalence."""
+    reasons = []
+    for check in checks:
+        name = check["check"]
+        if name == "the Data Quality Dashboard ran":
+            if profile == "full" and not check["passed"]:
+                reasons.append("the Data Quality Dashboard did not run")
+        elif name == "release equivalence":
+            if check["state"] == "failed":
+                reasons.append("release equivalence failed on SQL Server")
+            elif profile == "full" and check["state"] != "passed":
+                reasons.append("release equivalence was not run on SQL Server")
+        elif check["passed"] is False:
+            reasons.append(f"the check that {name} did not pass" if name.startswith(("every", "no ", "the ")) else name)
+    return "passed" if not reasons else "failed: " + "; ".join(reasons)
+
+
 # The run.
 
 def _versions(vocabulary):
@@ -433,7 +649,7 @@ def _versions(vocabulary):
             "duckdb": duckdb.__version__, "sqlglot": sqlglot.__version__, "python": sys.version.split()[0]}
 
 
-def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None):
+def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, profile="fast"):
     """Runs every stage and writes report.json and report.md to out. Returns the report."""
     started = time.monotonic()
     world, world_folder, folder = resolve_world(world_name)
@@ -464,42 +680,58 @@ def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None):
         (out / "release" / "release.sql").write_text(text, encoding="utf-8")
         (out / "release" / "source_manifest.csv").write_text(manifest, encoding="utf-8")
     dqd = dqd_inputs(conversion, folder, out)
+    if profile == "full":
+        dqd = run_dqd(out, dqd)
     sqlserver = run_sqlserver(world_folder, folder, rows, out) if engine == "sqlserver" else None
+    equivalence = release_equivalence(sqlserver)
 
     failures = convert.failures(report)
+    coverage_ = reconciliation["coverage"]
     checks = [
         {"check": "every step ran cleanly", "passed": all(s["status"] == "ok" for s in report["steps"])},
         {"check": "every row fits the CDM's field list", "passed": not report["problems"], "detail": report["problems"]},
         {"check": "every gate passed", "passed": all(g["rows"] == 0 for g in report["gates"])},
         {"check": "every count ran", "passed": all(c["error"] is None for c in report["counts"])},
         {"check": "every planted scenario passed", "passed": all(s["outcome"] == "passed" for s in scenarios)},
-        {"check": "the reconciliation's sums agree", "passed": reconciliation["totals"]["all_sums_agree"]},
-        {"check": "no source row gave several target rows where one was expected",
-         "passed": None if expectations is None else not reconciliation["totals"]["steps_with_unexpected_several_rows"],
-         "detail": reconciliation["totals"]["steps_with_unexpected_several_rows"]},
+        {"check": "the reconciliation found no unexplained discrepancy", "passed": coverage_["outcome"] == "passed",
+         "detail": coverage_["unexplained"]["items"]},
         {"check": "the release script was written and carries every step that ran",
          "passed": released["written"] and released["carries_every_step"]},
-        {"check": "the Data Quality Dashboard", "passed": None, "detail": "not run"},
+        {"check": "the Data Quality Dashboard ran", "passed": dqd["status"] == "ran" if profile == "full" else None,
+         "detail": dqd["reason"] or "ran"},
+        equivalence,
     ]
     if sqlserver is not None:
         checks.append({"check": "SQL Server agrees with DuckDB", "passed": sqlserver.get("exit_code") == 0, "detail": sqlserver.get("summary")})
+    checks += [{"check": f, "passed": False} for f in failures]
     judged = [c for c in checks if c["passed"] is not None]
     passed = sum(1 for s in scenarios if s["outcome"] == "passed")
-    totals = reconciliation["totals"]
+    if dqd["status"] == "ran":
+        dqd_sentence = (f"The Data Quality Dashboard ran {dqd['checks']:,} checks: {dqd['passed']:,} passed, {dqd['failed']:,} failed, "
+                        f"{dqd['could_not_run']:,} could not run and {dqd['not_applicable']:,} did not apply.")
+    elif profile == "full":
+        dqd_sentence = f"The Data Quality Dashboard did not run, because {dqd['reason']}, so the full profile cannot pass."
+    else:
+        dqd_sentence = "The fast profile does not run the Data Quality Dashboard; its inputs are in testbed_cdm.duckdb and csv/."
+    equivalence_sentence = {
+        "passed": "Release equivalence passed: on SQL Server, the release script produced the same derived rows and scenario rows as DuckDB.",
+        "failed": f"Release equivalence failed. {equivalence['detail']}",
+        "not run on SQL Server": "Release equivalence has not been run on SQL Server, because the testbed ran on DuckDB alone.",
+    }[equivalence["state"]]
     summary = {
-        "outcome": "passed" if all(c["passed"] for c in judged) and not failures else "failed",
+        "profile": profile,
+        "outcome": judge(checks, profile),
         "checks_passed": sum(1 for c in judged if c["passed"]), "checks_judged": len(judged),
         "scenarios_passed": passed, "scenarios": len(scenarios),
         "seconds": round(time.monotonic() - started, 1),
         "sentences": [
             f"The conversion ran {sum(1 for s in report['steps'] if s['status'] == 'ok')} of {len(steps)} steps cleanly over {report['built'][len('Schemalyser has built '):].rstrip('.')}.",
             f"{passed} of {len(scenarios)} planted scenarios passed against their written expectations.",
-            (f"The reconciliation traced {totals['steps_traced']} of {totals['steps']} steps. Counted step by step, the tables they "
-             f"start from held {totals['source_rows']:,} rows, of which {totals['reached']:,} reached a target and {totals['dropped']:,} "
-             f"were left out by a join or a condition, and the steps wrote {totals['target_rows']:,} rows from them."),
+            *coverage_sentences(coverage_, reconciliation["totals"]),
             (f"{sum(1 for g in report['gates'] if g['rows'] == 0)} of {len(report['gates'])} gates passed, and "
              f"{sum(1 for c in report['counts'] if c['error'] is None)} of {len(report['counts'])} counts ran."),
-            "The Data Quality Dashboard has not been run; its inputs are in testbed_cdm.duckdb and csv/.",
+            dqd_sentence,
+            equivalence_sentence,
         ],
     }
     result = {
@@ -512,7 +744,8 @@ def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None):
                   "run_at": datetime.now(UTC).isoformat(timespec="seconds")},
         "engines": {"build": "duckdb", "convert": "duckdb" + (" and sqlserver" if sqlserver else ""),
                     "scenarios": "duckdb" + (" and sqlserver" if sqlserver else ""), "reconciliation": "duckdb",
-                    "gates_and_counts": "duckdb" + (" and sqlserver" if sqlserver else ""), "dqd": "not run",
+                    "gates_and_counts": "duckdb" + (" and sqlserver" if sqlserver else ""),
+                    "dqd": "postgresql, through the Broadsea image" if dqd["status"] == "ran" else "not run",
                     "sqlserver": sqlserver},
         "build": {"sentence": report["built"], "mapping_rows": report["mappings"],
                   "derived_mappings": [{k: item[k] for k in ("vocabulary", "matched")} for item in report["derived"]],
@@ -524,7 +757,7 @@ def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None):
         "reconciliation": reconciliation,
         "release": released,
         "dqd": dqd,
-        "checks": checks + [{"check": f, "passed": False} for f in failures],
+        "checks": checks,
         "summary": summary,
     }
     (out / "report.json").write_text(json.dumps(result, indent=2, default=str) + "\n", encoding="utf-8")
@@ -536,14 +769,15 @@ def markdown(report):
     """The report for a person."""
     s, r = report["summary"], report["reconciliation"]
     lines = ["# OMOP testbed report", "",
-             (f"The run {'passed' if s['outcome'] == 'passed' else 'did not pass'}: {s['checks_passed']} of {s['checks_judged']} "
-              f"judged checks passed, and it took {s['seconds']} seconds."), ""]
+             (f"The run in the {s['profile']} profile "
+              + ("passed" if s["outcome"] == "passed" else f"did not pass, because {s['outcome'][len('failed: '):]}")
+              + f". {s['checks_passed']} of {s['checks_judged']} judged checks passed, and the run took {s['seconds']} seconds."), ""]
     lines += [*s["sentences"], ""]
     v = report["versions"]
     lines += ["## Versions", "", (f"Schemalyser is {v['tool']}, the CDM is version {v['cdm']}, the vocabulary is {v['vocabulary']}, "
                                   f"and DuckDB is version {v['duckdb']}."), "", "## Checks", ""]
     for check in report["checks"]:
-        mark = "not run" if check["passed"] is None else "passed" if check["passed"] else "failed"
+        mark = check.get("state") or ("not judged in this profile" if check["passed"] is None else "passed" if check["passed"] else "failed")
         lines.append(f"- {check['check']}: {mark}.")
     lines += ["", "## Scenarios", ""]
     for scenario in report["scenarios"]:
@@ -551,7 +785,16 @@ def markdown(report):
         for item in scenario["expectations"]:
             if not item["met"]:
                 lines.append(f"  - {item['says']} The run gave {item['found']}, and the scenario expects {item['expected']}.")
+    c = r["coverage"]
     lines += ["", "## Reconciliation", "", r["note"], "",
+              f"- Traced, with every excluded row accounted for ({c['accounted']['count']}): {_names(c['accounted']['steps']) or 'none'}.",
+              f"- Traced, with the fan-out that testbed.json allows confirmed ({c['fan_out_confirmed']['count']}): "
+              f"{_names(c['fan_out_confirmed']['steps']) or 'none'}."]
+    lines += [f"- Not traced, so not reconciled ({c['not_traced']['count']}):" if c["not_traced"]["count"] else "- Not traced (0): none."]
+    lines += [f"  - {item['step']}: {item['reason']}." for item in c["not_traced"]["steps"]]
+    lines += [f"- With an unexplained discrepancy ({c['unexplained']['count']}):" if c["unexplained"]["count"] else "- With an unexplained discrepancy (0): none."]
+    lines += [f"  - {item.get('step') or item.get('table')}: {item['reason']}." for item in c["unexplained"]["items"]]
+    lines += ["",
               "| Step | Starts from | Source rows | Reached | Left out | Target rows | Several rows from one | As expected |",
               "|---|---|---:|---:|---:|---:|---:|---|"]
     for e in r["steps"]:
@@ -572,9 +815,21 @@ def markdown(report):
                  else f"The release script was not written: {rel['reason']}.")
     for count in rel.get("counts", []):
         lines.append(f"- {count['says'] or count['count'] + ': the count could not be run.'}")
-    lines += ["", "## Data Quality Dashboard", "", ("The dashboard has not been run, because R is not available here. "
-                                                    "To run it in the Broadsea environment, load the tables and then run the dashboard's image:"), "",
-              f"    {dqd['load']}", f"    {dqd['command']}", ""]
+    lines += ["", "## Data Quality Dashboard", ""]
+    if dqd["status"] == "ran":
+        lines += [(f"The dashboard ran {dqd['checks']:,} checks in {dqd['seconds']} seconds: {dqd['passed']:,} passed, {dqd['failed']:,} "
+                   f"failed, {dqd['could_not_run']:,} could not run and {dqd['not_applicable']:,} did not apply. Its results are in "
+                   f"{dqd['results_file']}."), "", "| Category | Checks | Passed | Failed | Could not run | Not applicable |",
+                  "|---|---:|---:|---:|---:|---:|"]
+        lines += [f"| {name} | {n['checks']} | {n['passed']} | {n['failed']} | {n['could_not_run']} | {n['not_applicable']} |"
+                  for name, n in dqd["by_category"].items()]
+        lines.append("")
+    else:
+        lines += [(f"The dashboard has not been run, because {dqd['reason'].rstrip('.')}. You can run it in the Broadsea environment "
+                   "by loading the tables and then running the dashboard's image:"), "", f"    {dqd['load']}", f"    {dqd['command']}", ""]
+    eq = next(check for check in report["checks"] if check["check"] == "release equivalence")
+    said = {"passed": "The check passed.", "failed": "The check failed.", "not run on SQL Server": "The check has not been run on SQL Server."}
+    lines += ["## Release equivalence", "", f"{said[eq['state']]} {eq['detail']}", ""]
     if report["engines"]["sqlserver"]:
         lines += ["## SQL Server", "", f"The harness reports: {report['engines']['sqlserver']['status']}.", ""]
         lines += [f"- {line}" for line in report["engines"]["sqlserver"].get("summary", [])]
@@ -591,13 +846,17 @@ def main():
     runner.add_argument("--conversion", type=Path, help="a conversion folder; the world's conversion/ when left out")
     runner.add_argument("--engine", choices=("duckdb", "sqlserver"), default="duckdb",
                         help="sqlserver also runs tools/sqlserver/harness.py, which needs its container")
+    runner.add_argument("--profile", choices=("fast", "full"), default="fast",
+                        help="full also runs the Data Quality Dashboard and requires it and release equivalence to pass")
     args = parser.parse_args()
     try:
-        report = run(args.world, args.out, args.rows, args.engine, args.conversion)
+        report = run(args.world, args.out, args.rows, args.engine, args.conversion, args.profile)
     except (convert.ScenarioError, ValueError, FileNotFoundError) as error:
         raise SystemExit(f"schemalyser.testbed: {error}")
     for sentence in report["summary"]["sentences"]:
         print(sentence)
+    outcome = report["summary"]["outcome"]
+    print(f"The {args.profile} profile " + ("passed." if outcome == "passed" else f"did not pass, because {outcome[len('failed: '):]}."))
     print(f"The report is in {args.out / 'report.json'} and {args.out / 'report.md'}.")
     return 0 if report["summary"]["outcome"] == "passed" else 1
 
