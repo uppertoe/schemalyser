@@ -1,6 +1,6 @@
 # Architecture
 
-Schemalyser helps a clinician write an audit of anaesthetic records, test it on invented data, and have it run once on the hospital's real database by a colleague who has access. It describes the anaesthetic record once, in terms that belong to no vendor, as a set of parts. For each hospital, the clinician and the colleague then confirm in one sitting where that hospital's database keeps each part, and save the result as the hospital schema. An audit written against the parts is tested on made-up rows and compiled, through the hospital schema, into a script that is safe on production. This document describes what exists today. `docs/history.md` records the designs that came before it, and `docs/roadmap.md` sets out the order of the work still to come.
+Schemalyser helps a clinician write an audit of anaesthetic records, test it on invented data, and have it run once on the hospital's real database by a database analyst who has access. It describes the anaesthetic record once, in terms that belong to no vendor, as a set of parts. For each hospital, the clinician and the database analyst then confirm in one sitting where that hospital's database keeps each part, and save the result as the hospital schema. An audit written against the parts is tested on made-up rows and compiled, through the hospital schema, into a script that is safe on production. This document describes what exists today. `docs/history.md` records the designs that came before it, and `docs/roadmap.md` sets out the order of the work still to come.
 
 ## The standing rules
 
@@ -17,7 +17,7 @@ The role model, the tool, the OMOP side and the invented worlds are public, and 
 
 The page has three screens, and the hospital schema is the one thing that passes between them.
 
-1. **Describe the record** is built and published at https://uppertoe.github.io/schemalyser/ . It is the only page the site now serves. A clinician and a colleague use it once for each hospital to make the hospital schema.
+1. **Describe the record** is built and published at https://uppertoe.github.io/schemalyser/ . It is the only page the site now serves. The clinician, who leads the audit, and the database analyst, who runs the queries, use it once for each hospital to make the hospital schema.
 2. **An audit** is to come. It will read the hospital schema and an audit, build a shadow from the schema, plant the standard cases, run the audit on made-up rows and compile the safe script for production.
 3. **The OMOP layer** is to come. It will read the hospital schema and write the release script for the anaesthesia layer of the hospital's OMOP database.
 
@@ -45,7 +45,7 @@ The hospital schema is a map from the parts of the record to one hospital's tabl
 
 **The proposal.** The page reads the vendor's data dictionary in one of three ways: made from the database by one query that the page gives, which reads only the server's own records; uploaded as an export from the vendor's dictionary tool; or, to try the page, the invented dictionary. `datadict.py` reads the file and holds each description only in memory. `propose.py` then proposes, for each view, its table and, for each column, the table and column that play it, by plain, deterministic word matching against the dictionary's descriptions and names. Each proposal carries a confidence, up to three alternatives, and the description with the words that matched. No model is involved.
 
-**Confirmation.** A query of the server's own records says which proposed tables exist and how large they are. The colleague then answers each column yes, no with a replacement, or not sure. A column whose name suggests that it identifies a person is never offered.
+**Confirmation.** A query of the server's own records says which proposed tables exist and how large they are. The database analyst then answers each column yes, no with a replacement, or not sure. A column whose name suggests that it identifies a person is never offered.
 
 **Corrections.** Where a binding needs more than a table and a column, the page offers structured forms rather than SQL (`corrections.py`), such as a value derived from a column, a filter on the view's rows, a link through up to three tables, a link by shared key with a time window, and the translation of a column's local codes into the role's kinds. Each correction is stored in `map.json` as data, never as SQL, and `propose.view_sql` writes the SQL from it.
 

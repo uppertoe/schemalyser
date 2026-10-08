@@ -4,13 +4,13 @@ The order below follows one principle from the reviews of 8 October 2026: valida
 
 ## 1. The first meeting, as the acceptance test of the hospital schema
 
-The first meeting with the colleague who has database access is the test of screen 1. The two of them work through the page on production and save the hospital schema. Its scoreboard then shows, as counts that name nothing, how well the proposer did and so whether the dictionary-led approach holds at a real hospital.
+The first meeting of the clinician and the database analyst is the test of screen 1. The two of them work through the page on production and save the hospital schema. Its scoreboard then shows, as counts that name nothing, how well the proposer did and so whether the dictionary-led approach holds at a real hospital.
 
 Done means that a saved hospital schema exists on hospital storage in which all three contract views have reached the state *checked against the database*, and that its scoreboard has been read and any lesson for the proposer recorded in the public repository without naming the vendor's model.
 
 ## 2. Screen 2, an audit, built narrowly for the neonatal audit
 
-Screen 2 is built for one audit only, the neonatal low mean pressure audit, rather than as a general audit builder. It reads the saved hospital schema, builds a shadow from it, plants the standard neonatal cases, runs the audit on the made-up rows, and compiles the two-part script for production. The colleague runs the script once.
+Screen 2 is built for one audit only, the neonatal low mean pressure audit, rather than as a general audit builder. It reads the saved hospital schema, builds a shadow from it, plants the standard neonatal cases, runs the audit on the made-up rows, and compiles the two-part script for production. The database analyst runs the script once.
 
 The result is then clinically validated. A clinician reconciles a sample of anaesthetics against the clinical record, including some from each band of the answer and some that fell into the band in which nothing was recorded, and every disagreement is explained, either as a fault in the hospital schema, which is corrected, or as a limit of the record, which the result states.
 

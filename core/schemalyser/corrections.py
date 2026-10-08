@@ -85,7 +85,7 @@ WORDING = {
     "not_found": "The dictionary holds no column {name}.",
     "no_table": "The dictionary holds no table {name}.",
     "not_in_result": "The result of the tables and columns query holds no column {name}.",
-    "unreachable": "The table that holds this part does not reach {table} by any link that the dictionary shows. To name the links yourself, choose A link through other tables.",
+    "unreachable": "The table that holds this part does not reach {table} by any link that the dictionary shows. To name the links, the database analyst chooses A link through other tables.",
     "derive_type": "{about} is {type_words}, and a value worked out as {form_words} does not suit it.",
     "values": "Please give at least one value, and at most {most}.",
     "factor": "Please give the factor as a number other than nought, and the offset as a number.",

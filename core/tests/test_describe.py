@@ -594,7 +594,7 @@ def test_a_count_in_which_most_anaesthetics_have_no_patient_says_so_and_leads_to
                  date=DATE)
     found = [f for f in s.findings("coverage_by_year") if "have no patient" in f]
     assert found == ["In 2024 and 2025, most anaesthetics have no patient whom the hospital schema finds, so the link from "
-                     "each anaesthetic to its patient may be wrong. Look again at the patient's identifier in Anaesthetics at step 6."]
+                     "each anaesthetic to its patient may be wrong. The database analyst looks again at the patient's identifier in Anaesthetics at step 6."]
     assert all(s.finding_about("coverage_by_year")[f] == "role_anaesthetic.patient_key" for f in found)
     assert s.view()["counts"]["coverage_by_year"]["finding_about"]
 
@@ -638,7 +638,7 @@ def test_results_from_the_invented_hospital_are_headed_as_such_and_the_database_
     assert "Pasted into" not in result
     assert json.loads(files["journal.json"])["entries"][-1]["database"] == "invented"
     readme = files["README.md"].decode()
-    assert "as the colleague pasted it or as the invented hospital gave it" in readme
+    assert "as the database analyst pasted it or as the invented hospital gave it" in readme
     assert "where the answer was no or where a Yes carried a translation" in readme
     # The heading is taken off again when the file is opened, so the result reads as it was given.
     other = describe.Describe()
@@ -659,7 +659,7 @@ def test_a_kind_chosen_at_step_7_that_the_readings_count_does_not_hold_is_named_
                  "other\t90\t90\t90\t20\n", date=DATE)
     found = s.findings("readings_by_kind")
     assert found == ["Codes were chosen at step 7 for the mean arterial pressure from a non-invasive cuff and the oxygen "
-                     "saturation by pulse oximetry, but no readings of those kinds appear in 2024. Look again at those "
+                     "saturation by pulse oximetry, but no readings of those kinds appear in 2024. The clinician looks again at those "
                      "codes at step 7."]
     assert s.view()["counts"]["readings_by_kind"]["finding_codes"] == {found[0]: "role_reading.kind"}
     assert not s.view()["counts"]["readings_by_kind"]["finding_about"]

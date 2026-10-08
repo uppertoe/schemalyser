@@ -1,6 +1,6 @@
 """Screen 1, describing the record: the hospital folder, made once for each hospital in one sitting.
 
-A clinician and a colleague who can run SQL against the reporting database load the vendor's data dictionary, let the
+A clinician and a database analyst who can run SQL against the reporting database load the vendor's data dictionary, let the
 proposer draft a map from it and the role model, check with one query which of the proposed tables and columns exist
 and how large they are, confirm each binding, settle the local codes of each vocabulary, and run a few counts. What
 they settle is written to the hospital folder:
@@ -97,13 +97,13 @@ def identifies_person(column, description=""):
     return bool(PERSON_NAME.search(column or "") or PERSON_WORDS.search(description or ""))
 
 WORDING = {
-    "headings": "Schemalyser could not find a heading for the {fields} in the dictionary's first row. Please name the "
-                "heading under Name the headings yourself, then load the file again.",
+    "headings": "Schemalyser could not find a heading for the {fields} in the dictionary's first row. The clinician names the "
+                "heading under Name the headings yourself, then loads the file again.",
     "cohort_comment": "Part 1 puts into #cohort at most {limit} anaesthetics that started in {year}, the earliest first, "
                       "from {tables}, which hold one row for each anaesthetic or fewer. #cohort is a temporary table that "
-                      "exists only in your own SQL window and disappears when you close it. Nothing else is made or changed.",
-    "timeout": "Before you run this script, set a time limit: open the Query menu, choose Query Options, then Execution, "
-               "and enter a number of seconds in Execution time-out. Run the whole script; part 1 finishes first.",
+                      "exists only in the database analyst's SQL window and disappears when that window closes. Nothing else is made or changed.",
+    "timeout": "Before running this script, the database analyst sets a time limit: in the Query menu, Query Options, then "
+               "Execution, the analyst enters a number of seconds in Execution time-out. The analyst runs the whole script; part 1 finishes first.",
     "charted_comment": "Part 2 lists every code of {column} charted on the anaesthetics in #cohort, with the number of "
                        "rows and of anaesthetics for each, rounded down to ten and left empty under ten, and the name "
                        "that {lookup} gives each code, most charted first. It reaches {path} from #cohort by their keys, "
@@ -142,7 +142,7 @@ WORDING = {
     "grid_empty": "The pasted text holds no rows. If the query returned no rows, the grid is empty; otherwise please copy the whole results grid with Copy with Headers, and paste it again.",
     "folder_unreadable": "Schemalyser could not read the hospital schema in this file, so it has started a new hospital schema instead.",
     "cliff": "In {year}, {count} of {total} anaesthetics {what}, against {best_count} of {best_total} in {best_year}. A fall as sharp as this usually means that the data is held differently in that year.",
-    "no_patient": "In {years}, most anaesthetics have no patient whom the hospital schema finds, so the link from each anaesthetic to its patient may be wrong. Look again at the patient's identifier in Anaesthetics at step 6.",
+    "no_patient": "In {years}, most anaesthetics have no patient whom the hospital schema finds, so the link from each anaesthetic to its patient may be wrong. The database analyst looks again at the patient's identifier in Anaesthetics at step 6.",
     "repeated": "In {view}, {count} values of the column that identifies a row are held by more than one row.",
     "stamp_query": "Written by Schemalyser {version} on {date}.",
     "stamp_file": "Written by Schemalyser {version} on {date}.",
@@ -153,7 +153,7 @@ WORDING = {
     "differs": "{about} differs: the saved schema holds {before}, and the schema proposed again holds {after}.",
     "only_folder": "The saved schema holds {about}, and the schema proposed again does not.",
     "only_rebuilt": "The schema proposed again holds {about}, and the saved schema does not.",
-    "training": "These queries were run on a training database, whose patients are fictional, so their figures say nothing about the real record. Run each of them again on the production database before the figures are used:",
+    "training": "These queries were run on a training database, whose patients are fictional, so their figures say nothing about the real record. The database analyst runs each of them again on the production database before the figures are used:",
     "table_gone": "The table {table} was in the earlier result and is not in the new one.",
     "column_gone": "The column {column} was in the earlier result and is not in the new one.",
     "table_new": "The table {table} is in the new result and was not in the earlier one.",
@@ -161,7 +161,7 @@ WORDING = {
     "row_gone": "The row {key} was in the earlier result and is not in the new one.",
     "row_new": "The row {key} is in the new result and was not in the earlier one.",
     "count_changed": "{column} of the row {key} was {before} and is now {after}, a change of more than a tenth.",
-    "keep_failing": "This change fails the test on made-up rows, so Schemalyser keeps it only if you tick Keep it although the test fails and give the reason.",
+    "keep_failing": "This change fails the test on made-up rows, so Schemalyser keeps it only if the database analyst ticks Keep it although the test fails and gives the reason.",
     "no_probe": "Schemalyser offers no test query for this kind of change.",
     "values_comment": "Part 2 lists the commonest values of {column} among the rows of the anaesthetics in #cohort, at most {most}, with the number of rows that hold each, rounded down to ten and left empty under ten.",
     "values_safe": "This query lists the commonest values of {column}, at most {most}, with the number of rows that hold each, rounded down to ten and left empty under ten. It returns at most {most} rows and reads no table of readings. It reads each of these tables once: {tables}.",
@@ -196,11 +196,11 @@ WORDING = {
     "probe_flag": "The flag is 1 in {ones} rows, 0 in {zeros} and empty in {empty}.",
     "identifying": "The page does not offer columns that hold a person's name, address, contact details or medical record number, and {name} is one, so the page cannot use it here.",
     "identifying_values": "The page does not list the values of {name}, because it holds a person's name, address, contact details or medical record number.",
-    "kinds_absent": "Codes were chosen at step 7 for {kinds}, but no readings of {those} appear in {year}. Look again at {codes} at step 7.",
-    "invented_only": "The invented hospital answers only the queries written for the invented dictionary. With a real dictionary, your colleague runs each query on the hospital's database.",
+    "kinds_absent": "Codes were chosen at step 7 for {kinds}, but no readings of {those} appear in {year}. The clinician looks again at {codes} at step 7.",
+    "invented_only": "The invented hospital answers only the queries written for the invented dictionary. With a real dictionary, the database analyst runs each query on the hospital's database.",
     "invented_not_offered": "The page has not written this query yet. Write it first, then choose Run on the invented hospital.",
     "invented_failed": "The invented hospital could not run this query. Write it again and run it once more; if it still fails, answer this item by hand.",
-    "invented_missing": "The invented hospital holds no table {table}, so it cannot run this query. Choose another table or column at step 6, or answer this item by hand.",
+    "invented_missing": "The invented hospital holds no table {table}, so it cannot run this query. The database analyst chooses another table or column at step 6, or answers this item by hand.",
 }
 # Where a result came from when it was not pasted: the journal records it beside the result.
 INVENTED_HOSPITAL = "invented hospital"
@@ -1639,7 +1639,7 @@ ORDER  BY g.kind;"""
 
     def finding_about(self, name):
         """The column of step 6 that each finding of a count leads to, as {finding: about}."""
-        return {f: "role_anaesthetic.patient_key" for f in self.findings(name) if f.endswith("Look again at the patient's identifier in Anaesthetics at step 6.")}
+        return {f: "role_anaesthetic.patient_key" for f in self.findings(name) if f.endswith("looks again at the patient's identifier in Anaesthetics at step 6.")}
 
     def findings(self, name):
         held = self.counts.get(name) or {}
@@ -1688,7 +1688,7 @@ ORDER  BY g.kind;"""
 
     def offer(self, name, step, sql, **extra):
         """Records a query as the page offers it, numbered in the order of first offer, and returns its text with a
-        first line that names the tool's version and the date, which is the text that the colleague copies."""
+        first line that names the tool's version and the date, which is the text that the database analyst copies."""
         entry = self.journal.get(name)
         if entry is None:
             entry = self.journal[name] = {"number": len(self.journal) + 1, "name": name}
@@ -2408,17 +2408,17 @@ README = {
     "title": "# The saved hospital schema",
     "stamp": "Schemalyser {version} saved this file on {date}.",
     "intro": "This file holds the hospital schema: where the hospital's database keeps each part of the anaesthetic "
-             "record. A clinician and a colleague who runs SQL against that database made it together with "
+             "record. The clinician, who led the audit, and the database analyst, who ran the queries, made it together with "
              "Schemalyser's page Describe the record. The page proposed the schema from the data dictionary, the "
-             "colleague confirmed or corrected each column, and the queries that the colleague ran settled the "
+             "database analyst confirmed or corrected each column, and the queries that the analyst ran settled the "
              "hospital's codes and the counts.",
     "storage": "This file contains the hospital's data dictionary and the hospital schema, which name the hospital's own "
                "tables and codes. It must stay on the hospital's own storage.",
     "files": "## What each part of the file holds",
     "rerun": "## Queries to run again on production",
     "draft": "## This hospital schema is a draft",
-    "draft_text": "Some of the hospital schema is not yet answered ({parts}). To finish it, open the page Describe the "
-                  "record, open this file at step 3 and carry on from step 6.",
+    "draft_text": "Some of the hospital schema is not yet answered ({parts}). To finish it, the clinician opens the page Describe "
+                  "the record, opens this file at step 3 and carries on from step 6.",
     "readiness": "## How far the hospital schema has been checked",
     "readiness_text": "Schemalyser records how far each part of the hospital schema has been checked, in three states. A "
                       "part runs once it compiles and runs on made-up rows. It is checked against the database once the "
@@ -2442,17 +2442,17 @@ README = {
                    "nothing useful until a person translates them:",
     "remake": "## How to check or remake the hospital schema",
     "remake_text": [
-        "Open the page Describe the record, take it offline and open this file at step 3. The page then reads the data "
-        "dictionary and everything below from the file, and you can carry on from where you left off.",
+        "The clinician opens the page Describe the record, takes it offline and opens this file at step 3. The page then "
+        "reads the data dictionary and everything below from the file, and the work carries on from where it was left.",
         "To check that the hospital schema is still right, for example after a change to the database or a new release "
-        "of the vendor's system, choose Check against the database under Check a saved schema against the database. "
+        "of the vendor's system, the clinician chooses Check against the database under Check a saved schema against the database. "
         "Schemalyser proposes the schema again from the dictionary, applies the answers in confirmations.csv in their "
         "order, and says whether the result is the same as map/map.json. It then lists every query in queries/ with its "
-        "earlier result from results/. The colleague runs each query again and pastes the new result, and the page "
+        "earlier result from results/. The database analyst runs each query again and pastes the new result, and the page "
         "lists what has changed: a table or column that has gone, a row that has gone or come, or a count that has "
         "changed by more than a tenth.",
         "Without the page, the hospital schema can still be checked by hand. Each file in queries/ is the exact text "
-        "that the colleague ran, and the file of the same number in results/ is what came back. journal.json says "
+        "that the database analyst ran, and the file of the same number in results/ is what came back. journal.json says "
         "which step offered each query, which database it was run on and when the result was pasted.",
     ],
     "licence": "The data dictionary is licensed. This file holds a copy of it in dictionary/, so that the page can open "
@@ -2472,7 +2472,7 @@ README_FILES = [
                      "gives the file's name, its size, its numbers of tables and columns and a fingerprint of its "
                      "contents (a SHA-256 hash), and never its contents. Each correction kept has an entry of its own, "
                      "with the sentence that it means, the outcome of its test on made-up rows and any reason for keeping it."),
-    ("confirmations.csv", "Every answer that the colleague gave, in order, one row for each answer: the part and column, "
+    ("confirmations.csv", "Every answer that the database analyst gave, in order, one row for each answer: the part and column, "
                           "the answer (yes, no or not sure), the replacement where the answer was no or where a Yes carried "
                           "a translation of the column's codes, the date and any note. For a correction "
                           "made in one of the page's forms, it also gives the correction as data, the outcome of the test on "
@@ -2484,12 +2484,12 @@ README_FILES = [
     ("map/role_*.sql", "One SQL file for each part of the record, written from its columns, its links and the chosen "
                        "codes. An audit reads these parts of the record and nothing else."),
     ("queries/", "The exact text of every query that the page offered, numbered in the order offered."),
-    ("results/", "Each result, exactly as the colleague pasted it or as the invented hospital gave it, with the same number "
+    ("results/", "Each result, exactly as the database analyst pasted it or as the invented hospital gave it, with the same number "
                  "and name as its query. journal.json records which of the two each came from, and the first line of each "
                  "file says so, with the tool's version and the date."),
     ("codes/", "For each column that holds the hospital's own codes, the list of what is charted and the codes "
                "chosen for each kind."),
-    ("counts/judgements.json", "For each count, whether it looked right to the two of you, any note, and the database "
+    ("counts/judgements.json", "For each count, whether it looked right to the clinician, any note, and the database "
                                "whose figures were judged: production, training, or invented for the invented hospital."),
     ("dictionary/", "The dictionary's own files. Where the data dictionary was made from the database, it is the "
                     "result of the data dictionary query as a CSV, and any file of the vendor's descriptions is kept "

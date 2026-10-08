@@ -24,11 +24,11 @@ On 6 October, in a rehearsal on the test SQL Server, one long query filled the s
 
 ## The first page, with seven steps
 
-By 7 October the page walked a clinician and a colleague through seven steps, from taking the tab offline and choosing the audit's folder and SQL files to working through each checklist and saving the state as a zip to unzip into the folder. It could fetch its inputs from private GitHub repositories, recognised a training database with fictional patients, and offered a practice database. A reviewer new to the page found nineteen faults in the checklist step that day, and they were fixed.
+By 7 October the page walked a clinician and a database analyst through seven steps, from taking the tab offline and choosing the audit's folder and SQL files to working through each checklist and saving the state as a zip to unzip into the folder. It could fetch its inputs from private GitHub repositories, recognised a training database with fictional patients, and offered a practice database. A reviewer new to the page found nineteen faults in the checklist step that day, and they were fixed.
 
 ## The simplification to roles, 7 October
 
-On 7 October the owner read the published page closely for the first time, and two facts changed the premise. The colleague confirmed that the production schema is essentially the vendor's documented one. And the hospital could supply the vendor's data dictionary for use inside the page. The structure of the record could then be described once, confirmed in one sitting and reused for every audit, and most of the page's eighteen kinds of interaction existed only to gather evidence that was no longer needed.
+On 7 October the owner read the published page closely for the first time, and two facts changed the premise. The database analyst confirmed that the production schema is essentially the vendor's documented one. And the hospital could supply the vendor's data dictionary for use inside the page. The structure of the record could then be described once, confirmed in one sitting and reused for every audit, and most of the page's eighteen kinds of interaction existed only to gather evidence that was no longer needed.
 
 A prototype had already shown the alternative. The role model described the anaesthetic record with no vendor in mind, a small map supplied it at each hospital, and the neonatal audit written once against three role views gave the same band table as the OMOP target query through the conversion, in DuckDB and on SQL Server. A proposer drafted a map from a data dictionary by plain word matching, and on the vendor's public specification it agreed with an independently written map in 13 of 16 bindings.
 

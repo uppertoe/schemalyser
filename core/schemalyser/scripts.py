@@ -31,19 +31,19 @@ from . import checks as checking
 LIMIT = 5000
 
 WORDING = {
-    "timeout": "Set a time limit before you run this script, because SQL Server Management Studio sets none unless you "
-               "enter one: open the Query menu, choose Query Options, then Execution, and enter a number of seconds in "
-               "Execution time-out. Run part 1 on its own, then select part 2 and press Ctrl+L to see its estimated plan without "
+    "timeout": "The database analyst sets a time limit before running this script, because SQL Server Management Studio sets "
+               "none otherwise: in the Query menu, Query Options, then Execution, the analyst enters a number of seconds in "
+               "Execution time-out. The analyst runs part 1 on its own, then select part 2 and press Ctrl+L to see its estimated plan without "
                "running it. If a box that names the table of readings reads Scan, or a box that reads Hash Match has an "
-               "arrow coming in from it, do not run part 2, and show the plan to the clinician leading the audit. If the "
-               "table of readings appears only in boxes that read Seek, you can run part 2.",
-    "temporary": "This script makes one temporary table, #cohort, which is a small table that exists only in your own SQL "
-                 "window and disappears when you close that window. #cohort holds only the identifying numbers of the "
+               "arrow coming in from it, the analyst does not run part 2 and shows the plan to the clinician. If the "
+               "table of readings appears only in boxes that read Seek, the analyst can run part 2.",
+    "temporary": "This script makes one temporary table, #cohort, which is a small table that exists only in the database "
+                 "analyst's SQL window and disappears when that window closes. #cohort holds only the identifying numbers of the "
                  "audit's anaesthetics and of their records, with their start and end times. Nothing else is made or changed.",
     "worst": "The count by year shows {worst}, and part 2 asks only for the readings of those anaesthetics.",
     "part1": "Part 1 finds the audit's anaesthetics in the smaller tables and puts them into #cohort, one row for each anaesthetic.",
     "part2": "Part 2 fetches the readings of only the anaesthetics in #cohort.",
-    "unseen": "Schemalyser offers this query once you have seen the count by year, because the count shows how many "
+    "unseen": "Schemalyser offers this query once the count by year has been seen, because the count shows how many "
               "anaesthetics it would read.",
     "too_many": "The count by year shows that the cohort may hold as many as {n} anaesthetics from {start} to {end}. Schemalyser offers a "
                 "script that reads the readings only where the period holds at most {limit} anaesthetics of the cohort, so "

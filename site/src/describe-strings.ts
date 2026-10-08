@@ -27,15 +27,15 @@ const databaseReceipt = (r: { tables: number; columns: number; described: number
       : `The page has made the data dictionary from the database: ${plural(r.columns, 'column', 'columns')} in ${plural(r.tables, 'table', 'tables')}, with descriptions for ${r.described.toLocaleString('en-AU')} of them.`,
     r.vendor ? describeVendor(r.vendor) : '',
     r.described * 4 < r.columns
-      ? "Few columns have a description, so the proposals rest on the names of tables and columns and will need more correcting. If the hospital's team that looks after the record system can export the vendor's descriptions, add them with Upload a dictionary file you already have."
+      ? "Few columns have a description, so the proposals rest on the names of tables and columns and will need more correcting. If the hospital's team that looks after the record system can export the vendor's descriptions, the clinician can add them with Upload a dictionary file you already have."
       : '',
   ].filter(Boolean).join(' ');
 
 export const describeStrings = {
   title: 'Describe the record',
   intro:
-    "Two people work through these steps together, once for each hospital: the clinician who leads the audit, and a colleague who can run SQL on the hospital's database. One person may be both, and then “your colleague” on this page means you. The page proposes where the hospital's database keeps each part of the anaesthetic record, your colleague confirms or corrects each one, and the page saves the result as the hospital schema, which records where this hospital's database keeps each part of the anaesthetic record.",
-  privateNote: "Everything you load or paste stays in this browser tab. The only copy the page makes is the saved hospital schema, a single file that you keep on the hospital's own storage.",
+    "Two people work through these steps together, once for each hospital. The clinician leads the audit and works through the page, and the database analyst has access to the hospital's database, runs the queries that the page offers and answers questions about the database. If one person is both the clinician and the database analyst, the page's instructions still name the role that acts. The page proposes where the hospital's database keeps each part of the anaesthetic record, the database analyst confirms or corrects each one, and the page saves the result as the hospital schema, which records where this hospital's database keeps each part of the anaesthetic record.",
+  privateNote: "Everything loaded or pasted stays in this browser tab. The only copy the page makes is the saved hospital schema, a single file that the clinician keeps on the hospital's own storage.",
 
   // The headings of the steps. The page records the heading of the step that offered each query in the saved hospital schema.
   steps: [
@@ -59,10 +59,10 @@ export const describeStrings = {
     loading: 'This step opens once the page has loaded.',
     problem: 'This step opens once the page has loaded again.',
     inventedNoHospital:
-      'The invented dictionary has no database to ask in this sitting, so go on to step 6. If you load the invented dictionary again at step 2 while the tab is online, the invented hospital answers this step.',
+      'The invented dictionary has no database to ask in this sitting, so the clinician goes on to step 6. If the clinician loads the invented dictionary again at step 2 while the tab is online, the invented hospital answers this step.',
     dictionary: 'This step opens once the dictionary is loaded.',
     map: 'This step opens once the hospital schema is proposed.',
-    folder: 'This opens once you open a saved hospital schema at step 3.',
+    folder: 'This opens once the clinician opens a saved hospital schema at step 3.',
   },
   showStep: 'Show this step',
   hideStep: 'Hide this step',
@@ -86,10 +86,10 @@ export const describeStrings = {
   aboutFile: 'What this file is',
 
   // 1. Offline.
-  offlineWhat: 'Wait for the page to load, then take this tab offline. Your SQL window stays connected.',
+  offlineWhat: 'The clinician waits for the page to load, then takes this tab offline. The database analyst\'s SQL window stays connected.',
   loading: 'The page is loading. Keep it online until it says that it has finished.',
   loaded: 'The page has finished loading. Take this tab offline now.',
-  offlineInvented: ['If you want to try the page first, choose Use the invented dictionary to try the page at ', 'step 2', ' now, before you take the tab offline.'],
+  offlineInvented: ['If the clinician wants to try the page first, the clinician chooses Use the invented dictionary to try the page at ', 'step 2', ' now, before taking the tab offline.'],
   // Once the invented dictionary has loaded while the tab is online, in step 1 and in step 2.
   inventedLoaded:
     'The invented dictionary is loaded, with the invented hospital that answers its queries. Now take this tab offline and carry on at step 4.',
@@ -102,24 +102,24 @@ export const describeStrings = {
     'On a phone or a tablet, the page cannot be taken offline in this way, so please use it on a computer.',
   ],
   noFiles: 'The page will not accept any files while it is online.',
-  offlineDone: 'This tab is offline, so nothing you load or paste can leave it.',
+  offlineDone: 'This tab is offline, so nothing loaded or pasted here can leave it.',
   locked:
-    'This tab has gone back online, so the page has let go of the dictionary and of everything pasted. If you saved the hospital schema, nothing is lost: reload the page, take it offline and open the saved hospital schema at step 3.',
+    'This tab has gone back online, so the page has let go of the dictionary and of everything pasted. If the clinician saved the hospital schema, nothing is lost: the clinician reloads the page, takes it offline and opens the saved hospital schema at step 3.',
   policySummary: 'How the page makes sure that nothing can leave it',
 
   // 2. The dictionary.
   dictionaryWhat: 'Give the page the data dictionary in one of four ways:',
   // The four ways, each a heading and one sentence; only the chosen one's controls are shown beneath.
   ways: [
-    ['create', 'Create it from the database', "Your colleague runs one query on the hospital's database, and the page makes the data dictionary from its result."],
-    ['upload', 'Upload a dictionary file you already have', "Choose a file that the hospital's team that looks after the record system has exported from the vendor's dictionary, or a result of the query in the first way that you saved earlier."],
+    ['create', 'Create it from the database', "The database analyst runs one query on the hospital's database, and the page makes the data dictionary from its result."],
+    ['upload', 'Upload a dictionary file you already have', "The clinician chooses a file that the hospital's team that looks after the record system has exported from the vendor's dictionary, or a result of the query in the first way that was saved earlier."],
     ['invented', 'Use the invented dictionary to try the page', 'The page fetches the dictionary of a made-up hospital, and the invented hospital that answers its queries, from this site while the tab is still online.'],
-    ['saved', 'Open a saved hospital schema', 'If the page saved a hospital schema at an earlier sitting, open it at step 3.'],
+    ['saved', 'Open a saved hospital schema', 'If the page saved a hospital schema at an earlier sitting, the clinician opens it at step 3.'],
   ] as [string, string, string][],
   // Beside each input, where it comes from: run on the database, asked of someone, or made here.
   choiceDatabase: 'Create it from the database',
   databaseOrigin:
-    "Run this on the database. Your colleague copies the query below, runs it in the SQL window connected to the hospital's database, and brings the result back here in one of the two ways below.",
+    "Run this on the database. The database analyst copies the query below, runs it in the SQL window connected to the hospital's database, and brings the result back here in one of the two ways below.",
   databaseCopy: 'Copy the query',
   databaseSafeSummary: 'Why this query is safe on production, and what it returns',
   databaseReturns:
@@ -128,15 +128,15 @@ export const describeStrings = {
     'Once the query has finished, bring the result here in whichever of these two ways suits its size. A result of more than about 20,000 rows is easier to save as a file than to paste.',
   databaseSmall: 'For a small database, copy the result with headers and paste it here.',
   databaseSmallHow:
-    'In SQL Server Management Studio, click the empty square at the top left of the results grid, then right-click it and choose Copy with Headers. Paste the result into the box below and choose Read the result.',
+    'In SQL Server Management Studio, the database analyst clicks the empty square at the top left of the results grid, then right-clicks it and chooses Copy with Headers. The analyst pastes the result into the box below and choose Read the result.',
   databasePasteLabel: 'The result, copied with its headers:',
   databaseRead: 'Read the result',
   databaseLarge: 'For a large one, save the result as a file, then choose it here.',
   databaseLargeSummary: 'How to save the result as a file in SQL Server Management Studio',
   databaseLargeHow: [
-    'Before the first time, open the Tools menu and choose Options, then Query Results, SQL Server and Results to Grid. Tick Include column headers when copying or saving the results, and choose OK. You need do this only once.',
-    'Once the query has run, right-click the results grid, choose Save Results As, choose CSV as the type of file, and save it. Then choose the file below.',
-    'If the result is too large to show in the grid, open the Query menu before you run the query, choose Results To and then Results to File. When you run the query, SQL Server Management Studio asks where to save the result. For this way, also set two things once, under Tools, Options, Query Results, SQL Server and Results to Text: set Output format to Tab delimited, and set Maximum number of characters displayed in each column to 8192, so that long descriptions are kept whole.',
+    'Before the first time, open the Tools menu and choose Options, then Query Results, SQL Server and Results to Grid. Tick Include column headers when copying or saving the results, and choose OK. The database analyst need do this only once.',
+    'Once the query has run, the database analyst right-clicks the results grid, chooses Save Results As, chooses CSV as the type of file and saves it, then chooses the file below.',
+    'If the result is too large to show in the grid, the database analyst opens the Query menu before running the query and chooses Results To and then Results to File. When the query runs, SQL Server Management Studio asks where to save the result. For this way, also set two things once, under Tools, Options, Query Results, SQL Server and Results to Text: set Output format to Tab delimited, and set Maximum number of characters displayed in each column to 8192, so that long descriptions are kept whole.',
   ],
   databaseFileLabel: 'The saved result:',
   databaseReading: 'The page is making the data dictionary from the result.',
@@ -144,13 +144,13 @@ export const describeStrings = {
   databaseUnreadable: "The page could not read this as the result of the data dictionary query. Make sure that it is the result of the query shown here, with its headers, then paste it or choose the file again.",
   choiceReal: 'Upload a dictionary file you already have',
   choiceRealWhat:
-    "Ask the hospital's team that looks after the record system for the vendor's own data dictionary, exported as a table with three columns: the table name, the column name and the description. If you have already created the data dictionary from the database, the page adds the file's descriptions to it, which makes the proposals much better. If you have not, the page reads the file as the data dictionary itself, and step 5 then asks for one more query to check which tables exist. A result of the query in the first way, saved earlier as a file, is read just as if it had been pasted there. The vendor's export is licensed material: it stays in this browser and in the saved hospital schema, which stays on hospital storage.",
+    "The clinician asks the hospital's team that looks after the record system for the vendor's own data dictionary, exported as a table with three columns: the table name, the column name and the description. If the data dictionary has already been created from the database, the page adds the file's descriptions to it, which makes the proposals much better. If it has not, the page reads the file as the data dictionary itself, and step 5 then asks for one more query to check which tables exist. A result of the query in the first way, saved earlier as a file, is read just as if it had been pasted there. The vendor's export is licensed material: it stays in this browser and in the saved hospital schema, which stays on hospital storage.",
   choiceInvented: 'Use the invented dictionary to try the page',
   choiceInventedWhat:
-    'The page makes this; nothing is run on the database. The invented dictionary describes a made-up hospital. The page fetches it from this site with the invented hospital, a small database of made-up rows on which the page runs each of its queries for you, so load it while the tab is still online, then take the tab offline.',
+    'The page makes this; nothing is run on the database. The invented dictionary describes a made-up hospital. The page fetches it from this site with the invented hospital, a small database of made-up rows on which the page runs each of its queries itself, so the clinician loads it while the tab is still online, then takes the tab offline.',
   inventedLoad: 'Load the invented dictionary',
   choiceSaved: 'Open a saved hospital schema',
-  choiceSavedWhat: ['The page makes this; nothing is run on the database. The page saved this file at step 9 of an earlier sitting. Open it at ', 'step 3', '.'],
+  choiceSavedWhat: ['The page makes this; nothing is run on the database. The page saved this file at step 9 of an earlier sitting. The clinician opens it at ', 'step 3', '.'],
   inventedOnlineOnly:
     'The invented dictionary can only be loaded while the tab is online. Go back online, load it, then take the tab offline again.',
   inventedLoading: 'The page is loading the invented dictionary.',
@@ -163,7 +163,7 @@ export const describeStrings = {
     "This optional file comes from the same export. It gives each table's description and the column that identifies its rows, which help the page choose the right table and find how the tables link.",
   headingsSummary: 'If the page cannot find the headings',
   headingsWhat:
-    'The page looks for the usual headings, such as TABLE_NAME, COLUMN_NAME and DESCRIPTION. If your file uses others, write them here exactly as they appear in its first row, and leave the rest empty.',
+    'The page looks for the usual headings, such as TABLE_NAME, COLUMN_NAME and DESCRIPTION. If the file uses others, the clinician writes them here exactly as they appear in its first row and leaves the rest empty.',
   headingFields: [
     ['table', 'The heading of the table names:'],
     ['column', 'The heading of the column names:'],
@@ -185,11 +185,11 @@ export const describeStrings = {
 
   // 3. The saved hospital schema.
   folderWhat:
-    'If you saved a hospital schema at an earlier sitting, choose Open a saved hospital schema and pick the file. The page reads the data dictionary and everything you settled from it, and you carry on from where you left off. At a first sitting, you can leave this step.',
+    'If the clinician saved a hospital schema at an earlier sitting, the clinician chooses Open a saved hospital schema and picks the file. The page reads the data dictionary and everything settled from it, and the work carries on from where it was left. At a first sitting, the clinician can leave this step.',
   folderLabel: 'The saved hospital schema:',
   folderChoose: 'Open a saved hospital schema',
   folderAbout:
-    "The saved hospital schema is the one file that the page saves at step 9. It holds the data dictionary, the hospital schema, your answers, the hospital's codes, the counts, and every query that was run with its result. It stays on the hospital's own storage, and the page reads it in this tab only.",
+    "The saved hospital schema is the one file that the page saves at step 9. It holds the data dictionary, the hospital schema, the recorded answers, the hospital's codes, the counts, and every query that was run with its result. It stays on the hospital's own storage, and the page reads it in this tab only.",
   folderReading: 'The page is reading the saved hospital schema.',
   folderReceipt: (r: { map: boolean; tables: boolean; codes: number; counts: number; dictionary: boolean; confirmations: number; queries: number }) =>
     [
@@ -206,7 +206,7 @@ export const describeStrings = {
   // The check of a saved hospital schema against the database.
   checkHeading: 'Check a saved schema against the database',
   checkWhat:
-    "After a change to the database or a new release of the vendor's system, choose Check against the database. The page proposes the hospital schema again from the dictionary and your recorded answers, compares it with the saved schema, and lists each earlier query for your colleague to run again.",
+    "After a change to the database or a new release of the vendor's system, the clinician chooses Check against the database. The page proposes the hospital schema again from the dictionary and the recorded answers, compares it with the saved schema, and lists each earlier query for the database analyst to run again.",
   checkButton: 'Check against the database',
   checkSame: 'The schema proposed again is the same as the saved schema.',
   checkDiffers: (n: number) => `The schema proposed again differs from the saved schema in ${plural(n, 'place', 'places')}:`,
@@ -223,14 +223,14 @@ export const describeStrings = {
         ? `The invented hospital gave the earlier result below on ${when(pasted)}.`
         : `The earlier result below was pasted on ${when(pasted)}${database ? `, from the ${database === 'training' ? 'training' : 'production'} database` : ''}.`
       : 'No result was pasted for this query.',
-  checkPasteLabel: "Run the query again on the hospital's database, then paste the new result here with its headers:",
+  checkPasteLabel: "The database analyst runs the query again on the hospital's database, then pastes the new result here with its headers:",
   checkCompare: 'Compare with the earlier result',
   checkNoChange: 'The new result is the same as the earlier one.',
   checkChanges: 'The new result differs from the earlier one:',
 
   // 4. The proposal.
   proposeWhat:
-    'Choose Propose the hospital schema. The page describes the anaesthetic record as a set of parts, such as patients, anaesthetics and the readings charted during each, and matches each part to a table and its columns in the dictionary.',
+    'The clinician chooses Propose the hospital schema. The page describes the anaesthetic record as a set of parts, such as patients, anaesthetics and the readings charted during each, and matches each part to a table and its columns in the dictionary.',
   proposeAboutSummary: 'How the page proposes the hospital schema',
   proposeAbout:
     "The page compares the words that describe each part of the record with the dictionary's names and descriptions. It works by fixed rules, in this tab only and with no language model, so the same dictionary always gives the same proposal.",
@@ -238,7 +238,7 @@ export const describeStrings = {
   proposeProgress: (done: number, total: number) =>
     done === 0 ? 'The page is indexing the dictionary.' : `The page has proposed ${done} of ${total} parts of the record.`,
   proposeDone: (roles: number, drafted: number) =>
-    `The page has proposed a table for ${drafted} of the ${roles} parts of the record. You confirm or correct each one in step 6.`,
+    `The page has proposed a table for ${drafted} of the ${roles} parts of the record. The database analyst confirms or corrects each one in step 6.`,
   proposalSummary: 'See the proposal, part by part',
   roleUndrafted: 'The dictionary has no table that fits this part, so the page has not proposed one.',
   roleRequired: 'Every audit reads this part.',
@@ -271,11 +271,11 @@ export const describeStrings = {
 
   // 5. The tables and columns query.
   tablesWhat:
-    "Run this on the database. Choose the database, then choose Write the query. Your colleague runs the query in the SQL window connected to the hospital's database, pastes the result below and chooses Read the result.",
+    "Run this on the database. The database analyst chooses the database, then Write the query, runs the query in the SQL window connected to the hospital's database, pastes the result below and chooses Read the result.",
   tablesAnswered: 'The data dictionary made from the database has answered this step. Every proposed table exists, and the large ones are marked.',
   tablesInvented:
-    'The invented hospital answers this. Choose Write the query, then choose Run on the invented hospital, and the page runs the query there and reads its result. The page records the invented hospital as the database, so it does not ask which database your SQL window is connected to.',
-  databaseLegend: 'The database that your SQL window is connected to:',
+    'The invented hospital answers this. The clinician chooses Write the query, then Run on the invented hospital, and the page runs the query there and reads its result. The page records the invented hospital as the database, so it does not ask which database the SQL window is connected to.',
+  databaseLegend: "The database that the database analyst's SQL window is connected to:",
   databaseOptions: [
     ['production', "The hospital's everyday reporting database, with its real patients, or a recent copy of it"],
     ['training', 'A training or play database with fictional patients'],
@@ -284,13 +284,13 @@ export const describeStrings = {
   databaseAboutSummary: 'Why the page asks',
   databaseAbout:
     "A training database has the hospital's real tables and codes but fictional patients, so its counts mean nothing. On a training database the page still settles what depends on the tables alone, and marks every count to be run again on production.",
-  databaseUnsure: 'The page will treat it as the production database. If you later find that it is a training database, change this answer.',
+  databaseUnsure: 'The page will treat it as the production database. If the database analyst later finds that it is a training database, the clinician changes this answer.',
   tablesWrite: 'Write the query',
   tablesNames: (n: number) => `The query asks about ${plural(n, 'table', 'tables')}, including the lookup tables that give names to codes.`,
   tablesCopy: 'Copy the query',
   showQuery: 'Show the query',
   tablesHow: [
-    'Choose Copy the query, paste it into your SQL window and run it.',
+    'The database analyst chooses Copy the query, pastes it into the SQL window and runs it.',
     'In SQL Server Management Studio, click the empty square at the top left of the results grid, then right-click and choose Copy with Headers.',
     'Paste the result into the box below and choose Read the result.',
   ],
@@ -303,22 +303,22 @@ export const describeStrings = {
     `The page has read the result: ${plural(r.columns, 'column', 'columns')} in ${plural(r.tables, 'table', 'tables')}.${
       r.absent ? ` ${plural(r.absent, 'table', 'tables')} did not come back, either because ${r.absent === 1 ? 'it does' : 'they do'} not exist here or because this login cannot see ${r.absent === 1 ? 'it' : 'them'}.` : ' Every table came back.'
     } Each column in step 6 now shows whether the database holds it.`,
-  tablesDoubt: 'More than half of the tables did not come back. Make sure that your SQL window is connected to the reporting database before you go on.',
+  tablesDoubt: 'More than half of the tables did not come back. The database analyst should make sure that the SQL window is connected to the reporting database before going on.',
   tablesUnreadable: "The page could not read this as the query's result. Use Copy with Headers on the whole results grid, then paste it again.",
 
   // 6. Confirming.
   confirmIntro:
-    "Each part of the anaesthetic record has a few columns. For each column, the page proposes the table and column in the hospital's database that holds it, and your colleague says whether that is right.",
+    "Each part of the anaesthetic record has a few columns. For each column, the page proposes the table and column in the hospital's database that holds it, and the database analyst says whether that is right.",
   confirmWhat:
     "Beside each column below, choose Yes, this is right, Choose another column or Not sure. The row for a part's table offers Choose another table, and a column for which the page found nothing offers Choose a column.",
   confirmLegend:
     "Where a column sits in another table, the page shows how the tables are linked: linked by matching A to B means that a row of one table belongs with the row of the other in which B holds the same value as A. Beside each proposal, the page gives its confidence and what it rests on: the dictionary's own words, the names alone, or the column that identifies the part's rows.",
   confirmAboutSummary: 'What happens to each answer',
   confirmAbout:
-    'The page records each answer with its date. Choose another column opens a short form. You fill it in and choose Check this change, and the page runs the test on made-up rows: it builds rows with no hospital data in this tab and runs the whole hospital schema, with the change, on them. You then keep the change or discard it. Each Not sure goes into the list of questions for the database team at the end of this step. Once a column has an answer, Change the answer brings the choices back.',
+    'The page records each answer with its date. Choose another column opens a short form. The database analyst fills it in and chooses Check this change, and the page runs the test on made-up rows: it builds rows with no hospital data in this tab and runs the whole hospital schema, with the change, on them. The database analyst then keeps the change or discards it. Each Not sure goes into the list of questions for the database team at the end of this step. Once a column has an answer, Change the answer brings the choices back.',
   // Beside each part, who can usually answer for it.
   whoAnswers: {
-    colleague: 'Your colleague can usually answer for this part from what they know of the record.',
+    colleague: 'The database analyst can usually answer for this part from knowledge of the record.',
     team: 'Usually only the team that looks after the reporting database can answer for this part, so a Not sure here goes to them.',
   } as Record<string, string>,
   teamParts: ['role_lab', 'role_diagnosis', 'role_note', 'role_finding'],
@@ -350,17 +350,17 @@ export const describeStrings = {
   anotherUse: 'Use this one',
   // A column of a flag or a kind whose source holds codes, before and after Yes.
   coded: {
-    flag: 'This column holds codes rather than 1 and 0. After Yes, the page opens a short form in which you say which of its values mean yes, which the page then reads as 1, and every other value as 0.',
-    kind: "This column holds the hospital's own codes. After Yes, you translate them in the list of codes in step 7.",
-    kindForm: "This column holds the hospital's own codes. After Yes, the page opens a form in which you translate them.",
+    flag: 'This column holds codes rather than 1 and 0. After Yes, the page opens a short form in which the database analyst says which of its values mean yes, which the page then reads as 1, and every other value as 0.',
+    kind: "This column holds the hospital's own codes. After Yes, the clinician translates them in the list of codes in step 7.",
+    kindForm: "This column holds the hospital's own codes. After Yes, the page opens a form in which the clinician translates them.",
     flagNext:
-      'To finish this column, say which of its values mean yes in the form below. Type them in the box, separated by commas, or choose Write the query of values and tick them in the list that its result gives. Then choose Check this change.',
+      'To finish this column, the database analyst says which of its values mean yes in the form below, either by typing them in the box, separated by commas, or by choosing Write the query of values and ticking them in the list that its result gives. The analyst then chooses Check this change.',
     heading: 'Translate the codes of this column',
     kindNext: "To finish this column, translate its codes in step 7, where the page lists the codes in use.",
     kindNextForm: "To finish this column, translate its codes in the form below, then choose Check this change.",
   },
-  landed: (text: string) => `The test on made-up rows found: ${text} Choose another column or table for this row, or Not sure if you cannot tell.`,
-  landedCount: (text: string) => `The count at step 8 found: ${text} Choose another column for this row, or Not sure if you cannot tell.`,
+  landed: (text: string) => `The test on made-up rows found: ${text} The database analyst chooses another column or table for this row, or Not sure if it is unclear.`,
+  landedCount: (text: string) => `The count at step 8 found: ${text} The database analyst chooses another column for this row, or Not sure if it is unclear.`,
   // The first row of step 6 that shows each of these says what it means, in one line.
   glossLink:
     'Linked by matching A to B means that the rows of one table are joined to the rows of the other where these two columns hold the same value.',
@@ -384,7 +384,7 @@ export const describeStrings = {
     unknown: ['', 'Step 5', ' will say whether the database holds this.'],
   },
   questionsHeading: 'Questions for the database team',
-  questionsWhat: 'Each column marked Not sure is listed here. Choose Copy the questions, paste them into an email to the team, and answer each column above when they reply.',
+  questionsWhat: 'Each column marked Not sure is listed here. The clinician chooses Copy the questions and pastes them into an email to the team, and the database analyst answers each column above when the team replies.',
   questionsNone: 'There are no questions yet.',
   questionsCopy: 'Copy the questions',
   questionsNoteHead: 'Questions about the reporting database, from the description of the anaesthetic record. For each, the page states what it proposes and asks whether that is right:',
@@ -393,9 +393,9 @@ export const describeStrings = {
 
   // 7. The codes.
   codesWhat:
-    "Run these on the database. Some columns hold the hospital's own codes, such as the kind of each reading. For each list below, choose Write the list, run it in the SQL window connected to the hospital's database, paste the result and choose Read the list. Then choose what each code means and choose Save these codes.",
+    "Run these on the database. Some columns hold the hospital's own codes, such as the kind of each reading. For each list below, the database analyst chooses Write the list, runs it in the SQL window connected to the hospital's database, pastes the result and chooses Read the list. The clinician then chooses what each code means and chooses Save these codes.",
   codesWhatInvented:
-    "The invented hospital answers these. Some columns hold the hospital's own codes, such as the kind of each reading. For each list below, choose Write the list, then choose Run on the invented hospital. Then choose what each code means and choose Save these codes.",
+    "The invented hospital answers these. Some columns hold the hospital's own codes, such as the kind of each reading. For each list below, the clinician chooses Write the list, then Run on the invented hospital, then chooses what each code means and chooses Save these codes.",
   codesAboutSummary: 'How the list works, and why it is safe',
   codesSafe: (limit: string) =>
     `The list counts the codes used on the anaesthetics of the year above, with their names. It runs in two parts. Part 1 first fills #cohort, a temporary table of the chosen anaesthetics, at most ${limit} of that year. Part 2 then reads only their rows, never the whole of a large table.`,
@@ -417,11 +417,11 @@ export const describeStrings = {
   chartedPasteLabel: 'The result of the list, copied with its headers:',
   chartedRead: 'Read the list',
   chartedReceipt: (n: number, year: number) =>
-    `The page has read ${plural(n, 'code', 'codes')} charted in ${year}. Choose the kind of each code you recognise, leave the rest as Not chosen, then choose Save these codes.`,
+    `The page has read ${plural(n, 'code', 'codes')} charted in ${year}. The clinician chooses the kind of each code that the clinician recognises, leaves the rest as Not chosen, then chooses Save these codes.`,
   codesOther: 'A code left as Not chosen counts as other, which each list also offers.',
-  chartedEmpty: (year: number) => `The list for ${year} came back empty. Look again at this part's columns at step 6, or choose another year.`,
+  chartedEmpty: (year: number) => `The list for ${year} came back empty. The database analyst looks again at this part's columns at step 6, or the clinician chooses another year.`,
   chartedEmptyPatient: (year: number) =>
-    `The list for ${year} came back empty. This usually means that the anaesthetics are not reaching their patients, so look again at the patient's identifier in Anaesthetics at step 6, or choose another year.`,
+    `The list for ${year} came back empty. This usually means that the anaesthetics are not reaching their patients, so the database analyst looks again at the patient's identifier in Anaesthetics at step 6, or the clinician chooses another year.`,
   chartedColumns: ['Code', 'Times charted', 'Anaesthetics', 'Name', 'Which of the kinds the page knows'],
   notChosen: 'Not chosen',
   codesSave: 'Save these codes',
@@ -436,9 +436,9 @@ export const describeStrings = {
 
   // 8. The counts.
   countsWhat:
-    "Run these on the database. Choose Write the counts. For each count, choose Copy the count, run it in the SQL window connected to the hospital's database, paste its result and choose Read the result, then choose Save whether these look right.",
+    "Run these on the database. The clinician chooses Write the counts. For each count, the database analyst chooses Copy the count, runs it in the SQL window connected to the hospital's database, pastes its result and chooses Read the result, and the clinician then chooses Save whether these look right.",
   countsWhatInvented:
-    'The invented hospital answers these. Choose Write the counts. For each count, choose Run on the invented hospital, then choose Save whether these look right.',
+    'The invented hospital answers these. The clinician chooses Write the counts, then for each count chooses Run on the invented hospital and then Save whether these look right.',
   countsAboutSummary: 'What the counts are for',
   countsAbout:
     "The counts show whether the hospital schema reaches the record in every year. Each count is rounded down to ten. A year or a group with fewer than ten is left out, and a figure under ten within a group shows as under 10. The rounding and the leaving out reduce what a count can disclose, but they do not make the results anonymous, and repeated counts over slightly different groups can reveal more than one count does. The results are therefore for use inside the hospital until the hospital's own rules say otherwise.",
@@ -446,7 +446,7 @@ export const describeStrings = {
   fromSample: (year: number | string, limit: string) =>
     `These figures are from a sample: the anaesthetics of ${year}, at most ${limit} of them. They show what is charted, but not how much the whole record holds.`,
   countsWrite: 'Write the counts',
-  countsAgain: 'If you change a column or a code, choose Write the counts again.',
+  countsAgain: 'If a column or a code changes, the clinician chooses Write the counts again.',
   countHeading: {
     coverage_by_year: 'The anaesthetics of each year',
     repeated_keys: 'Rows that appear twice',
@@ -456,12 +456,12 @@ export const describeStrings = {
     coverage_by_year:
       'This count shows, for each year, how many anaesthetics the hospital schema finds and how many of them have a patient, a date of birth, a date of death and a recorded stop.',
     repeated_keys: 'This count shows whether any patient or anaesthetic appears on more than one row, which would make an audit count it twice.',
-    readings_by_kind: 'This count shows the readings of {year}, the year chosen in step 7, by kind, so that you can see whether the codes chosen in step 7 reach them.',
+    readings_by_kind: 'This count shows the readings of {year}, the year chosen in step 7, by kind, so that the clinician can see whether the codes chosen in step 7 reach them.',
   } as Record<string, string>,
   countTablesSummary: 'Which tables this count reads',
   countSafe: 'This count reads no table of readings, so it is safe to run on production.',
-  countTraining: 'Run on the training database; run it again on production before the figures are used.',
-  countTrainingNote: 'Your SQL window is connected to a training database, whose patients are fictional, so these figures show only that the query runs.',
+  countTraining: 'Run on the training database. The database analyst runs it again on production before the figures are used.',
+  countTrainingNote: 'The SQL window is connected to a training database, whose patients are fictional, so these figures show only that the query runs.',
   countScript: (limit: string) =>
     `This count reads the readings, so it runs in two parts. Part 1 first fills #cohort, a temporary table of the chosen anaesthetics, at most ${limit} of the year. Part 2 then reads only their readings.`,
   countTables: 'It reads these tables:',
@@ -472,30 +472,30 @@ export const describeStrings = {
   countRead: 'Read the result',
   countReceipt: (n: number) => `The page has read ${rows(n)} of this count.`,
   countNoFindings: 'The page sees nothing unusual in this count.',
-  countFindingCodes: 'Follow the link to the list at step 7, then choose the kind of each code again, and write the counts again.',
-  countFindingDo: 'Follow the link to the column, then choose another column there, and write the counts again.',
+  countFindingCodes: 'The clinician follows the link to the list at step 7, chooses the kind of each code again, and writes the counts again.',
+  countFindingDo: 'The database analyst follows the link to the column and chooses another column there, and the clinician writes the counts again.',
   lookRightLegend: 'Record whether these figures look right:',
   lookRightCompare: {
-    coverage_by_year: 'Compare each year with the number of anaesthetics that the department gives in a year, which the clinician who leads the audit will know.',
-    repeated_keys: 'Compare the figures with none, because a patient or an anaesthetic should appear on one row only.',
-    readings_by_kind: 'Compare the readings of each kind with what is usually charted, such as a mean pressure every few minutes of an anaesthetic.',
+    coverage_by_year: 'The clinician compares each year with the number of anaesthetics that the department gives in a year.',
+    repeated_keys: 'The clinician compares the figures with none, because a patient or an anaesthetic should appear on one row only.',
+    readings_by_kind: 'The clinician compares the readings of each kind with what is usually charted, such as a mean pressure every few minutes of an anaesthetic.',
   } as Record<string, string>,
   lookRight: [['yes', 'Yes, they look right'], ['no', 'No, something is wrong']] as [string, string][],
-  lookRightNote: 'A note, if you want to record what looks wrong or why:',
+  lookRightNote: 'A note, if the clinician wants to record what looks wrong or why:',
   lookRightNoteSaved: (note: string) => `The note saved with it: ${note}`,
   lookRightSave: 'Save whether these look right',
   lookRightSaved: (answer: string, date: string) =>
-    answer === 'yes' ? `On ${date}, you recorded that this count looks right.` : `On ${date}, you recorded that something in this count is wrong.`,
+    answer === 'yes' ? `On ${date}, the clinician recorded that this count looks right.` : `On ${date}, the clinician recorded that something in this count is wrong.`,
   lookRightTraining: 'The page has recorded that this was judged on the training database, and a note inside the saved file lists the count to run again on the everyday reporting database.',
 
   // 9. Saving the hospital schema.
   writeWhat:
-    'Choose Save the hospital schema. The page saves everything you have settled as one file, which you open at step 3 at the next sitting to carry on.',
+    'The clinician chooses Save the hospital schema. The page saves everything settled so far as one file, which the clinician opens at step 3 at the next sitting to carry on.',
   writeAboutSummary: 'What the file holds',
   writeAbout:
-    "The file holds the data dictionary, the hospital schema with one SQL file for each part of the record, the hospital's codes, the counts and whether they looked right, every query with its result, your answers in order, and a note that explains each part.",
+    "The file holds the data dictionary, the hospital schema with one SQL file for each part of the record, the hospital's codes, the counts and whether they looked right, every query with its result, the answers in order, and a note that explains each part.",
   writeSave: 'Save the hospital schema',
-  writeSaveNote: "Keep the file on the hospital's own storage, because it holds the hospital's data dictionary.",
+  writeSaveNote: "The clinician keeps the file on the hospital's own storage, because it holds the hospital's data dictionary.",
   // The receipt of a save names the state of readiness that the parts every audit reads have reached.
   saved: (draft: string, reached: string | null = 'runs') =>
     `The page has saved the hospital schema${draft ? ` as a draft (${draft})` : ''}. ${
@@ -511,23 +511,23 @@ export const describeStrings = {
   // The time zone of the database's clocks, asked once before the save.
   timeZoneLegend: "The time zone of the hospital's database",
   timeZoneWhy:
-    "The hospital schema gives each time as the database holds it, without converting it, so the saved file records the time zone that the database's clocks follow. The page has filled in this computer's time zone. If your colleague knows that the database keeps another, such as UTC, change it here.",
+    "The hospital schema gives each time as the database holds it, without converting it, so the saved file records the time zone that the database's clocks follow. The page has filled in this computer's time zone. If the database analyst knows that the database keeps another, such as UTC, the clinician changes it here.",
   timeZoneLabel: 'The time zone, as a name such as Australia/Sydney or UTC:',
   daylightLabel: "The database's clocks change with daylight saving",
   // How the proposals fared, under step 9.
   scoreboardHeading: 'How the proposals fared',
-  scoreboardWhat: "This text counts how the page's proposals fared against your answers. It names no table or column, so it may be shared.",
+  scoreboardWhat: "This text counts how the page's proposals fared against the database analyst's answers. It names no table or column, so it may be shared.",
   scoreboardCopy: 'Copy the text',
-  draftNote: (unfinished: string) => `Some of the hospital schema is not yet answered: ${unfinished}. You can save it now as a draft, which a note inside the saved file records, and finish it at a later sitting.`,
+  draftNote: (unfinished: string) => `Some of the hospital schema is not yet answered: ${unfinished}. The clinician can save it now as a draft, which a note inside the saved file records, and finish it at a later sitting.`,
   draftCodes: 'These columns are answered, but their codes are not yet translated. Each link leads to its row:',
   savedDraft: (left: string) => `Saved as a draft, ${left}`,
-  writtenStale: 'You have changed something since the hospital schema was saved, so please save it again.',
+  writtenStale: 'Something has changed since the hospital schema was saved, so the clinician should save it again.',
   writeFailed: 'The page could not save the hospital schema. Please try again.',
 
   // 6. Corrections, each a sentence to complete.
   corrections: {
-    intro: 'Choose the kind of change, then fill in the form below it. The page writes the SQL for you.',
-    findingDo: 'Follow the link to its row, then choose another column or table there, or Not sure if you cannot tell.',
+    intro: 'The database analyst chooses the kind of change, then fills in the form below it. The page writes the SQL.',
+    findingDo: 'The database analyst follows the link to its row, then chooses another column or table there, or Not sure if it is unclear.',
     formLabel: 'The kind of change:',
     forms: {
       column: 'A different column',
@@ -610,14 +610,14 @@ export const describeStrings = {
     kindLabel: 'stands for',
     addCode: 'Add another code',
     sentenceLabel: 'What this change means:',
-    checkingUse: 'The page runs the test on made-up rows before you keep this change.',
+    checkingUse: 'The page runs the test on made-up rows before the database analyst keeps this change.',
     sqlLabel: 'Show the SQL that the page will write',
     incomplete: 'Once the form is filled in, the page shows what the change means.',
-    incompleteColumn: 'Once you choose a column, the page shows what the change means.',
-    incompleteRows: 'Once you choose a table, the page shows what the change means.',
-    checkWhat: 'Choose Check this change. The page runs the test on made-up rows: it builds rows with no hospital data in this tab and runs the whole hospital schema, with the change, on them.',
+    incompleteColumn: 'Once a column is chosen, the page shows what the change means.',
+    incompleteRows: 'Once a table is chosen, the page shows what the change means.',
+    checkWhat: 'The database analyst chooses Check this change. The page runs the test on made-up rows: it builds rows with no hospital data in this tab and runs the whole hospital schema, with the change, on them.',
     passedMeans:
-      'This change keeps the hospital schema whole on made-up rows. It does not say whether the column means what you think; a counting query run on the database afterwards, and your own knowledge, decide that.',
+      'This change keeps the hospital schema whole on made-up rows. It does not say whether the column means what the database analyst thinks; a counting query run on the database afterwards, and the analyst\'s own knowledge, decide that.',
     checkButton: 'Check this change',
     checking: 'The page is building the made-up rows and testing every part of the hospital schema.',
     checkSeconds: (seconds: number) => `The test on made-up rows took ${seconds.toLocaleString('en-AU')} seconds.`,
@@ -637,20 +637,20 @@ export const describeStrings = {
     keptReason: (reason: string) => `The reason given: ${reason}`,
     modelCheck: 'Test the hospital schema on made-up rows',
     modelCheckWhat:
-      'Before you change anything, you can choose Test the hospital schema on made-up rows to see what is already wrong. The page builds rows with no hospital data and runs every part of the schema on them. Each finding links to its column below.',
-    modelCheckWhatAfter: 'Choose Test the hospital schema on made-up rows to test the schema with every answer and change so far. Each finding links to its column below.',
+      'Before anything changes, the database analyst can choose Test the hospital schema on made-up rows to see what is already wrong. The page builds rows with no hospital data and runs every part of the schema on them. Each finding links to its column below.',
+    modelCheckWhatAfter: 'The database analyst chooses Test the hospital schema on made-up rows to test the schema with every answer and change so far. Each finding links to its column below.',
     probeWhat: {
-      link: "Run this test query in the SQL window connected to the hospital's database to try the link. It counts the anaesthetics of {year}, the year chosen in step 7, that have at least one row through the link, and those with none.",
-      filter: "Run this test query in the SQL window connected to the hospital's database. It counts the rows read and how many of them pass the filter.",
-      flag: "Run this test query in the SQL window connected to the hospital's database. It counts the rows in which the flag is 1, 0 and empty.",
-      flag_two: "Run this test query in the SQL window connected to the hospital's database. It counts the rows in which the flag is 1 and 0. The form never leaves this flag empty.",
+      link: "The database analyst runs this test query in the SQL window connected to the hospital's database to try the link. It counts the anaesthetics of {year}, the year chosen in step 7, that have at least one row through the link, and those with none.",
+      filter: "The database analyst runs this test query in the SQL window connected to the hospital's database. It counts the rows read and how many of them pass the filter.",
+      flag: "The database analyst runs this test query in the SQL window connected to the hospital's database. It counts the rows in which the flag is 1, 0 and empty.",
+      flag_two: "The database analyst runs this test query in the SQL window connected to the hospital's database. It counts the rows in which the flag is 1 and 0. The form never leaves this flag empty.",
     } as Record<string, string>,
     probeWrite: 'Write the test query',
     probeCopy: 'Copy the test query',
     probePasteLabel: 'The result of the test query, copied with its headers:',
     probeRead: 'Read the result of the test query',
     probeNone: 'There is no test query for this kind of change, so the test on made-up rows is its only test.',
-    valuesKept: (n: number) => `Before you kept this change, the query of values showed that the column holds ${plural(n, 'value', 'values')}:`,
+    valuesKept: (n: number) => `Before the database analyst kept this change, the query of values showed that the column holds ${plural(n, 'value', 'values')}:`,
     problemLabel: 'The page cannot use the form yet:',
   },
 

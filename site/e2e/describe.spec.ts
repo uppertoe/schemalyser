@@ -980,7 +980,7 @@ test('the invented hospital answers every query, and the walk reaches a complete
   const coverageBlock = page.locator('[data-count="coverage_by_year"]');
   await expect(coverageBlock.locator('tbody')).toContainText('2024');
   await expect(coverageBlock.locator('tbody')).not.toContainText('2,024');
-  await expect(coverageBlock.locator('a.finding-link').first()).toContainText("Look again at the patient's identifier in Anaesthetics at step 6.");
+  await expect(coverageBlock.locator('a.finding-link').first()).toContainText("The database analyst looks again at the patient's identifier in Anaesthetics at step 6.");
   await expect(coverageBlock).not.toContainText(d.countNoFindings);
   // A count judged wrong, with a note, leaves step 8 needing attention; the receipt and the note stay once it is saved.
   await coverageBlock.locator('input[value="no"]').check();

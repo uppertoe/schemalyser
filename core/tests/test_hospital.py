@@ -89,7 +89,7 @@ def test_the_lists_of_codes_show_names_and_the_sex_list_reads_the_patients_own_t
     for query in s.count_queries(2025, "8"):
         s.run_invented(invented, f"count-{query['name']}", "count", name=query["name"])
     findings = s.findings("coverage_by_year")
-    assert any("Look again at the patient's identifier in Anaesthetics at step 6." in f for f in findings)
+    assert any("looks again at the patient's identifier in Anaesthetics at step 6." in f for f in findings)
     assert set(s.finding_about("coverage_by_year").values()) == {"role_anaesthetic.patient_key"}
     s.correction_keep({"form": "column", "about": "role_anaesthetic.patient_key", "replacement": "THEATRE_CASE.PERSON_KEY"}, date=DATE)
     found = s.charted_query("role_patient_detail.sex", 2025, "7")

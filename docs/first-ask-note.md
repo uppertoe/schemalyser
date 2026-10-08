@@ -1,6 +1,6 @@
 # A note to send with the first ask
 
-This is the note that a clinician sends to the analytics team with the first query. The page shows the same text with a button that copies it. The places in square brackets are for the sender to fill in. Every name in it is generic.
+This is the note that the clinician sends to the database analyst with the first query. The page shows the same text with a button that copies it. The places in square brackets are for the sender to fill in. Every name in it is generic.
 
 ---
 

@@ -47,11 +47,11 @@ def test_the_count_of_the_chosen_codes_starts_from_the_cohort_and_reaches_the_sp
     assert _target(_state(tmp_path / "b", {"from": "2021-01-01"}, [CODES]))["charted"] is None
     # Before the count by year has been seen, the count is not offered to be run, and the page says why.
     unseen = _target(_state(tmp_path / "u", {"from": "2021-01-01", "to": "2024-06-30"}, [CODES]))["charted"]
-    assert unseen["sql"] == "" and unseen["withheld"].startswith("Schemalyser offers this query once you have seen the count")
+    assert unseen["sql"] == "" and unseen["withheld"].startswith("Schemalyser offers this query once the count by year has been seen")
     found = _target(_state(tmp_path / "c", {"from": "2021-01-01", "to": "2024-06-30"}, [CODES, COUNT]))["charted"]
     assert (found["from"], found["to"], found["codes"], found["kept"]) == ("2023-07-01", "2024-06-30", ["52"], False)
     sql = found["sql"]
-    assert sql.startswith("-- Set a time limit before you run this script, because") and "\nSET NOCOUNT ON;\n" in sql
+    assert sql.startswith("-- The database analyst sets a time limit before running this script, because") and "\nSET NOCOUNT ON;\n" in sql
     assert "-- This query counts how often each chosen code was charted" in sql
     # The cohort goes into a temporary table first, and the readings are reached from it by key, for the chosen codes only.
     assert sql.index("q22_cohort AS (") < sql.index("INTO #cohort") < sql.index("FROM #cohort AS c")
@@ -127,7 +127,7 @@ def test_the_codes_are_chosen_from_a_list_of_what_is_charted_on_the_cohort(tmp_p
     listed = _target(_state(tmp_path / "b", given=[COUNT]))["listed"]
     assert (listed["year"], listed["column"], listed["years"], listed["rows"]) == (2024, "OBS_READING.OBS_TYPE_KEY", [2023, 2024], None)
     sql = listed["sql"]
-    assert sql.startswith("-- Set a time limit before you run this script, because") and "\nSET NOCOUNT ON;\n" in sql and listed["worst"] == "about 20 anaesthetics of the cohort in 2024"
+    assert sql.startswith("-- The database analyst sets a time limit before running this script, because") and "\nSET NOCOUNT ON;\n" in sql and listed["worst"] == "about 20 anaesthetics of the cohort in 2024"
     assert "-- This query lists every code of OBS_READING.OBS_TYPE_KEY that was charted" in sql
     # It puts the cohort into a temporary table, then reaches the readings last, by key, with no lookup of mapping rows and
     # no condition on a value.

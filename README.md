@@ -1,6 +1,6 @@
 # Schemalyser
 
-Schemalyser helps a clinician write an audit of anaesthetic records and test it on invented data before a colleague with access to the hospital's database runs it once for real.
+Schemalyser helps a clinician write an audit of anaesthetic records and test it on invented data before a database analyst with access to the hospital's database runs it once for real.
 
 The hospital's record system keeps its data in thousands of tables that few people understand, and patient data may not be shown to an AI model. Schemalyser therefore describes the anaesthetic record once, without reference to any vendor, as a set of parts: patients, anaesthetics, readings, drugs, devices, events, notes and outcomes. For each hospital, a clinician and a colleague who can query the database sit together once and confirm the hospital schema: where that hospital's database keeps each part, proposed from the vendor's data dictionary in the browser and confirmed column by column. Audits are then written against the parts, tested on made-up rows, and run once on the real database as scripts that are safe by construction.
 

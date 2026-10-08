@@ -1,7 +1,7 @@
 """The list of what is charted on the audit's cohort: how the codes of a column of readings are found at a real hospital.
 
 A name search on a definitions table returns every name that holds a word, and at a real hospital that is thousands of
-rows. What a colleague who writes SQL would run instead is a list of the codes charted on the cohort's anaesthetics in
+rows. What a database analyst would run instead is a list of the codes charted on the cohort's anaesthetics in
 one year, with their counts and their names. This module composes that list as one query over the source tables.
 
 The cohort comes from target.source_query, restructured to start from the anaesthetics, exactly as the count by year
@@ -36,14 +36,14 @@ WORDING = {
               "{readings} it reads only the readings on the cohort's own records in that year.",
     "empty": "The list of what is charted on the audit's anaesthetics in {year} came back empty. Either no anaesthetic of "
              "the cohort started in {year}, or the readings are not reaching their anaesthetic, and the audit cannot proceed "
-             "until you find which. Check first the match that links a reading to its anaesthetic, {link}: the query with "
-             "this point counts it. If the count by year shows no anaesthetic of the cohort in {year}, choose another year.",
+             "until the database analyst finds which. The analyst checks first the match that links a reading to its anaesthetic, {link}: "
+             "the query with this point counts it. If the count by year shows no anaesthetic of the cohort in {year}, the clinician chooses another year.",
     "zero": "None of the chosen codes was charted on an anaesthetic of the audit's cohort from {start} to {end}. Either the "
-            "codes are wrong or the readings are not reaching their anaesthetic, and the audit cannot proceed until you find "
-            "which. Check first the match that links a reading to its anaesthetic, {link}: the query with this point counts it.",
+            "codes are wrong or the readings are not reaching their anaesthetic, and the audit cannot proceed until the database "
+            "analyst finds which. The analyst checks first the match that links a reading to its anaesthetic, {link}: the query with this point counts it.",
     "no_cohort": "The count by year found no anaesthetic of the audit's cohort in any year. Either the cohort's conditions "
                  "find no one here, or the anaesthetics are not reaching their patients, and the audit cannot proceed until "
-                 "you find which.",
+                 "the database analyst finds which.",
     "sized": "{table} (about {rows:,} rows)",
     # On a training database with fictional patients, what is charted reflects training and not practice.
     "empty_training": "The list of what is charted on the audit's anaesthetics in {year} came back empty on a training "
@@ -545,7 +545,7 @@ def _again_point(rows, base, row_id, sentence):
 
 
 LISTED_INSTEAD = ("Schemalyser needs the codes of {column} that mean {meaning}. Schemalyser finds these codes in the list of "
-                  "what is charted on the audit's anaesthetics, which it offers once you have seen the count by year. Expect "
+                  "what is charted on the audit's anaesthetics, which it offers once the count by year has been seen. Expect "
                   "several codes for one meaning.")
 
 

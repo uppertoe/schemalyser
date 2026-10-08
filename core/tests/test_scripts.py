@@ -77,7 +77,7 @@ def _shape(sql):
     """The script's shape: the comment lines that advise a time-out and say what it creates and reads, SET NOCOUNT ON,
     part 1, which puts the cohort into #cohort with its key and reads no table of readings, and part 2, which is returned."""
     comments = " ".join(line[3:] for line in sql.splitlines() if line.startswith("-- "))
-    assert sql.startswith("-- Set a time limit before you run this script, because")
+    assert sql.startswith("-- The database analyst sets a time limit before running this script, because")
     for sentence in (scripts.WORDING["timeout"], scripts.WORDING["temporary"], scripts.WORDING["part1"], scripts.WORDING["part2"]):
         assert sentence in comments
     assert re.search(r"The count by year shows (about [\d,]+|fewer than ten) anaesthetics of the cohort (in \d{4}|from [\d-]+ to [\d-]+), and part 2 asks only", comments)
