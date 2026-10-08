@@ -203,6 +203,10 @@ def plain(text, view=None):
         at = match.start()
         return plain_about(match.group(0).strip("`"), at == 0 or text[:at].rstrip().endswith((".", ":")))
     text = re.sub(r"`?\brole_[a-z_]+(?:\.[a-z_]+)?\b`?", named, text)
+    # The contract names each list of kinds a vocabulary; the page calls them the kinds the page knows.
+    text = re.sub(r"\bone of the kinds of the (?:[a-z ]+ )?vocabulary\b", "one of the kinds the page knows", text)
+    text = re.sub(r"\bwith its kind from the (?:[a-z ]+ )?vocabulary(?: below)?", "with its kind, one of the kinds the page knows", text)
+    text = re.sub(r"\bthe complications of the (?:[a-z ]+ )?vocabulary\b", "the complications that the page knows", text)
     if view is not None:
         columns = {name for (owner, name) in _titles()[1] if owner == view and "_" in name}
         text = re.sub(r"\b[a-z]+_[a-z_]+\b", lambda m: f"the {column_title(view, m.group(0)).removeprefix('the ')}"

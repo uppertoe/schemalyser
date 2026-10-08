@@ -1,9 +1,11 @@
 OBS_TYPE_KEY,OBS_LABEL,UNIT_LABEL
-10,10,11
-14,33,14
-30417,19,15
-30418,10,9
-31102,30,34
-5,22,30
-7,23,19
-8,39,6
+5,Blood pressure,
+7,Temperature,
+8,Heart rate,beats/min
+10,Oxygen saturation,%
+14,Weight in ounces,oz
+51,Mean blood pressure from the cuff,mmHg
+52,Mean blood pressure from an arterial line,mmHg
+30417,Respiratory rate,
+30418,End-tidal carbon dioxide,
+31102,Pain score,

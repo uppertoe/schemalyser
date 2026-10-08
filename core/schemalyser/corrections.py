@@ -1687,5 +1687,9 @@ def report(before, after, change=True):
 def outcome(found):
     """The outcome of a check as it is recorded with a confirmation: passed, or failed with the first problem."""
     if found["passed"]:
+        # A change that breaks nothing new still leaves any problem that was there before it, and the record says so.
+        old = len(found.get("remaining") or [])
+        if old:
+            return f"passed: broke nothing new; {_problems_text(old)} {'was' if old == 1 else 'were'} there before it and {'remains' if old == 1 else 'remain'}"
         return "passed"
     return "failed: " + " ".join(found["problems"][:2])[:300]

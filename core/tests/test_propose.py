@@ -248,7 +248,7 @@ def test_the_draft_map_marks_every_binding_as_proposed_and_quotes_the_dictionary
     reading = (folder / "role_reading.sql").read_text()
     assert "LEFT JOIN OBS_SHEET t1 ON t1.SHEET_KEY = t0.SHEET_KEY" in reading and "WHERE  t1.ANAES_KEY IS NOT NULL" in reading
     assert "CASE WHEN t0.ACCEPTED_FLAG IN ('N', 'No', '0') THEN 0 ELSE 1 END AS accepted" in reading
-    assert "The local codes of the mean pressures are not yet known" in reading
+    assert "The hospital's codes of the mean pressures are not yet chosen" in reading
 
 
 def test_the_proposer_refuses_to_write_a_draft_from_a_real_dictionary_into_a_published_folder(tmp_path):

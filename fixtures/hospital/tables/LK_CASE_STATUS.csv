@@ -1,5 +1,5 @@
 CASE_STATUS_CAT,LABEL
-1,24
-2,0
-4,23
-6,25
+1,Booked
+2,Carried out
+4,Cancelled
+6,Postponed

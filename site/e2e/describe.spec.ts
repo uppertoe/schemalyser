@@ -175,12 +175,16 @@ test('the record is described, saved as a hospital schema and opened again', asy
   await expect(page.locator('#confirm [data-about="role_reading.value"] .answered')).toContainText('Not sure, listed as a question on');
   const patient = page.locator('#confirm [data-about="role_anaesthetic.patient_key"]');
   await patient.getByRole('button', { name: d.another }).click();
-  await patient.locator('input[type=text]').fill('THEATRE_CASE.NO_SUCH');
+  // The columns of the proposed table are listed, each with its type and the dictionary's description.
+  await expect(patient.locator('.chooser input')).toHaveValue('VISIT');
+  await expect(patient.locator('.chooser select option[value="PERSON_KEY"]')).toContainText('PERSON_KEY (');
+  // A name written by hand is checked against the dictionary, and only the problem is said, never that it will be used.
+  const typed = patient.getByLabel(d.anotherWrittenOr);
+  await typed.fill('THEATRE_CASE.NO_SUCH');
   await patient.getByRole('button', { name: d.anotherUse }).click();
   await expect(patient.locator('.problem-note')).toContainText('The dictionary holds no column THEATRE_CASE.NO_SUCH.');
-  await patient.locator('input[type=text]').fill('THEATRE_CASE.PERSON_KEY');
-  // The written name clears the list's choice, and the row says which is in force.
-  await expect(patient.locator('.in-force')).toHaveText(d.inForceWritten('THEATRE_CASE.PERSON_KEY'));
+  await expect(patient).not.toContainText('The page will use');
+  await typed.fill('THEATRE_CASE.PERSON_KEY');
   await patient.getByRole('button', { name: d.anotherUse }).click();
   // The chosen column's sentence is shown; the person then checks it, as in every other form, before keeping it.
   await expect(patient.locator('.correction-sentence')).toContainText("The patient's identifier in Anaesthetics is THEATRE_CASE.PERSON_KEY");
@@ -195,8 +199,9 @@ test('the record is described, saved as a hospital schema and opened again', asy
   // Each question states the proposal and asks whether it is right.
   await expect(page.locator('#questions')).toContainText(
     'The value in Readings charted during an anaesthetic: The page proposes OBS_READING.READ_VALUE as the value in Readings charted during an anaesthetic. Is that right, and if not, which column holds it?');
-  // After the first answer, the test of the whole hospital schema says that it tests the schema as it now stands.
-  await expect(page.locator('#model-check')).toHaveText(d.corrections.modelCheckAgain);
+  // After the first answer, the test of the whole hospital schema keeps the name that the step's own words give it.
+  await expect(page.locator('#model-check')).toHaveText(d.corrections.modelCheck);
+  await expect(page.locator('#t-model-check-what')).toContainText(d.corrections.modelCheck);
   await expect(page.locator('#questions')).not.toContainText('roles.md');
   // No code name of a part or a column stands alone anywhere in the step.
   expect(await page.locator('#step-6').innerText()).not.toMatch(/\brole_[a-z]/);
@@ -285,7 +290,7 @@ test('the record is described, saved as a hospital schema and opened again', asy
   expect(JSON.parse(readFileSync(join(unzipped, 'map/map.json'), 'utf8')).description).toContain('A person has since answered for');
   expect(readme.replace(/`[^`]*`/g, '').replace(/\S*\/\S*/g, '')).not.toMatch(/\brole\b|\bbindings?\b|\bfolders?\b|\bmaps?\b/i);
   expect(readme).toContain('## Queries to run again on production');
-  expect(readFileSync(join(unzipped, 'confirmations.csv'), 'utf8')).toMatch(/role_anaesthetic\.patient_key,no,"?THEATRE_CASE\.PERSON_KEY[^\n]*,passed,/);
+  expect(readFileSync(join(unzipped, 'confirmations.csv'), 'utf8')).toMatch(/role_anaesthetic\.patient_key,no,"?THEATRE_CASE\.PERSON_KEY[^\n]*,passed(: broke nothing new; [^,]+)?,/);
   // A change after the hospital schema was saved makes step 9 to be done again.
   await page.locator('#confirm [data-about="role_patient.patient_key"] .answer-yes').click();
   await expect(page.locator('#step-9')).not.toHaveAttribute('data-state', 'done');
@@ -609,12 +614,12 @@ test('a Yes on a column that holds codes leads on to its translation', async ({ 
   await expect(row.locator('.answered')).toContainText('codes not yet translated');
   await expect(row.locator('.translation')).toContainText(d.coded.flagNext);
   await expect(row.getByLabel(c.tableLabel, { exact: true })).toHaveValue('PERSON_MASTER');
-  await expect(page.locator('#rail a[href="#step-6"]')).toContainText('1 still to translate');
+  await expect(page.locator('#rail a[href="#step-6"]')).toContainText('1 column confirmed whose codes are not yet translated');
   await expect(page.locator('#step-6')).not.toHaveAttribute('data-state', 'done');
   // Step 9 lists the column and calls the hospital schema a draft until it is translated.
   await openStep(page, 9);
   await expect(page.locator('#write-draft-list')).toContainText('The test patient in Patients');
-  await expect(page.locator('#t-write-draft')).toContainText('1 still to translate');
+  await expect(page.locator('#t-write-draft')).toContainText('1 column confirmed whose codes are not yet translated');
   await stage(page, 'd1-draft', '#step-9');
   await page.locator('#write-draft-list a').first().click();
   await expect(row).toBeInViewport();
@@ -640,7 +645,7 @@ test('a Yes on a column that holds codes leads on to its translation', async ({ 
   await expect(row.locator('.answered')).toContainText('Confirmed on');
   await expect(row).not.toContainText('Corrected to');
   await expect(row.locator('.translation')).toHaveCount(0);
-  await expect(page.locator('#rail a[href="#step-6"]')).not.toContainText('still to translate');
+  await expect(page.locator('#rail a[href="#step-6"]')).not.toContainText('not yet translated');
   await expect(page.locator('#write-draft-list li')).toHaveCount(0);
   // Its test query counts 1 and 0 alone, as the form never leaves this flag empty.
   await expect(row.locator('.probe .note').first()).toHaveText(c.probeWhat.flag_two);
@@ -758,7 +763,8 @@ test('going back online to load the invented dictionary leaves it loadable', asy
   await setOnline(page, context, browserName, true);
   await expect(page.locator('#t-connection')).toHaveText('This page is online.');
   await expect(page.locator('#t-locked')).toBeHidden();
-  await expect(page.locator('#step-1')).toHaveAttribute('data-state', 'current');
+  // The page has sent the reader to load the invented dictionary, so step 2 is the step in hand until it is loaded.
+  await expect(page.locator('#step-2')).toHaveAttribute('data-state', 'current');
   await expect(page.locator('#invented-load')).toBeVisible();
   await expect(page.locator('#invented-load')).toBeEnabled();
   // The real files are never taken while the tab is online.
@@ -770,6 +776,7 @@ test('going back online to load the invented dictionary leaves it loadable', asy
     d.dictionaryReceipt({ tables: 25, columns: 98, described: 98, keyed: 25, skipped: 0, source: 'invented' }));
   await expect(page.locator('#t-invented-status')).toHaveText(d.inventedLoaded);
   await expect(page.locator('#t-offline-invented')).toHaveText(d.inventedLoaded);
+  await expect(page.locator('#step-1')).toHaveAttribute('data-state', 'current');
   await stage(page, 'o1-invented-online', '#step-2');
   await setOnline(page, context, browserName, false);
   await expect(page.locator('#receipt-1')).toHaveText(d.offlineDone);
@@ -801,8 +808,12 @@ test('the invented hospital answers every query, and the walk reaches a complete
   await page.locator('#way-create').check();
   await expect(page.locator('#step-2 #database-options input[value="production"]')).toBeEnabled();
   await page.locator('#t-offline-invented a').click();
+  // Sent to step 2 to load the invented dictionary first, the reader finds step 2 the step in hand, and then step 1.
+  await expect(page.locator('#step-2')).toHaveAttribute('data-state', 'current');
+  await expect(page.locator('#step-1')).not.toHaveAttribute('data-state', 'current');
   await page.locator('#invented-load').click();
   await expect(page.locator('#t-invented-status')).toHaveText(d.inventedLoaded, { timeout: 60_000 });
+  await expect(page.locator('#step-1')).toHaveAttribute('data-state', 'current');
   await setOnline(page, context, browserName, false);
   offline = true;
   await page.locator('#propose').click();
@@ -858,6 +869,38 @@ test('the invented hospital answers every query, and the walk reaches a complete
   await expect(row.locator('.probe')).toContainText(d.invented.receipt(c.probeRan));
   await expect(row.locator('.probe table')).toBeVisible();
   await stage(page, 'h6-translated', '#confirm [data-about="role_patient.is_test"]');
+
+  // Another column for the route, chosen from the list of a table's columns. A table that holds a person's name lists
+  // none of the columns that identify a person, and says so; the table of routes lists its columns with their words.
+  const route = page.locator('#confirm [data-about="role_drug.route"]');
+  await route.locator('.answer-another').click();
+  const pickTable = route.locator('.chooser input');
+  await expect(pickTable).toHaveValue('DRUG_GIVEN');
+  await pickTable.fill('PERSON_MASTER');
+  await pickTable.press('Tab');
+  await expect(route.locator('.chooser select option[value="BIRTH_TS"]')).toHaveCount(1);
+  await expect(route.locator('.chooser select option[value="GIVEN_NAME"]')).toHaveCount(0);
+  await expect(route.locator('.chooser select option[value="RECORD_NO"]')).toHaveCount(0);
+  await expect(route.locator('.chooser .withheld')).toHaveText(c.withheld);
+  await pickTable.fill('LK_ROUTE');
+  await pickTable.press('Tab');
+  await expect(route.locator('.chooser select option[value="LABEL"]')).toHaveText('LABEL (VARCHAR): The name of the category.');
+  await route.locator('.chooser select').selectOption('LABEL');
+  await expect(route.locator('.chooser .column-description')).toHaveText('The name of the category.');
+  await expect(route.locator('.correction-sentence')).toHaveText(
+    'The route in Drugs given is LK_ROUTE.LABEL, reached by matching DRUG_GIVEN.ROUTE_CAT to LK_ROUTE.ROUTE_CAT.');
+  // The chosen column's values, run on the invented hospital, are the names of the routes.
+  await route.getByRole('button', { name: c.valuesWrite }).click();
+  await route.locator('.look .query-block').getByRole('button', { name: d.invented.run }).click();
+  await expect(route.locator('.value-list')).toContainText('Intravenous');
+  await expect(route.locator('.value-list li')).toHaveCount(3);
+  await route.getByRole('button', { name: c.checkButton }).click();
+  await expect(route.locator('.check-report')).toBeVisible({ timeout: 300_000 });
+  await route.getByRole('button', { name: c.keep, exact: true }).click();
+  await expect(route).toContainText('Corrected to');
+  // Problems that stood before the change are not hidden behind a plain pass.
+  await expect(route.locator('.kept-correction')).toContainText(/broke nothing new; \d+ problems? (was|were) there before it and remains?\./);
+  await stage(page, 'h6-route', '#confirm [data-about="role_drug.route"]');
   // Every other column and table is answered Not sure, which lists it as a question for the database team.
   const unsure = page.locator('#confirm li.binding[data-answer=""] .answer-unsure:not([disabled])');
   while (await unsure.count()) {
@@ -879,6 +922,10 @@ test('the invented hospital answers every query, and the walk reaches a complete
     await list.getByRole('button', { name: d.invented.run }).click();
     await expect(list.locator('.status').first()).toContainText('Run on the invented hospital:');
     if (key === 'role_reading.kind') {
+      // The list shows each code's name from the hospital's table of names, and a code as it is, with no separator.
+      await expect(list.locator('tr:has(select[data-code="52"])')).toContainText('Mean blood pressure from an arterial line');
+      await expect(list.locator('tbody')).toContainText('31102');
+      await expect(list.locator('tbody')).not.toContainText('31,102');
       await list.locator('select[data-code="52"]').selectOption('map_arterial');
       await list.locator('select[data-code="51"]').selectOption('map_cuff');
     }
@@ -895,10 +942,33 @@ test('the invented hospital answers every query, and the walk reaches a complete
     const block = page.locator(`[data-count="${name}"]`);
     await block.getByRole('button', { name: d.invented.run }).click();
     await expect(page.locator(`[data-count="${name}"]`)).toContainText('Run on the invented hospital: The page has read');
+  }
+  // The years show no separator, and most anaesthetics of the invented hospital have no patient, which the count says,
+  // with a link to the column to look at again.
+  const coverageBlock = page.locator('[data-count="coverage_by_year"]');
+  await expect(coverageBlock.locator('tbody')).toContainText('2024');
+  await expect(coverageBlock.locator('tbody')).not.toContainText('2,024');
+  await expect(coverageBlock.locator('a.finding-link').first()).toContainText("Look again at the patient's identifier in Anaesthetics at step 6.");
+  await expect(coverageBlock).not.toContainText(d.countNoFindings);
+  // A count judged wrong, with a note, leaves step 8 needing attention; the receipt and the note stay once it is saved.
+  await coverageBlock.locator('input[value="no"]').check();
+  await coverageBlock.getByLabel(d.lookRightNote).fill('Most anaesthetics have no patient.');
+  await coverageBlock.getByRole('button', { name: d.lookRightSave }).click();
+  await expect(coverageBlock).toContainText('something in this count is wrong');
+  await expect(coverageBlock).toContainText(d.lookRightNoteSaved('Most anaesthetics have no patient.'));
+  await expect(coverageBlock).toContainText('Run on the invented hospital: The page has read');
+  await expect(page.locator('#step-8')).toHaveAttribute('data-state', 'problem');
+  await expect(page.locator('#rail a[href="#step-8"]')).toContainText(`${d.state.problem}: ${d.receipt.countsWrong(1)}`);
+  for (const name of ['repeated_keys', 'readings_by_kind']) {
     await page.locator(`[data-count="${name}"] input[value="yes"]`).check();
     await page.locator(`[data-count="${name}"]`).getByRole('button', { name: d.lookRightSave }).click();
     await expect(page.locator(`[data-count="${name}"]`)).toContainText('this count looks right');
+    await expect(page.locator(`[data-count="${name}"]`)).toContainText('Run on the invented hospital: The page has read');
   }
+  await expect(page.locator('#step-8')).toHaveAttribute('data-state', 'problem');
+  await coverageBlock.locator('input[value="yes"]').check();
+  await coverageBlock.getByRole('button', { name: d.lookRightSave }).click();
+  await expect(coverageBlock).toContainText('this count looks right');
   await expect(page.locator('#step-8')).toHaveAttribute('data-state', 'done');
   await stage(page, 'h8-counts', '#step-8');
 
@@ -919,5 +989,13 @@ test('the invented hospital answers every query, and the walk reaches a complete
   const run = entries.filter((e) => e.pasted);
   expect(run.length).toBeGreaterThan(5);
   expect(run.every((e) => e.from === 'invented hospital')).toBe(true);
+  // The saved file says where each result came from, and that the invented hospital was the database.
+  expect(JSON.parse(read('settings.json')).database).toBe('invented');
+  expect(read('results/01-tables-and-columns.tsv').split('\n')[0]).toMatch(/^# Run on the invented hospital into Schemalyser /);
+  expect(JSON.parse(read('counts/judgements.json')).counts.coverage_by_year.note).toBe('Most anaesthetics have no patient.');
+  const answers = read('confirmations.csv').trim().split('\n').slice(1);
+  expect(answers.filter((line) => line.startsWith('role_patient.is_test,'))).toHaveLength(1);
+  expect(answers.some((line) => line.startsWith('role_drug.route,no,'))).toBe(true);
+  expect(read('map/role_patient.sql')).not.toMatch(/^--.*(\bviews?\b|\bbindings?\b|map\.json)/m);
   expect(requestsWhileOffline).toEqual([]);
 });

@@ -328,7 +328,7 @@ def test_a_yes_on_a_column_that_holds_codes_leaves_it_to_translate_and_the_schem
     files = s.folder_files(date=DATE)
     settings = json.loads(files["settings.json"])
     assert settings["complete"] is False
-    assert settings["draft"].startswith("draft: ") and settings["draft"].endswith(" unanswered and 2 still to translate")
+    assert settings["draft"].startswith("draft: ") and settings["draft"].endswith(" unanswered and 2 columns confirmed whose codes are not yet translated")
     readme = files["README.md"].decode()
     assert "## This hospital schema is a draft" in readme and "The test patient in Patients (`PERSON_MASTER.TEST_PERSON_FLAG`)" in readme
     # The 1-or-0 form on the proposed column translates it, and step 7's codes translate the kind.
@@ -532,3 +532,120 @@ def test_an_uploaded_file_is_read_as_what_it_is():
     # A vendor's export beside it adds its descriptions.
     kind, receipt = s.upload(DICTIONARY.read_bytes(), None, {}, "vendor.csv")
     assert kind == "vendor" and receipt["described"] == 98 and receipt["vendor"]["matched"] == 98
+
+
+def test_a_column_that_identifies_a_person_is_never_offered_for_a_flag_a_kind_a_value_or_a_filter():
+    s = fresh()
+    assert describe.identifies_person("GIVEN_NAME") and describe.identifies_person("RECORD_NO")
+    assert describe.identifies_person("STAFF_LABEL", "The name of the staff member.")
+    assert describe.identifies_person("ADD_LINE_1", "The first line of the patient's street address.")
+    assert not describe.identifies_person("BIRTH_TS", "The date and time on which the patient was born.")
+    assert not describe.identifies_person("LABEL", "The name of the category.")
+    columns = {c["name"]: c for c in s.columns_of("PERSON_MASTER")["columns"]}
+    # The list of a table's columns gives each one's type and the dictionary's description, and marks those that identify.
+    assert columns["BIRTH_TS"]["description"] == "The date and time on which the patient was born." and columns["BIRTH_TS"]["type"]
+    assert {n for n, c in columns.items() if c["identifying"]} == {"RECORD_NO", "GIVEN_NAME", "FAMILY_NAME"}
+    # A key or a link may need a person's identifier; a flag, a kind, a value and a filter never take one.
+    assert s.offers_identifying("role_patient.patient_key") and s.offers_identifying("role_anaesthetic.patient_key")
+    assert not s.offers_identifying("role_patient.is_test") and not s.offers_identifying("role_drug.route")
+    assert not s.offers_identifying("role_anaesthetic rows")
+    items = {i["about"]: i for r in s.view()["roles"] for i in r["items"]}
+    for about, item in items.items():
+        if not item["offers_identifying"]:
+            assert not any(describe.identifies_person(*reversed(c["from"].split(",")[0].split(".", 1)))
+                           for c in item["candidates"] if "." in c["from"].split(",")[0]), about
+    with pytest.raises(describe.DescribeError, match="does not offer columns that identify a person"):
+        s.correction_preview({"form": "column", "about": "role_drug.route", "replacement": "PERSON_MASTER.FAMILY_NAME"})
+    with pytest.raises(describe.DescribeError, match="does not offer columns that identify a person"):
+        s.correction_preview({"form": "filter", "about": "role_anaesthetic rows", "table": "VISIT", "column": "PERSON_KEY",
+                              "values": ["1"]} | {"table": "PERSON_MASTER", "column": "GIVEN_NAME"})
+    with pytest.raises(describe.DescribeError, match="does not list the values"):
+        s.values_query("role_patient.is_test", "PERSON_MASTER", "RECORD_NO", 2024)
+    # A date of birth, which is a column of the record, is offered as any other.
+    assert s.correction_preview({"form": "column", "about": "role_patient.birth_date", "replacement": "PERSON_MASTER.BIRTH_TS"})
+
+
+def test_a_change_kept_over_old_problems_says_that_it_broke_nothing_new_and_they_remain():
+    from schemalyser import corrections
+    assert corrections.outcome({"passed": True, "problems": [], "remaining": []}) == "passed"
+    assert corrections.outcome({"passed": True, "problems": [], "remaining": ["a", "b"]}) == \
+        "passed: broke nothing new; 2 problems were there before it and remain"
+    s = fresh()
+    found = s.correction_check({"form": "column", "about": "role_drug.route", "replacement": "LK_ROUTE.LABEL"})
+    assert found["passed"] and found["remaining"]
+    s.correction_keep({"form": "column", "about": "role_drug.route", "replacement": "LK_ROUTE.LABEL"}, date=DATE)
+    assert s.confirmations[-1]["test"].startswith("passed: broke nothing new; ")
+
+
+def test_a_note_beside_a_count_s_judgement_is_saved():
+    s = fresh()
+    s.read_count("coverage_by_year", "start_year\tanaesthetics\twith_patient\twith_birth_date\twith_death_date\ttest_patients\t"
+                 "with_stop\tstop_before_start\n2024\t400\t400\t400\t10\t0\t390\t0\n", date=DATE)
+    s.judge_count("coverage_by_year", "no", "The department gives about 9,000 a year.", date=DATE)
+    judged = json.loads(s.folder_files(date=DATE)["counts/judgements.json"])["counts"]["coverage_by_year"]
+    assert judged["looks_right"] == "no" and judged["note"] == "The department gives about 9,000 a year."
+    assert s.view()["counts"]["coverage_by_year"]["note"] == "The department gives about 9,000 a year."
+
+
+def test_a_count_in_which_most_anaesthetics_have_no_patient_says_so_and_leads_to_the_link():
+    s = fresh()
+    s.read_count("coverage_by_year", "start_year\tanaesthetics\twith_patient\twith_birth_date\twith_death_date\ttest_patients\t"
+                 "with_stop\tstop_before_start\n2024\t100\t30\t30\tNULL\tNULL\t100\tNULL\n2025\t70\tNULL\tNULL\tNULL\tNULL\t70\tNULL\n",
+                 date=DATE)
+    found = [f for f in s.findings("coverage_by_year") if "have no patient" in f]
+    assert found == ["In 2024 and 2025, most anaesthetics have no patient whom the hospital schema finds, so the link from "
+                     "each anaesthetic to its patient may be wrong. Look again at the patient's identifier in Anaesthetics at step 6."]
+    assert all(s.finding_about("coverage_by_year")[f] == "role_anaesthetic.patient_key" for f in found)
+    assert s.view()["counts"]["coverage_by_year"]["finding_about"]
+
+
+def test_reopening_a_saved_file_counts_each_answer_once_and_keeps_the_time_of_each_result():
+    s = fresh()
+    s.tables_query("5. Check which tables exist")
+    s.read_tables(tables_result())
+    pasted = s.journal["tables-and-columns"]["pasted"]
+    s.confirm("role_patient.birth_date", "yes", date=DATE)
+    s.confirm("role_patient.is_test", "yes", date=DATE)
+    # A translation kept on a column already confirmed is one answer, recorded once.
+    s.correction_keep({"form": "derived", "about": "role_patient.is_test", "table": "PERSON_MASTER",
+                       "column": "TEST_PERSON_FLAG", "derive": {"form": "flag", "values": ["Y"]}}, date=DATE)
+    assert [c["attribute"] for c in s.confirmations].count("role_patient.is_test") == 1
+    files = s.folder_files(date=DATE)
+    rows = list(csv.DictReader(io.StringIO(files["confirmations.csv"].decode())))
+    assert len(rows) == 2 and rows[1]["replacement"] == "PERSON_MASTER.TEST_PERSON_FLAG"
+    # Opened again in the same sitting, the file's answers replace the sitting's, and are not added to them.
+    found = s.restore(files)
+    assert found["confirmations"] == 2 and len(s.confirmations) == 2
+    assert s.journal["tables-and-columns"]["pasted"] == pasted
+    assert s.check()["queries"][0]["pasted"] == pasted
+
+
+def test_results_from_the_invented_hospital_are_headed_as_such_and_the_database_is_the_invented_one():
+    from schemalyser import hospital
+    invented = hospital.InventedHospital(hospital.files_from(FIXTURES / "hospital", CATALOGUE))
+    s = describe.Describe()
+    s.version = "test"
+    s.load_dictionary(DICTIONARY.read_bytes(), TABLES.read_bytes(), {}, "invented-dictionary.csv", "invented-tables.csv",
+                      invented=True)
+    s.propose(date=DATE)
+    files = s.folder_files(date=DATE)
+    assert json.loads(files["settings.json"])["database"] == "invented"
+    s.tables_query("5")
+    s.run_invented(invented, "tables-and-columns", "tables")
+    files = s.folder_files(date=DATE)
+    result = files["results/01-tables-and-columns.tsv"].decode()
+    assert result.startswith("# Run on the invented hospital into Schemalyser test on ")
+    assert "Pasted into" not in result
+    assert json.loads(files["journal.json"])["entries"][-1]["database"] == "invented"
+    readme = files["README.md"].decode()
+    assert "as the colleague pasted it or as the invented hospital gave it" in readme
+    assert "where the answer was no or where a Yes carried a translation" in readme
+    # The heading is taken off again when the file is opened, so the result reads as it was given.
+    other = describe.Describe()
+    other.restore(files)
+    assert other.results["tables-and-columns"] == s.results["tables-and-columns"]
+    # The SQL of each part speaks of parts, columns and the hospital schema, never of views, bindings or map.json.
+    for path, data in files.items():
+        if path.startswith("map/role_"):
+            comments = "\n".join(line for line in data.decode().splitlines() if line.startswith("--"))
+            assert not re.search(r"\bviews?\b|\bbindings?\b|map\.json|\brole_\w+", comments), path

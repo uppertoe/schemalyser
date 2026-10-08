@@ -12,13 +12,16 @@ export interface CorrectionHeld {
 export interface CorrectionItem {
   about: string; attribute: string; type: string | null; link: string | null; date: string | null; correction: CorrectionHeld | null;
   bound?: boolean; table?: string | null; column?: string | null;
+  // Whether a column that identifies a person may be chosen here (a key or a link), and how many of the page's
+  // alternatives were left out because they identify a person.
+  offers_identifying?: boolean; withheld?: number;
   coding?: { form: string; translated: boolean; assumed: string; values: string[]; list?: boolean } | null;
 }
 interface Report {
   passed: boolean; sentence: string; problems: string[]; remaining: string[]; mended: string; notes: string[]; seconds: number;
   about?: Record<string, string>;
 }
-interface Column { name: string; type: string; key: boolean; present: boolean | null }
+interface Column { name: string; type: string; key: boolean; present: boolean | null; description?: string; identifying?: boolean }
 interface Join { from: string; table: string; to: string; repeats: boolean }
 interface Step { from: string; table: string; to: string; from2: string; to2: string }
 interface Draft {
@@ -35,7 +38,7 @@ export interface Deps {
   setBusy(value: boolean): void;
   el<K extends keyof HTMLElementTagNameMap>(tag: K, content?: string, className?: string): HTMLElementTagNameMap[K];
   button(label: string, onClick: () => void, className?: string): HTMLButtonElement;
-  grid(columns: string[], rows: (string | number | null)[][]): HTMLElement;
+  grid(columns: string[], rows: (string | number | null)[][], counted?: number[]): HTMLElement;
   pasteBox(key: string, label: string): readonly [HTMLLabelElement, HTMLTextAreaElement];
   year(): number;
   base(view: string): string | null;
@@ -81,7 +84,8 @@ async function parsed(name: string, args: unknown[] = []): Promise<Reply> {
   return JSON.parse(reply.reply as string) as Reply;
 }
 
-function ensureTables() {
+// The list of the dictionary's tables, which every box for a table's name offers.
+export function ensureTables() {
   if (tables !== null) return;
   tables = 'loading';
   void parsed('describe_names').then((reply) => {
@@ -265,14 +269,30 @@ function tableField(item: CorrectionItem, key: string, label: string, after?: ()
   return labelled(item.about, key, label, input);
 }
 
-function columnSelect(table: string, value: string, onChange: (value: string) => void) {
-  const select = deps.el('select');
+// A column as the lists show it: its name, its type, and the start of the dictionary's description where it has one.
+function columnText(column: Column) {
+  const words = (column.description ?? '').trim();
+  const short = words.length > 90 ? `${words.slice(0, 88).replace(/\s+\S*$/, '')}…` : words;
+  return `${column.name}${column.type ? ` (${column.type})` : ''}${column.present === false ? ', not in the database' : ''}${short ? `: ${short}` : ''}`;
+}
+
+// The columns of a table that a list offers. Where the value is a flag, a kind, a value or a filter, a column that
+// identifies a person is left out.
+function offered(table: string, hide: boolean) {
   const known = table ? columnsOf(table) : null;
+  if (!known) return { known: null, shown: [] as Column[], withheld: 0 };
+  const shown = hide ? known.filter((col) => !col.identifying) : known;
+  return { known, shown, withheld: known.length - shown.length };
+}
+
+function columnSelect(table: string, value: string, onChange: (value: string) => void, hide = false) {
+  const select = deps.el('select');
+  const { known, shown } = offered(table, hide);
   const first = deps.el('option', known ? c.chooseColumn : c.chooseTable);
   first.value = '';
   select.append(first);
-  for (const column of known ?? []) {
-    const option = deps.el('option', `${column.name}${column.type ? ` (${column.type})` : ''}${column.present === false ? ', not in the database' : ''}`);
+  for (const column of shown) {
+    const option = deps.el('option', columnText(column));
     option.value = column.name;
     select.append(option);
   }
@@ -286,13 +306,59 @@ function columnSelect(table: string, value: string, onChange: (value: string) =>
   return select;
 }
 
-function columnField(item: CorrectionItem, key: string, table: string, label: string) {
+// A column chosen from its table's list, with the dictionary's whole description of the chosen one beneath, and a line
+// that says so where the list leaves out columns that identify a person.
+function columnField(item: CorrectionItem, key: string, table: string, label: string, hide = false) {
   const draft = draftOf(item);
   const select = columnSelect(table, draft.f[key] ?? '', (value) => {
     draft.f[key] = value;
     void preview(item);
+  }, hide);
+  const box = labelled(item.about, key, label, select);
+  described(box, table, draft.f[key] ?? '', hide);
+  return box;
+}
+
+function described(box: HTMLElement, table: string, chosen: string, hide: boolean) {
+  const { known, withheld } = offered(table, hide);
+  const column = (known ?? []).find((col) => col.name === chosen);
+  if (column?.description) box.append(deps.el('p', column.description, 'note column-description'));
+  if (withheld) box.append(deps.el('p', c.withheld, 'note withheld'));
+}
+
+// Whether a list for this column leaves out the columns that identify a person.
+const hides = (item: CorrectionItem) => !item.offers_identifying;
+
+// The choice of a table and then one of its columns, for Choose another column: the table starts as the one that the
+// proposal names, or the part's own table, and choosing a column uses it at once.
+export function chooser(item: CorrectionItem, chosen: (replacement: string) => void, first = false): HTMLElement {
+  ensureTables();
+  const draft = draftOf(item);
+  const box = deps.el('div', undefined, 'chooser');
+  if (draft.f.pick_table === undefined) draft.f.pick_table = item.table || deps.base(view(item.about)) || '';
+  const input = deps.el('input');
+  input.type = 'text';
+  input.spellcheck = false;
+  input.autocomplete = 'off';
+  input.setAttribute('list', 'dl-tables');
+  input.value = draft.f.pick_table;
+  input.addEventListener('input', () => { draft.f.pick_table = input.value; });
+  input.addEventListener('change', () => {
+    draft.f.pick_table = input.value.trim();
+    draft.f.pick_column = '';
+    deps.render();
   });
-  return labelled(item.about, key, label, select);
+  box.append(labelled(item.about, 'pick-table', first ? d.anotherTableFirst : d.anotherTable, input));
+  const table = (draft.f.pick_table ?? '').trim();
+  const select = columnSelect(table, draft.f.pick_column ?? '', (value) => {
+    draft.f.pick_column = value;
+    if (value) chosen(`${table}.${value}`);
+    else deps.render();
+  }, hides(item));
+  const field = labelled(item.about, 'pick-column', d.anotherColumn, select);
+  described(field, table, draft.f.pick_column ?? '', hides(item));
+  box.append(field);
+  return box;
 }
 
 // A query to copy and run, with Run on the invented hospital beside the copy while the invented dictionary is in use,
@@ -308,22 +374,28 @@ function queryBlock(sql: string, copyLabel: string, run?: () => void) {
   return box;
 }
 
-function valuesHelper(item: CorrectionItem, box: HTMLElement, label: string) {
+// The values that a column holds, from the query of values: for a flag, ticked for the values that mean yes; for a
+// filter, ticked for the rows to keep; and for a column chosen in place of the proposal, listed to look at. The box of
+// values follows the ticks.
+function valuesHelper(item: CorrectionItem, box: HTMLElement, mode: 'flag' | 'filter' | 'look', table?: string, column?: string) {
   const draft = draftOf(item);
-  box.append(textField(item, 'values', label));
-  box.append(deps.el('p', c.valuesNote, 'note'));
+  const source = () => ({ table: table ?? draft.f.table ?? '', column: column ?? draft.f.column ?? '' });
+  if (mode !== 'look') box.append(textField(item, 'values', mode === 'flag' ? c.flagValuesLabel : c.valuesLabel));
+  box.append(deps.el('p', mode === 'look' ? c.valuesLookNote : c.valuesNote, 'note'));
   const actions = deps.el('div', undefined, 'actions');
   actions.append(deps.button(c.valuesWrite, async () => {
-    if (!draft.f.table || !draft.f.column) return;
+    const { table: from, column: name } = source();
+    if (!from || !name) return;
     deps.setBusy(true);
     try {
-      const reply = await parsed('describe_values_query', [JSON.stringify({ about: item.about, table: draft.f.table, column: draft.f.column,
+      const reply = await parsed('describe_values_query', [JSON.stringify({ about: item.about, table: from, column: name,
         year: deps.year(), step: deps.step })]);
       if (reply.ok) {
         draft.valuesSql = reply.sql as string;
         draft.valuesName = reply.name as string;
         draft.valueRows = deps.values(draft.valuesName) ?? [];
         draft.problem = '';
+        if (mode !== 'look') followList(item, draft);
       } else draft.problem = reply.problem ?? d.failed;
     } catch {
       draft.problem = d.failed;
@@ -341,6 +413,7 @@ function valuesHelper(item: CorrectionItem, box: HTMLElement, label: string) {
           draft.valueRows = (reply.receipt as { values: Draft['valueRows'] }).values;
           draft.problem = '';
           draft.ran = true;
+          if (mode !== 'look') followList(item, draft);
         } else draft.problem = reply.problem ?? d.invented.failed;
       } catch {
         draft.problem = d.invented.failed;
@@ -358,6 +431,7 @@ function valuesHelper(item: CorrectionItem, box: HTMLElement, label: string) {
           draft.ran = false;
           area.value = '';
           draft.problem = '';
+          if (mode !== 'look') followList(item, draft);
         } else draft.problem = reply.problem ?? d.failed;
       } catch {
         draft.problem = d.failed;
@@ -366,10 +440,18 @@ function valuesHelper(item: CorrectionItem, box: HTMLElement, label: string) {
     }));
     box.append(caption, area, read);
   }
-  if (draft.valueRows.length) {
+  if (draft.valueRows.length && mode === 'look') {
+    const list = deps.el('div', undefined, 'values look');
+    if (draft.ran) list.append(deps.el('p', d.invented.receipt(c.valuesRan(draft.valueRows.length)), 'status good'));
+    list.append(deps.el('p', c.valuesLook, 'label'));
+    const rows = deps.el('ul', undefined, 'value-list');
+    for (const row of draft.valueRows) rows.append(deps.el('li', c.valueRows(row.value, row.rows)));
+    list.append(rows);
+    box.append(list);
+  } else if (draft.valueRows.length) {
     const fieldset = deps.el('fieldset', undefined, 'values');
     if (draft.ran) fieldset.append(deps.el('p', d.invented.receipt(c.valuesRan(draft.valueRows.length)), 'status good'));
-    fieldset.append(deps.el('legend', c.valuesTick));
+    fieldset.append(deps.el('legend', mode === 'flag' ? c.valuesTick : c.valuesTickFilter));
     const chosen = new Set((draft.f.values ?? '').split(',').map((v) => v.trim()).filter(Boolean));
     for (const row of draft.valueRows) {
       const option = deps.el('label', undefined, 'option');
@@ -379,16 +461,27 @@ function valuesHelper(item: CorrectionItem, box: HTMLElement, label: string) {
       tick.id = id(item.about, `value-${draft.valueRows.indexOf(row)}`);
       option.htmlFor = tick.id;
       tick.checked = chosen.has(row.value);
+      // The box holds exactly the values ticked, so that a value guessed before the list came back does not linger.
       tick.addEventListener('change', () => {
-        if (tick.checked) chosen.add(row.value);
-        else chosen.delete(row.value);
-        draft.f.values = [...chosen].join(', ');
+        const ticked = [...fieldset.querySelectorAll<HTMLInputElement>('input[type=checkbox]')].filter((t) => t.checked).map((t) => t.value);
+        draft.f.values = ticked.join(', ');
         void preview(item);
       });
       option.append(tick, document.createTextNode(` ${c.valueRows(row.value, row.rows)}`));
       fieldset.append(option);
     }
     box.append(fieldset);
+  }
+}
+
+// Once the list of values is back, the box keeps only the values that the list holds, which are the ones it ticks.
+function followList(item: CorrectionItem, draft: Draft) {
+  const listed = new Set(draft.valueRows.map((row) => row.value));
+  const typed = (draft.f.values ?? '').split(',').map((v) => v.trim()).filter(Boolean);
+  const kept = typed.filter((v) => listed.has(v));
+  if (kept.length && kept.length !== typed.length) {
+    draft.f.values = kept.join(', ');
+    void preview(item);
   }
 }
 
@@ -447,7 +540,7 @@ function stepsFields(item: CorrectionItem, box: HTMLElement, pair: boolean) {
     if (steps.length > 1) actions.append(deps.button(c.removeStep, () => { draft.steps.pop(); void preview(item); }, 'secondary'));
     box.append(actions);
   }
-  box.append(columnField(item, 'final', at, c.finalColumn(at || c.chooseTable)));
+  box.append(columnField(item, 'final', at, c.finalColumn(at || c.chooseTable), hides(item)));
 }
 
 function codesFields(item: CorrectionItem, box: HTMLElement) {
@@ -488,21 +581,21 @@ function formFields(item: CorrectionItem, box: HTMLElement) {
         f.table = item.table || base;
         if (item.table && item.column) f.column = item.column;
       }
-      box.append(tableField(item, 'table', c.tableLabel, () => { f.column = ''; }), columnField(item, 'column', f.table ?? '', c.columnLabel));
-      valuesHelper(item, box, c.flagValuesLabel);
+      box.append(tableField(item, 'table', c.tableLabel, () => { f.column = ''; }), columnField(item, 'column', f.table ?? '', c.columnLabel, hides(item)));
+      valuesHelper(item, box, 'flag');
       break;
     case 'filter':
       if (!f.table && base) f.table = base;
-      box.append(tableField(item, 'table', c.filterTable, () => { f.column = ''; }), columnField(item, 'column', f.table ?? '', c.filterColumn));
-      valuesHelper(item, box, c.valuesLabel);
+      box.append(tableField(item, 'table', c.filterTable, () => { f.column = ''; }), columnField(item, 'column', f.table ?? '', c.filterColumn, true));
+      valuesHelper(item, box, 'filter');
       break;
     case 'scale':
-      box.append(tableField(item, 'table', c.tableLabel, () => { f.column = ''; }), columnField(item, 'column', f.table ?? '', c.columnLabel),
+      box.append(tableField(item, 'table', c.tableLabel, () => { f.column = ''; }), columnField(item, 'column', f.table ?? '', c.columnLabel, hides(item)),
         textField(item, 'factor', c.factorLabel), textField(item, 'offset', c.offsetLabel));
       break;
     case 'date':
     case 'trim':
-      box.append(tableField(item, 'table', c.tableLabel, () => { f.column = ''; }), columnField(item, 'column', f.table ?? '', c.columnLabel));
+      box.append(tableField(item, 'table', c.tableLabel, () => { f.column = ''; }), columnField(item, 'column', f.table ?? '', c.columnLabel, hides(item)));
       break;
     case 'path':
       stepsFields(item, box, false);
@@ -521,7 +614,7 @@ function formFields(item: CorrectionItem, box: HTMLElement) {
       if (!f.on_table && base) f.on_table = base;
       box.append(tableField(item, 'on_table', c.onTable, () => { f.on_column = ''; }), columnField(item, 'on_column', f.on_table ?? '', c.onColumn),
         tableField(item, 'rows_table', c.rowsTable, () => { f.link = ''; f.text = ''; f.order = ''; }),
-        columnField(item, 'link', f.rows_table ?? '', c.linkColumn), columnField(item, 'text', f.rows_table ?? '', c.textColumn),
+        columnField(item, 'link', f.rows_table ?? '', c.linkColumn), columnField(item, 'text', f.rows_table ?? '', c.textColumn, hides(item)),
         columnField(item, 'order', f.rows_table ?? '', c.orderColumn), textField(item, 'separator', c.separatorLabel));
       break;
     case 'codes':
@@ -559,6 +652,14 @@ export function panel(item: CorrectionItem, plain: () => HTMLElement, translate 
   const sql = deps.el('details');
   sql.append(deps.el('summary', c.sqlLabel), deps.el('pre', draft.preview.sql, 'code correction-sql'));
   box.append(sql);
+  // A column chosen in place of the proposal can be looked at on the database before it is kept. A key or a link is
+  // not, because its values identify a patient or a record.
+  const named = draft.form === 'column' ? (draft.f.replacement ?? '').match(/^\s*(\w+)\.(\w+)/) : null;
+  if (named && hides(item)) {
+    const look = deps.el('div', undefined, 'look');
+    valuesHelper(item, look, 'look', named[1], named[2]);
+    box.append(look);
+  }
   box.append(deps.el('p', c.checkWhat, 'note'));
   const actions = deps.el('div', undefined, 'actions');
   const correction = correctionOf(item, draft)!;
@@ -626,6 +727,7 @@ function list(items: string[], className = 'findings', about: Record<string, str
 export async function useAlternative(item: CorrectionItem, chosen: string) {
   const draft = draftOf(item);
   draft.form = item.attribute === 'rows' ? 'rows' : 'column';
+  if (draft.f.replacement !== chosen) Object.assign(draft, { valuesSql: '', valuesName: '', valueRows: [], ran: false });
   draft.f.replacement = chosen;
   draft.report = null;
   draft.although = false;
@@ -766,7 +868,7 @@ export function kept(item: CorrectionItem): HTMLElement | null {
   }
   if (held.probed) {
     if (probeRan.get(item.about) === '') probe.append(deps.el('p', d.invented.receipt(c.probeRan), 'status good'));
-    probe.append(deps.grid(held.probed.columns, held.probed.rows));
+    probe.append(deps.grid(held.probed.columns, held.probed.rows, held.probed.columns.map((_, at) => at)));
     if (held.findings.length) probe.append(list(held.findings));
   }
   box.append(probe);

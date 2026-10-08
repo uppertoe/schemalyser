@@ -15,17 +15,18 @@ interface Item {
   about: string; attribute: string; meaning: string; type: string | null; from: string; table: string | null; column: string | null;
   bound: boolean; definition: string | null; says: string; confidence: string; basis: string; candidates: Candidate[]; status: string; question: string;
   answer: string | null; date: string | null; replacement: string | null; presence: Presence | null;
-  link: string | null; correction: corrections.CorrectionHeld | null; title: string;
+  link: string | null; correction: corrections.CorrectionHeld | null; title: string; offers_identifying?: boolean; withheld?: number;
   coding: { form: string; translated: boolean; assumed: string; values: string[]; list?: boolean } | null;
 }
 interface Role { name: string; title: string; description: string; required: boolean; drafted: boolean; items: Item[] }
 interface Vocabulary {
   key: string; title: string; view: string; column: string; vocabulary: string; kinds: string[]; meanings: Record<string, string>; bound: string;
-  lookup: [string, string] | null; reason: string; rows: { code: string; charted: number | null; anaesthetics: number | null; name: string }[];
+  lookup: [string, string] | null; reason: string; link: string | null; rows: { code: string; charted: number | null; anaesthetics: number | null; name: string }[];
   chosen: Record<string, string>; year: number | null; date: string | null;
 }
 interface CountHeld {
   columns: string[] | null; rows: string[][] | null; looks_right: string | null; note: string | null; date: string | null; findings: string[];
+  finding_about?: Record<string, string>;
   database: string | null;
 }
 interface Tally {
@@ -100,6 +101,10 @@ let changedSinceWritten = false;
 const READING = new Set(['describe_model', 'describe_check', 'describe_compare', 'describe_dictionary_query']);
 // The sentence that says why an answer could not be recorded, beside the binding it was given for.
 const problems = new Map<string, string>();
+// The receipt of each list of codes and each count, which stays in view when the step is drawn again.
+const receiptsHeld = new Map<string, { text: string; kind: '' | 'good' | 'problem' }>();
+// What a person has chosen and typed beside a count before saving it, which a drawing again keeps.
+const judging = new Map<string, { looks: string; note: string }>();
 
 function text(id: string, value: string) {
   $(id).textContent = value;
@@ -205,6 +210,8 @@ function lock() {
   changing.clear();
   openAnother.clear();
   chartedSql.clear();
+  receiptsHeld.clear();
+  judging.clear();
   countQueries = [];
   tablesSql = '';
   written = false;
@@ -260,6 +267,11 @@ function countsDone(m: Model) {
   return m.counts_offered.length > 0 && judged(m) === m.counts_offered.length;
 }
 
+// The counts judged to look wrong, which keep step 8 in need of attention.
+function judgedWrong(m: Model) {
+  return m.counts_offered.filter((name) => m.counts[name]?.looks_right === 'no').length;
+}
+
 // Step 6 is done once every column and table has an answer and every code is translated.
 function confirmDone(t: Tally) {
   return t.remaining === 0 && t.tables_remaining === 0 && t.untranslated === 0;
@@ -289,11 +301,19 @@ function stepStates() {
     if (i === 4 && m?.dictionary?.invented && !hospitalReady && !m.catalogue) return d.waitingFor.inventedNoHospital;
     return '';
   });
+  const wrong = proposed ? judgedWrong(m!) : 0;
   const states: StepState[] = STEPS.map((_, i) => {
     if (i === 0) return ready ? 'done' : state === 'load-failed' || state === 'locked' ? 'problem' : 'current';
+    if (i === 7 && !waits[i] && wrong) return 'problem';
     return waits[i] ? 'waiting' : done[i] ? 'done' : 'available';
   });
-  const first = states.findIndex((value, i) => value === 'available' && !OPTIONAL.has(STEPS[i]));
+  // Once the page has sent the reader to step 2 to load the invented dictionary before going offline, step 2 is the
+  // step in hand until the dictionary is loaded, and then step 1 is again.
+  if (states[0] === 'current' && navigator.onLine && wayChosen === 'invented' && !m?.dictionary) {
+    states[0] = 'available';
+    states[1] = 'current';
+  }
+  const first = states.findIndex((value, i) => value === 'available' && !OPTIONAL.has(STEPS[i]) && i > 0);
   if (first >= 0 && !states.includes('current')) states[first] = 'current';
   const statusText = (id: string) => ($(id).hidden ? '' : $(id).textContent ?? '');
   const receipts = [
@@ -304,7 +324,7 @@ function stepStates() {
     m?.catalogue_source === 'database' ? d.tablesAnswered : statusText('t-tables-status') || d.receipt.tables,
     m ? d.receipt.confirmed(m.tally.total, m.roles.filter((r) => !r.drafted).length) : '',
     m ? d.receipt.codes(listsSaved(m), listsOffered(m)) : '',
-    m ? d.receipt.counts(judged(m), m.counts_offered.length) : '',
+    m ? (wrong ? `${d.state.problem}: ${d.receipt.countsWrong(wrong)}.` : d.receipt.counts(judged(m), m.counts_offered.length)) : '',
     statusText('t-write-status'),
   ];
   return { states, waits, receipts };
@@ -333,7 +353,9 @@ function show() {
     // While the tab is online with nothing loaded, step 2 stays open beside step 1, so that the invented dictionary
     // can be loaded; once it is loaded, step 2 stays open to say what to do next until the tab goes offline.
     const online2 = n === '2' && state === 'ready' && online && !hidden.has(n) && (!model?.dictionary || model.dictionary.source === 'invented');
-    const isOpen = value === 'problem' || (value === 'current' && !hidden.has(n)) || (value !== 'waiting' && opened.has(n)) || online2;
+    // Step 1 in trouble is always open; another step that needs attention opens and folds as a current one does.
+    const isOpen = (value === 'problem' && n === '1') || ((value === 'current' || value === 'problem') && !hidden.has(n))
+      || (value !== 'waiting' && opened.has(n)) || online2;
     step.dataset.state = value;
     step.dataset.open = String(isOpen);
     if (value === 'current') step.setAttribute('aria-current', 'step');
@@ -345,7 +367,8 @@ function show() {
     text(`state-${n}`, word);
     const receipt = $(`receipt-${n}`);
     // A folded step shows its receipt when done, and otherwise its first instruction.
-    const line = value === 'done' ? receipts[i] : value === 'available' || value === 'current' ? step.querySelector('.do')?.textContent ?? '' : '';
+    const line = value === 'done' || (value === 'problem' && n !== '1') ? receipts[i]
+      : value === 'available' || value === 'current' ? step.querySelector('.do')?.textContent ?? '' : '';
     receipt.textContent = line;
     receipt.hidden = isOpen || !line;
     receipt.className = value === 'done' ? 'receipt done' : 'receipt';
@@ -353,7 +376,7 @@ function show() {
     waiting.textContent = waits[i];
     waiting.hidden = value !== 'waiting';
     const toggle = $<HTMLButtonElement>(`toggle-${n}`);
-    toggle.hidden = value === 'waiting' || value === 'problem';
+    toggle.hidden = value === 'waiting' || (value === 'problem' && n === '1');
     toggle.textContent = isOpen ? d.hideStep : d.showStep;
     toggle.setAttribute('aria-expanded', String(isOpen));
     toggle.onclick = () => toggleStep(n, !isOpen);
@@ -369,7 +392,8 @@ function show() {
     const name = d.steps[i].replace(/^\d+\.\s*/, '');
     // Steps 6 to 9 say how far each has gone until it is done.
     let progress = '';
-    if (model?.proposed && value !== 'done' && value !== 'waiting') {
+    if (model?.proposed && n === '8' && value === 'problem') progress = d.receipt.countsWrong(judgedWrong(model));
+    else if (model?.proposed && value !== 'done' && value !== 'waiting') {
       const t = model.tally;
       if (n === '6') progress = d.stillToAnswer(t.remaining, t.tables_remaining, t.untranslated);
       if (n === '7' && listsOffered(model)) progress = d.receipt.codes(listsSaved(model), listsOffered(model)).replace(/\.$/, '');
@@ -515,7 +539,7 @@ function render() {
   // The check of the whole map says, once something is answered, that it checks the map as it now stands.
   const answeredAny = !!model?.proposed && (model.tally.total - model.tally.remaining + model.tally.tables - model.tally.tables_remaining) > 0;
   text('t-model-check-what', answeredAny ? d.corrections.modelCheckWhatAfter : d.corrections.modelCheckWhat);
-  text('model-check', answeredAny ? d.corrections.modelCheckAgain : d.corrections.modelCheck);
+  text('model-check', d.corrections.modelCheck);
   renderDraft();
   show();
 }
@@ -722,8 +746,9 @@ async function answer(about: string, value: string, replacement = '', from?: HTM
   render();
 }
 
-// The choice of another column or table: one that the page found, or one written by hand. Whichever is chosen, the
-// page checks it on invented rows and shows the result before it can be kept.
+// The choice of another column or table: one that the page found, a column chosen from the list of a table's columns,
+// or one written by hand. Whichever is chosen, the page shows what it means at once, and checks it on made-up rows
+// before it can be kept. A name written by hand is checked against the dictionary, and any problem is said beneath.
 function anotherPanel(item: Item) {
   const panel = el('div', undefined, 'another');
   const rows = item.attribute === 'rows';
@@ -748,25 +773,28 @@ function anotherPanel(item: Item) {
   } else if (!rows) {
     panel.append(el('p', d.anotherNoneFound, 'note no-alternative'));
   }
+  if (item.withheld) panel.append(el('p', d.corrections.withheld, 'note withheld'));
+  // For a column, the columns of a table, listed with their types and the dictionary's descriptions.
+  if (!rows) panel.append(corrections.chooser(item, (chosen) => {
+    if (select) select.value = '';
+    written.value = '';
+    void corrections.useAlternative(item, chosen);
+  }, !select));
   const written = el('input');
   written.type = 'text';
   written.spellcheck = false;
   written.autocomplete = 'off';
   written.dataset.keep = `${id}-written`;
-  const writtenLabel = rows ? (select ? d.anotherRowsWrittenOr : d.anotherRowsLabel) : select ? d.anotherWrittenOr : d.anotherWritten;
+  if (rows) {
+    corrections.ensureTables();
+    written.setAttribute('list', 'dl-tables');
+  }
+  const writtenLabel = rows ? (select ? d.anotherRowsWrittenOr : d.anotherRowsLabel) : d.anotherWrittenOr;
   written.setAttribute('aria-label', writtenLabel);
-  if (!select) written.id = id;
+  if (!select && rows) written.id = id;
   panel.append(el('span', ` ${writtenLabel} `, 'label'), written);
-  const inForce = el('p', '', 'note in-force');
-  const sayInForce = () => {
-    const option = select?.selectedOptions[0];
-    inForce.textContent = written.value.trim() ? d.inForceWritten(written.value.trim())
-      : select?.value && option ? d.inForceChosen(option.textContent ?? '') : '';
-    inForce.hidden = !inForce.textContent;
-  };
   written.addEventListener('input', () => {
     if (written.value.trim() && select) select.value = '';
-    sayInForce();
   });
   // A column or table chosen from the list is used at once, and the page shows what it means.
   select?.addEventListener('change', () => {
@@ -774,12 +802,7 @@ function anotherPanel(item: Item) {
       written.value = '';
       void corrections.useAlternative(item, select!.value);
     }
-    sayInForce();
   });
-  written.addEventListener('kept', sayInForce);
-  select?.addEventListener('kept', sayInForce);
-  sayInForce();
-  panel.append(inForce);
   panel.append(button(d.anotherUse, () => {
     const chosen = written.value.trim() || select?.value || '';
     if (chosen) void corrections.useAlternative(item, chosen);
@@ -954,7 +977,8 @@ function grid(columns: string[], rows: (string | number | null)[][], counted: nu
     const line = el('tr');
     row.forEach((cell, at) => {
       let value = cell === null || cell === undefined ? '' : String(cell);
-      if (/^-?\d+$/.test(value)) value = Number(value).toLocaleString('en-AU');
+      // A count takes a thousands separator; a year or a code is shown as it is.
+      if (counted.includes(at) && /^-?\d+$/.test(value)) value = Number(value).toLocaleString('en-AU');
       if (!value && counted.includes(at)) value = d.underTen;
       line.append(el('td', value, /^-?[\d,]+(\.\d+)?$/.test(value) || value === d.underTen ? 'number' : ''));
     });
@@ -1033,8 +1057,8 @@ function renderVocabularies() {
           render();
           if (reply.ok) {
             const n = (reply.receipt as { rows: number }).rows;
-            status(status_.id, d.invented.receipt(n ? d.chartedReceipt(n, yearValue()) : d.chartedEmpty(yearValue())), n ? 'good' : 'problem');
-          } else status(status_.id, reply.problem ?? d.invented.failed, 'problem');
+            hold(status_.id, d.invented.receipt(n ? d.chartedReceipt(n, yearValue()) : empty(vocabulary)), n ? 'good' : 'problem');
+          } else hold(status_.id, reply.problem ?? d.invented.failed, 'problem');
         } catch {
           setBusy(false);
           status(status_.id, d.invented.failed, 'problem');
@@ -1052,7 +1076,7 @@ function renderVocabularies() {
             const n = (reply.receipt as { rows: number }).rows;
             setBusy(false);
             render();
-            status(status_.id, n ? d.chartedReceipt(n, yearValue()) : d.chartedEmpty(yearValue()), n ? 'good' : 'problem');
+            hold(status_.id, n ? d.chartedReceipt(n, yearValue()) : empty(vocabulary), n ? 'good' : 'problem');
             return;
           }
           setBusy(false);
@@ -1065,6 +1089,7 @@ function renderVocabularies() {
       section.append(read);
     }
     section.append(status_);
+    shown(status_);
     if (vocabulary.rows.length) {
       const frame = grid(d.chartedColumns, vocabulary.rows.map((r) => [r.code, r.charted, r.anaesthetics, r.name, '']), [1, 2]);
       const body = frame.querySelectorAll('tbody tr');
@@ -1103,6 +1128,25 @@ function renderVocabularies() {
   }
 }
 
+// A receipt that stays beside its list or count when the step is drawn again.
+function hold(id: string, text_: string, kind: '' | 'good' | 'problem' = '') {
+  receiptsHeld.set(id, { text: text_, kind });
+  status(id, text_, kind);
+}
+
+function shown(node: HTMLElement) {
+  const held = receiptsHeld.get(node.id);
+  if (!held) return;
+  node.hidden = !held.text;
+  node.textContent = held.text;
+  node.className = `status ${held.kind}`.trim();
+}
+
+// An empty list of codes says where to look: for a part reached through the patient, at the anaesthetic's link to it.
+function empty(vocabulary: Vocabulary) {
+  return vocabulary.link === 'patient_key' ? d.chartedEmptyPatient(yearValue()) : d.chartedEmpty(yearValue());
+}
+
 function yearValue() {
   const value = Number($<HTMLInputElement>('year').value);
   return Number.isInteger(value) && value > 1900 ? value : new Date().getFullYear() - 1;
@@ -1136,8 +1180,8 @@ function renderCounts() {
         const reply = await runInvented({ query: `count-${query.name}`, read: 'count', name: query.name });
         setBusy(false);
         render();
-        if (reply.ok) status(status_.id, d.invented.receipt(d.countReceipt((reply.receipt as { rows: number }).rows)), 'good');
-        else status(status_.id, reply.problem ?? d.invented.failed, 'problem');
+        if (reply.ok) hold(status_.id, d.invented.receipt(d.countReceipt((reply.receipt as { rows: number }).rows)), 'good');
+        else hold(status_.id, reply.problem ?? d.invented.failed, 'problem');
       } catch {
         setBusy(false);
         status(status_.id, d.invented.failed, 'problem');
@@ -1154,30 +1198,52 @@ function renderCounts() {
         if (reply.ok) {
           area.value = '';
           render();
-          status(status_.id, d.countReceipt((reply.receipt as { rows: number }).rows), 'good');
-        } else status(status_.id, reply.problem ?? d.failed, 'problem');
+          hold(status_.id, d.countReceipt((reply.receipt as { rows: number }).rows), 'good');
+        } else hold(status_.id, reply.problem ?? d.failed, 'problem');
       } catch {
         setBusy(false);
         status(status_.id, d.failed, 'problem');
       }
     }, held?.rows ? 'secondary' : ''));
     section.append(read, status_);
+    shown(status_);
     if (held?.rows && held.columns) {
-      section.append(grid(held.columns, held.rows, held.columns.map((_, at) => at).filter((at) => at > 0)));
+      // A part of the record is named in words, as everywhere else on the page.
+      const titles = new Map((model.roles ?? []).map((r) => [r.name, r.title || r.name]));
+      const rows = held.rows.map((row) => row.map((cell) => titles.get(cell) ?? cell));
+      section.append(grid(held.columns, rows, held.columns.map((_, at) => at).filter((at) => at > 0)));
+      // A finding that names a column of step 6 links to it.
       const findings = el('ul', undefined, 'findings');
-      for (const finding of held.findings) findings.append(el('li', finding));
+      for (const finding of held.findings) {
+        const entry = el('li');
+        const target = held.finding_about?.[finding];
+        if (target) {
+          const link = el('a', finding, 'finding-link');
+          link.href = '#step-6';
+          link.dataset.about = target;
+          link.addEventListener('click', (event) => {
+            event.preventDefault();
+            goTo(target, finding);
+          });
+          entry.append(link, el('span', ` ${d.countFindingDo}`, 'finding-do'));
+        } else entry.textContent = finding;
+        findings.append(entry);
+      }
       section.append(held.findings.length ? findings : el('p', d.countNoFindings, 'note'));
       if (training) section.append(el('p', d.countTrainingNote, 'note'));
       const fieldset = el('fieldset', undefined, 'judgement');
       fieldset.append(el('legend', d.lookRightLegend));
       if (d.lookRightCompare[query.name]) fieldset.append(el('p', d.lookRightCompare[query.name], 'note compare'));
+      const draft = judging.get(query.name) ?? { looks: held.looks_right ?? '', note: held.note ?? '' };
+      judging.set(query.name, draft);
       for (const [value, label] of d.lookRight) {
         const option = el('label', undefined, 'option');
         const radio = el('input');
         radio.type = 'radio';
         radio.name = `right-${query.name}`;
         radio.value = value;
-        radio.checked = held.looks_right === value;
+        radio.checked = draft.looks === value;
+        radio.addEventListener('change', () => { if (radio.checked) draft.looks = value; });
         option.append(radio, document.createTextNode(` ${label}`));
         fieldset.append(option);
       }
@@ -1187,7 +1253,8 @@ function renderCounts() {
       const note = el('input');
       note.type = 'text';
       note.id = noteId;
-      note.value = held.note ?? '';
+      note.value = draft.note;
+      note.addEventListener('input', () => { draft.note = note.value; });
       fieldset.append(noteLabel, note);
       const save = el('div', undefined, 'actions');
       save.append(button(d.lookRightSave, async () => {
@@ -1195,13 +1262,15 @@ function renderCounts() {
         if (!chosen) return;
         setBusy(true);
         try {
-          await ask('describe_count_judge', [JSON.stringify({ name: query.name, looksRight: chosen.value, note: note.value })]);
+          const reply = await ask('describe_count_judge', [JSON.stringify({ name: query.name, looksRight: chosen.value, note: note.value })]);
+          if (reply.ok) judging.delete(query.name);
         } catch { /* kept */ }
         setBusy(false);
         render();
       }, held.looks_right ? 'secondary' : ''));
       fieldset.append(save);
-      if (held.looks_right) fieldset.append(el('p', d.lookRightSaved(held.looks_right, d.day(held.date ?? '')), 'status good'));
+      if (held.looks_right) fieldset.append(el('p', d.lookRightSaved(held.looks_right, d.day(held.date ?? '')), held.looks_right === 'yes' ? 'status good' : 'status problem'));
+      if (held.looks_right && held.note) fieldset.append(el('p', d.lookRightNoteSaved(held.note), 'note saved-note'));
       if (held.looks_right && held.database === 'training') fieldset.append(el('p', d.lookRightTraining, 'note'));
       section.append(fieldset);
     }

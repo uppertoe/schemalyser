@@ -57,6 +57,29 @@ PROBE_COLUMNS = {"link": ("anaesthetics", "with_rows", "without_rows"), "filter"
 DROP = "IF OBJECT_ID('tempdb..#cohort') IS NOT NULL DROP TABLE #cohort;"
 # A label column of a lookup table, by the words of its name.
 LABEL_WORDS = {"name", "label", "title", "display", "disp", "description"}
+# A column that identifies a person: a name, an address, a telephone number, an email address, a medical record number or
+# another number that identifies a person, by the words of its name or of the dictionary's description. A date of birth is
+# a column of the record in its own right, and is not among them. Such a column is never offered as the source of a flag,
+# a kind, a value or a filter, and its values are never listed.
+PERSON_NAME = re.compile(
+    r"(^|_)(GIVEN|FAMILY|FIRST|LAST|MIDDLE|MAIDEN|PREFERRED|FULL|PAT|PATIENT|PERSON|STAFF|PROV|PROVIDER|EMP|EMPLOYEE|USER|"
+    r"CONTACT|KIN)_?NAME($|_)|(^|_)(SURNAME|FORENAME|ADDR|ADDRESS|ADDRESS_LINE\d?|STREET|SUBURB|POSTCODE|POST_CODE|ZIP|ZIPCODE|"
+    r"PHONE|PHONE_NO|TELEPHONE|MOBILE|FAX|EMAIL|E_MAIL|MRN|RECORD_NO|RECORD_NUM|MED_REC_NO|UR_NO|URN|SSN|MEDICARE|MEDICARE_NO|"
+    r"NHI|IHI|PASSPORT|LICENCE_NO|LICENSE_NO)($|_)", re.IGNORECASE)
+PERSON_WORDS = re.compile(
+    r"\b(patient|person|staff member|employee|clinician|provider|user|surgeon|anaesthetist|anesthetist|doctor|nurse|"
+    r"guardian|contact|next of kin)(\u2019s|'s)? (given |family |first |last |middle |full |preferred |maiden )?name\b|"
+    r"\b(given|family|first|last|middle|maiden) name\b|\bsurname\b|"
+    r"\bname of the (patient|person|staff member|employee|clinician|provider|user|surgeon|anaesthetist|anesthetist|doctor|nurse)\b|"
+    r"\b(home|street|postal|mailing|residential|email|e-mail) address\b|\baddress of the (patient|person)\b|"
+    r"\b(tele)?phone( number)?\b|\bmobile number\b|\be-?mail\b|\bmedical record number\b|\bsocial security\b|"
+    r"\bmedicare (card )?number\b|\bnational (health )?identifier\b|\bpassport\b|\bdriver'?s licen[cs]e\b",
+    re.IGNORECASE)
+
+
+def identifies_person(column, description=""):
+    """Whether a column identifies a person, by its name or the dictionary's description of it."""
+    return bool(PERSON_NAME.search(column or "") or PERSON_WORDS.search(description or ""))
 
 WORDING = {
     "headings": "Schemalyser could not find a heading for the {fields} in the dictionary's first row. Please name the "
@@ -104,10 +127,12 @@ WORDING = {
     "grid_empty": "The pasted text holds no rows. If the query returned no rows, the grid is empty; otherwise please copy the whole results grid with Copy with Headers, and paste it again.",
     "folder_unreadable": "Schemalyser could not read the hospital schema in this file, so it has started a new hospital schema instead.",
     "cliff": "In {year}, {count} of {total} anaesthetics {what}, against {best_count} of {best_total} in {best_year}. A fall as sharp as this usually means that the data is held differently in that year.",
+    "no_patient": "In {years}, most anaesthetics have no patient whom the hospital schema finds, so the link from each anaesthetic to its patient may be wrong. Look again at the patient's identifier in Anaesthetics at step 6.",
     "repeated": "In {view}, {count} values of the column that identifies a row are held by more than one row.",
     "stamp_query": "Written by Schemalyser {version} on {date}.",
     "stamp_file": "Written by Schemalyser {version} on {date}.",
     "stamp_result": "Pasted into Schemalyser {version} on {date}. The lines below are the result exactly as it was pasted.",
+    "stamp_invented": "Run on the invented hospital into Schemalyser {version} on {date}. The lines below are the result exactly as the invented hospital gave it.",
     "check_confirmation": "Schemalyser could not apply the recorded answer for {about} again: {problem}",
     "check_codes": "Schemalyser could not apply the recorded codes of {key} again.",
     "differs": "{about} differs: the saved schema holds {before}, and the schema proposed again holds {after}.",
@@ -133,6 +158,7 @@ WORDING = {
     "probe_flag_two_comment": "This test query counts the rows in which {about} is 1 and 0, rounded down to ten and left empty under ten.",
     "probe_flag_two": "The flag is 1 in {ones} rows and 0 in {zeros}.",
     "sized": "{table}, which holds about {rows} rows",
+    "sized_few": "{table}, which holds fewer than ten rows",
     "sized_unknown": "{table}, whose size is not known",
     "question_column": "The page proposes {source} as {title}. Is that right, and if not, which column holds it?",
     "question_nothing": "The page has found no column for {title}. Which column holds it, if the hospital records it?",
@@ -149,6 +175,8 @@ WORDING = {
     "probe_link": "Of {total} anaesthetics of the year, {linked} have at least one row through this link and {none} have none.",
     "probe_filter": "Of {total} rows read, {passing} pass the filter.",
     "probe_flag": "The flag is 1 in {ones} rows, 0 in {zeros} and empty in {empty}.",
+    "identifying": "The page does not offer columns that identify a person, and {name} is one, so the page cannot use it here.",
+    "identifying_values": "The page does not list the values of {name}, because it is a column that identifies a person.",
     "invented_only": "The invented hospital answers only the queries written for the invented dictionary. With a real dictionary, your colleague runs each query on the hospital's database.",
     "invented_not_offered": "The page has not written this query yet. Write it first, then choose Run on the invented hospital.",
     "invented_failed": "The invented hospital could not run this query. Write it again and run it once more; if it still fails, answer this item by hand.",
@@ -361,6 +389,8 @@ class Describe:
                                  "version": self.version}
         if self.invented:
             self.dictionary_entry["invented"] = True
+            # With the invented dictionary, the invented hospital is the only database that the queries can run on.
+            self.settings["database"] = "invented"
         return receipt
 
     def dictionary_receipt(self):
@@ -755,7 +785,8 @@ class Describe:
         unanswered = [p for p in (_count_words(t["remaining"], "column", "columns"), _count_words(t["tables_remaining"], "table", "tables")) if p]
         parts = [f"{_and(unanswered)} unanswered"] if unanswered else []
         if t["untranslated"]:
-            parts.append(f"{t['untranslated']:,} still to translate")
+            n = t["untranslated"]
+            parts.append(f"{n:,} {'column' if n == 1 else 'columns'} confirmed whose codes are not yet translated")
         return " and ".join(parts)
 
     def questions(self):
@@ -794,9 +825,44 @@ class Describe:
 
     def _built(self, correction):
         try:
-            return corrections.build(self, correction)
+            built = corrections.build(self, correction)
         except corrections.CorrectionError as error:
             raise DescribeError(str(error)) from None
+        # A column that identifies a person is never the source of a flag, a kind, a value or a filter, even written by hand.
+        if self.offers_identifying(built["about"]):
+            return built
+        named = []
+        if built.get("filter"):
+            named.append((built["filter"]["table"], built["filter"]["column"]))
+        binding = built.get("binding") or {}
+        if binding.get("joined"):
+            named.append((binding["joined"]["table"], binding["joined"]["text"]))
+        elif binding:
+            named.append((binding["table"], binding["column"]))
+        for table, column in named:
+            if self._identifying(table, column):
+                raise DescribeError(WORDING["identifying"].format(name=f"{table}.{column}"))
+        return built
+
+    def _identifying(self, table, column):
+        """Whether a column of the dictionary identifies a person, by its name or the dictionary's description."""
+        if self.dictionary is None:
+            return identifies_person(column)
+        return identifies_person(column, self.dictionary.description(table, column) or "")
+
+    def offers_identifying(self, about):
+        """Whether a column that identifies a person may be chosen for this column of a part: only for a key or a link,
+        which may need a person's identifier to join, and for a column that the record itself marks as identifying,
+        such as the text of a note. Never for the filter of a part's rows, a flag, a kind or a value."""
+        if about.endswith(" rows"):
+            return False
+        view_name, _, name = about.partition(".")
+        view = self.views.get(view_name)
+        spec = next((c for c in (view or {}).get("columns", []) if c["name"] == name), None)
+        if spec is None:
+            return False
+        links = {link["column"] for link in view.get("links", [])}
+        return spec["type"] == "key" or name in links or bool(spec.get("identifying"))
 
     def correction_preview(self, correction):
         """What a correction means, as the sentence that the map records and the SQL of the view that it changes."""
@@ -848,6 +914,10 @@ class Describe:
             record["reason"] = reason
         corrections.apply(self, built, record)
         self.settings["updated"] = date
+        if answer == "yes":
+            mine = [i for i, c in enumerate(self.confirmations) if c["attribute"] == built["about"]]
+            if mine and self.confirmations[mine[-1]]["answer"] == "yes" and not self.confirmations[mine[-1]].get("correction"):
+                del self.confirmations[mine[-1]]
         self.confirmations.append({"attribute": built["about"], "answer": answer, "replacement": built["source"], "date": date,
                                    "note": "", "version": self.version, "correction": json.dumps(correction, sort_keys=True),
                                    "test": result, "reason": reason if not found["passed"] else ""})
@@ -900,7 +970,9 @@ class Describe:
             if self.catalogue is not None:
                 known = self.catalogue.table(held.name)
                 present = bool(known is not None and known.column(entry.name) is not None)
-            found.append({"name": entry.name, "type": entry.data_type or "", "key": entry.name in held.primary_key(), "present": present})
+            description = self.dictionary.description(held.name, entry.name) or ""
+            found.append({"name": entry.name, "type": entry.data_type or "", "key": entry.name in held.primary_key(), "present": present,
+                          "description": description, "identifying": identifies_person(entry.name, description)})
         return {"table": held.name, "columns": found}
 
     def joins_from(self, table):
@@ -941,6 +1013,8 @@ class Describe:
             path = corrections.path_to(self, role, table)
         except corrections.CorrectionError as error:
             raise DescribeError(str(error)) from None
+        if self._identifying(table, column):
+            raise DescribeError(WORDING["identifying_values"].format(name=f"{table}.{column}"))
         year = int(year or self.settings.get("year") or dt.date.today().year - 1)
         name = f"values-{view_name}-{table}-{column}"
         script, sql, order = self._counted(view_name, path, table, column, year)
@@ -973,8 +1047,9 @@ class Describe:
         parts = []
         for name in dict.fromkeys(names):
             size = self.sizes.get(name.upper())
-            parts.append(WORDING["sized"].format(table=name, rows=f"{size:,}") if size is not None
-                         else WORDING["sized_unknown"].format(table=name))
+            parts.append(WORDING["sized_unknown"].format(table=name) if size is None
+                         else WORDING["sized_few"].format(table=name) if size < LEAST
+                         else WORDING["sized"].format(table=name, rows=f"{size:,}"))
         return _and(parts)
 
     def _sized_names(self, lines):
@@ -1282,6 +1357,23 @@ class Describe:
             where.append(propose.filter_sql(item, f"{forward(item['path'])}.{_name(item['column'])}"))
         return lines, expressions, order, where
 
+    def _direct(self, view_name, link, column):
+        """(table, key) where a column of a part sits in a table that the part reaches by the very key that links the
+        part to #cohort, such as the sex in the patients' own table: that table is then joined to #cohort directly, and
+        the part's own table, which may lack rows for some patients, is not read. None otherwise."""
+        role = self.data["roles"][view_name]
+        link_binding = role["columns"][link].get("binding") or {}
+        binding = role["columns"][column].get("binding") or {}
+        if not link_binding or link_binding.get("path") or link_binding.get("window") or role["rows"]["binding"].get("filter"):
+            return None
+        path = binding.get("path") or []
+        if len(path) != 1 or len(path[0]) != 4 or binding.get("window") or binding.get("joined"):
+            return None
+        start, one, table, other = path[0]
+        if start.upper() != link_binding["table"].upper() or one.upper() != link_binding["column"].upper():
+            return None
+        return table, other
+
     def _cohort(self, year):
         """Part 1 of a script: at most COHORT_LIMIT anaesthetics of one year into #cohort, from role_anaesthetic."""
         sql = self.view_sql("role_anaesthetic")
@@ -1322,8 +1414,16 @@ class Describe:
         self.set_settings(year=year)
         view_name, column = entry["view"], entry["column"]
         cohort_column = "anaesthetic_key" if entry["link"] == "anaesthetic_key" else "patient_key"
-        lines, expressions, order, where = self._reached(view_name, entry["link"], cohort_column, [column], raw={column})
-        ref = expressions[column]
+        direct = self._direct(view_name, entry["link"], column)
+        if direct:
+            table, shared = direct
+            lines = ["FROM   #cohort AS c",
+                     f"JOIN   {_name(table)} AS t0 WITH (NOLOCK) ON t0.{_name(shared)} = c.{cohort_column}"]
+            ref = f"t0.{_name(self.data['roles'][view_name]['columns'][column]['binding']['column'])}"
+            order, where = [table], []
+        else:
+            lines, expressions, order, where = self._reached(view_name, entry["link"], cohort_column, [column], raw={column})
+            ref = expressions[column]
         lookup = entry["lookup"]
         select = [f"SELECT CAST({ref} AS nvarchar(100)) AS code,",
                   f"       CASE WHEN COUNT(*) >= {LEAST} THEN (COUNT(*) / 10) * 10 END AS charted,",
@@ -1500,6 +1600,10 @@ ORDER  BY g.kind;"""
         held.update({"looks_right": looks_right, "note": " ".join((note or "").split())[:400], "judged": date or _today(),
                      "database": self.settings.get("database") or "unsure"})
 
+    def finding_about(self, name):
+        """The column of step 6 that each finding of a count leads to, as {finding: about}."""
+        return {f: "role_anaesthetic.patient_key" for f in self.findings(name) if f.endswith("Look again at the patient's identifier in Anaesthetics at step 6.")}
+
     def findings(self, name):
         held = self.counts.get(name) or {}
         if not held.get("rows"):
@@ -1508,6 +1612,12 @@ ORDER  BY g.kind;"""
         found = []
         if name == "coverage_by_year":
             records = [r for r in records if isinstance(r.get("anaesthetics"), (int, float)) and r["anaesthetics"]]
+            # A year in which most anaesthetics have no patient, which a comparison of years misses when every year has it.
+            lacking = [str(r["start_year"]) for r in records if r["anaesthetics"] >= 2 * LEAST
+                       and (r.get("with_patient") in (None, "") or (isinstance(r.get("with_patient"), (int, float))
+                                                                   and r["with_patient"] * 2 < r["anaesthetics"]))]
+            if lacking:
+                found.append(WORDING["no_patient"].format(years=_and(lacking)))
             for figure, what in FIGURES.items():
                 # A figure under ten comes back empty, and says too little to compare.
                 shares = [(r[figure] / r["anaesthetics"], r) for r in records if isinstance(r.get(figure), (int, float))]
@@ -1577,6 +1687,7 @@ ORDER  BY g.kind;"""
         if read not in readers:
             raise DescribeError(WORDING["invented_failed"])
         self.origin = INVENTED_HOSPITAL
+        self.settings["database"] = "invented"
         try:
             return readers[read]()
         finally:
@@ -1653,8 +1764,9 @@ ORDER  BY g.kind;"""
             files[self._file(name, "queries", "sql")] = text.encode("utf-8")
         for name, text in self.results.items():
             entry = self.journal[name]
-            first = "# " + WORDING["stamp_result"].format(version=entry.get("version") or self.version or "unknown",
-                                                          date=(entry.get("pasted") or date)[:10])
+            stamp = "stamp_invented" if entry.get("from") == INVENTED_HOSPITAL else "stamp_result"
+            first = "# " + WORDING[stamp].format(version=entry.get("version") or self.version or "unknown",
+                                                 date=(entry.get("pasted") or date)[:10])
             files[self._file(name, "results", "tsv")] = (first + "\n" + text.rstrip("\n") + "\n").encode("utf-8")
         for key, held in sorted(self.codes.items()):
             files[f"codes/{key}.json"] = self._json({"view": key.split(".")[0], "column": key.split(".")[1], **held}, date)
@@ -1705,6 +1817,7 @@ ORDER  BY g.kind;"""
         if self.invented:
             settings["invented"] = True
             settings["dictionary"]["invented"] = True
+            settings["database"] = "invented"
         files["settings.json"] = self._json(settings, date)
         training = [self._file(e["name"], "queries", "sql") for e in entries if e.get("database") == "training"]
         files["README.md"] = readme(sorted(files), self.version, date, kept, training, unfinished,
@@ -1733,6 +1846,10 @@ ORDER  BY g.kind;"""
             found["needs_dictionary"] = True
             return found
         self.folder = files
+        # What the sitting held before is replaced by what the file holds, so that nothing is counted twice.
+        self.confirmations, self.corrections, self.codes, self.counts = [], [], {}, {}
+        self.journal, self.queries, self.results, self.values, self.probes = {}, {}, {}, {}, {}
+        self._checked, self._baseline = {}, None
         held = _json_of(files.get("settings.json"))
         for key in ("made", "updated", "database", "year"):
             if key in held:
@@ -1804,7 +1921,7 @@ ORDER  BY g.kind;"""
             self.results[name] = text
             try:
                 if name == "tables-and-columns":
-                    self.read_tables(text)
+                    self.read_tables(text, record=False)
                     found["tables"] = True
                 elif name.startswith("charted-") and entry.get("key"):
                     self.read_charted(entry["key"], text, entry.get("year") or self.settings.get("year") or 2000, record=False)
@@ -1927,7 +2044,7 @@ ORDER  BY g.kind;"""
                 "tally": tally, "questions": self.questions(), "catalogue": self.catalogue is not None,
                 "catalogue_source": self.catalogue_source if self.catalogue is not None else None,
                 "vocabularies": self.vocabularies(), "values": self.values, "counts": {k: {kk: v.get(kk) for kk in ("columns", "rows", "looks_right", "note", "date", "database")}
-                                                                | {"findings": self.findings(k)} for k, v in self.counts.items()},
+                                                                | {"findings": self.findings(k), "finding_about": self.finding_about(k)} for k, v in self.counts.items()},
                 "settings": {k: self.settings.get(k) for k in ("made", "updated", "database", "year")},
                 "anaesthetic_table": ((self.data or {}).get("roles", {}).get("role_anaesthetic") or {}).get("rows", {}).get("binding", {}).get("table"),
                 "bases": {name: role["rows"]["binding"]["table"] for name, role in (self.data or {}).get("roles", {}).items()
@@ -1943,8 +2060,13 @@ ORDER  BY g.kind;"""
         if self.dictionary is not None and table:
             definition = self.dictionary.description(table, column) if column else self.dictionary.description(table)
         candidates = []
+        offers = self.offers_identifying(about)
+        withheld = 0
         for candidate in item.get("candidates") or []:
             head = candidate["from"].split(",")[0]
+            if not offers and "." in head and self._identifying(*head.split(".", 1)):
+                withheld += 1
+                continue
             words = None
             if self.dictionary is not None and "." in head:
                 words = self.dictionary.description(*head.split(".", 1)) or None
@@ -1964,7 +2086,7 @@ ORDER  BY g.kind;"""
                 "table": table, "column": column, "bound": bool(binding) if attribute != "rows" else bool(table),
                 "definition": definition, "says": re.sub(r"\b(match|matches) the role\.$", r"\1 this column.", rolemap.plain(item["says"])), "title": "", "confidence": item.get("confidence") or "",
                 "basis": _basis(item.get("says") or ""),
-                "candidates": candidates, "status": item["status"], "question": rolemap.plain(item.get("question") or ""),
+                "candidates": candidates, "offers_identifying": offers, "withheld": withheld, "status": item["status"], "question": rolemap.plain(item.get("question") or ""),
                 "answer": confirmation.get("answer"), "date": confirmation.get("date"),
                 "replacement": confirmation.get("replacement"), "note": confirmation.get("note"),
                 "presence": self.presence(binding if attribute != "rows" else ({"table": table} if table else None))}
@@ -2036,7 +2158,7 @@ def _json_of(data):
 def _strip_stamp(text):
     """A pasted result as it was pasted, without the first line that the folder adds to name the tool and the date."""
     first, _, rest = (text or "").partition("\n")
-    return rest if first.startswith("# Pasted into Schemalyser") else text
+    return rest if first.startswith(("# Pasted into Schemalyser", "# Run on the invented hospital into Schemalyser")) else text
 
 
 def _shown(item):
@@ -2151,14 +2273,17 @@ README = {
 }
 README_FILES = [
     ("settings.json", "The tool's version, the dates on which the hospital schema was made and last changed, the database that "
-                      "the queries were run on, production or training, and the year of the lists."),
+                      "the queries were run on (production, training, or invented where the invented hospital ran them), "
+                      "and the year of the lists."),
     ("journal.json", "One entry for each step that took something in: the step's heading, the query file, the result "
-                     "file, the database, when the result was pasted and the tool's version. For the dictionary, it "
+                     "file, the database, when the result was pasted or run, whether it came from the invented hospital "
+                     "rather than a paste, and the tool's version. For the dictionary, it "
                      "gives the file's name, its size, its numbers of tables and columns and a fingerprint of its "
                      "contents (a SHA-256 hash), and never its contents. Each correction kept has an entry of its own, "
                      "with the sentence that it means, the outcome of its test on made-up rows and any reason for keeping it."),
-    ("confirmations.csv", "Every answer that the colleague gave, in order: the part and column, the answer (yes, no "
-                          "or not sure), the replacement where the answer was no, the date and any note. For a correction "
+    ("confirmations.csv", "Every answer that the colleague gave, in order, one row for each answer: the part and column, "
+                          "the answer (yes, no or not sure), the replacement where the answer was no or where a Yes carried "
+                          "a translation of the column's codes, the date and any note. For a correction "
                           "made in one of the page's forms, it also gives the correction as data, the outcome of the test on "
                           "made-up rows that Schemalyser ran before it was kept (the column headed test), and, where it "
                           "was kept although the test failed, the reason that was given."),
@@ -2166,15 +2291,15 @@ README_FILES = [
                      "that reach them, the dictionary's description that supports it, the answer and its date. Its "
                      "description gives the date of the proposal and how many columns a person has answered for."),
     ("map/role_*.sql", "One SQL file for each part of the record, written from its columns, its links and the chosen "
-                       "codes. The SQL files call a part of the record a view, and an audit reads these views and "
-                       "nothing else."),
+                       "codes. An audit reads these parts of the record and nothing else."),
     ("queries/", "The exact text of every query that the page offered, numbered in the order offered."),
-    ("results/", "Each result that the colleague pasted, exactly as pasted, with the same number and name as its query. "
-                 "The first line names the tool's version and the date."),
+    ("results/", "Each result, exactly as the colleague pasted it or as the invented hospital gave it, with the same number "
+                 "and name as its query. journal.json records which of the two each came from, and the first line of each "
+                 "file says so, with the tool's version and the date."),
     ("codes/", "For each column that holds the hospital's own codes, the list of what is charted and the codes "
                "chosen for each kind."),
-    ("counts/judgements.json", "For each count, whether it looked right to the two of you, any note, and the database, "
-                               "production or training, whose figures were judged."),
+    ("counts/judgements.json", "For each count, whether it looked right to the two of you, any note, and the database "
+                               "whose figures were judged: production, training, or invented for the invented hospital."),
     ("dictionary/", "The dictionary's own files. Where the data dictionary was made from the database, it is the "
                     "result of the data dictionary query as a CSV, and any file of the vendor's descriptions is kept "
                     "exactly as it was loaded. Otherwise the files are exactly as they were loaded."),

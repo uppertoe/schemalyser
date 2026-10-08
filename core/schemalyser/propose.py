@@ -108,12 +108,12 @@ WORDING = {
     "no_rows_says": "The dictionary holds no table that fits {view}, so the proposer has not drafted it.",
     "kind_says": "The dictionary cannot give the local codes of {kind}, because each hospital builds its own list of the things that can be charted.",
     "kind_question": "Please list the local codes of {source} that hold {meaning}",
-    "header": "-- {view}: a draft that Schemalyser proposed from the data dictionary on {date}.",
-    "header_none": "-- No person has confirmed any of its bindings yet, and map.json gives each one with its evidence and its question.",
-    "header_nothing": "-- The dictionary holds no column that fits {columns}, so the view gives {them} empty.",
-    "header_vocabulary": "-- The local values of {columns} have not yet been translated to the role's kinds or to 1 and 0, so the view gives a kind as other and a flag as empty until a person writes the translation.",
-    "header_codes": "-- The local codes of the mean pressures are not yet known, so every reading is of the kind other until a person supplies them in map.json.",
-    "header_person": "-- A person has answered for some bindings of this view, and map.json records each answer with its date.",
+    "header": "-- {view}, a part of the anaesthetic record: a draft that Schemalyser proposed from the data dictionary on {date}.",
+    "header_none": "-- No person has confirmed any of its columns yet, and the saved hospital schema gives each one with its evidence and its question.",
+    "header_nothing": "-- The dictionary holds no column that fits {columns}, so this part gives {them} empty.",
+    "header_vocabulary": "-- The hospital's codes in {columns} are not yet translated into the kinds the page knows or into 1 and 0, so this part gives a kind as other and a flag as empty until a person translates them.",
+    "header_codes": "-- The hospital's codes of the mean pressures are not yet chosen, so every reading is of the kind other until a person chooses them.",
+    "header_person": "-- A person has answered for some of its columns, and the saved hospital schema records each answer with its date.",
     "via_one": "by matching {path}",
     "in_table": "in the table that holds this part",
     "replaced_says": "A person replaced the proposal with {source} on {date}.",
@@ -1069,7 +1069,7 @@ def view_sql(name, role, kinds=None, model=None, vocabularies=None):
         evidence = role["columns"][column["name"]]
         binding = evidence.get("binding")
         if not binding:
-            nothing.append(column["name"])
+            nothing.append(rolemap.column_title(name, column["name"]))
             lines.append(f"{_empty(column)} AS {column['name']}")
             continue
         alias, _ = walk(binding["path"], aliases, joins)
@@ -1090,7 +1090,7 @@ def view_sql(name, role, kinds=None, model=None, vocabularies=None):
         elif column["type"] == "kind" and (vocabularies or {}).get(column["name"]) is not None:
             codes = vocabularies[column["name"]]
         elif not binding.get("derive") and (column["type"] == "kind" or (column["type"] in ("flag", "flag_or_empty") and _category(binding["column"]))):
-            vocabulary.append(column["name"])
+            vocabulary.append(rolemap.column_title(name, column["name"]))
         lines.append(f"{render(plan(column, binding, codes), ref)} AS {column['name']}")
         if column["name"] in links and column["name"] in view["key"] and anchor is None:
             anchor = ref
@@ -1109,7 +1109,7 @@ def view_sql(name, role, kinds=None, model=None, vocabularies=None):
     for item in (role["rows"].get("binding") or {}).get("filter") or []:
         alias, _ = walk(item["path"], aliases, joins)
         conditions.append(filter_sql(item, f"{alias}.{_name(item['column'])}"))
-    header = [WORDING["header"].format(view=name, date=role.get("_date", ""))]
+    header = [WORDING["header"].format(view=rolemap.view_title(name), date=role.get("_date", ""))]
     if any(e.get("confirmation") for e in [role["rows"], *role["columns"].values()]):
         header.append(WORDING["header_person"])
     else:
