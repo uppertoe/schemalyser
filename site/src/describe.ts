@@ -1328,8 +1328,6 @@ const fixed: Record<string, string> = {
   title: d.title,
   intro: d.intro,
   't-private': d.privateNote,
-  't-back': d.back,
-  'a-back': d.backLink,
   'h-rail': d.railLabel,
   't-offline-what': d.offlineWhat,
   't-loading': d.loading,

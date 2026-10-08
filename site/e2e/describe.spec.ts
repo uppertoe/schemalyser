@@ -65,7 +65,7 @@ async function openStep(page: Page, n: number | string) {
 async function loadAndGoOffline(page: Page, context: import('@playwright/test').BrowserContext, browserName: string) {
   const size = process.env.DESCRIBE_VIEWPORT?.match(/^(\d+)x(\d+)$/);
   if (size) await page.setViewportSize({ width: Number(size[1]), height: Number(size[2]) });
-  await page.goto('./describe.html');
+  await page.goto('./');
   await expect(page.getByText(d.loaded)).toBeVisible({ timeout: 90_000 });
   await expect(page.locator('#dictionary')).toBeDisabled();
   await setOnline(page, context, browserName, false);
@@ -91,9 +91,6 @@ test('the record is described, saved as a hospital schema and opened again', asy
     if (offline && !request.url().startsWith('blob:') && !request.url().startsWith('data:')) requestsWhileOffline.push(request.url());
   });
 
-  // The existing page leads here as its new first step.
-  await page.goto('./');
-  await expect(page.locator('#a-describe')).toHaveAttribute('href', './describe.html');
 
   await loadAndGoOffline(page, context, browserName);
   offline = true;
@@ -634,7 +631,7 @@ test('a Yes on a column that holds codes leads on to its translation', async ({ 
 // says on its first line that it describes no hospital.
 test('the invented dictionary is loaded while online and marks the saved schema as practice', async ({ page, context, browserName }) => {
   test.setTimeout(240_000);
-  await page.goto('./describe.html');
+  await page.goto('./');
   await expect(page.getByText(d.loaded)).toBeVisible({ timeout: 90_000 });
   // A real dictionary is never loaded online, so its control is shut; the invented one is offered from step 1.
   await expect(page.locator('#dictionary')).toBeDisabled();

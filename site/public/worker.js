@@ -190,7 +190,7 @@ self.onmessage = async (event) => {
       const zip = browser.state_zip().toJs();
       self.postMessage({ type: 'state-zip', zip }, [zip.buffer]);
     } else if (message.type === 'describe') {
-      // Screen 1 (describe.html): one call of a describe_ function of the bridge. Files are read here into bytes, and
+      // Screen 1 (index.html, the front page): one call of a describe_ function of the bridge. Files are read here into bytes, and
       // the dictionary and the hospital schema stay in this worker's memory.
       if (!/^describe_[a-z_]+$/.test(message.call) || typeof browser[message.call] !== 'function') throw new Error('call');
       let reply;

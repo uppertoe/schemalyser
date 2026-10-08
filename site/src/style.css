@@ -953,7 +953,7 @@ h3.part {
   color: var(--muted);
 }
 
-/* The page Describe the record (describe.html). A rail on the left gives the order of the steps and the state of each;
+/* The page Describe the record (index.html, the front page). A rail on the left gives the order of the steps and the state of each;
    the current step is open, a finished one folds to its receipt, and a waiting one says what it waits for. */
 
 html:has(body.describe) {

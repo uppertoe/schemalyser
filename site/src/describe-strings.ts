@@ -1,4 +1,4 @@
-// The wording of the page Describe the record (describe.html), in one place. Each instruction says what to do and where
+// The wording of the page Describe the record (index.html, the front page), in one place. Each instruction says what to do and where
 // the control is; the fuller account of each input sits behind a short disclosure beside it.
 
 const plural = (n: number, one: string, many: string) => `${n.toLocaleString('en-AU')} ${n === 1 ? one : many}`;
@@ -9,8 +9,6 @@ export const describeStrings = {
   intro:
     "A clinician and a colleague who can run SQL work through these steps together, once for each hospital. The page proposes where the hospital's database keeps each part of the anaesthetic record, the colleague confirms or corrects each one, and the page saves the result as the hospital schema.",
   privateNote: "Everything you load or paste stays in this browser tab. The only copy the page makes is the saved hospital schema, a single file that you keep on the hospital's own storage.",
-  back: 'For an audit of the earlier kind, you can still use the existing page.',
-  backLink: 'Open the existing page',
 
   // The headings of the steps. The page records the heading of the step that offered each query in the saved hospital schema.
   steps: [
