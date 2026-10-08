@@ -16,6 +16,8 @@ Done means that a saved hospital schema exists on the hospital's own storage in 
 
 Screen 2 is built for one audit only, the neonatal low mean pressure audit, rather than as a general audit builder. It reads the saved hospital schema, builds a shadow from it, plants the standard neonatal cases, runs the audit on the made-up rows, and compiles the two-part script for production. The database analyst then runs the script once on production.
 
+The first half of screen 2 is the report on whether a question can be answered (`feasibility.py`, described in `docs/feasibility.md`). It reads the audit and the saved hospital schema, gives each requirement of the audit its state, from not currently mapped to checked against the database, and asks for the smallest investigation that would move each one that falls short, so that the clinician and the database analyst know what remains before the script is run. It runs from the command line today; the page's screen follows, and it adds nothing to the hospital schema itself.
+
 Done means that the neonatal audit has run once on production through the hospital schema, that every planted case gave its expected answer on the shadow beforehand, and that the result carries its coverage by year, so that a year in which the schema reaches too few readings is visible beside the answer.
 
 ### 3. A sample of anaesthetics is reconciled against the clinical record

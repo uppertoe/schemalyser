@@ -119,6 +119,7 @@ Every module in `core/schemalyser` falls into one of four classes. A module of t
 | `rolemap.py` | Active workflow | The roles, the maps, the compiled audit, the standard counts and the scoreboard. It still takes the blanking of small counts from `target.py`, and its comparison with the OMOP target runs through `target.py` as well. |
 | `hospital.py` | Active workflow | The invented hospital, on which the page runs its own queries when the invented dictionary is in use. |
 | `first_ask.py` | Active workflow | The query of the server's own records, which screen 1 uses for the tables and columns and for the data dictionary made from the database. |
+| `feasibility.py` | Active workflow | Whether a question over the parts of the record can be answered from a saved hospital schema: its requirements, the state of each, the evidence requests that would move them, and the programme view over many questions. `docs/feasibility.md` describes it. |
 | `__init__.py` | Shared infrastructure | Marks the package. It still exports the earlier analyser, which keeps that module in place. |
 | `catalogue.py` | Shared infrastructure | The tables and columns that exist, and the allowlist for names. |
 | `extract.py` | Shared infrastructure | Reads files safely for every module. Its finding of facts in a request belongs to the earlier design. |
@@ -154,4 +155,4 @@ Every module in `core/schemalyser` falls into one of four classes. A module of t
 | `sql_evidence.py` | Superseded | What the team's SQL showed, kept for the earlier checklist. |
 | `target.py` | Superseded | Ties the earlier project to one target query and its checklist. `rolemap.py` still depends on it, so it is retired last. |
 
-Eight modules are active workflow, thirteen are shared infrastructure, nine are candidates for the testbed and twelve are superseded.
+Nine modules are active workflow, thirteen are shared infrastructure, nine are candidates for the testbed and twelve are superseded.
