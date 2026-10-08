@@ -187,7 +187,13 @@ WORDING = {
     "described_codes": " {count} still {hold} codes that a person has not yet translated.",
     "draft": "draft: {parts}",
     "state_runs": "The part compiles and runs on made-up rows, by the test on made-up rows.",
-    "state_checked": "The counts that read the part have been run on the hospital's database and judged to look right.",
+    "state_checked": "The counts that read the part have been run on the hospital's database, and the clinician judged them to look right.",
+    # The measured coverage, which the page keeps apart from the clinician's judgement.
+    "measured_coverage": "This count measured that, of the {total} anaesthetics that it found, {patient} per cent have a patient, {birth} per cent have a patient with a date of birth, and {stop} per cent have a recorded stop.",
+    "measured_readings": "This count measured that, of the {total} anaesthetics of {year} in #cohort, {share} per cent have at least one reading of a kind that the audit needs, which is a mean arterial pressure from an arterial line or a cuff.",
+    "measured_both": "The counts measured that {patient} per cent of anaesthetics have a patient, and that {reading} per cent of the anaesthetics of {year} in #cohort have a reading of a kind that the audit needs.",
+    "measured_patient": "The counts measured that {patient} per cent of anaesthetics have a patient. The readings count has not yet been read, so the share with a reading of a kind that the audit needs is not yet known.",
+    "measured_reading": "The counts measured that {reading} per cent of the anaesthetics of {year} in #cohort have a reading of a kind that the audit needs. The coverage by year has not yet been read, so the share with a patient is not yet known.",
     "state_validated": "A sample of anaesthetics has been reconciled against the clinical record. The page cannot do this, so it never records this state; the hospital's own reconciliation does.",
     "sample_stamp": " The figures are from a sample: the anaesthetics of one year in #cohort, at most {limit}.",
     "probe_few": "Fewer than ten anaesthetics came back, so the test query says too little to judge the link.",
@@ -210,8 +216,12 @@ COUNT_COLUMNS = {
     "coverage_by_year": ("start_year", "anaesthetics", "with_patient", "with_birth_date", "with_death_date", "test_patients",
                          "with_stop", "stop_before_start"),
     "repeated_keys": ("role_view", "keys_repeated", "rows_held"),
-    "readings_by_kind": ("kind", "readings", "accepted", "with_value", "anaesthetics"),
+    "readings_by_kind": ("kind", "readings", "accepted", "with_value", "anaesthetics", "cohort_anaesthetics", "with_needed_kind"),
 }
+# The columns of a count that a result pasted before they were added does not hold, which are read as empty.
+COUNT_OPTIONAL = {"readings_by_kind": ("cohort_anaesthetics", "with_needed_kind")}
+# The kinds of reading that the audit needs, whose share of anaesthetics the readings count measures.
+NEEDED_KINDS = rolemap.MEAN_KINDS
 CHARTED_COLUMNS = ("code", "charted", "anaesthetics", "name")
 
 
@@ -285,9 +295,10 @@ def _wrap(sentence):
 
 # Pasted grids.
 
-def read_grid(text, wanted=None):
+def read_grid(text, wanted=None, optional=()):
     """A grid copied from SQL Server Management Studio with its headers, or a CSV, as (columns, rows). wanted, when
-    given, is the columns that the query returns, all of which the heading must hold. Raises DescribeError."""
+    given, is the columns that the query returns, all of which the heading must hold except those in optional, which
+    are read as empty where the heading lacks them. Raises DescribeError."""
     text = (text or "").lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n").strip("\n")
     if "\t" in text:
         rows = [[cell.strip() for cell in line.split("\t")] for line in text.split("\n")]
@@ -298,12 +309,12 @@ def read_grid(text, wanted=None):
     if not rows:
         raise DescribeError(WORDING["grid_empty"])
     columns = [c.lower() for c in rows[0]]
-    if wanted is not None and not set(wanted) <= set(columns):
-        raise DescribeError(WORDING["grid_columns"].format(wanted=", ".join(wanted)))
+    if wanted is not None and not set(wanted) - set(optional) <= set(columns):
+        raise DescribeError(WORDING["grid_columns"].format(wanted=", ".join(c for c in wanted if c not in optional)))
     body = [["" if c == "NULL" else c for c in (r + [""] * len(columns))[:len(columns)]] for r in rows[1:]]
     if wanted is not None:
-        at = [columns.index(c) for c in wanted]
-        columns, body = list(wanted), [[r[i] for i in at] for r in body]
+        at = [columns.index(c) if c in columns else None for c in wanted]
+        columns, body = list(wanted), [["" if i is None else r[i] for i in at] for r in body]
     return columns, body
 
 
@@ -1593,11 +1604,16 @@ ORDER  BY g.role_view;"""
             inner = ("SELECT " + ",\n       ".join(f"{expressions[c]} AS {c}" for c in columns)
                      + ",\n       c.anaesthetic_key\n" + "\n".join(lines + _where(where)))
             indented = "\n".join("        " + line for line in inner.splitlines())
+            needed = ", ".join(f"'{kind}'" for kind in NEEDED_KINDS)
+            # Every row also carries the anaesthetics in #cohort and how many of them have at least one reading of a
+            # kind that the audit needs, which the page gives as the measured coverage beside the judgement.
             second = f"""SELECT g.kind,
        CASE WHEN g.readings >= {LEAST} THEN g.readings - g.readings % 10 END AS readings,
        CASE WHEN g.accepted >= {LEAST} THEN g.accepted - g.accepted % 10 END AS accepted,
        CASE WHEN g.with_value >= {LEAST} THEN g.with_value - g.with_value % 10 END AS with_value,
-       CASE WHEN g.anaesthetics >= {LEAST} THEN g.anaesthetics - g.anaesthetics % 10 END AS anaesthetics
+       CASE WHEN g.anaesthetics >= {LEAST} THEN g.anaesthetics - g.anaesthetics % 10 END AS anaesthetics,
+       CASE WHEN k.cohort_anaesthetics >= {LEAST} THEN k.cohort_anaesthetics - k.cohort_anaesthetics % 10 END AS cohort_anaesthetics,
+       CASE WHEN n.with_needed_kind >= {LEAST} THEN n.with_needed_kind - n.with_needed_kind % 10 END AS with_needed_kind
 FROM   (SELECT r.kind,
                COUNT(*) AS readings,
                SUM(CASE WHEN r.accepted = 1 THEN 1 ELSE 0 END) AS accepted,
@@ -1607,6 +1623,12 @@ FROM   (SELECT r.kind,
 {indented}
                ) r
         GROUP  BY r.kind) g
+       CROSS JOIN (SELECT COUNT(*) AS cohort_anaesthetics FROM #cohort) k
+       CROSS JOIN (SELECT COUNT(DISTINCT r.anaesthetic_key) AS with_needed_kind
+                   FROM   (
+{indented}
+                          ) r
+                   WHERE  r.kind IN ({needed})) n
 WHERE  g.readings >= {LEAST}
 ORDER  BY g.kind;"""
             found.append({"name": "readings_by_kind", "safe": False, "year": year,
@@ -1619,7 +1641,7 @@ ORDER  BY g.kind;"""
     def read_count(self, name, text, date=None, record=True):
         if name not in COUNT_COLUMNS:
             raise DescribeError(WORDING["unknown_count"].format(name=name))
-        columns, rows = read_grid(text, COUNT_COLUMNS[name])
+        columns, rows = read_grid(text, COUNT_COLUMNS[name], COUNT_OPTIONAL.get(name, ()))
         if record:
             self.pasted(f"count-{name}", text)
         held = self.counts.setdefault(name, {})
@@ -1632,6 +1654,59 @@ ORDER  BY g.kind;"""
         held = self.counts.setdefault(name, {})
         held.update({"looks_right": looks_right, "note": " ".join((note or "").split())[:400], "judged": date or _today(),
                      "database": self.settings.get("database") or "unsure"})
+
+    def measured(self, name):
+        """The measured coverage that a count gives, which the page shows beside the clinician's judgement and the saved
+        file records beside it: for coverage by year, the share in per cent of all the anaesthetics counted that have a
+        patient, a date of birth and a recorded stop; for the readings count, the share of the anaesthetics of the year
+        in #cohort that have at least one reading of a kind that the audit needs. Returns {"figures", "says"} or None."""
+        held = self.counts.get(name) or {}
+        if not held.get("rows"):
+            return None
+        records = [dict(zip(held["columns"], [_number(v) for v in row])) for row in held["rows"]]
+
+        def share(part, whole):
+            return min(100, round(100 * (part or 0) / whole))
+        if name == "coverage_by_year":
+            total = sum(r.get("anaesthetics") or 0 for r in records)
+            if not total:
+                return None
+            # A figure under ten within a year comes back empty, and counts here as none.
+            figures = {"anaesthetics": total, **{f: share(sum(r.get(f) or 0 for r in records), total)
+                                                  for f in ("with_patient", "with_birth_date", "with_stop")}}
+            return {"figures": figures, "says": WORDING["measured_coverage"].format(
+                total=f"{total:,}", patient=figures["with_patient"], birth=figures["with_birth_date"], stop=figures["with_stop"])}
+        if name == "readings_by_kind":
+            cohort = next((r.get("cohort_anaesthetics") for r in records if r.get("cohort_anaesthetics")), None)
+            if not cohort:
+                return None
+            found = next((r.get("with_needed_kind") for r in records if r.get("with_needed_kind") is not None), None)
+            year = (self.journal.get("count-readings_by_kind") or {}).get("year") or self.settings.get("year")
+            figures = {"year": year, "anaesthetics": cohort, "with_needed_kind": share(found, cohort)}
+            return {"figures": figures, "says": WORDING["measured_readings"].format(
+                share=figures["with_needed_kind"], total=f"{cohort:,}", year=year or "the year chosen")}
+        return None
+
+    def measured_coverage(self):
+        """The measured coverage of the counts together, kept apart from the clinician's judgement: {"figures", "says"}
+        or None where neither count that measures it has a result."""
+        coverage, readings = self.measured("coverage_by_year"), self.measured("readings_by_kind")
+        if coverage is None and readings is None:
+            return None
+        figures = {}
+        if coverage is not None:
+            figures["with_patient"] = coverage["figures"]["with_patient"]
+        if readings is not None:
+            figures["with_needed_kind"] = readings["figures"]["with_needed_kind"]
+            figures["year"] = readings["figures"]["year"]
+        if coverage is not None and readings is not None:
+            says = WORDING["measured_both"].format(patient=figures["with_patient"], reading=figures["with_needed_kind"],
+                                                   year=figures["year"] or "the year chosen")
+        elif coverage is not None:
+            says = WORDING["measured_patient"].format(patient=figures["with_patient"])
+        else:
+            says = WORDING["measured_reading"].format(reading=figures["with_needed_kind"], year=figures["year"] or "the year chosen")
+        return {"figures": figures, "says": says}
 
     def finding_codes(self, name):
         """The list of codes at step 7 that each finding of a count leads to, as {finding: key}."""
@@ -1824,7 +1899,7 @@ ORDER  BY g.kind;"""
         reached = min(held, key=lambda state: order[state]) if len(held) == len(contract) else None
         self._readiness = {"reached": reached, "states": {RUNS: WORDING["state_runs"], CHECKED: WORDING["state_checked"],
                                                          VALIDATED: WORDING["state_validated"]},
-                           "parts": parts, "date": date}
+                           "parts": parts, "date": date, "measured": self.measured_coverage()}
         return self._readiness
 
     # The hospital folder.
@@ -1909,6 +1984,7 @@ ORDER  BY g.kind;"""
             files[f"codes/{key}.json"] = self._json({"view": key.split(".")[0], "column": key.split(".")[1], **held,
                                                      "provenance": {"rows": SAMPLE, "chosen": PERSON}}, date)
         judgements = {name: {**{k: held.get(k) for k in ("date", "looks_right", "note", "judged", "database") if held.get(k) is not None},
+                             **({"measured": self.measured(name)} if self.measured(name) else {}),
                              "provenance": {"figures": self.provenance(f"count-{name}"),
                                             **({"judgement": PERSON} if held.get("looks_right") else {})}}
                       for name, held in sorted(self.counts.items())}
@@ -2049,7 +2125,7 @@ ORDER  BY g.kind;"""
         judgements = _json_of(files.get("counts/judgements.json")).get("counts") or {}
         for name, held in judgements.items():
             if name in COUNT_COLUMNS:
-                self.counts[name] = {k: v for k, v in held.items() if k != "provenance"}
+                self.counts[name] = {k: v for k, v in held.items() if k not in ("provenance", "measured")}
         for entry in (_json_of(files.get("journal.json")).get("entries") or []):
             if entry.get("name") == "correction":
                 self.corrections.append({k: v for k, v in entry.items() if k != "provenance"})
@@ -2081,7 +2157,7 @@ ORDER  BY g.kind;"""
                     self.values[name] = [{"value": r[0], "rows": _number(r[1])} for r in read_grid(text, ("value", "rows"))[1]]
                 elif name.startswith("count-") and name[6:] in COUNT_COLUMNS:
                     self.read_count(name[6:], text, (entry.get("pasted") or "")[:10] or None, record=False)
-                    self.counts[name[6:]].update({k: v for k, v in (judgements.get(name[6:]) or {}).items() if k != "provenance"})
+                    self.counts[name[6:]].update({k: v for k, v in (judgements.get(name[6:]) or {}).items() if k not in ("provenance", "measured")})
                     found["counts"] += 1
             except DescribeError:
                 pass
@@ -2202,6 +2278,7 @@ ORDER  BY g.kind;"""
                 "catalogue_source": self.catalogue_source if self.catalogue is not None else None,
                 "vocabularies": self.vocabularies(), "values": self.values, "counts": {k: {kk: v.get(kk) for kk in ("columns", "rows", "looks_right", "note", "date", "database")}
                                                                 | {"findings": self.findings(k), "finding_about": self.finding_about(k),
+                                                                   "measured": (self.measured(k) or {}).get("says"),
                                                                    "finding_codes": self.finding_codes(k)} for k, v in self.counts.items()},
                 "settings": {k: self.settings.get(k) for k in ("made", "updated", "database", "year", "time_zone", "daylight_saving")},
                 "readiness": self._readiness,
@@ -2422,14 +2499,17 @@ README = {
     "readiness": "## How far the hospital schema has been checked",
     "readiness_text": "Schemalyser records how far each part of the hospital schema has been checked, in three states. A "
                       "part runs once it compiles and runs on made-up rows. It is checked against the database once the "
-                      "counts that read it have been run on the hospital's database and judged to look right. It is "
-                      "clinically validated only once a sample of anaesthetics has been reconciled against the clinical "
+                      "counts that read it have been run on the hospital's database and the clinician has judged them "
+                      "to look right. The coverage that the counts measured is recorded beside that judgement and kept "
+                      "apart from it, because a count can look right to the clinician and still reach too few "
+                      "anaesthetics. A part is clinically validated only once a sample of anaesthetics has been reconciled against the clinical "
                       "record, which the page cannot do, so this file never records that state.",
     "readiness_reached": "The parts that every audit reads have reached the state {state}, on the dates below.",
     "readiness_none": "The parts that every audit reads have not yet reached the first state, because the test on made-up "
                       "rows finds a problem in at least one of them.",
     "readiness_part": "- {title} ({status}): {states}.",
     "readiness_part_none": "- {title} ({status}): no state reached yet.",
+    "readiness_measured": "{says} The page records these figures apart from the clinician's judgement.",
     "provenance": "## Where each fact came from",
     "provenance_text": "Every fact in this file says where it came from. In journal.json, map/map.json, codes/, "
                        "counts/judgements.json and confirmations.csv, the field headed provenance gives one of five "
@@ -2489,8 +2569,9 @@ README_FILES = [
                  "file says so, with the tool's version and the date."),
     ("codes/", "For each column that holds the hospital's own codes, the list of what is charted and the codes "
                "chosen for each kind."),
-    ("counts/judgements.json", "For each count, whether it looked right to the clinician, any note, and the database "
-                               "whose figures were judged: production, training, or invented for the invented hospital."),
+    ("counts/judgements.json", "For each count, whether it looked right to the clinician, any note, the database "
+                               "whose figures were judged (production, training, or invented for the invented hospital), "
+                               "and, kept apart from the judgement, the coverage that the count measured."),
     ("dictionary/", "The dictionary's own files. Where the data dictionary was made from the database, it is the "
                     "result of the data dictionary query as a CSV, and any file of the vendor's descriptions is kept "
                     "exactly as it was loaded. Otherwise the files are exactly as they were loaded."),
@@ -2510,6 +2591,8 @@ def readme(paths, version, date, kept, training=(), unfinished="", untranslated=
     if readiness is not None:
         lines += [README["readiness"], "", README["readiness_text"], ""]
         lines += [README["readiness_reached"].format(state=readiness["reached"]) if readiness["reached"] else README["readiness_none"], ""]
+        if readiness.get("measured"):
+            lines += [README["readiness_measured"].format(says=readiness["measured"]["says"]), ""]
         for view, part in readiness["parts"].items():
             status = "read by every audit" if part["status"] == "contract" else "not yet read by any audit"
             states = [f"{state} on {_day(part[state])}" for state in READINESS if part.get(state)]

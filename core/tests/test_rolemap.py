@@ -5,6 +5,8 @@ must give the same answer through each world's map as the OMOP target gives thro
 silently stops reaching the readings of earlier years must be caught by the counts, which the audit alone never does.
 """
 import io
+import json
+import re
 import shutil
 import sys
 from contextlib import redirect_stdout
@@ -312,3 +314,71 @@ def test_the_command_line_checks_a_map_lists_its_open_items_and_compiles_the_aud
     text = out.getvalue()
     assert "role_reading: one SELECT over OBS_READING, OBS_SHEET" in text and "The map has 36 open items." in text
     assert "kind map_cuff (proposed): Please confirm whether" in text and "WITH (NOLOCK)" in text
+
+
+# How the proposals fared, by category of column.
+
+def _proposal(answer=None, confidence="high", binding=None, replacement="", candidates=()):
+    item = {"status": "proposed", "from": "the dictionary", "says": "A proposal.", "question": "A question.",
+            "confidence": confidence, "binding": binding or {"table": "T", "column": "C"},
+            "candidates": [{"from": c} for c in candidates]}
+    if answer:
+        item["confirmation"] = {"answer": answer, "replacement": replacement}
+    return item
+
+
+def test_the_scoreboard_counts_each_category_of_column_apart(tmp_path):
+    data = {"roles": {
+        "role_patient": {"rows": _proposal("yes"),
+                         "columns": {"patient_key": _proposal("yes"), "birth_date": _proposal("no", replacement="P.BORN"),
+                                     "death_date": _proposal(), "is_test": _proposal("not sure")}},
+        "role_anaesthetic": {"rows": _proposal("yes"),
+                             "columns": {"anaesthetic_key": _proposal("yes"),
+                                         # A key reached through another table is a link, not a key.
+                                         "patient_key": _proposal("no", replacement="CASE.PAT", candidates=["CASE.PAT"],
+                                                                  binding={"table": "CASE", "column": "PAT",
+                                                                           "path": [["A", "CASE_ID", "CASE", "ID"]]}),
+                                         "start_time": _proposal("yes"), "stop_time": _proposal("yes", confidence="low")}},
+        "role_reading": {"rows": _proposal(),
+                         "columns": {"anaesthetic_key": _proposal("no", replacement="S.EPISODE",
+                                                                  binding={"table": "R", "column": "ENC",
+                                                                           "window": {"table": "A", "key": "ID", "output": "ID",
+                                                                                      "start": "S", "stop": "E", "time": "T"}}),
+                                     "kind": _proposal("no", replacement="R.TYPE", candidates=["R.TYPE"]),
+                                     "reading_time": _proposal(), "value": _proposal("yes"), "accepted": _proposal(),
+                                     "reading_key": _proposal("yes"), "value_text": _proposal()}}},
+        "kinds": {}}
+    assert rolemap.category("role_patient", None, data["roles"]["role_patient"]["rows"]) == "keys"
+    assert rolemap.category("role_reading", "value_text") == "descriptive"
+    board = rolemap.scoreboard(data)
+    held = board["categories"]
+    # Keys: three rows, the patient's and anaesthetic's own keys, and the reading's key.
+    assert held["keys"] == {"proposals": 6, "as_proposed": 5, "listed": 0, "unlisted": 0, "not_sure": 0, "unanswered": 1}
+    assert held["links"] == {"proposals": 2, "as_proposed": 0, "listed": 1, "unlisted": 1, "not_sure": 0, "unanswered": 0}
+    assert held["timestamps"] == {"proposals": 5, "as_proposed": 2, "listed": 0, "unlisted": 1, "not_sure": 0, "unanswered": 2}
+    assert held["codes"] == {"proposals": 3, "as_proposed": 0, "listed": 1, "unlisted": 0, "not_sure": 1, "unanswered": 1}
+    assert held["descriptive"] == {"proposals": 2, "as_proposed": 1, "listed": 0, "unlisted": 0, "not_sure": 0, "unanswered": 1}
+    assert sum(c["proposals"] for c in held.values()) == board["overall"]["proposals"] == 18
+    text = board["text"]
+    assert ("Among the links, which join one part to another through further tables or by a time window, the page made "
+            "2 proposals. Of these, 0 were confirmed as proposed, 1 was corrected to an alternative that the page had "
+            "listed, 1 was corrected to a column or table that the page had not listed, 0 were marked not sure, and 0 "
+            "have no answer yet.") in text
+    assert "Among the dates and times, the page made 5 proposals." in text
+    assert "Among the descriptive columns, the page made 2 proposals." in text
+    for name in ("T", "CASE", "PAT", "EPISODE", "TYPE"):
+        assert not re.search(rf"\b{name}\b", text)
+    assert "?" not in text and "!" not in text
+    # A category in which the page made no proposal says so, and the command line prints the same text.
+    del data["roles"]["role_reading"]
+    assert "Among the links, which join one part to another through further tables or by a time window, the page made no proposal." \
+        not in rolemap.scoreboard(data)["text"]
+    data["roles"]["role_anaesthetic"]["columns"]["patient_key"] = _proposal("yes")
+    assert ("Among the links, which join one part to another through further tables or by a time window, the page made "
+            "no proposal.") in rolemap.scoreboard(data)["text"]
+    saved = tmp_path / "map.json"
+    saved.write_text(json.dumps(data), encoding="utf-8")
+    out = io.StringIO()
+    with redirect_stdout(out):
+        rolemap.main(["scoreboard", str(saved)])
+    assert out.getvalue() == rolemap.scoreboard(data)["text"]

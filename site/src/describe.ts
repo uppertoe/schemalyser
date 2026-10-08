@@ -26,6 +26,8 @@ interface Vocabulary {
 }
 interface CountHeld {
   columns: string[] | null; rows: string[][] | null; looks_right: string | null; note: string | null; date: string | null; findings: string[];
+  // The coverage that the count measured, as a sentence, which the page shows beside the clinician's judgement.
+  measured?: string | null;
   finding_about?: Record<string, string>;
   // The list of codes at step 7 that a finding of a count leads to, as {finding: key}.
   finding_codes?: Record<string, string>;
@@ -1339,6 +1341,8 @@ function renderCounts() {
       const fieldset = el('fieldset', undefined, 'judgement');
       fieldset.append(el('legend', d.lookRightLegend));
       if (d.lookRightCompare[query.name]) fieldset.append(el('p', d.lookRightCompare[query.name], 'note compare'));
+      // The measured figure sits beside the judgement and apart from it.
+      if (held.measured) fieldset.append(el('p', held.measured, 'note measured'));
       const draft = judging.get(query.name) ?? { looks: held.looks_right ?? '', note: held.note ?? '' };
       judging.set(query.name, draft);
       for (const [value, label] of d.lookRight) {

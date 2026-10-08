@@ -507,7 +507,7 @@ export const describeStrings = {
     } Keep the file on the hospital's own storage.`,
   // Where step 9 begins: the three states of readiness, once.
   readiness:
-    "The saved file records how far each part of the hospital schema has been checked, in three states. A part runs once it compiles and runs on made-up rows, and it is checked against the database once the counts that read it have been run on the hospital's database and judged to look right. A part is clinically validated only once someone has reconciled a sample of anaesthetics against the clinical record, which the page cannot do, so the page never records that state.",
+    "The saved file records how far each part of the hospital schema has been checked, in three states. A part runs once it compiles and runs on made-up rows, and it is checked against the database once the counts that read it have been run on the hospital's database and the clinician has judged them to look right. The file records the coverage that the counts measured beside that judgement and keeps the two apart, because a count can look right and still reach too few anaesthetics. A part is clinically validated only once someone has reconciled a sample of anaesthetics against the clinical record, which the page cannot do, so the page never records that state.",
   // The time zone of the database's clocks, asked once before the save.
   timeZoneLegend: "The time zone of the hospital's database",
   timeZoneWhy:
@@ -516,7 +516,7 @@ export const describeStrings = {
   daylightLabel: "The database's clocks change with daylight saving",
   // How the proposals fared, under step 9.
   scoreboardHeading: 'How the proposals fared',
-  scoreboardWhat: "This text counts how the page's proposals fared against the database analyst's answers. It names no table or column, so it may be shared.",
+  scoreboardWhat: "This text counts how the page's proposals fared against the database analyst's answers, overall, for each part of the record and for each category of column. The categories are counted apart because a wrong link between a reading and its anaesthetic matters far more than a missing descriptive column. The text names no table or column, so it may be shared.",
   scoreboardCopy: 'Copy the text',
   draftNote: (unfinished: string) => `Some of the hospital schema is not yet answered: ${unfinished}. The clinician can save it now as a draft, which a note inside the saved file records, and finish it at a later sitting.`,
   draftCodes: 'These columns are answered, but their codes are not yet translated. Each link leads to its row:',

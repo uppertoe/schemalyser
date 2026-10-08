@@ -1,0 +1,8 @@
+{
+  "description": "What the OMOP testbed expects of the invented world's conversion, written from each step's own statement of what one row stands for. A step that is not listed below writes at most one row for each row of the table it starts from.",
+  "several_rows_for_one_source_row": {
+    "measurement_blood_pressure_through_anaesthetic.sql": "each accepted charted pressure gives two rows, one systolic and one diastolic.",
+    "measurement_blood_pressure.sql": "each accepted charted pressure gives two rows, one systolic and one diastolic.",
+    "anaesthetic_phase.sql": "each anaesthetic may have several phases, each of which is a row."
+  }
+}

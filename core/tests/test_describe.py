@@ -587,6 +587,50 @@ def test_a_note_beside_a_count_s_judgement_is_saved():
     assert s.view()["counts"]["coverage_by_year"]["note"] == "The department gives about 9,000 a year."
 
 
+def test_each_count_records_its_measured_coverage_beside_the_judgement_and_kept_apart_from_it():
+    s = fresh()
+    s.count_queries(2024, "8. Run the counts")
+    s.read_count("coverage_by_year", "start_year\tanaesthetics\twith_patient\twith_birth_date\twith_death_date\ttest_patients\t"
+                 "with_stop\tstop_before_start\n2024\t400\t400\t300\t10\t0\t390\t0\n2025\t100\t80\tNULL\tNULL\tNULL\t100\tNULL\n",
+                 date=DATE)
+    s.judge_count("coverage_by_year", "yes", "", date=DATE)
+    measured = s.measured("coverage_by_year")
+    assert measured["figures"] == {"anaesthetics": 500, "with_patient": 96, "with_birth_date": 60, "with_stop": 98}
+    assert measured["says"] == ("This count measured that, of the 500 anaesthetics that it found, 96 per cent have a patient, "
+                                "60 per cent have a patient with a date of birth, and 98 per cent have a recorded stop.")
+    # Only coverage by year has been read, so the readiness says so and gives the share with a patient alone.
+    assert s.readiness(DATE)["measured"]["says"].startswith("The counts measured that 96 per cent of anaesthetics have a patient.")
+    # The readings count gives the share of the year's anaesthetics in #cohort with a reading of a kind the audit needs.
+    assert "WHERE  r.kind IN ('map_arterial', 'map_cuff')) n" in s.queries["count-readings_by_kind"]
+    s.read_count("readings_by_kind", "kind\treadings\taccepted\twith_value\tanaesthetics\tcohort_anaesthetics\twith_needed_kind\n"
+                 "map_arterial\t400\t400\t400\t40\t400\t300\nmap_cuff\t900\t900\t900\t280\t400\t300\n", date=DATE)
+    s.judge_count("readings_by_kind", "no", "", date=DATE)
+    assert s.measured("readings_by_kind")["figures"] == {"year": 2024, "anaesthetics": 400, "with_needed_kind": 75}
+    # The saved file records the measured figure beside the judgement, and the readiness keeps the two apart.
+    files = s.folder_files(date=DATE)
+    judged = json.loads(files["counts/judgements.json"])["counts"]
+    assert judged["readings_by_kind"]["looks_right"] == "no" and judged["readings_by_kind"]["measured"]["figures"]["with_needed_kind"] == 75
+    assert judged["coverage_by_year"]["looks_right"] == "yes" and judged["coverage_by_year"]["measured"]["figures"]["with_patient"] == 96
+    readiness = json.loads(files["settings.json"])["readiness"]
+    assert readiness["states"]["checked against the database"] == (
+        "The counts that read the part have been run on the hospital's database, and the clinician judged them to look right.")
+    assert readiness["measured"]["says"] == ("The counts measured that 96 per cent of anaesthetics have a patient, and that 75 per "
+                                             "cent of the anaesthetics of 2024 in #cohort have a reading of a kind that the audit needs.")
+    readme = files["README.md"].decode()
+    assert readiness["measured"]["says"] + " The page records these figures apart from the clinician's judgement." in readme
+    assert "kept apart from the judgement, the coverage that the count measured" in readme
+    # The page shows the measured figure beside the judgement, and a file opened again computes it from the result.
+    assert s.view()["counts"]["readings_by_kind"]["measured"] == s.measured("readings_by_kind")["says"]
+    again = describe.Describe()
+    again.version = "test"
+    again.restore(files)
+    assert "measured" not in again.counts["coverage_by_year"] and again.measured("coverage_by_year") == measured
+    # A readings result pasted before the measured columns were added still reads, and measures nothing.
+    s.read_count("readings_by_kind", "kind\treadings\taccepted\twith_value\tanaesthetics\nmap_arterial\t400\t400\t400\t40\n", date=DATE)
+    assert s.measured("readings_by_kind") is None
+    assert not [c for c in (measured["says"], readiness["measured"]["says"]) if "?" in c or "!" in c]
+
+
 def test_a_count_in_which_most_anaesthetics_have_no_patient_says_so_and_leads_to_the_link():
     s = fresh()
     s.read_count("coverage_by_year", "start_year\tanaesthetics\twith_patient\twith_birth_date\twith_death_date\ttest_patients\t"
@@ -718,6 +762,9 @@ def test_the_saved_schema_names_the_state_each_part_has_reached_and_never_calls_
     readme = files["README.md"].decode()
     assert "## How far the hospital schema has been checked" in readme
     assert "The parts that every audit reads have reached the state checked against the database" in readme
+    # The coverage that the counts measured on the invented world is kept beside the state, apart from the judgement.
+    assert set(readiness["measured"]["figures"]) == {"with_patient", "with_needed_kind", "year"}
+    assert 0 <= readiness["measured"]["figures"]["with_needed_kind"] <= 100 and readiness["measured"]["figures"]["with_patient"] > 0
     # A change to the codes after the counts were written leaves the parts unchecked until the counts are run again.
     s.choose_codes("role_reading.kind", {"52": "map_arterial", "51": "map_cuff"}, DATE)
     assert json.loads(s.folder_files(date=DATE)["settings.json"])["readiness"]["reached"] == "runs"

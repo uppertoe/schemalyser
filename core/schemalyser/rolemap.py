@@ -49,7 +49,8 @@ nothing was recorded.
     python -m schemalyser.rolemap scoreboard FILE
 
 scoreboard reads a saved hospital schema, as the one file that the page saves, its folder or its map.json, and prints
-how the proposals fared, as counts that name no table or column.
+how the proposals fared, as counts that name no table or column, overall, for each part and for each of five
+categories of column: keys, links, timestamps, codes and descriptive columns.
 
 propose and confirm are written in propose.py, and the dictionary is read by datadict.py.
 """
@@ -765,8 +766,48 @@ SCORE_WORDING = {
              "which is {share} per cent.",
     "level_none": "No proposal made with {level} confidence has yet been confirmed or corrected.",
     "nothing": "The page proposed nothing for {count}, and a person has since chosen one for {chosen} of them.",
+    "category": "Among {category}, the page made {proposals}. Of these, {as_proposed} confirmed as proposed, {listed} "
+                "corrected to an alternative that the page had listed, {unlisted} corrected to a column or table that the "
+                "page had not listed, {not_sure} marked not sure, and {unanswered} no answer yet.",
+    "category_none": "Among {category}, the page made no proposal.",
     "shared": "These figures name no table or column, so they may be shared.",
 }
+
+
+# The five categories of column by which the scoreboard also counts, with the words that name each. A wrong link between
+# a reading and its anaesthetic matters far more than a missing descriptive column, so each is counted apart.
+SCORE_CATEGORIES = {
+    "keys": "the keys, which identify each row of a part or link it to another part",
+    "links": "the links, which join one part to another through further tables or by a time window",
+    "timestamps": "the dates and times",
+    "codes": "the codes and flags, which need translating into the kinds and values that the audits read",
+    "descriptive": "the descriptive columns",
+}
+CATEGORY_TYPES = {"key": "keys", "date": "timestamps", "datetime": "timestamps", "kind": "codes", "flag": "codes",
+                  "flag_or_empty": "codes"}
+
+
+def category(view, column, item=None):
+    """The category of a binding for the scoreboard: links where the binding reaches its column through a path of
+    further tables or a time window, and otherwise by the column's type in contract.json, so that keys, dates and
+    times, and kinds and flags each have their own category, and every other column is descriptive. column is None
+    for the binding of a part's rows, which identifies the part and counts as a key unless it is reached by a path."""
+    binding = (item or {}).get("binding") or {}
+    if binding.get("path") or binding.get("window"):
+        return "links"
+    if column is None:
+        return "keys"
+    return CATEGORY_TYPES.get(_column_types().get((view, column)), "descriptive")
+
+
+_TYPES = None
+
+
+def _column_types():
+    global _TYPES
+    if _TYPES is None:
+        _TYPES = {(v["name"], c["name"]): c["type"] for v in contract()["views"] for c in v["columns"]}
+    return _TYPES
 
 
 def _were(n):
@@ -804,16 +845,19 @@ def scoreboard(data):
     """How the proposals of a hospital schema fared, from its map.json as data: for each part and overall, how many were
     confirmed as proposed, corrected to an alternative that the page had listed, corrected to one it had not, marked
     not sure, and left without an answer; and, at each level of confidence, the share of those answered that were
-    corrected. A binding that no proposal made, such as one written by hand, is not counted. Returns {"parts",
-    "overall", "levels", "nothing", "lines", "text"}; the lines give counts and the plain names of the parts only."""
+    corrected. The same counts are given for each of five categories of column (keys, links, timestamps, codes and
+    descriptive columns; see category). A binding that no proposal made, such as one written by hand, is not counted.
+    Returns {"parts", "overall", "categories", "levels", "nothing", "lines", "text"}; the lines give counts and the
+    plain names of the parts only."""
     empty = {"proposals": 0, "as_proposed": 0, "listed": 0, "unlisted": 0, "not_sure": 0, "unanswered": 0}
     overall, parts = dict(empty), []
+    categories = {name: dict(empty) for name in SCORE_CATEGORIES}
     levels = {level: {"answered": 0, "corrected": 0} for level in SCORE_LEVELS}
     nothing = {"count": 0, "chosen": 0}
     for view in [name for name in all_views() if name in (data or {}).get("roles", {})]:
         role = data["roles"][view]
         part = dict(empty)
-        for item in [role["rows"], *role["columns"].values()]:
+        for column, item in [(None, role["rows"]), *role["columns"].items()]:
             if "confidence" not in item:
                 continue
             fared = _fared(item)
@@ -823,6 +867,9 @@ def scoreboard(data):
                 continue
             part["proposals"] += 1
             part[fared] += 1
+            held = categories[category(view, column, item)]
+            held["proposals"] += 1
+            held[fared] += 1
             if fared in ("as_proposed", "listed", "unlisted"):
                 levels[item["confidence"]]["answered"] += 1
                 levels[item["confidence"]]["corrected"] += fared != "as_proposed"
@@ -844,6 +891,10 @@ def scoreboard(data):
         lines.append("")
         lines += [sentence(SCORE_WORDING["part"], part, part=view_title(part["view"], False)) for part in parts]
         lines.append("")
+        lines += [sentence(SCORE_WORDING["category"], counts, category=SCORE_CATEGORIES[name]) if counts["proposals"]
+                  else SCORE_WORDING["category_none"].format(category=SCORE_CATEGORIES[name])
+                  for name, counts in categories.items()]
+        lines.append("")
         for level in SCORE_LEVELS:
             held = levels[level]
             if held["answered"]:
@@ -857,7 +908,7 @@ def scoreboard(data):
             lines.append(SCORE_WORDING["nothing"].format(count=f"{nothing['count']:,} {'column' if nothing['count'] == 1 else 'columns'}",
                                                          chosen=f"{nothing['chosen']:,}"))
     lines += ["", SCORE_WORDING["shared"]]
-    return {"parts": parts, "overall": overall, "levels": levels, "nothing": nothing, "lines": lines,
+    return {"parts": parts, "overall": overall, "categories": categories, "levels": levels, "nothing": nothing, "lines": lines,
             "text": "\n".join(lines) + "\n"}
 
 
