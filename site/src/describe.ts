@@ -94,6 +94,8 @@ const hidden = new Set<string>();
 let written = false;
 // Whether the worker holds the invented hospital, which answers the page's queries while the invented dictionary is in use.
 let hospitalReady = false;
+// Whether the page is still fetching the invented hospital's files, during which the tab must stay online.
+let hospitalFetching = false;
 // The name of the one file that holds the saved hospital schema.
 const SCHEMA_FILE = 'hospital-schema.schemalyser.zip';
 // Whether the hospital schema last saved was a draft, which leaves step 9 to be done again.
@@ -439,10 +441,12 @@ function show() {
   $('t-offline-done').hidden = !ready;
   $('t-locked').hidden = state !== 'locked';
   // Once the invented dictionary has loaded while the tab is online, step 1 and step 2 say what to do next.
-  const inventedOnline = state === 'ready' && online && model?.dictionary?.source === 'invented';
+  const inventedOnline = state === 'ready' && online && model?.dictionary?.source === 'invented' && hospitalReady;
   if (inventedOnline) {
     text('t-offline-invented', d.inventedLoaded);
     status('t-invented-status', d.inventedLoaded, 'good');
+  } else if (state === 'ready' && online && model?.dictionary?.source === 'invented' && hospitalFetching) {
+    status('t-invented-status', d.invented.fetching, '');
   } else if ($('t-offline-invented').textContent === d.inventedLoaded) {
     linked('t-offline-invented', d.offlineInvented, '2', () => (wayChosen = 'invented'));
     if ($('t-invented-status').textContent === d.inventedLoaded) status('t-invented-status', '');
@@ -1497,6 +1501,8 @@ $('invented-load').addEventListener('click', async () => {
     const reply = await ask('describe_dictionary', [file, tables, '{}', file.name, tables.name, d.steps[1], true]);
     // The invented hospital is fetched now too, while the tab is online, and the worker builds it once and keeps it.
     if (reply.ok && !hospitalReady) {
+      hospitalFetching = true;
+      render();
       try {
         const folder = new URL('./example/hospital/', location.href);
         const manifest = await (await fetch(new URL('manifest.json', folder))).json() as { tables: { name: string }[] };
@@ -1511,6 +1517,7 @@ $('invented-load').addEventListener('click', async () => {
       } catch {
         hospitalReady = false;
       }
+      hospitalFetching = false;
     }
     if (reply.ok) {
       status('t-invented-status', !hospitalReady ? d.invented.unavailable : navigator.onLine ? d.inventedLoaded : '', hospitalReady ? 'good' : 'problem');

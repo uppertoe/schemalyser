@@ -659,6 +659,7 @@ export const describeStrings = {
     run: 'Run on the invented hospital',
     receipt: (text: string) => `Run on the invented hospital: ${text}`,
     running: 'The invented hospital is running the query.',
+    fetching: 'The page is fetching the invented hospital. Please keep the tab online until it says that the invented dictionary is loaded.',
     failed: 'The invented hospital could not run this query. Please try again.',
     unavailable:
       'The page has not been able to fetch the invented hospital, so its queries cannot be run here. If the tab is still online, reload the page and load the invented dictionary again.',
