@@ -15,7 +15,7 @@ wheels/
 .venv/
 __pycache__/
 
-# Reference material downloaded from elsewhere (Epic copyright; never commit).
+# Reference material downloaded from elsewhere (the vendor's copyright; never commit).
 reference/
 
 # Built output and generated assets.
@@ -51,7 +51,7 @@ dictionary.json
 dictionary.md
 load_postgresql.sql
 
-# The conversion to OMOP names Clarity tables, so it is kept out of the public repo.
+# The conversion to OMOP names the vendor's tables, so it is kept out of the public repo.
 etl/
 
 # macOS folder settings.
