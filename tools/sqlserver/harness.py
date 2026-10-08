@@ -27,7 +27,8 @@ layout that schemalyser.harness reads. The harness then:
     schemalyser.target composes for it against clarity_shadow, with any hand-written source query
     given with --source-query, and compares every answer with DuckDB's;
  9. runs the check script against clarity_shadow and compares its rows with DuckDB's answers;
-10. prints a short report, and exits with 1 if anything differs.
+10. prints a short report, writes summary.json with the same findings for a machine, and exits with 1
+    if anything differs.
 
 The conversion's planted scenarios are planted on both engines. DuckDB plants them as
 schemalyser.convert does; clarity_shadow is loaded with the sandbox's rows as they were before any
@@ -717,6 +718,12 @@ def _moment(text):
         return None
 
 
+def checksum(rows):
+    """A SHA-256 of a table's normalised rows, in a fixed order, so that two engines' tables can be compared by one value."""
+    ordered = sorted(rows.elements(), key=lambda row: json.dumps(row, default=str))
+    return hashlib.sha256(json.dumps(ordered, default=str).encode("utf-8")).hexdigest()
+
+
 def compare_rows(label, kinds, ours, theirs, key=0):
     """Compares two lists of rows as multisets. Returns a plain dictionary of what differs, with samples."""
     left = Counter(tuple(normalise(v, k) for v, k in zip(row, kinds)) for row in ours)
@@ -724,7 +731,8 @@ def compare_rows(label, kinds, ours, theirs, key=0):
     only_duck, only_server = left - right, right - left
     result = {"object": label, "duckdb": len(ours), "sqlserver": len(theirs),
               "same": not only_duck and not only_server, "only_duckdb": sum(only_duck.values()),
-              "only_sqlserver": sum(only_server.values())}
+              "only_sqlserver": sum(only_server.values()),
+              "checksum_duckdb": checksum(left), "checksum_sqlserver": checksum(right)}
     if result["same"]:
         return result
     result["sample_duckdb"] = list(only_duck)[:SAMPLE]
@@ -1195,10 +1203,63 @@ def main():
     print(f"Safeguards that behaved as they should: {len(safeguards) - unsafe} of {len(safeguards)}.")
     print(f"Target queries, drafts and source queries whose answers differ or could not be compared: {target_problems} of {len(answers)}.")
     print(f"Expectations of the planted scenarios not met on both engines: {scenario_problems} of {len(expectations)}.")
+    exit_code = 1 if different or step_problems or gate_problems or check_problems or findings or duck_failures or unsafe \
+        or target_problems or scenario_problems or count_problems else 0
+    write_summary(workspace / "summary.json", {
+        "versions": versions(version),
+        "world": args.world.resolve().name if args.world else "fixtures", "conversion": folder.name, "rows": args.rows,
+        "release": {"status": outcome["status"], "message": outcome.get("message")},
+        "steps": [{"file": r["file"], "sqlserver": r["status"], "sqlserver_rows": r.get("rows"),
+                   "duckdb": duck_steps[r["file"]]["status"], "duckdb_rows": duck_steps[r["file"]]["rows"],
+                   "agree": r["status"] == "ok" and duck_steps[r["file"]]["status"] == "ok" and r.get("rows") == duck_steps[r["file"]]["rows"]}
+                  for r in core_results],
+        "tables": [{"object": item["object"], "duckdb_rows": item["duckdb"], "sqlserver_rows": item["sqlserver"],
+                    "duckdb_checksum": item.get("checksum_duckdb"), "sqlserver_checksum": item.get("checksum_sqlserver"),
+                    "agree": item["same"], "error": item.get("error")} for item in comparisons],
+        "scenarios": scenario_outcomes(expectations, planted),
+        "gates": [{"gate": ours["gate"], "sqlserver_rows": ours["rows"], "duckdb_rows": theirs["rows"],
+                   "sqlserver": gate_outcome(ours["rows"]), "duckdb": gate_outcome(theirs["rows"]),
+                   "agree": ours["rows"] == theirs["rows"] == 0} for ours, theirs in zip(gates, report["gates"])],
+        "counts": {"compared": len(report.get("counts", [])), "differ": count_problems},
+        "checks": {"differ": check_problems}, "type_findings": len(findings), "duckdb_failures": duck_failures,
+        "safeguards": [{"safeguard": label, "as_it_should": ok} for label, ok, _ in safeguards],
+        "target_queries": {"compared": len(answers), "differ": target_problems},
+        "exit_code": exit_code,
+    })
+    print("The same summary, with a checksum for each table, is in summary.json beside the release script.")
     print(f"The scripts that were run are in {server.local}, and the release script and check results in {workspace}.")
     server.clean()
-    return 1 if different or step_problems or gate_problems or check_problems or findings or duck_failures or unsafe or target_problems \
-        or scenario_problems or count_problems else 0
+    return exit_code
+
+
+def gate_outcome(rows):
+    return "could not be run" if rows is None else "passed" if rows == 0 else "failed"
+
+
+def scenario_outcomes(expectations, planted):
+    """Each scenario's outcome on each engine: met when every one of its expectations was met there."""
+    found = {}
+    for name, says, duck_met, server_met, _ in expectations:
+        entry = found.setdefault(name, {"scenario": name, "planted_on_sqlserver": planted.get(name) is None, "expectations": []})
+        entry["expectations"].append({"says": says, "duckdb": "met" if duck_met else "not met",
+                                      "sqlserver": "met" if server_met else "not met"})
+    for entry in found.values():
+        for engine in ("duckdb", "sqlserver"):
+            entry[engine] = "met" if all(item[engine] == "met" for item in entry["expectations"]) else "not met"
+        entry["agree"] = entry["duckdb"] == entry["sqlserver"] == "met"
+    return list(found.values())
+
+
+def versions(server_version):
+    import duckdb
+    import sqlglot
+    return {"sqlserver": server_version, "duckdb": duckdb.__version__, "sqlglot": sqlglot.__version__,
+            "python": sys.version.split()[0], "summary_format": 1}
+
+
+def write_summary(path, summary):
+    """Writes the machine-readable summary, which names no folder of this machine."""
+    path.write_text(json.dumps(summary, indent=2, default=str) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

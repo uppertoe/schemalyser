@@ -17,13 +17,15 @@ What the testbed adds is the account of the run:
 - the reconciliation's coverage: the steps traced with every excluded row accounted for, the steps traced with the
   fan-out that testbed.json allows, the steps that could not be traced, each with its reason, and any discrepancy
   that the reconciliation cannot explain;
-- the inputs for the Data Quality Dashboard, and in the full profile its results;
-- the release equivalence check, which reads the SQL Server harness's summary;
+- the inputs for the Data Quality Dashboard, and in the full profile its results, with each failure set against
+  the world's dqd-expectations.json;
+- the release equivalence check, which reads the SQL Server harness's summary.json;
 - report.json for a machine and report.md for a person.
 
 The fast profile, the default, runs everything above apart from the dashboard, and passes when every judged check
 passes. The full profile also loads the tables into the OMOP database and runs the dashboard's Broadsea image, and it
-passes only when the dashboard ran and release equivalence passed, which needs --engine sqlserver.
+passes only when the dashboard ran with no failure that dqd-expectations.json does not permit and release
+equivalence passed, which needs --engine sqlserver.
 
 A world's testbed.json, where it has one, says which steps may write more than one row for a single row
 of the table they start from. Every other step is expected to write at most one. A world without the file
@@ -35,6 +37,7 @@ The reconciliation and the inputs for the Data Quality Dashboard are made from D
 """
 import argparse
 import csv
+import fnmatch
 import hashlib
 import itertools
 import json
@@ -60,6 +63,7 @@ from .translate import OMOP_SCHEMA, Unreadable, Unsupported, to_duckdb
 ROOT = Path(__file__).resolve().parents[2]
 HARNESS = ROOT / "tools" / "sqlserver" / "harness.py"
 EXPECTATIONS = "testbed.json"
+DQD_EXPECTATIONS = "dqd-expectations.json"
 SECTIONS = ("versions", "world", "engines", "build", "steps", "scenarios", "reconciliation", "release", "dqd", "checks", "summary")
 CDM_VERSION = "5.4"
 # The schema into which load_postgresql.sql loads the testbed's tables, apart from the OMOP database's own cdm schema.
@@ -494,11 +498,32 @@ def _flag(value):
     return str(value).strip().lower() in ("1", "true", "yes")
 
 
-def dqd_results(path):
-    """The dashboard's results file, counted by outcome and by category."""
+def read_dqd_expectations(path):
+    """The dashboard failures that a world permits, from its dqd-expectations.json: a list of entries, each naming a check
+    and a CDM table, and optionally a field, as names or patterns with * and ?, and the reason in a sentence."""
+    entries = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(entries, list) or not all(isinstance(e, dict) and e.get("check") and e.get("table") and e.get("reason")
+                                                  for e in entries):
+        raise ValueError(f"{Path(path).name} must be a list of entries, each with a check, a table and a reason")
+    return entries
+
+
+def _expected(row, expectations):
+    """The first expectation that a dashboard result matches, or None."""
+    def fits(pattern, value):
+        return pattern is None or fnmatch.fnmatchcase((value or "").upper(), pattern.upper())
+    return next((e for e in expectations or [] if fits(e["check"], row.get("checkName")) and fits(e["table"], row.get("cdmTableName"))
+                 and fits(e.get("field"), row.get("cdmFieldName"))), None)
+
+
+def dqd_results(path, expectations=None):
+    """The dashboard's results file, counted by outcome and by category, with each failure set against the expectations.
+
+    A check that failed or could not run is expected when an entry of the expectations matches it, and unexpected otherwise.
+    """
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     blank = {"checks": 0, "passed": 0, "failed": 0, "could_not_run": 0, "not_applicable": 0}
-    found, by_category = dict(blank), {}
+    found, by_category, failures = dict(blank), {}, []
     for row in data.get("CheckResults") or []:
         outcome = ("could_not_run" if _flag(row.get("isError")) else "not_applicable" if _flag(row.get("notApplicable"))
                    else "failed" if _flag(row.get("failed")) else "passed")
@@ -506,10 +531,23 @@ def dqd_results(path):
         for counted in (found, category):
             counted["checks"] += 1
             counted[outcome] += 1
-    return dict(found, by_category=dict(sorted(by_category.items())))
+        if outcome in ("failed", "could_not_run"):
+            match = _expected(row, expectations)
+            failures.append({"check": row.get("checkName"), "table": row.get("cdmTableName"), "field": row.get("cdmFieldName"),
+                             "category": row.get("category"), "outcome": outcome.replace("_", " "),
+                             "violated_rows": row.get("numViolatedRows"), "denominator_rows": row.get("numDenominatorRows"),
+                             "expected": match is not None, "reason": match["reason"] if match else None})
+    unexpected = [f for f in failures if not f["expected"]]
+    return dict(found, by_category=dict(sorted(by_category.items())), expected_failures=len(failures) - len(unexpected),
+                unexpected_failures=len(unexpected), failures=failures)
 
 
-def run_dqd(out, inputs):
+def _failure_name(failure):
+    place = ".".join(part for part in (failure["table"], failure["field"]) if part)
+    return f"{failure['check']} on {place}" if place else failure["check"]
+
+
+def run_dqd(out, inputs, expectations=None):
     """Loads the testbed's tables into the OMOP database and runs the dashboard's image on them, as docs/testbed.md describes.
 
     It needs psql, Docker with the Broadsea image for the dashboard, the OMOP database listening on 127.0.0.1 at the port
@@ -552,7 +590,7 @@ def run_dqd(out, inputs):
     if done.returncode != 0 or not results.exists():
         return not_run(f"the dashboard's image stopped with exit code {done.returncode}; its output is in dqd/dqd.txt")
     return dict(inputs, status="ran", reason=None, seconds=round(time.monotonic() - started, 1),
-                results_file="dqd/out/dqd_results.json", output="dqd/dqd.txt", **dqd_results(results))
+                results_file="dqd/out/dqd_results.json", output="dqd/dqd.txt", **dqd_results(results, expectations))
 
 
 # SQL Server.
@@ -571,11 +609,25 @@ def run_sqlserver(world_folder, folder, rows, out):
     target.mkdir(parents=True, exist_ok=True)
     (target / "harness.txt").write_text(done.stdout + done.stderr, encoding="utf-8")
     lines = done.stdout.splitlines()
-    summary = lines[lines.index("SUMMARY") + 1:] if "SUMMARY" in lines else []
+    # The last lines name the folders of this machine, so the report keeps only the counts.
+    summary = [line for line in (lines[lines.index("SUMMARY") + 1:] if "SUMMARY" in lines else [])
+               if not line.startswith(("The scripts that were run are in", "The same summary, with a checksum"))]
+    structured = read_harness_summary(target)
     return {"status": "agrees with DuckDB" if done.returncode == 0 else "differs from DuckDB or did not run",
-            "exit_code": done.returncode, "summary": summary,
+            "exit_code": done.returncode, "summary": summary, "summary_json": structured,
             "reason": None if summary else _clip((done.stderr or done.stdout).strip().splitlines()[-1] if (done.stderr or done.stdout).strip() else "no output"),
-            "output": "sqlserver/harness.txt"}
+            "output": "sqlserver/harness.txt", "summary_file": "sqlserver/summary.json" if structured is not None else None}
+
+
+def read_harness_summary(folder):
+    """The harness's summary.json in a folder, or None when it did not write one."""
+    path = Path(folder) / "summary.json"
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return None
 
 
 def _summary_numbers(summary, start):
@@ -595,13 +647,56 @@ def release_equivalence(sqlserver):
     if sqlserver is None:
         return dict(check, state="not run on SQL Server", passed=None,
                     detail="The testbed ran on DuckDB alone; --engine sqlserver runs the harness that this check reads.")
+    if sqlserver.get("summary_json") is not None:
+        return dict(check, source="summary.json", **_equivalence_from_json(sqlserver["summary_json"]))
+    fallback = "The harness wrote no summary.json, so the check read its printed summary instead. "
+    found = _equivalence_from_text(sqlserver)
+    return dict(check, source="the printed summary", **dict(found, detail=fallback + found["detail"]))
+
+
+def _sentence(parts):
+    text = "; ".join(parts)
+    return text[:1].upper() + text[1:] + "."
+
+
+def _equivalence_from_json(summary):
+    """Release equivalence from the harness's summary.json: every compared table and every scenario must agree."""
+    tables, scenarios = summary.get("tables") or [], summary.get("scenarios") or []
+    problems = []
+    differ = [t["object"] for t in tables if not t.get("agree")]
+    if not tables:
+        problems.append("the harness compared no OMOP object")
+    elif differ:
+        problems.append(f"{len(differ)} of {len(tables)} OMOP objects differ between the engines ({', '.join(differ)})")
+    if (summary.get("release") or {}).get("status") != "committed":
+        problems.append("the release script did not run to its end on SQL Server")
+    steps = [s["file"] for s in summary.get("steps") or [] if not s.get("agree")]
+    if steps:
+        problems.append(f"{len(steps)} core steps failed or wrote a different number of rows ({', '.join(steps)})")
+    if summary.get("duckdb_failures"):
+        problems.append(f"the DuckDB run was not clean for {len(summary['duckdb_failures'])} reasons")
+    unmatched = [s["scenario"] for s in scenarios if not s.get("agree")]
+    if not scenarios:
+        problems.append("the harness evaluated no planted scenario")
+    elif unmatched:
+        problems.append(f"{len(unmatched)} of {len(scenarios)} planted scenarios were not met on both engines ({', '.join(unmatched)})")
+    if problems:
+        return {"state": "failed", "passed": False, "detail": _sentence(problems)}
+    expectations = sum(len(s.get("expectations") or []) for s in scenarios)
+    return {"state": "passed", "passed": True,
+            "detail": (f"The release script ran on SQL Server, all {len(tables)} OMOP objects matched DuckDB's by row count and "
+                       f"checksum, and all {len(scenarios)} planted scenarios, with {expectations} expectations, were met on both engines.")}
+
+
+def _equivalence_from_text(sqlserver):
+    """Release equivalence from the harness's printed summary, for a harness that wrote no summary.json."""
     summary = sqlserver.get("summary") or []
     objects = _summary_numbers(summary, "OMOP objects compared:")
     steps = _summary_numbers(summary, "Steps that failed or wrote a different number of rows:")
     duckdb_clean = _summary_numbers(summary, "Reasons that the DuckDB run itself was not clean:")
     scenarios = _summary_numbers(summary, "Expectations of the planted scenarios not met on both engines:")
     if None in (objects, steps, duckdb_clean, scenarios):
-        return dict(check, state="failed", passed=False,
+        return dict(state="failed", passed=False,
                     detail="The harness gave no summary, so it has not shown that SQL Server agrees with DuckDB. "
                            + (sqlserver.get("reason") or ""))
     problems = []
@@ -614,8 +709,8 @@ def release_equivalence(sqlserver):
     if scenarios[1] == 0 or scenarios[0]:
         problems.append(f"{scenarios[0]} of {scenarios[1]} expectations of the planted scenarios were not met on both engines")
     if problems:
-        return dict(check, state="failed", passed=False, detail="; ".join(problems).capitalize() + ".")
-    return dict(check, state="passed", passed=True,
+        return dict(state="failed", passed=False, detail=_sentence(problems))
+    return dict(state="passed", passed=True,
                 detail=(f"The release script ran on SQL Server, all {objects[0]} OMOP objects matched DuckDB's, and all "
                         f"{scenarios[1]} expectations of the planted scenarios were met on both engines."))
 
@@ -625,7 +720,13 @@ def judge(checks, profile):
     reasons = []
     for check in checks:
         name = check["check"]
-        if name == "the Data Quality Dashboard ran":
+        if name.startswith("the Data Quality Dashboard reported no failure"):
+            if check["passed"] is False:
+                unexpected = check.get("detail") or []
+                reasons.append(f"the Data Quality Dashboard reported {len(unexpected)} "
+                               f"{'failure' if len(unexpected) == 1 else 'failures'} that dqd-expectations.json does not permit "
+                               f"({', '.join(unexpected)})")
+        elif name == "the Data Quality Dashboard ran":
             if profile == "full" and not check["passed"]:
                 reasons.append("the Data Quality Dashboard did not run")
         elif name == "release equivalence":
@@ -649,7 +750,7 @@ def _versions(vocabulary):
             "duckdb": duckdb.__version__, "sqlglot": sqlglot.__version__, "python": sys.version.split()[0]}
 
 
-def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, profile="fast"):
+def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, profile="fast", dqd_expectations=None):
     """Runs every stage and writes report.json and report.md to out. Returns the report."""
     started = time.monotonic()
     world, world_folder, folder = resolve_world(world_name)
@@ -660,6 +761,10 @@ def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, prof
     steps = json.loads((folder / "conversion.json").read_text())
     expectation_path = world_folder / EXPECTATIONS
     expectations = json.loads(expectation_path.read_text()) if expectation_path.exists() else None
+    # The dashboard failures that the world permits: the file named, else the world's own, else the conversion's.
+    dqd_path = Path(dqd_expectations) if dqd_expectations else next(
+        (p for p in (world_folder / DQD_EXPECTATIONS, folder / DQD_EXPECTATIONS) if p.is_file()), None)
+    permitted = read_dqd_expectations(dqd_path) if dqd_path else None
 
     # 1 to 4: build, create the CDM, convert, and plant and evaluate the scenarios, all in convert.run.
     conversion, report = convert.run(world, folder, rows, vocabulary)
@@ -681,7 +786,9 @@ def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, prof
         (out / "release" / "source_manifest.csv").write_text(manifest, encoding="utf-8")
     dqd = dqd_inputs(conversion, folder, out)
     if profile == "full":
-        dqd = run_dqd(out, dqd)
+        dqd = run_dqd(out, dqd, permitted)
+    dqd["expectations"] = ({"file": dqd_path.name, "entries": len(permitted), "sha256": _digest([dqd_path])}
+                           if dqd_path else None)
     sqlserver = run_sqlserver(world_folder, folder, rows, out) if engine == "sqlserver" else None
     equivalence = release_equivalence(sqlserver)
 
@@ -699,6 +806,9 @@ def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, prof
          "passed": released["written"] and released["carries_every_step"]},
         {"check": "the Data Quality Dashboard ran", "passed": dqd["status"] == "ran" if profile == "full" else None,
          "detail": dqd["reason"] or "ran"},
+        {"check": "the Data Quality Dashboard reported no failure that dqd-expectations.json does not permit",
+         "passed": dqd["unexpected_failures"] == 0 if dqd["status"] == "ran" else None,
+         "detail": [_failure_name(f) for f in dqd.get("failures", []) if not f["expected"]]},
         equivalence,
     ]
     if sqlserver is not None:
@@ -708,7 +818,11 @@ def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, prof
     passed = sum(1 for s in scenarios if s["outcome"] == "passed")
     if dqd["status"] == "ran":
         dqd_sentence = (f"The Data Quality Dashboard ran {dqd['checks']:,} checks: {dqd['passed']:,} passed, {dqd['failed']:,} failed, "
-                        f"{dqd['could_not_run']:,} could not run and {dqd['not_applicable']:,} did not apply.")
+                        f"{dqd['could_not_run']:,} could not run and {dqd['not_applicable']:,} did not apply. Of the "
+                        f"{dqd['expected_failures'] + dqd['unexpected_failures']:,} that failed or could not run, "
+                        f"{dqd['expected_failures']:,} are expected, with a reason in "
+                        f"{dqd['expectations']['file'] if dqd['expectations'] else 'no expectations file'}, and "
+                        f"{dqd['unexpected_failures']:,} are not.")
     elif profile == "full":
         dqd_sentence = f"The Data Quality Dashboard did not run, because {dqd['reason']}, so the full profile cannot pass."
     else:
@@ -824,6 +938,23 @@ def markdown(report):
         lines += [f"| {name} | {n['checks']} | {n['passed']} | {n['failed']} | {n['could_not_run']} | {n['not_applicable']} |"
                   for name, n in dqd["by_category"].items()]
         lines.append("")
+        unexpected = [f for f in dqd["failures"] if not f["expected"]]
+        expected = [f for f in dqd["failures"] if f["expected"]]
+        lines.append(f"{len(unexpected)} of the checks that failed or could not run are not permitted by "
+                     f"{dqd['expectations']['file'] if dqd['expectations'] else 'an expectations file, because the world has none'}"
+                     + (", and each of them fails the full profile:" if unexpected else "."))
+        lines += [f"- {_failure_name(f)} ({f['category']}): {f['outcome']}, with {f['violated_rows']} of {f['denominator_rows']} rows in breach."
+                  if f["outcome"] == "failed" else f"- {_failure_name(f)} ({f['category']}): {f['outcome']}." for f in unexpected]
+        if expected:
+            lines += ["", f"{len(expected)} are expected, each for the reason given:"]
+            grouped = {}
+            for f in expected:
+                grouped.setdefault(f["reason"], []).append(f)
+            for reason, items in grouped.items():
+                names = sorted({_failure_name(f) for f in items})
+                lines.append(f"- {', '.join(names[:4])}{f' and {len(names) - 4} more' if len(names) > 4 else ''} "
+                             f"({len(items)} {'check' if len(items) == 1 else 'checks'}): {reason}")
+        lines.append("")
     else:
         lines += [(f"The dashboard has not been run, because {dqd['reason'].rstrip('.')}. You can run it in the Broadsea environment "
                    "by loading the tables and then running the dashboard's image:"), "", f"    {dqd['load']}", f"    {dqd['command']}", ""]
@@ -846,11 +977,13 @@ def main():
     runner.add_argument("--conversion", type=Path, help="a conversion folder; the world's conversion/ when left out")
     runner.add_argument("--engine", choices=("duckdb", "sqlserver"), default="duckdb",
                         help="sqlserver also runs tools/sqlserver/harness.py, which needs its container")
+    runner.add_argument("--dqd-expectations", type=Path,
+                        help="the dashboard failures that are permitted; the world's dqd-expectations.json when left out")
     runner.add_argument("--profile", choices=("fast", "full"), default="fast",
                         help="full also runs the Data Quality Dashboard and requires it and release equivalence to pass")
     args = parser.parse_args()
     try:
-        report = run(args.world, args.out, args.rows, args.engine, args.conversion, args.profile)
+        report = run(args.world, args.out, args.rows, args.engine, args.conversion, args.profile, args.dqd_expectations)
     except (convert.ScenarioError, ValueError, FileNotFoundError) as error:
         raise SystemExit(f"schemalyser.testbed: {error}")
     for sentence in report["summary"]["sentences"]:

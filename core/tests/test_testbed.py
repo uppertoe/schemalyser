@@ -171,3 +171,64 @@ def test_a_trace_puts_each_row_left_out_down_to_its_join_or_condition():
     assert found["traced"] and found["source_rows"] == 3 and found["reached"] == 1 and found["target_rows"] == 2
     assert [d["rows"] for d in found["dropped"]] == [1, 1]
     assert found["source_rows_with_several_target_rows"] == 1 and found["matches_the_run"]
+
+
+def test_the_dashboard_failures_are_set_against_the_expectations(tmp_path):
+    expectations = testbed.read_dqd_expectations(FIXTURES / "dqd-expectations.json")
+    assert expectations and all(e["reason"].endswith(".") for e in expectations)
+    path = tmp_path / "dqd_results.json"
+    path.write_text(json.dumps({"CheckResults": [
+        {"checkName": "measurePersonCompleteness", "cdmTableName": "DRUG_ERA", "category": "Completeness", "failed": 1,
+         "isError": 0, "notApplicable": 0, "numViolatedRows": 5, "numDenominatorRows": 5},
+        {"checkName": "isRequired", "cdmTableName": "COHORT", "cdmFieldName": "COHORT_DEFINITION_ID", "category": "Conformance",
+         "failed": 0, "isError": 1, "notApplicable": 0},
+        {"checkName": "plausibleValueLow", "cdmTableName": "MEASUREMENT", "cdmFieldName": "VALUE_AS_NUMBER",
+         "category": "Plausibility", "failed": 1, "isError": 0, "notApplicable": 0, "numViolatedRows": 2, "numDenominatorRows": 9}]}))
+    found = testbed.dqd_results(path, expectations)
+    assert (found["expected_failures"], found["unexpected_failures"]) == (2, 1)
+    unexpected = [f for f in found["failures"] if not f["expected"]]
+    assert [testbed._failure_name(f) for f in unexpected] == ["plausibleValueLow on MEASUREMENT.VALUE_AS_NUMBER"]
+    assert "DRUG_ERA" in next(f["reason"] for f in found["failures"] if f["table"] == "DRUG_ERA")
+    # Without expectations, every failure is unexpected.
+    assert testbed.dqd_results(path)["unexpected_failures"] == 3
+    clean = [{"check": "every step ran cleanly", "passed": True}, {"check": "the Data Quality Dashboard ran", "passed": True},
+             testbed.release_equivalence({"exit_code": 0, "summary": SUMMARY})]
+    permitted = {"check": "the Data Quality Dashboard reported no failure that dqd-expectations.json does not permit"}
+    assert testbed.judge(clean + [dict(permitted, passed=True, detail=[])], "full") == "passed"
+    outcome = testbed.judge(clean + [dict(permitted, passed=False, detail=["plausibleValueLow on MEASUREMENT.VALUE_AS_NUMBER"])], "full")
+    assert outcome == ("failed: the Data Quality Dashboard reported 1 failure that dqd-expectations.json does not permit "
+                       "(plausibleValueLow on MEASUREMENT.VALUE_AS_NUMBER)")
+
+
+def _harness_summary():
+    return {"versions": {"sqlserver": "Developer Edition, version 16", "duckdb": duckdb.__version__, "summary_format": 1},
+            "release": {"status": "committed", "message": None},
+            "steps": [{"file": "person.sql", "sqlserver": "ok", "sqlserver_rows": 9, "duckdb": "ok", "duckdb_rows": 9, "agree": True}],
+            "tables": [{"object": "dbo.person", "duckdb_rows": 9, "sqlserver_rows": 9, "duckdb_checksum": "a" * 64,
+                        "sqlserver_checksum": "a" * 64, "agree": True, "error": None},
+                       {"object": "anaes_pub.measurement", "duckdb_rows": 30, "sqlserver_rows": 30, "duckdb_checksum": "b" * 64,
+                        "sqlserver_checksum": "b" * 64, "agree": True, "error": None}],
+            "scenarios": [{"scenario": "late_reading", "duckdb": "met", "sqlserver": "met", "agree": True,
+                           "expectations": [{"says": "One reading is kept.", "duckdb": "met", "sqlserver": "met"}]}],
+            "gates": [], "duckdb_failures": [], "exit_code": 0}
+
+
+def test_release_equivalence_reads_the_harness_summary_json(tmp_path):
+    (tmp_path / "summary.json").write_text(json.dumps(_harness_summary()))
+    read = testbed.read_harness_summary(tmp_path)
+    passed = testbed.release_equivalence({"exit_code": 0, "summary": [], "summary_json": read})
+    assert passed["state"] == "passed" and passed["source"] == "summary.json" and "all 2 OMOP objects" in passed["detail"]
+    differs = _harness_summary()
+    differs["tables"][1].update(sqlserver_checksum="c" * 64, agree=False)
+    failed = testbed.release_equivalence({"exit_code": 1, "summary": SUMMARY, "summary_json": differs})
+    # The structured summary decides, even where the printed one says that every object matched.
+    assert failed["state"] == "failed" and "anaes_pub.measurement" in failed["detail"]
+    unmatched = _harness_summary()
+    unmatched["scenarios"][0].update(sqlserver="not met", agree=False)
+    assert "late_reading" in testbed.release_equivalence({"exit_code": 1, "summary_json": unmatched})["detail"]
+    assert testbed.release_equivalence({"exit_code": 0, "summary_json": dict(_harness_summary(), scenarios=[])})["state"] == "failed"
+    # Without summary.json, the check reads the printed summary and says so.
+    assert testbed.read_harness_summary(tmp_path / "missing") is None
+    fallback = testbed.release_equivalence({"exit_code": 0, "summary": SUMMARY, "summary_json": None})
+    assert fallback["state"] == "passed" and fallback["source"] == "the printed summary"
+    assert fallback["detail"].startswith("The harness wrote no summary.json, so the check read its printed summary instead.")

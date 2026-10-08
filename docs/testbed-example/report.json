@@ -1,0 +1,3790 @@
+{
+  "versions": {
+    "tool": "schemalyser 0.1.0",
+    "cdm": "5.4",
+    "cdm_fields_sha256": "e13915ab3e8d7574c664095643f70a622e7072043d4991e3fe923c269dd4f073",
+    "vocabulary": "the SQL Server harness's sample subset of 5 public concepts, not an Athena release",
+    "vocabulary_sha256": "23be4f5176846bf3fa28ee0c8010869d0113d802af2470c068e8b6d90b65e314",
+    "duckdb": "1.5.1",
+    "sqlglot": "30.21.0",
+    "python": "3.13.9"
+  },
+  "world": {
+    "folder": "fixtures",
+    "conversion": "conversion",
+    "rows": 50,
+    "catalogue_sha256": "fec2984677b5fd81ea77fb9d5017e66b662d01b46d164c63fecfdb6ce3f91fa9",
+    "conversion_sha256": "53ff2a84a61df2710e1b824aa9759f32eb028a785254c86722b9d965561ffa4a",
+    "requests_sha256": "24d5a27cd6bae6b8064ecda92948103275873ce94be602f572dd2c0cd9c9ac62",
+    "expectations": "testbed.json",
+    "run_at": "2026-10-08T20:00:55+00:00"
+  },
+  "engines": {
+    "build": "duckdb",
+    "convert": "duckdb and sqlserver",
+    "scenarios": "duckdb and sqlserver",
+    "reconciliation": "duckdb",
+    "gates_and_counts": "duckdb and sqlserver",
+    "dqd": "postgresql, through the Broadsea image",
+    "sqlserver": {
+      "status": "agrees with DuckDB",
+      "exit_code": 0,
+      "summary": [
+        "OMOP objects compared: 36; identical: 36; different: 0.",
+        "Steps that failed or wrote a different number of rows: 0.",
+        "Gates passed on SQL Server: 9 of 9; gates whose outcome differs from DuckDB's or did not pass: 0.",
+        "Counts that differ between the engines or could not be compared: 0 of 2.",
+        "Check rows that differ, and checks that failed: 0.",
+        "Source columns whose sandbox values do not fit the catalogue's type: 0.",
+        "Reasons that the DuckDB run itself was not clean: 0.",
+        "Safeguards that behaved as they should: 0 of 0.",
+        "Target queries, drafts and source queries whose answers differ or could not be compared: 0 of 12.",
+        "Expectations of the planted scenarios not met on both engines: 0 of 77."
+      ],
+      "summary_json": {
+        "versions": {
+          "sqlserver": "Developer Edition (64-bit), version 16.0.4295.3",
+          "duckdb": "1.5.1",
+          "sqlglot": "30.21.0",
+          "python": "3.13.9",
+          "summary_format": 1
+        },
+        "world": "fixtures",
+        "conversion": "conversion",
+        "rows": 50,
+        "release": {
+          "status": "committed",
+          "message": null
+        },
+        "steps": [
+          {
+            "file": "person.sql",
+            "sqlserver": "ok",
+            "sqlserver_rows": 85,
+            "duckdb": "ok",
+            "duckdb_rows": 85,
+            "agree": true
+          },
+          {
+            "file": "provider.sql",
+            "sqlserver": "ok",
+            "sqlserver_rows": 50,
+            "duckdb": "ok",
+            "duckdb_rows": 50,
+            "agree": true
+          },
+          {
+            "file": "care_site.sql",
+            "sqlserver": "ok",
+            "sqlserver_rows": 50,
+            "duckdb": "ok",
+            "duckdb_rows": 50,
+            "agree": true
+          },
+          {
+            "file": "visit_occurrence.sql",
+            "sqlserver": "ok",
+            "sqlserver_rows": 86,
+            "duckdb": "ok",
+            "duckdb_rows": 86,
+            "agree": true
+          },
+          {
+            "file": "procedure_occurrence_surgery.sql",
+            "sqlserver": "ok",
+            "sqlserver_rows": 50,
+            "duckdb": "ok",
+            "duckdb_rows": 50,
+            "agree": true
+          },
+          {
+            "file": "condition_occurrence.sql",
+            "sqlserver": "ok",
+            "sqlserver_rows": 50,
+            "duckdb": "ok",
+            "duckdb_rows": 50,
+            "agree": true
+          },
+          {
+            "file": "drug_exposure.sql",
+            "sqlserver": "ok",
+            "sqlserver_rows": 26,
+            "duckdb": "ok",
+            "duckdb_rows": 26,
+            "agree": true
+          },
+          {
+            "file": "death.sql",
+            "sqlserver": "ok",
+            "sqlserver_rows": 5,
+            "duckdb": "ok",
+            "duckdb_rows": 5,
+            "agree": true
+          },
+          {
+            "file": "observation_period.sql",
+            "sqlserver": "ok",
+            "sqlserver_rows": 85,
+            "duckdb": "ok",
+            "duckdb_rows": 85,
+            "agree": true
+          },
+          {
+            "file": "cdm_source.sql",
+            "sqlserver": "ok",
+            "sqlserver_rows": 1,
+            "duckdb": "ok",
+            "duckdb_rows": 1,
+            "agree": true
+          }
+        ],
+        "tables": [
+          {
+            "object": "dbo.person",
+            "duckdb_rows": 85,
+            "sqlserver_rows": 85,
+            "duckdb_checksum": "42d74562d24ab8e2cf7d7b14dc629bcf1e4cba76c480b526f70fdf8451d3797c",
+            "sqlserver_checksum": "42d74562d24ab8e2cf7d7b14dc629bcf1e4cba76c480b526f70fdf8451d3797c",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_pub.person",
+            "duckdb_rows": 85,
+            "sqlserver_rows": 85,
+            "duckdb_checksum": "42d74562d24ab8e2cf7d7b14dc629bcf1e4cba76c480b526f70fdf8451d3797c",
+            "sqlserver_checksum": "42d74562d24ab8e2cf7d7b14dc629bcf1e4cba76c480b526f70fdf8451d3797c",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "dbo.observation_period",
+            "duckdb_rows": 85,
+            "sqlserver_rows": 85,
+            "duckdb_checksum": "ec1747655fa3b36968919eda98783871256c800672720d6ff0b1a17c064105f2",
+            "sqlserver_checksum": "ec1747655fa3b36968919eda98783871256c800672720d6ff0b1a17c064105f2",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_pub.observation_period",
+            "duckdb_rows": 85,
+            "sqlserver_rows": 85,
+            "duckdb_checksum": "ec1747655fa3b36968919eda98783871256c800672720d6ff0b1a17c064105f2",
+            "sqlserver_checksum": "ec1747655fa3b36968919eda98783871256c800672720d6ff0b1a17c064105f2",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "dbo.visit_occurrence",
+            "duckdb_rows": 86,
+            "sqlserver_rows": 86,
+            "duckdb_checksum": "0932d97f0a62d168fc739f2989b14e6bc49a82c7c301087fce3157ac73ce28d3",
+            "sqlserver_checksum": "0932d97f0a62d168fc739f2989b14e6bc49a82c7c301087fce3157ac73ce28d3",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_pub.visit_occurrence",
+            "duckdb_rows": 86,
+            "sqlserver_rows": 86,
+            "duckdb_checksum": "0932d97f0a62d168fc739f2989b14e6bc49a82c7c301087fce3157ac73ce28d3",
+            "sqlserver_checksum": "0932d97f0a62d168fc739f2989b14e6bc49a82c7c301087fce3157ac73ce28d3",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_cdm.visit_detail",
+            "duckdb_rows": 85,
+            "sqlserver_rows": 85,
+            "duckdb_checksum": "696e99944329da908b4db9079ee0b6e959815e1eac1b6a66498a1e3d35115f9e",
+            "sqlserver_checksum": "696e99944329da908b4db9079ee0b6e959815e1eac1b6a66498a1e3d35115f9e",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_pub.visit_detail",
+            "duckdb_rows": 85,
+            "sqlserver_rows": 85,
+            "duckdb_checksum": "696e99944329da908b4db9079ee0b6e959815e1eac1b6a66498a1e3d35115f9e",
+            "sqlserver_checksum": "696e99944329da908b4db9079ee0b6e959815e1eac1b6a66498a1e3d35115f9e",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "dbo.condition_occurrence",
+            "duckdb_rows": 50,
+            "sqlserver_rows": 50,
+            "duckdb_checksum": "77f13f51427e2fb4444fe12002f676c1abaa8656ded4229cefef6027352bd022",
+            "sqlserver_checksum": "77f13f51427e2fb4444fe12002f676c1abaa8656ded4229cefef6027352bd022",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_pub.condition_occurrence",
+            "duckdb_rows": 50,
+            "sqlserver_rows": 50,
+            "duckdb_checksum": "77f13f51427e2fb4444fe12002f676c1abaa8656ded4229cefef6027352bd022",
+            "sqlserver_checksum": "77f13f51427e2fb4444fe12002f676c1abaa8656ded4229cefef6027352bd022",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "dbo.drug_exposure",
+            "duckdb_rows": 26,
+            "sqlserver_rows": 26,
+            "duckdb_checksum": "0b517940fd999eb881e34e580c70770dd8b0225f7e9155ed89c14a35062617c6",
+            "sqlserver_checksum": "0b517940fd999eb881e34e580c70770dd8b0225f7e9155ed89c14a35062617c6",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_cdm.drug_exposure",
+            "duckdb_rows": 15,
+            "sqlserver_rows": 15,
+            "duckdb_checksum": "fbd21b7834f4671689dfa3a2159ca9941f8320c20a92f53634840afe6c04be83",
+            "sqlserver_checksum": "fbd21b7834f4671689dfa3a2159ca9941f8320c20a92f53634840afe6c04be83",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_pub.drug_exposure",
+            "duckdb_rows": 41,
+            "sqlserver_rows": 41,
+            "duckdb_checksum": "aa573e722957b15973664dba6e1bbd64ebe09624e0093e2239487322d98c08c3",
+            "sqlserver_checksum": "aa573e722957b15973664dba6e1bbd64ebe09624e0093e2239487322d98c08c3",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "dbo.procedure_occurrence",
+            "duckdb_rows": 50,
+            "sqlserver_rows": 50,
+            "duckdb_checksum": "c29b0a331ddec8892df8fad130c42a59d7ff7b46ae2a6c094a258a007c8e0c76",
+            "sqlserver_checksum": "c29b0a331ddec8892df8fad130c42a59d7ff7b46ae2a6c094a258a007c8e0c76",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_cdm.procedure_occurrence",
+            "duckdb_rows": 98,
+            "sqlserver_rows": 98,
+            "duckdb_checksum": "44c7d01f7759f4080b147c9a5862c00d94c02c0b0bf2b6f1cfbf5c2d3306d9e3",
+            "sqlserver_checksum": "44c7d01f7759f4080b147c9a5862c00d94c02c0b0bf2b6f1cfbf5c2d3306d9e3",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_pub.procedure_occurrence",
+            "duckdb_rows": 148,
+            "sqlserver_rows": 148,
+            "duckdb_checksum": "3b17006546abc85faac38eb294506a97d5423e186a114248628d8c3064e26ff8",
+            "sqlserver_checksum": "3b17006546abc85faac38eb294506a97d5423e186a114248628d8c3064e26ff8",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_cdm.device_exposure",
+            "duckdb_rows": 41,
+            "sqlserver_rows": 41,
+            "duckdb_checksum": "d6fceafc3c2a4da141370737c7f301b01498d2c55bf4527ec10051ea031dd677",
+            "sqlserver_checksum": "d6fceafc3c2a4da141370737c7f301b01498d2c55bf4527ec10051ea031dd677",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_pub.device_exposure",
+            "duckdb_rows": 41,
+            "sqlserver_rows": 41,
+            "duckdb_checksum": "d6fceafc3c2a4da141370737c7f301b01498d2c55bf4527ec10051ea031dd677",
+            "sqlserver_checksum": "d6fceafc3c2a4da141370737c7f301b01498d2c55bf4527ec10051ea031dd677",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_cdm.measurement",
+            "duckdb_rows": 4006,
+            "sqlserver_rows": 4006,
+            "duckdb_checksum": "2cbc79f803864404bb024f4ca5656a0bf51486af72f968222369a78f40f479e0",
+            "sqlserver_checksum": "2cbc79f803864404bb024f4ca5656a0bf51486af72f968222369a78f40f479e0",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_pub.measurement",
+            "duckdb_rows": 4006,
+            "sqlserver_rows": 4006,
+            "duckdb_checksum": "2cbc79f803864404bb024f4ca5656a0bf51486af72f968222369a78f40f479e0",
+            "sqlserver_checksum": "2cbc79f803864404bb024f4ca5656a0bf51486af72f968222369a78f40f479e0",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_cdm.observation",
+            "duckdb_rows": 37,
+            "sqlserver_rows": 37,
+            "duckdb_checksum": "1632de1431603daa4b872ca2130b66cc8512a28b57b3fe9dd1fbe2a589c11dda",
+            "sqlserver_checksum": "1632de1431603daa4b872ca2130b66cc8512a28b57b3fe9dd1fbe2a589c11dda",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_pub.observation",
+            "duckdb_rows": 37,
+            "sqlserver_rows": 37,
+            "duckdb_checksum": "1632de1431603daa4b872ca2130b66cc8512a28b57b3fe9dd1fbe2a589c11dda",
+            "sqlserver_checksum": "1632de1431603daa4b872ca2130b66cc8512a28b57b3fe9dd1fbe2a589c11dda",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "dbo.death",
+            "duckdb_rows": 5,
+            "sqlserver_rows": 5,
+            "duckdb_checksum": "2219cdacbb590935a3ed8fa7f1e0a76b9e65802be8499a8150906e966974d9db",
+            "sqlserver_checksum": "2219cdacbb590935a3ed8fa7f1e0a76b9e65802be8499a8150906e966974d9db",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_pub.death",
+            "duckdb_rows": 5,
+            "sqlserver_rows": 5,
+            "duckdb_checksum": "2219cdacbb590935a3ed8fa7f1e0a76b9e65802be8499a8150906e966974d9db",
+            "sqlserver_checksum": "2219cdacbb590935a3ed8fa7f1e0a76b9e65802be8499a8150906e966974d9db",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "dbo.care_site",
+            "duckdb_rows": 50,
+            "sqlserver_rows": 50,
+            "duckdb_checksum": "1ffab3f3eed3589dbe582e3cd46d4c6965534cda67c9db3cfd0110a6c9965ff0",
+            "sqlserver_checksum": "1ffab3f3eed3589dbe582e3cd46d4c6965534cda67c9db3cfd0110a6c9965ff0",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_pub.care_site",
+            "duckdb_rows": 50,
+            "sqlserver_rows": 50,
+            "duckdb_checksum": "1ffab3f3eed3589dbe582e3cd46d4c6965534cda67c9db3cfd0110a6c9965ff0",
+            "sqlserver_checksum": "1ffab3f3eed3589dbe582e3cd46d4c6965534cda67c9db3cfd0110a6c9965ff0",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "dbo.provider",
+            "duckdb_rows": 50,
+            "sqlserver_rows": 50,
+            "duckdb_checksum": "82288c3d0b19cb6bc8433194f4a8ba677ab703d480b7bb847d1e34b75df4ceba",
+            "sqlserver_checksum": "82288c3d0b19cb6bc8433194f4a8ba677ab703d480b7bb847d1e34b75df4ceba",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_pub.provider",
+            "duckdb_rows": 50,
+            "sqlserver_rows": 50,
+            "duckdb_checksum": "82288c3d0b19cb6bc8433194f4a8ba677ab703d480b7bb847d1e34b75df4ceba",
+            "sqlserver_checksum": "82288c3d0b19cb6bc8433194f4a8ba677ab703d480b7bb847d1e34b75df4ceba",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "dbo.cdm_source",
+            "duckdb_rows": 1,
+            "sqlserver_rows": 1,
+            "duckdb_checksum": "75ad2589529b07af85750b9d87deb3e23ee6fac68d2ea4d8f762e6a349e9ea3b",
+            "sqlserver_checksum": "75ad2589529b07af85750b9d87deb3e23ee6fac68d2ea4d8f762e6a349e9ea3b",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_pub.cdm_source",
+            "duckdb_rows": 1,
+            "sqlserver_rows": 1,
+            "duckdb_checksum": "75ad2589529b07af85750b9d87deb3e23ee6fac68d2ea4d8f762e6a349e9ea3b",
+            "sqlserver_checksum": "75ad2589529b07af85750b9d87deb3e23ee6fac68d2ea4d8f762e6a349e9ea3b",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "dbo.source_to_concept_map",
+            "duckdb_rows": 45,
+            "sqlserver_rows": 45,
+            "duckdb_checksum": "85877cc18e718b8574e96440571eb70be46f0042a548363d72c658cece1b27a2",
+            "sqlserver_checksum": "85877cc18e718b8574e96440571eb70be46f0042a548363d72c658cece1b27a2",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_cdm.source_to_concept_map",
+            "duckdb_rows": 45,
+            "sqlserver_rows": 45,
+            "duckdb_checksum": "85877cc18e718b8574e96440571eb70be46f0042a548363d72c658cece1b27a2",
+            "sqlserver_checksum": "85877cc18e718b8574e96440571eb70be46f0042a548363d72c658cece1b27a2",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_cdm.anaesthetic",
+            "duckdb_rows": 85,
+            "sqlserver_rows": 85,
+            "duckdb_checksum": "ebbe0d88eddb7b9e40126808bcc63073330d7a6166a5fd7037fe8727f4135687",
+            "sqlserver_checksum": "ebbe0d88eddb7b9e40126808bcc63073330d7a6166a5fd7037fe8727f4135687",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_pub.anaesthetic",
+            "duckdb_rows": 85,
+            "sqlserver_rows": 85,
+            "duckdb_checksum": "ebbe0d88eddb7b9e40126808bcc63073330d7a6166a5fd7037fe8727f4135687",
+            "sqlserver_checksum": "ebbe0d88eddb7b9e40126808bcc63073330d7a6166a5fd7037fe8727f4135687",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_cdm.anaesthetic_phase",
+            "duckdb_rows": 85,
+            "sqlserver_rows": 85,
+            "duckdb_checksum": "6cdbb6c435b83e8a909fd1f5ec4371c834eaea41340511cb79616506a5316502",
+            "sqlserver_checksum": "6cdbb6c435b83e8a909fd1f5ec4371c834eaea41340511cb79616506a5316502",
+            "agree": true,
+            "error": null
+          },
+          {
+            "object": "anaes_pub.anaesthetic_phase",
+            "duckdb_rows": 85,
+            "sqlserver_rows": 85,
+            "duckdb_checksum": "6cdbb6c435b83e8a909fd1f5ec4371c834eaea41340511cb79616506a5316502",
+            "sqlserver_checksum": "6cdbb6c435b83e8a909fd1f5ec4371c834eaea41340511cb79616506a5316502",
+            "agree": true,
+            "error": null
+          }
+        ],
+        "scenarios": [
+          {
+            "scenario": "age_by_calendar_date",
+            "planted_on_sqlserver": true,
+            "expectations": [
+              {
+                "says": "The child anaesthetised on the day before the first birthday is 0 years and 11 months old, although 365 days have passed since the birth.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The child anaesthetised on the first birthday is one year old, although the anaesthetic starts before the hour of birth.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The child born on 29 February is 0 years and 11 months old on 28 February of the next year.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The child born on 29 February is one year old on 1 March of the next year.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              }
+            ],
+            "duckdb": "met",
+            "sqlserver": "met",
+            "agree": true
+          },
+          {
+            "scenario": "airway_still_in_place",
+            "planted_on_sqlserver": true,
+            "expectations": [
+              {
+                "says": "The tube is written as an endotracheal tube with a start and an empty end.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The tube belongs to the visit detail of the anaesthetic.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              }
+            ],
+            "duckdb": "met",
+            "sqlserver": "met",
+            "agree": true
+          },
+          {
+            "scenario": "anaesthetic_across_midnight",
+            "planted_on_sqlserver": true,
+            "expectations": [
+              {
+                "says": "The anaesthetic lasts 150 minutes and ends on the day after it starts.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The visit detail ends on the date after the date on which it starts.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The systolic reading taken after midnight points at the anaesthetic and falls within its times.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              }
+            ],
+            "duckdb": "met",
+            "sqlserver": "met",
+            "agree": true
+          },
+          {
+            "scenario": "anaesthetic_without_stop",
+            "planted_on_sqlserver": true,
+            "expectations": [
+              {
+                "says": "The anaesthesia layer writes the anaesthetic as a visit detail whose end datetime is empty and whose end date is the date of its start, because the model requires an end date.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The anaesthetic's own procedure row has an empty end.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The anaesthetic table holds the anaesthetic with an empty end and an empty duration, and its whole phase has an empty end.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "Both systolic readings point at the anaesthetic, because an anaesthetic without a stop has no upper end to the window in which a reading points at it.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The infusion belongs to the anaesthetic's visit detail.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              }
+            ],
+            "duckdb": "met",
+            "sqlserver": "met",
+            "agree": true
+          },
+          {
+            "scenario": "anaesthetic_without_theatre_case",
+            "planted_on_sqlserver": true,
+            "expectations": [
+              {
+                "says": "The anaesthesia layer does not write the anaesthetic, because the visit detail step reaches the hospital visit only through the theatre case or the link table, as the data team's queries do, and the run counts the anaesthetic as left out.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The core still writes the child and the hospital visit.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              }
+            ],
+            "duckdb": "met",
+            "sqlserver": "met",
+            "agree": true
+          },
+          {
+            "scenario": "cuff_reading_during_arterial_line",
+            "planted_on_sqlserver": true,
+            "expectations": [
+              {
+                "says": "The child is a neonate of 10 days at the start and has no recorded death.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "Where the arterial reading is preferred only at a shared time, the query keeps all eight readings, the cuff mean of 60 stands from 09:12 until the arterial mean at 09:17, and the four arterial means below 40 stand for one minute each, so the readings below 40 stand for 4 minutes.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "When the arterial line alone is used once it is running, the query sets aside the cuff mean, which falls between the line's first and last readings, and keeps seven readings; the arterial mean of 36 at 09:11 then stands until 09:17 but for no longer than five minutes, so the readings below 40 stand for 8 minutes.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The cuff mean of 60 is written beside the arterial means and points at the anaesthetic, so the choice of rule alone decides whether it counts.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              }
+            ],
+            "duckdb": "met",
+            "sqlserver": "met",
+            "agree": true
+          },
+          {
+            "scenario": "event_link_margin",
+            "planted_on_sqlserver": true,
+            "expectations": [
+              {
+                "says": "The readings taken ten minutes before the start and ten minutes after the end point at the anaesthetic, because each falls within the margin of 15 minutes.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The readings taken twenty minutes before the start and twenty minutes after the end do not point at the anaesthetic, and both still carry its visit detail.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              }
+            ],
+            "duckdb": "met",
+            "sqlserver": "met",
+            "agree": true
+          },
+          {
+            "scenario": "infant_systolic_cases",
+            "planted_on_sqlserver": true,
+            "expectations": [
+              {
+                "says": "The anaesthetic table holds each of the four anaesthetics as a general anaesthetic.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The infant's reading of 50 is written as a systolic pressure that points at the anaesthetic and falls within its times.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The five-year-old is five years old at the start of the anaesthetic, so the infant queries leave the reading out.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The reading taken an hour after the anaesthetic ended does not point at the anaesthetic, because it falls outside the margin after the end, and it still carries the anaesthetic's visit detail.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The reading that the source marks as not accepted is not written.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              }
+            ],
+            "duckdb": "met",
+            "sqlserver": "met",
+            "agree": true
+          },
+          {
+            "scenario": "infusion_never_stopped",
+            "planted_on_sqlserver": true,
+            "expectations": [
+              {
+                "says": "The infusion is written as one period, which ends when the anaesthetic ends.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              }
+            ],
+            "duckdb": "met",
+            "sqlserver": "met",
+            "agree": true
+          },
+          {
+            "scenario": "infusion_rate_changes_twice",
+            "planted_on_sqlserver": true,
+            "expectations": [
+              {
+                "says": "The infusion is written as three periods, one for each rate, and no period starts when the infusion is stopped.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The three periods together run for 90 minutes, from fifteen minutes after the start of the anaesthetic to the stop of the infusion.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              }
+            ],
+            "duckdb": "met",
+            "sqlserver": "met",
+            "agree": true
+          },
+          {
+            "scenario": "long_anaesthetic",
+            "planted_on_sqlserver": true,
+            "expectations": [
+              {
+                "says": "The anaesthetic lasts 500 minutes.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "All three thousand heart rates are written, and each points at the anaesthetic and falls within its times.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              }
+            ],
+            "duckdb": "met",
+            "sqlserver": "met",
+            "agree": true
+          },
+          {
+            "scenario": "malformed_blood_pressure",
+            "planted_on_sqlserver": true,
+            "expectations": [
+              {
+                "says": "The pressure written as 110/ gives a systolic row of 110 and no diastolic row.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The pressure written as a word gives no row.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The pressure written correctly gives one systolic row and one diastolic row.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              }
+            ],
+            "duckdb": "met",
+            "sqlserver": "met",
+            "agree": true
+          },
+          {
+            "scenario": "neonatal_mean_pressure_minutes",
+            "planted_on_sqlserver": true,
+            "expectations": [
+              {
+                "says": "The child is a neonate of 10 days at the start and died 30 days after the date of the start, so the child counts as having died within 90 days.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The ten arterial readings below 40, a minute apart, stand for exactly ten minutes, and the query keeps 17 readings.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The child is a neonate of 10 days at the start and died late on the 90th day after the date of the start, so the child counts as having died within 90 days.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The same ten arterial readings below 40 stand for exactly ten minutes.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The child is a neonate of 10 days at the start and died just after midnight on the 91st day after the date of the start, so the child does not count as having died within 90 days.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The same ten arterial readings below 40 stand for exactly ten minutes.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The child is a neonate of 10 days at the start and has no recorded death.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The cuff reading below 40 is followed by the next reading 20 minutes later, and a reading stands for no longer than five minutes, so the readings below 40 stand for exactly five minutes.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The child is a neonate of 10 days at the start and has no recorded death.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "Neither the low reading ten minutes before the start nor the low reading an hour after the end lies from the start to the end, so the readings below 40 stand for no time, and the query keeps three readings.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The low reading ten minutes before the start still points at the anaesthetic through its event field, because it falls within the margin of 15 minutes, although the query leaves it out.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The child is a neonate of 10 days at the start and has no recorded death.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The last reading, below 40 and two minutes before the end, stands until the end, so the readings below 40 stand for exactly two minutes.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The child is a neonate of 10 days at the start of an anaesthetic with no recorded stop.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The last reading, which is below 40, of the anaesthetic with no recorded stop stands for no time, and the query keeps three readings.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The child is a neonate of 10 days at the start and has no recorded death.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The query keeps the arterial mean of 50 rather than the cuff mean of 35 with the same time, so the readings below 40 stand for no time, and the query keeps four readings.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "Both means are written with the same time, the cuff mean of 35 and the arterial mean of 50.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              }
+            ],
+            "duckdb": "met",
+            "sqlserver": "met",
+            "agree": true
+          },
+          {
+            "scenario": "neonatal_mean_pressure_who_counts",
+            "planted_on_sqlserver": true,
+            "expectations": [
+              {
+                "says": "The child is exactly 28 days old at the start, counted by calendar date although less than 28 whole days have passed since the hour of birth, so the query leaves the anaesthetic out.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The readings below 40 of the child aged 28 days stand for exactly three minutes, which the query never counts.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The child is 27 days old at the start, so the query counts the anaesthetic.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The arterial reading below 40 of the child aged 27 days stand for exactly three minutes.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The child is a neonate of 10 days at the start and has no recorded death.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The neonate's charted pressure has no recorded mean, and the calculated mean is switched off, so no mean pressure is kept.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The charted pressure of the neonate without a mean gives a systolic and a diastolic row and no mean of any kind.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The child is a neonate of 10 days at the start and has no recorded death.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The low mean that the source marks as not accepted is not written, so the readings below 40 stand for no time, and the query keeps two readings.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The mean of 35 that the source marks as not accepted is not written.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The child is a neonate of 5 days at the start of the first anaesthetic and died within 90 days of it.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The cuff reading below 40 in the first anaesthetic stand for exactly three minutes.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The child is a neonate of 12 days at the start of the second anaesthetic and died within 90 days of it as well, so the query counts the death once for each anaesthetic.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The arterial reading below 40 in the second anaesthetic stand for exactly five minutes.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              }
+            ],
+            "duckdb": "met",
+            "sqlserver": "met",
+            "agree": true
+          },
+          {
+            "scenario": "reading_entered_twice",
+            "planted_on_sqlserver": true,
+            "expectations": [
+              {
+                "says": "The anaesthesia layer writes both entries, so the anaesthetic has two systolic rows with the same time and value.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              }
+            ],
+            "duckdb": "met",
+            "sqlserver": "met",
+            "agree": true
+          },
+          {
+            "scenario": "stop_before_start",
+            "planted_on_sqlserver": true,
+            "expectations": [
+              {
+                "says": "The anaesthesia layer does not write the anaesthetic as a visit detail or as a row of the anaesthetic table.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The core still writes the child and the hospital visit.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              }
+            ],
+            "duckdb": "met",
+            "sqlserver": "met",
+            "agree": true
+          },
+          {
+            "scenario": "test_patient",
+            "planted_on_sqlserver": true,
+            "expectations": [
+              {
+                "says": "The core writes no person for the test patient.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The anaesthesia layer writes no visit detail for the test patient's anaesthetic.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              }
+            ],
+            "duckdb": "met",
+            "sqlserver": "met",
+            "agree": true
+          },
+          {
+            "scenario": "two_anaesthetics_one_stay",
+            "planted_on_sqlserver": true,
+            "expectations": [
+              {
+                "says": "The anaesthetic table holds both anaesthetics, and both belong to the same hospital visit.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "Two systolic readings point at the first anaesthetic and one at the second, each at the anaesthetic during which it was taken.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "No reading of the child points at an anaesthetic outside whose times it was taken.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              }
+            ],
+            "duckdb": "met",
+            "sqlserver": "met",
+            "agree": true
+          },
+          {
+            "scenario": "weight_after_anaesthetic",
+            "planted_on_sqlserver": true,
+            "expectations": [
+              {
+                "says": "The weight is written as a body weight of 9.979 kilograms.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              },
+              {
+                "says": "The anaesthetic table gives the anaesthetic no weight, because its rule looks only from seven days before the start to the end.",
+                "duckdb": "met",
+                "sqlserver": "met"
+              }
+            ],
+            "duckdb": "met",
+            "sqlserver": "met",
+            "agree": true
+          }
+        ],
+        "gates": [
+          {
+            "gate": "010_anaesthetics_have_a_person_and_a_visit.sql",
+            "sqlserver_rows": 0,
+            "duckdb_rows": 0,
+            "sqlserver": "passed",
+            "duckdb": "passed",
+            "agree": true
+          },
+          {
+            "gate": "020_an_anaesthetic_ends_after_it_starts.sql",
+            "sqlserver_rows": 0,
+            "duckdb_rows": 0,
+            "sqlserver": "passed",
+            "duckdb": "passed",
+            "agree": true
+          },
+          {
+            "gate": "030_identifiers_are_not_repeated.sql",
+            "sqlserver_rows": 0,
+            "duckdb_rows": 0,
+            "sqlserver": "passed",
+            "duckdb": "passed",
+            "agree": true
+          },
+          {
+            "gate": "040_anaesthetics_fall_inside_an_observation_period.sql",
+            "sqlserver_rows": 0,
+            "duckdb_rows": 0,
+            "sqlserver": "passed",
+            "duckdb": "passed",
+            "agree": true
+          },
+          {
+            "gate": "050_values_point_at_an_anaesthetic.sql",
+            "sqlserver_rows": 0,
+            "duckdb_rows": 0,
+            "sqlserver": "passed",
+            "duckdb": "passed",
+            "agree": true
+          },
+          {
+            "gate": "060_an_anaesthetic_was_written.sql",
+            "sqlserver_rows": 0,
+            "duckdb_rows": 0,
+            "sqlserver": "passed",
+            "duckdb": "passed",
+            "agree": true
+          },
+          {
+            "gate": "070_most_anaesthetics_became_a_visit_detail.sql",
+            "sqlserver_rows": 0,
+            "duckdb_rows": 0,
+            "sqlserver": "passed",
+            "duckdb": "passed",
+            "agree": true
+          },
+          {
+            "gate": "080_one_anaesthetic_row_for_each_anaesthetic.sql",
+            "sqlserver_rows": 0,
+            "duckdb_rows": 0,
+            "sqlserver": "passed",
+            "duckdb": "passed",
+            "agree": true
+          },
+          {
+            "gate": "090_each_anaesthetic_is_one_whole_phase.sql",
+            "sqlserver_rows": 0,
+            "duckdb_rows": 0,
+            "sqlserver": "passed",
+            "duckdb": "passed",
+            "agree": true
+          }
+        ],
+        "counts": {
+          "compared": 2,
+          "differ": 0
+        },
+        "checks": {
+          "differ": 0
+        },
+        "type_findings": 0,
+        "duckdb_failures": [],
+        "safeguards": [],
+        "target_queries": {
+          "compared": 12,
+          "differ": 0
+        },
+        "exit_code": 0
+      },
+      "reason": null,
+      "output": "sqlserver/harness.txt",
+      "summary_file": "sqlserver/summary.json"
+    }
+  },
+  "build": {
+    "sentence": "Schemalyser has built 24 tables containing 1,731 rows.",
+    "mapping_rows": 38,
+    "derived_mappings": [
+      {
+        "vocabulary": "SITE_DRUG",
+        "matched": 1
+      },
+      {
+        "vocabulary": "SITE_PROC",
+        "matched": 2
+      },
+      {
+        "vocabulary": "SITE_DIAGNOSIS",
+        "matched": 4
+      }
+    ],
+    "vocabulary_rows": {
+      "concept": 5,
+      "concept_relationship": 1,
+      "concept_synonym": 1
+    },
+    "concept_notes": 49,
+    "unmapped": {
+      "rows": 100,
+      "variables": 0
+    }
+  },
+  "steps": [
+    {
+      "file": "person.sql",
+      "layer": "core",
+      "table": "person",
+      "status": "ok",
+      "rows": 85,
+      "sha256": "c2104841670c36412d33c525d8af839e782fe67970fd8f0ca60aa0a088f38535"
+    },
+    {
+      "file": "provider.sql",
+      "layer": "core",
+      "table": "provider",
+      "status": "ok",
+      "rows": 50,
+      "sha256": "b4dfd35d3fcbecec71f0a5f76fc4663b940430c48a557dd6799b572ac3a26bbf"
+    },
+    {
+      "file": "care_site.sql",
+      "layer": "core",
+      "table": "care_site",
+      "status": "ok",
+      "rows": 50,
+      "sha256": "89fe3c6530546e26b45afd0f0df145507423ab554452cfa3dd5426258380c458"
+    },
+    {
+      "file": "visit_occurrence.sql",
+      "layer": "core",
+      "table": "visit_occurrence",
+      "status": "ok",
+      "rows": 86,
+      "sha256": "e261a15c0623607dd560801af0f0fd6e6db3ac6b88e3c1f843938ffe89a48049"
+    },
+    {
+      "file": "procedure_occurrence_surgery.sql",
+      "layer": "core",
+      "table": "procedure_occurrence",
+      "status": "ok",
+      "rows": 50,
+      "sha256": "3ed52bb33e9f8cc14ffe977f8dc9be3d4f4b1a4c4797a730fa05350cf0d39daf"
+    },
+    {
+      "file": "condition_occurrence.sql",
+      "layer": "core",
+      "table": "condition_occurrence",
+      "status": "ok",
+      "rows": 50,
+      "sha256": "7c04224ad4fb12036baf440163b056e6ef310a9d889035b3c314037dc4a93611"
+    },
+    {
+      "file": "drug_exposure.sql",
+      "layer": "core",
+      "table": "drug_exposure",
+      "status": "ok",
+      "rows": 26,
+      "sha256": "aad59719b7a8a73e80e5802e5859924faadc2731630cd6c04d9b4f07130f1515"
+    },
+    {
+      "file": "death.sql",
+      "layer": "core",
+      "table": "death",
+      "status": "ok",
+      "rows": 5,
+      "sha256": "e25b5947c58e9312676581c753ab048f85b5eafc2a301d7fc72ba9f91ac77b1f"
+    },
+    {
+      "file": "observation_period.sql",
+      "layer": "core",
+      "table": "observation_period",
+      "status": "ok",
+      "rows": 85,
+      "sha256": "0bc2672425e05240c3971f70bef10c39beddae88d9088bcfadf9a73a16e3144c"
+    },
+    {
+      "file": "cdm_source.sql",
+      "layer": "core",
+      "table": "cdm_source",
+      "status": "ok",
+      "rows": 1,
+      "sha256": "08c59273cb4de7b22dd9a346ab037a498095368b71ecbb948044b6fc64cc6d61"
+    },
+    {
+      "file": "visit_detail_through_case.sql",
+      "layer": "anaesthesia",
+      "table": "visit_detail",
+      "status": "ok",
+      "rows": 85,
+      "sha256": "e4ab12e30e51490a8f03b9aabbde243a06d91fdb781feebff0689e43d1e460b2"
+    },
+    {
+      "file": "procedure_occurrence_anaesthetic.sql",
+      "layer": "anaesthesia",
+      "table": "procedure_occurrence",
+      "status": "ok",
+      "rows": 85,
+      "sha256": "056b3cfcbfd185d9117503afc7ffbf4af1eeaf1c4aafe9944e606429ab0c33a9"
+    },
+    {
+      "file": "procedure_occurrence_events.sql",
+      "layer": "anaesthesia",
+      "table": "procedure_occurrence",
+      "status": "ok",
+      "rows": 13,
+      "sha256": "1a85151c6662b2545809bb43d460da0b30caa43871227ef28317286d12d28ad6"
+    },
+    {
+      "file": "measurement.sql",
+      "layer": "anaesthesia",
+      "table": "measurement",
+      "status": "ok",
+      "rows": 3913,
+      "sha256": "ce2f1e42910b0af2f434db50024da851064321364c325f15bbf1249bf1231461"
+    },
+    {
+      "file": "measurement_blood_pressure_through_anaesthetic.sql",
+      "layer": "anaesthesia",
+      "table": "measurement",
+      "status": "ok",
+      "rows": 43,
+      "sha256": "17efe93fde171700fa10ec0197c54618d5cbe2468ab009bb0eaed66641b13de2"
+    },
+    {
+      "file": "measurement_mean_pressure_calculated.sql",
+      "layer": "anaesthesia",
+      "table": "measurement",
+      "status": "ok",
+      "rows": 0,
+      "sha256": "0d71aeacb1fa6dc25f5a5bc6edc5aee398d8353644d2ab6c7adef402c4acd4b6"
+    },
+    {
+      "file": "measurement_asa.sql",
+      "layer": "anaesthesia",
+      "table": "measurement",
+      "status": "ok",
+      "rows": 50,
+      "sha256": "c9eb7546df9fb9175f7972fe69a6cc875c8ac78e19340e4e833e6586d42d1d64"
+    },
+    {
+      "file": "observation_anaesthesia_events.sql",
+      "layer": "anaesthesia",
+      "table": "observation",
+      "status": "ok",
+      "rows": 37,
+      "sha256": "85dd656484911f6966e436e4005a0491c53f31c7fee964e14a8c26fce6271f9c"
+    },
+    {
+      "file": "drug_exposure_infusion.sql",
+      "layer": "anaesthesia",
+      "table": "drug_exposure",
+      "status": "ok",
+      "rows": 15,
+      "sha256": "3d3c487886b8a6f222a309ba37a6c753db56de9aba4d41f27f763983627edb73"
+    },
+    {
+      "file": "device_exposure.sql",
+      "layer": "anaesthesia",
+      "table": "device_exposure",
+      "status": "ok",
+      "rows": 41,
+      "sha256": "7df3be779509b5705c6e859513ace816f466dca40e7d0ef08dbf14f858eaddd5"
+    },
+    {
+      "file": "anaesthetic.sql",
+      "layer": "derived",
+      "table": "anaesthetic",
+      "status": "ok",
+      "rows": 85,
+      "sha256": "83e98cce7aab565748f6d05df7462bf6b487202388b815f4790100e6de84eeb3"
+    },
+    {
+      "file": "anaesthetic_phase.sql",
+      "layer": "derived",
+      "table": "anaesthetic_phase",
+      "status": "ok",
+      "rows": 85,
+      "sha256": "c0682166f8d9acc78d87f3d4ed729156c5cee13df3e667cd64e60e8afae6d9e6"
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "age_by_calendar_date",
+      "description": "Four infants each have a general anaesthetic with a systolic pressure of 55 during it: one on the day before the first birthday, one on the first birthday before the hour of birth, one born on 29 February and anaesthetised on 28 February of the next year, and one born on 29 February and anaesthetised on 1 March of the next year.",
+      "planted_rows": 24,
+      "fails_gate": null,
+      "expectations": [
+        {
+          "says": "The child anaesthetised on the day before the first birthday is 0 years and 11 months old, although 365 days have passed since the birth.",
+          "met": true,
+          "expected": "0, 11, 365",
+          "found": "0, 11, 365",
+          "error": null
+        },
+        {
+          "says": "The child anaesthetised on the first birthday is one year old, although the anaesthetic starts before the hour of birth.",
+          "met": true,
+          "expected": "1, 12, 366",
+          "found": "1, 12, 366",
+          "error": null
+        },
+        {
+          "says": "The child born on 29 February is 0 years and 11 months old on 28 February of the next year.",
+          "met": true,
+          "expected": "0, 11, 365",
+          "found": "0, 11, 365",
+          "error": null
+        },
+        {
+          "says": "The child born on 29 February is one year old on 1 March of the next year.",
+          "met": true,
+          "expected": "1, 12, 366",
+          "found": "1, 12, 366",
+          "error": null
+        }
+      ],
+      "outcome": "passed"
+    },
+    {
+      "name": "airway_still_in_place",
+      "description": "One child has an endotracheal tube whose removal time is 19 November 2157, the source's mark for a device that is still in place.",
+      "planted_rows": 6,
+      "fails_gate": null,
+      "expectations": [
+        {
+          "says": "The tube is written as an endotracheal tube with a start and an empty end.",
+          "met": true,
+          "expected": "1",
+          "found": "1",
+          "error": null
+        },
+        {
+          "says": "The tube belongs to the visit detail of the anaesthetic.",
+          "met": true,
+          "expected": "1",
+          "found": "1",
+          "error": null
+        }
+      ],
+      "outcome": "passed"
+    },
+    {
+      "name": "anaesthetic_across_midnight",
+      "description": "One child has a general anaesthetic that starts at ten past eleven at night and ends at twenty to two the next morning, with a blood pressure taken after midnight.",
+      "planted_rows": 6,
+      "fails_gate": null,
+      "expectations": [
+        {
+          "says": "The anaesthetic lasts 150 minutes and ends on the day after it starts.",
+          "met": true,
+          "expected": "150, 1",
+          "found": "150, 1",
+          "error": null
+        },
+        {
+          "says": "The visit detail ends on the date after the date on which it starts.",
+          "met": true,
+          "expected": "1",
+          "found": "1",
+          "error": null
+        },
+        {
+          "says": "The systolic reading taken after midnight points at the anaesthetic and falls within its times.",
+          "met": true,
+          "expected": "1",
+          "found": "1",
+          "error": null
+        }
+      ],
+      "outcome": "passed"
+    },
+    {
+      "name": "anaesthetic_without_stop",
+      "description": "One child has an anaesthetic with a recorded start and no recorded stop, two blood pressures on its record, one half an hour and one three hours after the start, and an infusion started during it.",
+      "planted_rows": 8,
+      "fails_gate": null,
+      "expectations": [
+        {
+          "says": "The anaesthesia layer writes the anaesthetic as a visit detail whose end datetime is empty and whose end date is the date of its start, because the model requires an end date.",
+          "met": true,
+          "expected": "1, 1",
+          "found": "1, 1",
+          "error": null
+        },
+        {
+          "says": "The anaesthetic's own procedure row has an empty end.",
+          "met": true,
+          "expected": "1",
+          "found": "1",
+          "error": null
+        },
+        {
+          "says": "The anaesthetic table holds the anaesthetic with an empty end and an empty duration, and its whole phase has an empty end.",
+          "met": true,
+          "expected": "1",
+          "found": "1",
+          "error": null
+        },
+        {
+          "says": "Both systolic readings point at the anaesthetic, because an anaesthetic without a stop has no upper end to the window in which a reading points at it.",
+          "met": true,
+          "expected": "2",
+          "found": "2",
+          "error": null
+        },
+        {
+          "says": "The infusion belongs to the anaesthetic's visit detail.",
+          "met": true,
+          "expected": "1",
+          "found": "1",
+          "error": null
+        }
+      ],
+      "outcome": "passed"
+    },
+    {
+      "name": "anaesthetic_without_theatre_case",
+      "description": "One child has a general anaesthetic whose record carries its hospital visit, but which has no theatre case, or row in the anaesthesia link table, through which the visit detail step reaches that visit.",
+      "planted_rows": 4,
+      "fails_gate": null,
+      "expectations": [
+        {
+          "says": "The anaesthesia layer does not write the anaesthetic, because the visit detail step reaches the hospital visit only through the theatre case or the link table, as the data team's queries do, and the run counts the anaesthetic as left out.",
+          "met": true,
+          "expected": "0",
+          "found": "0",
+          "error": null
+        },
+        {
+          "says": "The core still writes the child and the hospital visit.",
+          "met": true,
+          "expected": "1",
+          "found": "1",
+          "error": null
+        }
+      ],
+      "outcome": "passed"
+    },
+    {
+      "name": "cuff_reading_during_arterial_line",
+      "description": "A neonate of 10 days has a general anaesthetic with an arterial line running from its start to its end, whose arterial means fall below 40 at 09:10, 09:11, 09:17 and 09:18, with a cuff mean of 60 at 09:12 in the middle of that run. Where the arterial reading is preferred only at a shared time, which keeps every reading and lets each stand until the next for no longer than five minutes, the cuff mean interrupts the low run and the readings below 40 stand for 4 minutes. When the arterial line alone is used once it is running, the query sets the cuff mean aside, the arterial mean of 36 at 09:11 then stands until 09:17 but for no longer than five minutes, and the readings below 40 stand for 8 minutes.",
+      "planted_rows": 13,
+      "fails_gate": null,
+      "expectations": [
+        {
+          "says": "The child is a neonate of 10 days at the start and has no recorded death.",
+          "met": true,
+          "expected": "10, 0",
+          "found": "10, 0",
+          "error": null
+        },
+        {
+          "says": "Where the arterial reading is preferred only at a shared time, the query keeps all eight readings, the cuff mean of 60 stands from 09:12 until the arterial mean at 09:17, and the four arterial means below 40 stand for one minute each, so the readings below 40 stand for 4 minutes.",
+          "met": true,
+          "expected": "4, 8",
+          "found": "4.0, 8",
+          "error": null
+        },
+        {
+          "says": "When the arterial line alone is used once it is running, the query sets aside the cuff mean, which falls between the line's first and last readings, and keeps seven readings; the arterial mean of 36 at 09:11 then stands until 09:17 but for no longer than five minutes, so the readings below 40 stand for 8 minutes.",
+          "met": true,
+          "expected": "8, 7",
+          "found": "8.0, 7",
+          "error": null
+        },
+        {
+          "says": "The cuff mean of 60 is written beside the arterial means and points at the anaesthetic, so the choice of rule alone decides whether it counts.",
+          "met": true,
+          "expected": "1",
+          "found": "1",
+          "error": null
+        }
+      ],
+      "outcome": "passed"
+    },
+    {
+      "name": "event_link_margin",
+      "description": "One child has a general anaesthetic from eight to ten in the morning, with blood pressures on its record taken twenty and ten minutes before the start and ten and twenty minutes after the end.",
+      "planted_rows": 9,
+      "fails_gate": null,
+      "expectations": [
+        {
+          "says": "The readings taken ten minutes before the start and ten minutes after the end point at the anaesthetic, because each falls within the margin of 15 minutes.",
+          "met": true,
+          "expected": "2, 92, 93",
+          "found": "2, 92.0, 93.0",
+          "error": null
+        },
+        {
+          "says": "The readings taken twenty minutes before the start and twenty minutes after the end do not point at the anaesthetic, and both still carry its visit detail.",
+          "met": true,
+          "expected": "2, 91, 94",
+          "found": "2, 91.0, 94.0",
+          "error": null
+        }
+      ],
+      "outcome": "passed"
+    },
+    {
+      "name": "infant_systolic_cases",
+      "description": "Four children each have a general anaesthetic with one systolic pressure of 50 on its record: an infant whose reading falls during the anaesthetic, a five-year-old with the same reading, an infant whose reading was taken an hour after the anaesthetic ended, and an infant whose reading the source marks as not accepted.",
+      "planted_rows": 24,
+      "fails_gate": null,
+      "expectations": [
+        {
+          "says": "The anaesthetic table holds each of the four anaesthetics as a general anaesthetic.",
+          "met": true,
+          "expected": "4",
+          "found": "4",
+          "error": null
+        },
+        {
+          "says": "The infant's reading of 50 is written as a systolic pressure that points at the anaesthetic and falls within its times.",
+          "met": true,
+          "expected": "1",
+          "found": "1",
+          "error": null
+        },
+        {
+          "says": "The five-year-old is five years old at the start of the anaesthetic, so the infant queries leave the reading out.",
+          "met": true,
+          "expected": "5",
+          "found": "5",
+          "error": null
+        },
+        {
+          "says": "The reading taken an hour after the anaesthetic ended does not point at the anaesthetic, because it falls outside the margin after the end, and it still carries the anaesthetic's visit detail.",
+          "met": true,
+          "expected": "1",
+          "found": "1",
+          "error": null
+        },
+        {
+          "says": "The reading that the source marks as not accepted is not written.",
+          "met": true,
+          "expected": "0",
+          "found": "0",
+          "error": null
+        }
+      ],
+      "outcome": "passed"
+    },
+    {
+      "name": "infusion_never_stopped",
+      "description": "One child has an infusion that is started during a general anaesthetic and never stopped.",
+      "planted_rows": 6,
+      "fails_gate": null,
+      "expectations": [
+        {
+          "says": "The infusion is written as one period, which ends when the anaesthetic ends.",
+          "met": true,
+          "expected": "1, 1",
+          "found": "1, 1",
+          "error": null
+        }
+      ],
+      "outcome": "passed"
+    },
+    {
+      "name": "infusion_rate_changes_twice",
+      "description": "One child has an infusion that is started during a general anaesthetic, changed in rate twice, and then stopped.",
+      "planted_rows": 9,
+      "fails_gate": null,
+      "expectations": [
+        {
+          "says": "The infusion is written as three periods, one for each rate, and no period starts when the infusion is stopped.",
+          "met": true,
+          "expected": "3",
+          "found": "3",
+          "error": null
+        },
+        {
+          "says": "The three periods together run for 90 minutes, from fifteen minutes after the start of the anaesthetic to the stop of the infusion.",
+          "met": true,
+          "expected": "90, 15",
+          "found": "90, 15",
+          "error": null
+        }
+      ],
+      "outcome": "passed"
+    },
+    {
+      "name": "long_anaesthetic",
+      "description": "One child has a general anaesthetic of eight hours and twenty minutes with a heart rate recorded every ten seconds, three thousand readings in all.",
+      "planted_rows": 3005,
+      "fails_gate": null,
+      "expectations": [
+        {
+          "says": "The anaesthetic lasts 500 minutes.",
+          "met": true,
+          "expected": "500",
+          "found": "500",
+          "error": null
+        },
+        {
+          "says": "All three thousand heart rates are written, and each points at the anaesthetic and falls within its times.",
+          "met": true,
+          "expected": "3000, 3000",
+          "found": "3000, 3000",
+          "error": null
+        }
+      ],
+      "outcome": "passed"
+    },
+    {
+      "name": "malformed_blood_pressure",
+      "description": "One child has three blood pressures on the record of a general anaesthetic: one written as 110/, one written as a word, and one written correctly as 100/60.",
+      "planted_rows": 8,
+      "fails_gate": null,
+      "expectations": [
+        {
+          "says": "The pressure written as 110/ gives a systolic row of 110 and no diastolic row.",
+          "met": true,
+          "expected": "1, 0, 110",
+          "found": "1, 0, 110.0",
+          "error": null
+        },
+        {
+          "says": "The pressure written as a word gives no row.",
+          "met": true,
+          "expected": "0",
+          "found": "0",
+          "error": null
+        },
+        {
+          "says": "The pressure written correctly gives one systolic row and one diastolic row.",
+          "met": true,
+          "expected": "2",
+          "found": "2",
+          "error": null
+        }
+      ],
+      "outcome": "passed"
+    },
+    {
+      "name": "neonatal_mean_pressure_minutes",
+      "description": "Eight neonates each have a general anaesthetic whose mean pressures test how long a pressure below 40 stands: ten arterial readings below 40 a minute apart, with a death 30, 90 or 91 days after the date of the start, a low cuff reading followed by the next reading 20 minutes later, low readings ten minutes before the start and an hour after the end, a low last reading two minutes before the end, a low last reading of an anaesthetic with no recorded stop, and a cuff mean of 35 beside an arterial mean of 50 with the same time.",
+      "planted_rows": 114,
+      "fails_gate": null,
+      "expectations": [
+        {
+          "says": "The child is a neonate of 10 days at the start and died 30 days after the date of the start, so the child counts as having died within 90 days.",
+          "met": true,
+          "expected": "10, 1",
+          "found": "10, 1",
+          "error": null
+        },
+        {
+          "says": "The ten arterial readings below 40, a minute apart, stand for exactly ten minutes, and the query keeps 17 readings.",
+          "met": true,
+          "expected": "10, 17",
+          "found": "10.0, 17",
+          "error": null
+        },
+        {
+          "says": "The child is a neonate of 10 days at the start and died late on the 90th day after the date of the start, so the child counts as having died within 90 days.",
+          "met": true,
+          "expected": "10, 1",
+          "found": "10, 1",
+          "error": null
+        },
+        {
+          "says": "The same ten arterial readings below 40 stand for exactly ten minutes.",
+          "met": true,
+          "expected": "10, 17",
+          "found": "10.0, 17",
+          "error": null
+        },
+        {
+          "says": "The child is a neonate of 10 days at the start and died just after midnight on the 91st day after the date of the start, so the child does not count as having died within 90 days.",
+          "met": true,
+          "expected": "10, 0",
+          "found": "10, 0",
+          "error": null
+        },
+        {
+          "says": "The same ten arterial readings below 40 stand for exactly ten minutes.",
+          "met": true,
+          "expected": "10, 17",
+          "found": "10.0, 17",
+          "error": null
+        },
+        {
+          "says": "The child is a neonate of 10 days at the start and has no recorded death.",
+          "met": true,
+          "expected": "10, 0",
+          "found": "10, 0",
+          "error": null
+        },
+        {
+          "says": "The cuff reading below 40 is followed by the next reading 20 minutes later, and a reading stands for no longer than five minutes, so the readings below 40 stand for exactly five minutes.",
+          "met": true,
+          "expected": "5, 4",
+          "found": "5.0, 4",
+          "error": null
+        },
+        {
+          "says": "The child is a neonate of 10 days at the start and has no recorded death.",
+          "met": true,
+          "expected": "10, 0",
+          "found": "10, 0",
+          "error": null
+        },
+        {
+          "says": "Neither the low reading ten minutes before the start nor the low reading an hour after the end lies from the start to the end, so the readings below 40 stand for no time, and the query keeps three readings.",
+          "met": true,
+          "expected": "0, 3",
+          "found": "0.0, 3",
+          "error": null
+        },
+        {
+          "says": "The low reading ten minutes before the start still points at the anaesthetic through its event field, because it falls within the margin of 15 minutes, although the query leaves it out.",
+          "met": true,
+          "expected": "1",
+          "found": "1",
+          "error": null
+        },
+        {
+          "says": "The child is a neonate of 10 days at the start and has no recorded death.",
+          "met": true,
+          "expected": "10, 0",
+          "found": "10, 0",
+          "error": null
+        },
+        {
+          "says": "The last reading, below 40 and two minutes before the end, stands until the end, so the readings below 40 stand for exactly two minutes.",
+          "met": true,
+          "expected": "2, 3",
+          "found": "2.0, 3",
+          "error": null
+        },
+        {
+          "says": "The child is a neonate of 10 days at the start of an anaesthetic with no recorded stop.",
+          "met": true,
+          "expected": "10, 0",
+          "found": "10, 0",
+          "error": null
+        },
+        {
+          "says": "The last reading, which is below 40, of the anaesthetic with no recorded stop stands for no time, and the query keeps three readings.",
+          "met": true,
+          "expected": "0, 3",
+          "found": "0.0, 3",
+          "error": null
+        },
+        {
+          "says": "The child is a neonate of 10 days at the start and has no recorded death.",
+          "met": true,
+          "expected": "10, 0",
+          "found": "10, 0",
+          "error": null
+        },
+        {
+          "says": "The query keeps the arterial mean of 50 rather than the cuff mean of 35 with the same time, so the readings below 40 stand for no time, and the query keeps four readings.",
+          "met": true,
+          "expected": "0, 4",
+          "found": "0.0, 4",
+          "error": null
+        },
+        {
+          "says": "Both means are written with the same time, the cuff mean of 35 and the arterial mean of 50.",
+          "met": true,
+          "expected": "2",
+          "found": "2",
+          "error": null
+        }
+      ],
+      "outcome": "passed"
+    },
+    {
+      "name": "neonatal_mean_pressure_who_counts",
+      "description": "Five children test which anaesthetics the neonatal question counts: a child aged exactly 28 days and a child aged 27 days at the start, each with readings below 40, a neonate whose charted pressure has no recorded mean, a neonate whose only low mean the source marks as not accepted, and a neonate with two anaesthetics on different days who died within 90 days of both.",
+      "planted_rows": 46,
+      "fails_gate": null,
+      "expectations": [
+        {
+          "says": "The child is exactly 28 days old at the start, counted by calendar date although less than 28 whole days have passed since the hour of birth, so the query leaves the anaesthetic out.",
+          "met": true,
+          "expected": "28, 0",
+          "found": "28, 0",
+          "error": null
+        },
+        {
+          "says": "The readings below 40 of the child aged 28 days stand for exactly three minutes, which the query never counts.",
+          "met": true,
+          "expected": "3, 3",
+          "found": "3.0, 3",
+          "error": null
+        },
+        {
+          "says": "The child is 27 days old at the start, so the query counts the anaesthetic.",
+          "met": true,
+          "expected": "27, 0",
+          "found": "27, 0",
+          "error": null
+        },
+        {
+          "says": "The arterial reading below 40 of the child aged 27 days stand for exactly three minutes.",
+          "met": true,
+          "expected": "3, 3",
+          "found": "3.0, 3",
+          "error": null
+        },
+        {
+          "says": "The child is a neonate of 10 days at the start and has no recorded death.",
+          "met": true,
+          "expected": "10, 0",
+          "found": "10, 0",
+          "error": null
+        },
+        {
+          "says": "The neonate's charted pressure has no recorded mean, and the calculated mean is switched off, so no mean pressure is kept.",
+          "met": true,
+          "expected": "0, 0",
+          "found": "0.0, 0",
+          "error": null
+        },
+        {
+          "says": "The charted pressure of the neonate without a mean gives a systolic and a diastolic row and no mean of any kind.",
+          "met": true,
+          "expected": "2, 0",
+          "found": "2, 0",
+          "error": null
+        },
+        {
+          "says": "The child is a neonate of 10 days at the start and has no recorded death.",
+          "met": true,
+          "expected": "10, 0",
+          "found": "10, 0",
+          "error": null
+        },
+        {
+          "says": "The low mean that the source marks as not accepted is not written, so the readings below 40 stand for no time, and the query keeps two readings.",
+          "met": true,
+          "expected": "0, 2",
+          "found": "0.0, 2",
+          "error": null
+        },
+        {
+          "says": "The mean of 35 that the source marks as not accepted is not written.",
+          "met": true,
+          "expected": "0",
+          "found": "0",
+          "error": null
+        },
+        {
+          "says": "The child is a neonate of 5 days at the start of the first anaesthetic and died within 90 days of it.",
+          "met": true,
+          "expected": "5, 1",
+          "found": "5, 1",
+          "error": null
+        },
+        {
+          "says": "The cuff reading below 40 in the first anaesthetic stand for exactly three minutes.",
+          "met": true,
+          "expected": "3, 3",
+          "found": "3.0, 3",
+          "error": null
+        },
+        {
+          "says": "The child is a neonate of 12 days at the start of the second anaesthetic and died within 90 days of it as well, so the query counts the death once for each anaesthetic.",
+          "met": true,
+          "expected": "12, 1",
+          "found": "12, 1",
+          "error": null
+        },
+        {
+          "says": "The arterial reading below 40 in the second anaesthetic stand for exactly five minutes.",
+          "met": true,
+          "expected": "5, 3",
+          "found": "5.0, 3",
+          "error": null
+        }
+      ],
+      "outcome": "passed"
+    },
+    {
+      "name": "reading_entered_twice",
+      "description": "One child has a blood pressure of 120/80 entered twice, at the same time, on the record of a general anaesthetic.",
+      "planted_rows": 7,
+      "fails_gate": null,
+      "expectations": [
+        {
+          "says": "The anaesthesia layer writes both entries, so the anaesthetic has two systolic rows with the same time and value.",
+          "met": true,
+          "expected": "2, 1",
+          "found": "2, 1",
+          "error": null
+        }
+      ],
+      "outcome": "passed"
+    },
+    {
+      "name": "stop_before_start",
+      "description": "One child has an anaesthetic whose recorded stop is an hour before its recorded start.",
+      "planted_rows": 5,
+      "fails_gate": null,
+      "expectations": [
+        {
+          "says": "The anaesthesia layer does not write the anaesthetic as a visit detail or as a row of the anaesthetic table.",
+          "met": true,
+          "expected": "0, 0",
+          "found": "0, 0",
+          "error": null
+        },
+        {
+          "says": "The core still writes the child and the hospital visit.",
+          "met": true,
+          "expected": "1",
+          "found": "1",
+          "error": null
+        }
+      ],
+      "outcome": "passed"
+    },
+    {
+      "name": "test_patient",
+      "description": "A test patient, whom the core leaves out, has a general anaesthetic with a blood pressure on its record.",
+      "planted_rows": 6,
+      "fails_gate": null,
+      "expectations": [
+        {
+          "says": "The core writes no person for the test patient.",
+          "met": true,
+          "expected": "0",
+          "found": "0",
+          "error": null
+        },
+        {
+          "says": "The anaesthesia layer writes no visit detail for the test patient's anaesthetic.",
+          "met": true,
+          "expected": "0",
+          "found": "0",
+          "error": null
+        }
+      ],
+      "outcome": "passed"
+    },
+    {
+      "name": "two_anaesthetics_one_stay",
+      "description": "One child has two general anaesthetics in the same hospital stay, two days apart, and each anaesthetic has its own blood pressure readings.",
+      "planted_rows": 11,
+      "fails_gate": null,
+      "expectations": [
+        {
+          "says": "The anaesthetic table holds both anaesthetics, and both belong to the same hospital visit.",
+          "met": true,
+          "expected": "2, 1",
+          "found": "2, 1",
+          "error": null
+        },
+        {
+          "says": "Two systolic readings point at the first anaesthetic and one at the second, each at the anaesthetic during which it was taken.",
+          "met": true,
+          "expected": "2, 1",
+          "found": "2, 1",
+          "error": null
+        },
+        {
+          "says": "No reading of the child points at an anaesthetic outside whose times it was taken.",
+          "met": true,
+          "expected": "0",
+          "found": "0",
+          "error": null
+        }
+      ],
+      "outcome": "passed"
+    },
+    {
+      "name": "weight_after_anaesthetic",
+      "description": "One child has a weight of 352 ounces recorded an hour after a general anaesthetic ended, and no weight before it.",
+      "planted_rows": 6,
+      "fails_gate": null,
+      "expectations": [
+        {
+          "says": "The weight is written as a body weight of 9.979 kilograms.",
+          "met": true,
+          "expected": "9.979, 9529",
+          "found": "9.979, 9529",
+          "error": null
+        },
+        {
+          "says": "The anaesthetic table gives the anaesthetic no weight, because its rule looks only from seven days before the start to the end.",
+          "met": true,
+          "expected": "1",
+          "found": "1",
+          "error": null
+        }
+      ],
+      "outcome": "passed"
+    },
+    {
+      "name": "anaesthetic_listed_twice",
+      "description": "The source lists one general anaesthetic twice under the same identifier, so that the anaesthesia layer writes that identifier twice and the gate on repeated identifiers fails.",
+      "planted_rows": 6,
+      "fails_gate": "030_identifiers_are_not_repeated.sql",
+      "expectations": [
+        {
+          "says": "The visit detail table holds the anaesthetic twice under one identifier.",
+          "met": true,
+          "expected": "2, 1",
+          "found": "2, 1",
+          "error": null
+        }
+      ],
+      "gate_failed_as_intended": true,
+      "outcome": "passed"
+    }
+  ],
+  "reconciliation": {
+    "totals": {
+      "steps": 22,
+      "steps_traced": 20,
+      "source_rows": 13004,
+      "reached": 4833,
+      "dropped": 8171,
+      "target_rows": 4854,
+      "extra_target_rows": 21,
+      "steps_with_unexpected_several_rows": [],
+      "all_sums_agree": true
+    },
+    "coverage": {
+      "steps": 22,
+      "traced": 20,
+      "accounted": {
+        "count": 19,
+        "steps": [
+          "person.sql",
+          "provider.sql",
+          "care_site.sql",
+          "visit_occurrence.sql",
+          "procedure_occurrence_surgery.sql",
+          "condition_occurrence.sql",
+          "drug_exposure.sql",
+          "death.sql",
+          "visit_detail_through_case.sql",
+          "procedure_occurrence_anaesthetic.sql",
+          "procedure_occurrence_events.sql",
+          "measurement.sql",
+          "measurement_mean_pressure_calculated.sql",
+          "measurement_asa.sql",
+          "observation_anaesthesia_events.sql",
+          "drug_exposure_infusion.sql",
+          "device_exposure.sql",
+          "anaesthetic.sql",
+          "anaesthetic_phase.sql"
+        ]
+      },
+      "fan_out_confirmed": {
+        "count": 1,
+        "steps": [
+          {
+            "step": "measurement_blood_pressure_through_anaesthetic.sql",
+            "expected": "several rows may come from one source row: each accepted charted pressure gives two rows, one systolic and one diastolic.",
+            "source_rows_with_several_target_rows": 21
+          }
+        ]
+      },
+      "not_traced": {
+        "count": 2,
+        "steps": [
+          {
+            "step": "observation_period.sql",
+            "reason": "the step combines rows, so a target row stands for several source rows"
+          },
+          {
+            "step": "cdm_source.sql",
+            "reason": "the step reads no table"
+          }
+        ]
+      },
+      "unexplained": {
+        "count": 0,
+        "items": []
+      },
+      "outcome": "passed"
+    },
+    "steps": [
+      {
+        "step": "person.sql",
+        "layer": "core",
+        "target": "person",
+        "written": 85,
+        "traced": true,
+        "source_table": "PERSON_MASTER",
+        "source_rows": 86,
+        "reached": 85,
+        "dropped": [
+          {
+            "by": "the condition COALESCE(pm.TEST_PERSON_FLAG, 'N') <> 'Y'",
+            "rows": 1
+          }
+        ],
+        "target_rows": 85,
+        "source_rows_with_several_target_rows": 0,
+        "extra_target_rows": 0,
+        "starts_from_a_nested_query": false,
+        "start_agrees": true,
+        "sums_agree": true,
+        "matches_the_run": true,
+        "expected": "at most one target row for each source row",
+        "as_expected": true
+      },
+      {
+        "step": "provider.sql",
+        "layer": "core",
+        "target": "provider",
+        "written": 50,
+        "traced": true,
+        "source_table": "STAFF_MASTER",
+        "source_rows": 50,
+        "reached": 50,
+        "dropped": [],
+        "target_rows": 50,
+        "source_rows_with_several_target_rows": 0,
+        "extra_target_rows": 0,
+        "starts_from_a_nested_query": false,
+        "start_agrees": true,
+        "sums_agree": true,
+        "matches_the_run": true,
+        "expected": "at most one target row for each source row",
+        "as_expected": true
+      },
+      {
+        "step": "care_site.sql",
+        "layer": "core",
+        "target": "care_site",
+        "written": 50,
+        "traced": true,
+        "source_table": "WARD_DEF",
+        "source_rows": 50,
+        "reached": 50,
+        "dropped": [],
+        "target_rows": 50,
+        "source_rows_with_several_target_rows": 0,
+        "extra_target_rows": 0,
+        "starts_from_a_nested_query": false,
+        "start_agrees": true,
+        "sums_agree": true,
+        "matches_the_run": true,
+        "expected": "at most one target row for each source row",
+        "as_expected": true
+      },
+      {
+        "step": "visit_occurrence.sql",
+        "layer": "core",
+        "target": "visit_occurrence",
+        "written": 86,
+        "traced": true,
+        "source_table": "VISIT",
+        "source_rows": 87,
+        "reached": 86,
+        "dropped": [
+          {
+            "by": "the inner join to omop.person AS p on p.person_source_value = v.PERSON_KEY",
+            "rows": 1
+          }
+        ],
+        "target_rows": 86,
+        "source_rows_with_several_target_rows": 0,
+        "extra_target_rows": 0,
+        "starts_from_a_nested_query": false,
+        "start_agrees": true,
+        "sums_agree": true,
+        "matches_the_run": true,
+        "expected": "at most one target row for each source row",
+        "as_expected": true
+      },
+      {
+        "step": "procedure_occurrence_surgery.sql",
+        "layer": "core",
+        "target": "procedure_occurrence",
+        "written": 50,
+        "traced": true,
+        "source_table": "CASE_PROC",
+        "source_rows": 50,
+        "reached": 50,
+        "dropped": [],
+        "target_rows": 50,
+        "source_rows_with_several_target_rows": 0,
+        "extra_target_rows": 0,
+        "starts_from_a_nested_query": false,
+        "start_agrees": true,
+        "sums_agree": true,
+        "matches_the_run": true,
+        "expected": "at most one target row for each source row",
+        "as_expected": true
+      },
+      {
+        "step": "condition_occurrence.sql",
+        "layer": "core",
+        "target": "condition_occurrence",
+        "written": 50,
+        "traced": true,
+        "source_table": "VISIT_DIAGNOSIS",
+        "source_rows": 50,
+        "reached": 50,
+        "dropped": [],
+        "target_rows": 50,
+        "source_rows_with_several_target_rows": 0,
+        "extra_target_rows": 0,
+        "starts_from_a_nested_query": false,
+        "start_agrees": true,
+        "sums_agree": true,
+        "matches_the_run": true,
+        "expected": "at most one target row for each source row",
+        "as_expected": true
+      },
+      {
+        "step": "drug_exposure.sql",
+        "layer": "core",
+        "target": "drug_exposure",
+        "written": 26,
+        "traced": true,
+        "source_table": "DRUG_GIVEN",
+        "source_rows": 56,
+        "reached": 26,
+        "dropped": [
+          {
+            "by": "the inner join to omop.source_to_concept_map AS given on given.source_vocabulary_id = 'SITE_DRUG_GIVEN' AND given.source_code = CAST(g.ACTION_CAT AS VARCHAR(50))",
+            "rows": 30
+          }
+        ],
+        "target_rows": 26,
+        "source_rows_with_several_target_rows": 0,
+        "extra_target_rows": 0,
+        "starts_from_a_nested_query": false,
+        "start_agrees": true,
+        "sums_agree": true,
+        "matches_the_run": true,
+        "expected": "at most one target row for each source row",
+        "as_expected": true
+      },
+      {
+        "step": "death.sql",
+        "layer": "core",
+        "target": "death",
+        "written": 5,
+        "traced": true,
+        "source_table": "PERSON_MASTER_2",
+        "source_rows": 54,
+        "reached": 5,
+        "dropped": [
+          {
+            "by": "the condition NOT pm.DEATH_TS IS NULL",
+            "rows": 49
+          }
+        ],
+        "target_rows": 5,
+        "source_rows_with_several_target_rows": 0,
+        "extra_target_rows": 0,
+        "starts_from_a_nested_query": false,
+        "start_agrees": true,
+        "sums_agree": true,
+        "matches_the_run": true,
+        "expected": "at most one target row for each source row",
+        "as_expected": true
+      },
+      {
+        "step": "observation_period.sql",
+        "layer": "core",
+        "target": "observation_period",
+        "written": 85,
+        "traced": false,
+        "reason": "the step combines rows, so a target row stands for several source rows"
+      },
+      {
+        "step": "cdm_source.sql",
+        "layer": "core",
+        "target": "cdm_source",
+        "written": 1,
+        "traced": false,
+        "reason": "the step reads no table"
+      },
+      {
+        "step": "visit_detail_through_case.sql",
+        "layer": "anaesthesia",
+        "target": "visit_detail",
+        "written": 85,
+        "traced": true,
+        "source_table": "ANAES_RECORD",
+        "source_rows": 88,
+        "reached": 85,
+        "dropped": [
+          {
+            "by": "the inner join to THEATRE_CASE AS tc on tc.CASE_KEY = ar.CASE_KEY",
+            "rows": 1
+          },
+          {
+            "by": "the inner join to omop.visit_occurrence AS vo on vo.visit_source_value = CAST(tc.VISIT_KEY AS VARCHAR(50))",
+            "rows": 1
+          },
+          {
+            "by": "the condition ar.ANAES_STOP_TS IS NULL OR ar.ANAES_STOP_TS >= ar.ANAES_START_TS",
+            "rows": 1
+          }
+        ],
+        "target_rows": 85,
+        "source_rows_with_several_target_rows": 0,
+        "extra_target_rows": 0,
+        "starts_from_a_nested_query": false,
+        "start_agrees": true,
+        "sums_agree": true,
+        "matches_the_run": true,
+        "expected": "at most one target row for each source row",
+        "as_expected": true
+      },
+      {
+        "step": "procedure_occurrence_anaesthetic.sql",
+        "layer": "anaesthesia",
+        "target": "procedure_occurrence",
+        "written": 85,
+        "traced": true,
+        "source_table": "ANAES_RECORD",
+        "source_rows": 88,
+        "reached": 85,
+        "dropped": [
+          {
+            "by": "the inner join to omop.visit_detail AS vd on vd.visit_detail_source_value = CAST(ar.ANAES_KEY AS VARCHAR(50))",
+            "rows": 3
+          }
+        ],
+        "target_rows": 85,
+        "source_rows_with_several_target_rows": 0,
+        "extra_target_rows": 0,
+        "starts_from_a_nested_query": false,
+        "start_agrees": true,
+        "sums_agree": true,
+        "matches_the_run": true,
+        "expected": "at most one target row for each source row",
+        "as_expected": true
+      },
+      {
+        "step": "procedure_occurrence_events.sql",
+        "layer": "anaesthesia",
+        "target": "procedure_occurrence",
+        "written": 13,
+        "traced": true,
+        "source_table": "ANAES_EVENT",
+        "source_rows": 50,
+        "reached": 13,
+        "dropped": [
+          {
+            "by": "the inner join to omop.source_to_concept_map AS what on what.source_vocabulary_id = 'SITE_EVENT_PROC' AND what.source_code = CAST(ev.EVENT_TYPE_KEY AS VARCHAR(50))",
+            "rows": 37
+          }
+        ],
+        "target_rows": 13,
+        "source_rows_with_several_target_rows": 0,
+        "extra_target_rows": 0,
+        "starts_from_a_nested_query": false,
+        "start_agrees": true,
+        "sums_agree": true,
+        "matches_the_run": true,
+        "expected": "at most one target row for each source row",
+        "as_expected": true
+      },
+      {
+        "step": "measurement.sql",
+        "layer": "anaesthesia",
+        "target": "measurement",
+        "written": 3913,
+        "traced": true,
+        "source_table": "OBS_READING",
+        "source_rows": 3939,
+        "reached": 3913,
+        "dropped": [
+          {
+            "by": "the inner join to omop.visit_occurrence AS vo on vo.visit_source_value = CAST(s.VISIT_KEY AS VARCHAR(50))",
+            "rows": 1
+          },
+          {
+            "by": "the condition NOT TRY_CAST(r.READ_VALUE AS FLOAT) IS NULL",
+            "rows": 24
+          },
+          {
+            "by": "the condition COALESCE(r.ACCEPTED_FLAG, 'Y') <> 'N'",
+            "rows": 1
+          }
+        ],
+        "target_rows": 3913,
+        "source_rows_with_several_target_rows": 0,
+        "extra_target_rows": 0,
+        "starts_from_a_nested_query": false,
+        "start_agrees": true,
+        "sums_agree": true,
+        "matches_the_run": true,
+        "expected": "at most one target row for each source row",
+        "as_expected": true
+      },
+      {
+        "step": "measurement_blood_pressure_through_anaesthetic.sql",
+        "layer": "anaesthesia",
+        "target": "measurement",
+        "written": 43,
+        "traced": true,
+        "source_table": "OBS_READING",
+        "source_rows": 3939,
+        "reached": 22,
+        "dropped": [
+          {
+            "by": "the nested query's own joins and conditions",
+            "rows": 2
+          },
+          {
+            "by": "the inner join to omop.visit_detail AS vd on vd.visit_detail_source_value = CAST(s.ANAES_KEY AS VARCHAR(50))",
+            "rows": 1
+          },
+          {
+            "by": "the inner join to omop.source_to_concept_map AS what on what.source_vocabulary_id = bp.vocabulary AND what.source_code = CAST(bp.OBS_TYPE_KEY AS VARCHAR(50))",
+            "rows": 3913
+          },
+          {
+            "by": "the condition NOT bp.reading IS NULL",
+            "rows": 1
+          }
+        ],
+        "target_rows": 43,
+        "source_rows_with_several_target_rows": 21,
+        "extra_target_rows": 21,
+        "starts_from_a_nested_query": true,
+        "start_agrees": true,
+        "sums_agree": true,
+        "matches_the_run": true,
+        "expected": "several rows may come from one source row: each accepted charted pressure gives two rows, one systolic and one diastolic.",
+        "as_expected": true
+      },
+      {
+        "step": "measurement_mean_pressure_calculated.sql",
+        "layer": "anaesthesia",
+        "target": "measurement",
+        "written": 0,
+        "traced": true,
+        "source_table": "OBS_READING",
+        "source_rows": 3939,
+        "reached": 0,
+        "dropped": [
+          {
+            "by": "the nested query's own joins and conditions",
+            "rows": 2
+          },
+          {
+            "by": "the inner join to omop.source_to_concept_map AS setting on setting.source_vocabulary_id = 'SITE_SETTING' AND setting.source_code = 'CALCULATED_MEAN_PRESSURE' AND setting.target_concept_id = 1",
+            "rows": 3937
+          }
+        ],
+        "target_rows": 0,
+        "source_rows_with_several_target_rows": 0,
+        "extra_target_rows": 0,
+        "starts_from_a_nested_query": true,
+        "start_agrees": true,
+        "sums_agree": true,
+        "matches_the_run": true,
+        "expected": "at most one target row for each source row",
+        "as_expected": true
+      },
+      {
+        "step": "measurement_asa.sql",
+        "layer": "anaesthesia",
+        "target": "measurement",
+        "written": 50,
+        "traced": true,
+        "source_table": "ANAES_RECORD",
+        "source_rows": 88,
+        "reached": 50,
+        "dropped": [
+          {
+            "by": "the inner join to omop.visit_detail AS vd on vd.visit_detail_source_value = CAST(ar.ANAES_KEY AS VARCHAR(50))",
+            "rows": 3
+          },
+          {
+            "by": "the inner join to omop.source_to_concept_map AS grade on grade.source_vocabulary_id = 'SITE_RISK_GRADE' AND grade.source_code = CAST(ar.RISK_GRADE_CAT AS VARCHAR(50))",
+            "rows": 35
+          }
+        ],
+        "target_rows": 50,
+        "source_rows_with_several_target_rows": 0,
+        "extra_target_rows": 0,
+        "starts_from_a_nested_query": false,
+        "start_agrees": true,
+        "sums_agree": true,
+        "matches_the_run": true,
+        "expected": "at most one target row for each source row",
+        "as_expected": true
+      },
+      {
+        "step": "observation_anaesthesia_events.sql",
+        "layer": "anaesthesia",
+        "target": "observation",
+        "written": 37,
+        "traced": true,
+        "source_table": "ANAES_EVENT",
+        "source_rows": 50,
+        "reached": 37,
+        "dropped": [
+          {
+            "by": "the inner join to omop.source_to_concept_map AS what on what.source_vocabulary_id = 'SITE_EVENT_OBS' AND what.source_code = CAST(ev.EVENT_TYPE_KEY AS VARCHAR(50))",
+            "rows": 13
+          }
+        ],
+        "target_rows": 37,
+        "source_rows_with_several_target_rows": 0,
+        "extra_target_rows": 0,
+        "starts_from_a_nested_query": false,
+        "start_agrees": true,
+        "sums_agree": true,
+        "matches_the_run": true,
+        "expected": "at most one target row for each source row",
+        "as_expected": true
+      },
+      {
+        "step": "drug_exposure_infusion.sql",
+        "layer": "anaesthesia",
+        "target": "drug_exposure",
+        "written": 15,
+        "traced": true,
+        "source_table": "DRUG_GIVEN",
+        "source_rows": 56,
+        "reached": 15,
+        "dropped": [
+          {
+            "by": "the nested query's own joins and conditions",
+            "rows": 26
+          },
+          {
+            "by": "the condition a.phase = 'SITE_DRUG_RUNNING'",
+            "rows": 15
+          }
+        ],
+        "target_rows": 15,
+        "source_rows_with_several_target_rows": 0,
+        "extra_target_rows": 0,
+        "starts_from_a_nested_query": true,
+        "start_agrees": true,
+        "sums_agree": true,
+        "matches_the_run": true,
+        "expected": "at most one target row for each source row",
+        "as_expected": true
+      },
+      {
+        "step": "device_exposure.sql",
+        "layer": "anaesthesia",
+        "target": "device_exposure",
+        "written": 41,
+        "traced": true,
+        "source_table": "AIRWAY_DEVICE",
+        "source_rows": 51,
+        "reached": 41,
+        "dropped": [
+          {
+            "by": "the inner join to omop.source_to_concept_map AS what on what.source_vocabulary_id = 'SITE_DEVICE' AND what.source_code = CAST(dv.DEVICE_KIND_KEY AS VARCHAR(50))",
+            "rows": 10
+          }
+        ],
+        "target_rows": 41,
+        "source_rows_with_several_target_rows": 0,
+        "extra_target_rows": 0,
+        "starts_from_a_nested_query": false,
+        "start_agrees": true,
+        "sums_agree": true,
+        "matches_the_run": true,
+        "expected": "at most one target row for each source row",
+        "as_expected": true
+      },
+      {
+        "step": "anaesthetic.sql",
+        "layer": "derived",
+        "target": "anaesthetic",
+        "written": 85,
+        "traced": true,
+        "source_table": "omop.procedure_occurrence",
+        "source_rows": 148,
+        "reached": 85,
+        "dropped": [
+          {
+            "by": "the condition po.procedure_source_value = 'ANAESTHETIC'",
+            "rows": 63
+          }
+        ],
+        "target_rows": 85,
+        "source_rows_with_several_target_rows": 0,
+        "extra_target_rows": 0,
+        "starts_from_a_nested_query": false,
+        "start_agrees": true,
+        "sums_agree": true,
+        "matches_the_run": true,
+        "expected": "at most one target row for each source row",
+        "as_expected": true
+      },
+      {
+        "step": "anaesthetic_phase.sql",
+        "layer": "derived",
+        "target": "anaesthetic_phase",
+        "written": 85,
+        "traced": true,
+        "source_table": "omop.anaesthetic",
+        "source_rows": 85,
+        "reached": 85,
+        "dropped": [],
+        "target_rows": 85,
+        "source_rows_with_several_target_rows": 0,
+        "extra_target_rows": 0,
+        "starts_from_a_nested_query": true,
+        "start_agrees": true,
+        "sums_agree": true,
+        "matches_the_run": true,
+        "expected": "several rows may come from one source row: each anaesthetic may have several phases, each of which is a row.",
+        "as_expected": true
+      }
+    ],
+    "source_tables": [
+      {
+        "table": "AIRWAY_DEVICE",
+        "rows": 51,
+        "planted_rows": 1,
+        "read_by": [
+          {
+            "step": "device_exposure.sql",
+            "target": "device_exposure",
+            "role": "starts from"
+          }
+        ],
+        "rows_reaching_each_target": {
+          "device_exposure": 41
+        }
+      },
+      {
+        "table": "ANAES_EVENT",
+        "rows": 50,
+        "planted_rows": 0,
+        "read_by": [
+          {
+            "step": "procedure_occurrence_events.sql",
+            "target": "procedure_occurrence",
+            "role": "starts from"
+          },
+          {
+            "step": "observation_anaesthesia_events.sql",
+            "target": "observation",
+            "role": "starts from"
+          }
+        ],
+        "rows_reaching_each_target": {
+          "procedure_occurrence": 13,
+          "observation": 37
+        }
+      },
+      {
+        "table": "ANAES_RECORD",
+        "rows": 88,
+        "planted_rows": 38,
+        "read_by": [
+          {
+            "step": "visit_detail_through_case.sql",
+            "target": "visit_detail",
+            "role": "starts from"
+          },
+          {
+            "step": "procedure_occurrence_anaesthetic.sql",
+            "target": "procedure_occurrence",
+            "role": "starts from"
+          },
+          {
+            "step": "measurement_asa.sql",
+            "target": "measurement",
+            "role": "starts from"
+          }
+        ],
+        "rows_reaching_each_target": {
+          "visit_detail": 85,
+          "procedure_occurrence": 85,
+          "measurement": 50
+        }
+      },
+      {
+        "table": "ANAES_STAFF",
+        "rows": 50,
+        "planted_rows": 0,
+        "read_by": [
+          {
+            "step": "visit_detail_through_case.sql",
+            "target": "visit_detail",
+            "role": "joins or looks up"
+          }
+        ],
+        "rows_reaching_each_target": {}
+      },
+      {
+        "table": "CASE_PROC",
+        "rows": 50,
+        "planted_rows": 0,
+        "read_by": [
+          {
+            "step": "procedure_occurrence_surgery.sql",
+            "target": "procedure_occurrence",
+            "role": "starts from"
+          }
+        ],
+        "rows_reaching_each_target": {
+          "procedure_occurrence": 50
+        }
+      },
+      {
+        "table": "DIAG_DEF",
+        "rows": 50,
+        "planted_rows": 0,
+        "read_by": [
+          {
+            "step": "condition_occurrence.sql",
+            "target": "condition_occurrence",
+            "role": "joins or looks up"
+          }
+        ],
+        "rows_reaching_each_target": {}
+      },
+      {
+        "table": "DRUG_DEF",
+        "rows": 50,
+        "planted_rows": 0,
+        "read_by": [
+          {
+            "step": "drug_exposure.sql",
+            "target": "drug_exposure",
+            "role": "joins or looks up"
+          },
+          {
+            "step": "drug_exposure_infusion.sql",
+            "target": "drug_exposure",
+            "role": "joins or looks up"
+          }
+        ],
+        "rows_reaching_each_target": {}
+      },
+      {
+        "table": "DRUG_GIVEN",
+        "rows": 56,
+        "planted_rows": 6,
+        "read_by": [
+          {
+            "step": "drug_exposure.sql",
+            "target": "drug_exposure",
+            "role": "starts from"
+          },
+          {
+            "step": "drug_exposure_infusion.sql",
+            "target": "drug_exposure",
+            "role": "starts from"
+          }
+        ],
+        "rows_reaching_each_target": {
+          "drug_exposure": 41
+        }
+      },
+      {
+        "table": "OBS_READING",
+        "rows": 3939,
+        "planted_rows": 3120,
+        "read_by": [
+          {
+            "step": "measurement.sql",
+            "target": "measurement",
+            "role": "starts from"
+          },
+          {
+            "step": "measurement_blood_pressure_through_anaesthetic.sql",
+            "target": "measurement",
+            "role": "starts from"
+          },
+          {
+            "step": "measurement_mean_pressure_calculated.sql",
+            "target": "measurement",
+            "role": "starts from"
+          }
+        ],
+        "rows_reaching_each_target": {
+          "measurement": 3935
+        }
+      },
+      {
+        "table": "OBS_SHEET",
+        "rows": 88,
+        "planted_rows": 38,
+        "read_by": [
+          {
+            "step": "measurement.sql",
+            "target": "measurement",
+            "role": "joins or looks up"
+          },
+          {
+            "step": "measurement_blood_pressure_through_anaesthetic.sql",
+            "target": "measurement",
+            "role": "joins or looks up"
+          },
+          {
+            "step": "measurement_mean_pressure_calculated.sql",
+            "target": "measurement",
+            "role": "joins or looks up"
+          }
+        ],
+        "rows_reaching_each_target": {}
+      },
+      {
+        "table": "PERSON_MASTER",
+        "rows": 86,
+        "planted_rows": 36,
+        "read_by": [
+          {
+            "step": "person.sql",
+            "target": "person",
+            "role": "starts from"
+          }
+        ],
+        "rows_reaching_each_target": {
+          "person": 85
+        }
+      },
+      {
+        "table": "PERSON_MASTER_2",
+        "rows": 54,
+        "planted_rows": 4,
+        "read_by": [
+          {
+            "step": "death.sql",
+            "target": "death",
+            "role": "starts from"
+          }
+        ],
+        "rows_reaching_each_target": {
+          "death": 5
+        }
+      },
+      {
+        "table": "PROC_DEF",
+        "rows": 50,
+        "planted_rows": 0,
+        "read_by": [
+          {
+            "step": "procedure_occurrence_surgery.sql",
+            "target": "procedure_occurrence",
+            "role": "joins or looks up"
+          }
+        ],
+        "rows_reaching_each_target": {}
+      },
+      {
+        "table": "STAFF_MASTER",
+        "rows": 50,
+        "planted_rows": 0,
+        "read_by": [
+          {
+            "step": "provider.sql",
+            "target": "provider",
+            "role": "starts from"
+          }
+        ],
+        "rows_reaching_each_target": {
+          "provider": 50
+        }
+      },
+      {
+        "table": "THEATRE_CASE",
+        "rows": 87,
+        "planted_rows": 37,
+        "read_by": [
+          {
+            "step": "procedure_occurrence_surgery.sql",
+            "target": "procedure_occurrence",
+            "role": "joins or looks up"
+          },
+          {
+            "step": "visit_detail_through_case.sql",
+            "target": "visit_detail",
+            "role": "joins or looks up"
+          }
+        ],
+        "rows_reaching_each_target": {}
+      },
+      {
+        "table": "VISIT",
+        "rows": 87,
+        "planted_rows": 37,
+        "read_by": [
+          {
+            "step": "visit_occurrence.sql",
+            "target": "visit_occurrence",
+            "role": "starts from"
+          }
+        ],
+        "rows_reaching_each_target": {
+          "visit_occurrence": 86
+        }
+      },
+      {
+        "table": "VISIT_DIAGNOSIS",
+        "rows": 50,
+        "planted_rows": 0,
+        "read_by": [
+          {
+            "step": "condition_occurrence.sql",
+            "target": "condition_occurrence",
+            "role": "starts from"
+          }
+        ],
+        "rows_reaching_each_target": {
+          "condition_occurrence": 50
+        }
+      },
+      {
+        "table": "WARD_DEF",
+        "rows": 50,
+        "planted_rows": 0,
+        "read_by": [
+          {
+            "step": "care_site.sql",
+            "target": "care_site",
+            "role": "starts from"
+          }
+        ],
+        "rows_reaching_each_target": {
+          "care_site": 50
+        }
+      }
+    ],
+    "target_tables": [
+      {
+        "table": "person",
+        "rows_from_steps": 85,
+        "rows_held": 85,
+        "agree": true
+      },
+      {
+        "table": "provider",
+        "rows_from_steps": 50,
+        "rows_held": 50,
+        "agree": true
+      },
+      {
+        "table": "care_site",
+        "rows_from_steps": 50,
+        "rows_held": 50,
+        "agree": true
+      },
+      {
+        "table": "visit_occurrence",
+        "rows_from_steps": 86,
+        "rows_held": 86,
+        "agree": true
+      },
+      {
+        "table": "procedure_occurrence",
+        "rows_from_steps": 148,
+        "rows_held": 148,
+        "agree": true
+      },
+      {
+        "table": "condition_occurrence",
+        "rows_from_steps": 50,
+        "rows_held": 50,
+        "agree": true
+      },
+      {
+        "table": "drug_exposure",
+        "rows_from_steps": 41,
+        "rows_held": 41,
+        "agree": true
+      },
+      {
+        "table": "death",
+        "rows_from_steps": 5,
+        "rows_held": 5,
+        "agree": true
+      },
+      {
+        "table": "observation_period",
+        "rows_from_steps": 85,
+        "rows_held": 85,
+        "agree": true
+      },
+      {
+        "table": "cdm_source",
+        "rows_from_steps": 1,
+        "rows_held": 1,
+        "agree": true
+      },
+      {
+        "table": "visit_detail",
+        "rows_from_steps": 85,
+        "rows_held": 85,
+        "agree": true
+      },
+      {
+        "table": "measurement",
+        "rows_from_steps": 4006,
+        "rows_held": 4006,
+        "agree": true
+      },
+      {
+        "table": "observation",
+        "rows_from_steps": 37,
+        "rows_held": 37,
+        "agree": true
+      },
+      {
+        "table": "device_exposure",
+        "rows_from_steps": 41,
+        "rows_held": 41,
+        "agree": true
+      },
+      {
+        "table": "anaesthetic",
+        "rows_from_steps": 85,
+        "rows_held": 85,
+        "agree": true
+      },
+      {
+        "table": "anaesthetic_phase",
+        "rows_from_steps": 85,
+        "rows_held": 85,
+        "agree": true
+      }
+    ],
+    "note": "A gate removes no rows: it fails the run. Every row left out is put down to a join or a condition of a step."
+  },
+  "release": {
+    "written": true,
+    "sha256": "ccefddf0060c520e02e492eb23d50fbdfafba67d43ab08165fcd7734fb29c18c",
+    "steps_carried": 12,
+    "steps_expected": 12,
+    "carries_every_step": true,
+    "gates_carried": 9,
+    "counts_carried": 2,
+    "source_columns": 40,
+    "gates": [
+      {
+        "gate": "010_anaesthetics_have_a_person_and_a_visit.sql",
+        "rows": 0,
+        "outcome": "passed"
+      },
+      {
+        "gate": "020_an_anaesthetic_ends_after_it_starts.sql",
+        "rows": 0,
+        "outcome": "passed"
+      },
+      {
+        "gate": "030_identifiers_are_not_repeated.sql",
+        "rows": 0,
+        "outcome": "passed"
+      },
+      {
+        "gate": "040_anaesthetics_fall_inside_an_observation_period.sql",
+        "rows": 0,
+        "outcome": "passed"
+      },
+      {
+        "gate": "050_values_point_at_an_anaesthetic.sql",
+        "rows": 0,
+        "outcome": "passed"
+      },
+      {
+        "gate": "060_an_anaesthetic_was_written.sql",
+        "rows": 0,
+        "outcome": "passed"
+      },
+      {
+        "gate": "070_most_anaesthetics_became_a_visit_detail.sql",
+        "rows": 0,
+        "outcome": "passed"
+      },
+      {
+        "gate": "080_one_anaesthetic_row_for_each_anaesthetic.sql",
+        "rows": 0,
+        "outcome": "passed"
+      },
+      {
+        "gate": "090_each_anaesthetic_is_one_whole_phase.sql",
+        "rows": 0,
+        "outcome": "passed"
+      }
+    ],
+    "counts": [
+      {
+        "count": "010_anaesthetics_whose_stop_is_before_their_start.sql",
+        "rows": 1,
+        "error": null,
+        "says": "The number of anaesthetics that the anaesthesia layer has left out because the recorded stop is before the recorded start is 1."
+      },
+      {
+        "count": "020_anaesthetics_without_a_hospital_visit.sql",
+        "rows": 2,
+        "error": null,
+        "says": "The number of further anaesthetics that the anaesthesia layer has left out because it found no hospital visit for them in the core, for example where an anaesthetic has no theatre case or belongs to a test patient, is 2."
+      }
+    ],
+    "run_with": "sqlcmd -S SERVER -d DATABASE -b -i release.sql -v OmopSchemaName=\"dbo\" AnaesSchemaName=\"anaes_cdm\" AnaesPubSchemaName=\"anaes_pub\" SourcePrefix=\"clarity_stage.\""
+  },
+  "dqd": {
+    "status": "ran",
+    "reason": null,
+    "duckdb_file": "testbed_cdm.duckdb",
+    "duckdb_schema": "cdm",
+    "csv_folder": "csv",
+    "tables_exported": 17,
+    "load": "(cd csv && psql -h 127.0.0.1 -p PORT -U postgres -f load_postgresql.sql)",
+    "command": "docker run --rm --platform linux/amd64 -e PG_PORT=PORT -v \"$PWD/dqd/run_dqd.R:/run_dqd.R:ro\" -v \"PASSWORD_FILE:/run/pg-password.txt:ro\" -v jdbc-drivers-data:/jdbc -v \"$PWD/dqd/out:/out\" broadsea-broadsea-run-dqd Rscript /run_dqd.R",
+    "script": "dqd/run_dqd.R",
+    "seconds": 159.3,
+    "results_file": "dqd/out/dqd_results.json",
+    "output": "dqd/dqd.txt",
+    "checks": 2374,
+    "passed": 1176,
+    "failed": 13,
+    "could_not_run": 33,
+    "not_applicable": 1152,
+    "by_category": {
+      "Completeness": {
+        "checks": 501,
+        "passed": 275,
+        "failed": 10,
+        "could_not_run": 11,
+        "not_applicable": 205
+      },
+      "Conformance": {
+        "checks": 1060,
+        "passed": 685,
+        "failed": 3,
+        "could_not_run": 18,
+        "not_applicable": 354
+      },
+      "Plausibility": {
+        "checks": 813,
+        "passed": 216,
+        "failed": 0,
+        "could_not_run": 4,
+        "not_applicable": 593
+      }
+    },
+    "expected_failures": 39,
+    "unexpected_failures": 7,
+    "failures": [
+      {
+        "check": "cdmTable",
+        "table": "COHORT",
+        "field": null,
+        "category": "Conformance",
+        "outcome": "failed",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT, which holds the cohorts that ATLAS generates, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "cdmTable",
+        "table": "COHORT_DEFINITION",
+        "field": null,
+        "category": "Conformance",
+        "outcome": "failed",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT_DEFINITION, which ATLAS fills when it defines cohorts, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "measurePersonCompleteness",
+        "table": "DRUG_ERA",
+        "field": null,
+        "category": "Completeness",
+        "outcome": "failed",
+        "violated_rows": 85,
+        "denominator_rows": 85,
+        "expected": true,
+        "reason": "The conversion does not build DRUG_ERA, which the era scripts derive from DRUG_EXPOSURE after loading, so no person has a record in it."
+      },
+      {
+        "check": "measurePersonCompleteness",
+        "table": "CONDITION_ERA",
+        "field": null,
+        "category": "Completeness",
+        "outcome": "failed",
+        "violated_rows": 85,
+        "denominator_rows": 85,
+        "expected": true,
+        "reason": "The conversion does not build CONDITION_ERA, which the era scripts derive from CONDITION_OCCURRENCE after loading, so no person has a record in it."
+      },
+      {
+        "check": "measureConditionEraCompleteness",
+        "table": "CONDITION_ERA",
+        "field": null,
+        "category": "Completeness",
+        "outcome": "failed",
+        "violated_rows": 4,
+        "denominator_rows": 4,
+        "expected": true,
+        "reason": "The conversion does not build CONDITION_ERA, so no person with a condition occurrence has a condition era yet."
+      },
+      {
+        "check": "isRequired",
+        "table": "COHORT",
+        "field": "COHORT_DEFINITION_ID",
+        "category": "Conformance",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT, which holds the cohorts that ATLAS generates, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "isRequired",
+        "table": "COHORT",
+        "field": "COHORT_END_DATE",
+        "category": "Conformance",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT, which holds the cohorts that ATLAS generates, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "isRequired",
+        "table": "COHORT",
+        "field": "COHORT_START_DATE",
+        "category": "Conformance",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT, which holds the cohorts that ATLAS generates, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "isRequired",
+        "table": "COHORT",
+        "field": "SUBJECT_ID",
+        "category": "Conformance",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT, which holds the cohorts that ATLAS generates, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "isRequired",
+        "table": "COHORT_DEFINITION",
+        "field": "COHORT_DEFINITION_ID",
+        "category": "Conformance",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT_DEFINITION, which ATLAS fills when it defines cohorts, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "isRequired",
+        "table": "COHORT_DEFINITION",
+        "field": "COHORT_DEFINITION_NAME",
+        "category": "Conformance",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT_DEFINITION, which ATLAS fills when it defines cohorts, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "isRequired",
+        "table": "COHORT_DEFINITION",
+        "field": "DEFINITION_TYPE_CONCEPT_ID",
+        "category": "Conformance",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT_DEFINITION, which ATLAS fills when it defines cohorts, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "isRequired",
+        "table": "COHORT_DEFINITION",
+        "field": "SUBJECT_CONCEPT_ID",
+        "category": "Conformance",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT_DEFINITION, which ATLAS fills when it defines cohorts, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "cdmDatatype",
+        "table": "COHORT",
+        "field": "COHORT_DEFINITION_ID",
+        "category": "Conformance",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT, which holds the cohorts that ATLAS generates, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "cdmDatatype",
+        "table": "COHORT",
+        "field": "SUBJECT_ID",
+        "category": "Conformance",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT, which holds the cohorts that ATLAS generates, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "cdmDatatype",
+        "table": "COHORT_DEFINITION",
+        "field": "COHORT_DEFINITION_ID",
+        "category": "Conformance",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT_DEFINITION, which ATLAS fills when it defines cohorts, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "cdmDatatype",
+        "table": "COHORT_DEFINITION",
+        "field": "DEFINITION_TYPE_CONCEPT_ID",
+        "category": "Conformance",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT_DEFINITION, which ATLAS fills when it defines cohorts, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "cdmDatatype",
+        "table": "COHORT_DEFINITION",
+        "field": "SUBJECT_CONCEPT_ID",
+        "category": "Conformance",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT_DEFINITION, which ATLAS fills when it defines cohorts, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "isForeignKey",
+        "table": "COHORT_DEFINITION",
+        "field": "COHORT_DEFINITION_ID",
+        "category": "Conformance",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT_DEFINITION, which ATLAS fills when it defines cohorts, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "isForeignKey",
+        "table": "COHORT_DEFINITION",
+        "field": "DEFINITION_TYPE_CONCEPT_ID",
+        "category": "Conformance",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT_DEFINITION, which ATLAS fills when it defines cohorts, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "isForeignKey",
+        "table": "COHORT_DEFINITION",
+        "field": "SUBJECT_CONCEPT_ID",
+        "category": "Conformance",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT_DEFINITION, which ATLAS fills when it defines cohorts, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "fkClass",
+        "table": "DRUG_STRENGTH",
+        "field": "INGREDIENT_CONCEPT_ID",
+        "category": "Conformance",
+        "outcome": "failed",
+        "violated_rows": 3587,
+        "denominator_rows": 2966568,
+        "expected": true,
+        "reason": "DRUG_STRENGTH is a vocabulary table from the Athena download that the OMOP database already holds; the conversion does not write to it, and the rows that fail are the vocabulary release's own."
+      },
+      {
+        "check": "isStandardValidConcept",
+        "table": "COHORT_DEFINITION",
+        "field": "DEFINITION_TYPE_CONCEPT_ID",
+        "category": "Conformance",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT_DEFINITION, which ATLAS fills when it defines cohorts, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "isStandardValidConcept",
+        "table": "COHORT_DEFINITION",
+        "field": "SUBJECT_CONCEPT_ID",
+        "category": "Conformance",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT_DEFINITION, which ATLAS fills when it defines cohorts, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "measureValueCompleteness",
+        "table": "COHORT",
+        "field": "COHORT_DEFINITION_ID",
+        "category": "Completeness",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT, which holds the cohorts that ATLAS generates, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "measureValueCompleteness",
+        "table": "COHORT",
+        "field": "COHORT_END_DATE",
+        "category": "Completeness",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT, which holds the cohorts that ATLAS generates, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "measureValueCompleteness",
+        "table": "COHORT",
+        "field": "COHORT_START_DATE",
+        "category": "Completeness",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT, which holds the cohorts that ATLAS generates, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "measureValueCompleteness",
+        "table": "COHORT",
+        "field": "SUBJECT_ID",
+        "category": "Completeness",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT, which holds the cohorts that ATLAS generates, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "measureValueCompleteness",
+        "table": "COHORT_DEFINITION",
+        "field": "COHORT_DEFINITION_DESCRIPTION",
+        "category": "Completeness",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT_DEFINITION, which ATLAS fills when it defines cohorts, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "measureValueCompleteness",
+        "table": "COHORT_DEFINITION",
+        "field": "COHORT_DEFINITION_ID",
+        "category": "Completeness",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT_DEFINITION, which ATLAS fills when it defines cohorts, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "measureValueCompleteness",
+        "table": "COHORT_DEFINITION",
+        "field": "COHORT_DEFINITION_NAME",
+        "category": "Completeness",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT_DEFINITION, which ATLAS fills when it defines cohorts, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "measureValueCompleteness",
+        "table": "COHORT_DEFINITION",
+        "field": "COHORT_DEFINITION_SYNTAX",
+        "category": "Completeness",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT_DEFINITION, which ATLAS fills when it defines cohorts, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "measureValueCompleteness",
+        "table": "COHORT_DEFINITION",
+        "field": "COHORT_INITIATION_DATE",
+        "category": "Completeness",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT_DEFINITION, which ATLAS fills when it defines cohorts, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "measureValueCompleteness",
+        "table": "COHORT_DEFINITION",
+        "field": "DEFINITION_TYPE_CONCEPT_ID",
+        "category": "Completeness",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT_DEFINITION, which ATLAS fills when it defines cohorts, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "measureValueCompleteness",
+        "table": "COHORT_DEFINITION",
+        "field": "SUBJECT_CONCEPT_ID",
+        "category": "Completeness",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT_DEFINITION, which ATLAS fills when it defines cohorts, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "standardConceptRecordCompleteness",
+        "table": "CONDITION_OCCURRENCE",
+        "field": "CONDITION_CONCEPT_ID",
+        "category": "Completeness",
+        "outcome": "failed",
+        "violated_rows": 46,
+        "denominator_rows": 50,
+        "expected": false,
+        "reason": null
+      },
+      {
+        "check": "standardConceptRecordCompleteness",
+        "table": "DRUG_EXPOSURE",
+        "field": "DRUG_CONCEPT_ID",
+        "category": "Completeness",
+        "outcome": "failed",
+        "violated_rows": 41,
+        "denominator_rows": 41,
+        "expected": false,
+        "reason": null
+      },
+      {
+        "check": "standardConceptRecordCompleteness",
+        "table": "PROCEDURE_OCCURRENCE",
+        "field": "PROCEDURE_CONCEPT_ID",
+        "category": "Completeness",
+        "outcome": "failed",
+        "violated_rows": 48,
+        "denominator_rows": 148,
+        "expected": false,
+        "reason": null
+      },
+      {
+        "check": "sourceValueCompleteness",
+        "table": "CONDITION_OCCURRENCE",
+        "field": "CONDITION_SOURCE_VALUE",
+        "category": "Completeness",
+        "outcome": "failed",
+        "violated_rows": 26,
+        "denominator_rows": 27,
+        "expected": false,
+        "reason": null
+      },
+      {
+        "check": "sourceValueCompleteness",
+        "table": "DRUG_EXPOSURE",
+        "field": "DRUG_SOURCE_VALUE",
+        "category": "Completeness",
+        "outcome": "failed",
+        "violated_rows": 32,
+        "denominator_rows": 32,
+        "expected": false,
+        "reason": null
+      },
+      {
+        "check": "sourceValueCompleteness",
+        "table": "MEASUREMENT",
+        "field": "MEASUREMENT_SOURCE_VALUE",
+        "category": "Completeness",
+        "outcome": "failed",
+        "violated_rows": 1,
+        "denominator_rows": 7,
+        "expected": false,
+        "reason": null
+      },
+      {
+        "check": "sourceValueCompleteness",
+        "table": "PROCEDURE_OCCURRENCE",
+        "field": "PROCEDURE_SOURCE_VALUE",
+        "category": "Completeness",
+        "outcome": "failed",
+        "violated_rows": 27,
+        "denominator_rows": 30,
+        "expected": false,
+        "reason": null
+      },
+      {
+        "check": "plausibleValueLow",
+        "table": "COHORT",
+        "field": "COHORT_END_DATE",
+        "category": "Plausibility",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT, which holds the cohorts that ATLAS generates, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "plausibleValueLow",
+        "table": "COHORT",
+        "field": "COHORT_START_DATE",
+        "category": "Plausibility",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT, which holds the cohorts that ATLAS generates, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "plausibleValueHigh",
+        "table": "COHORT",
+        "field": "COHORT_END_DATE",
+        "category": "Plausibility",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT, which holds the cohorts that ATLAS generates, so the dashboard finds the table missing and cannot run its field checks on it."
+      },
+      {
+        "check": "plausibleValueHigh",
+        "table": "COHORT",
+        "field": "COHORT_START_DATE",
+        "category": "Plausibility",
+        "outcome": "could not run",
+        "violated_rows": null,
+        "denominator_rows": null,
+        "expected": true,
+        "reason": "The conversion does not build COHORT, which holds the cohorts that ATLAS generates, so the dashboard finds the table missing and cannot run its field checks on it."
+      }
+    ],
+    "expectations": {
+      "file": "dqd-expectations.json",
+      "entries": 6,
+      "sha256": "f67f273f0cd43a55093b61e52195adcfd6e138db99a5e7ad4d4b27fc425e88d4"
+    }
+  },
+  "checks": [
+    {
+      "check": "every step ran cleanly",
+      "passed": true
+    },
+    {
+      "check": "every row fits the CDM's field list",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "check": "every gate passed",
+      "passed": true
+    },
+    {
+      "check": "every count ran",
+      "passed": true
+    },
+    {
+      "check": "every planted scenario passed",
+      "passed": true
+    },
+    {
+      "check": "the reconciliation found no unexplained discrepancy",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "check": "the release script was written and carries every step that ran",
+      "passed": true
+    },
+    {
+      "check": "the Data Quality Dashboard ran",
+      "passed": true,
+      "detail": "ran"
+    },
+    {
+      "check": "the Data Quality Dashboard reported no failure that dqd-expectations.json does not permit",
+      "passed": false,
+      "detail": [
+        "standardConceptRecordCompleteness on CONDITION_OCCURRENCE.CONDITION_CONCEPT_ID",
+        "standardConceptRecordCompleteness on DRUG_EXPOSURE.DRUG_CONCEPT_ID",
+        "standardConceptRecordCompleteness on PROCEDURE_OCCURRENCE.PROCEDURE_CONCEPT_ID",
+        "sourceValueCompleteness on CONDITION_OCCURRENCE.CONDITION_SOURCE_VALUE",
+        "sourceValueCompleteness on DRUG_EXPOSURE.DRUG_SOURCE_VALUE",
+        "sourceValueCompleteness on MEASUREMENT.MEASUREMENT_SOURCE_VALUE",
+        "sourceValueCompleteness on PROCEDURE_OCCURRENCE.PROCEDURE_SOURCE_VALUE"
+      ]
+    },
+    {
+      "check": "release equivalence",
+      "source": "summary.json",
+      "state": "passed",
+      "passed": true,
+      "detail": "The release script ran on SQL Server, all 36 OMOP objects matched DuckDB's by row count and checksum, and all 19 planted scenarios, with 77 expectations, were met on both engines."
+    },
+    {
+      "check": "SQL Server agrees with DuckDB",
+      "passed": true,
+      "detail": [
+        "OMOP objects compared: 36; identical: 36; different: 0.",
+        "Steps that failed or wrote a different number of rows: 0.",
+        "Gates passed on SQL Server: 9 of 9; gates whose outcome differs from DuckDB's or did not pass: 0.",
+        "Counts that differ between the engines or could not be compared: 0 of 2.",
+        "Check rows that differ, and checks that failed: 0.",
+        "Source columns whose sandbox values do not fit the catalogue's type: 0.",
+        "Reasons that the DuckDB run itself was not clean: 0.",
+        "Safeguards that behaved as they should: 0 of 0.",
+        "Target queries, drafts and source queries whose answers differ or could not be compared: 0 of 12.",
+        "Expectations of the planted scenarios not met on both engines: 0 of 77."
+      ]
+    }
+  ],
+  "summary": {
+    "profile": "full",
+    "outcome": "failed: the Data Quality Dashboard reported 7 failures that dqd-expectations.json does not permit (standardConceptRecordCompleteness on CONDITION_OCCURRENCE.CONDITION_CONCEPT_ID, standardConceptRecordCompleteness on DRUG_EXPOSURE.DRUG_CONCEPT_ID, standardConceptRecordCompleteness on PROCEDURE_OCCURRENCE.PROCEDURE_CONCEPT_ID, sourceValueCompleteness on CONDITION_OCCURRENCE.CONDITION_SOURCE_VALUE, sourceValueCompleteness on DRUG_EXPOSURE.DRUG_SOURCE_VALUE, sourceValueCompleteness on MEASUREMENT.MEASUREMENT_SOURCE_VALUE, sourceValueCompleteness on PROCEDURE_OCCURRENCE.PROCEDURE_SOURCE_VALUE)",
+    "checks_passed": 10,
+    "checks_judged": 11,
+    "scenarios_passed": 20,
+    "scenarios": 20,
+    "seconds": 252.9,
+    "sentences": [
+      "The conversion ran 22 of 22 steps cleanly over 24 tables containing 1,731 rows.",
+      "20 of 20 planted scenarios passed against their written expectations.",
+      "The reconciliation traced 20 of 22 steps and accounted for every excluded row in them; 2 steps could not be traced (observation_period.sql, cdm_source.sql), so their rows are not reconciled.",
+      "In 1 of the traced steps (measurement_blood_pressure_through_anaesthetic.sql), a source row gave several target rows, as testbed.json allows.",
+      "Counted step by step, the tables that the traced steps start from held 13,004 rows, of which 4,833 reached a target and 8,171 were left out by a join or a condition, and the steps wrote 4,854 rows from them.",
+      "9 of 9 gates passed, and 2 of 2 counts ran.",
+      "The Data Quality Dashboard ran 2,374 checks: 1,176 passed, 13 failed, 33 could not run and 1,152 did not apply. Of the 46 that failed or could not run, 39 are expected, with a reason in dqd-expectations.json, and 7 are not.",
+      "Release equivalence passed: on SQL Server, the release script produced the same derived rows and scenario rows as DuckDB."
+    ]
+  }
+}

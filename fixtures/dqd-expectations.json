@@ -1,0 +1,33 @@
+[
+  {
+    "check": "*",
+    "table": "COHORT",
+    "reason": "The conversion does not build COHORT, which holds the cohorts that ATLAS generates, so the dashboard finds the table missing and cannot run its field checks on it."
+  },
+  {
+    "check": "*",
+    "table": "COHORT_DEFINITION",
+    "reason": "The conversion does not build COHORT_DEFINITION, which ATLAS fills when it defines cohorts, so the dashboard finds the table missing and cannot run its field checks on it."
+  },
+  {
+    "check": "measurePersonCompleteness",
+    "table": "DRUG_ERA",
+    "reason": "The conversion does not build DRUG_ERA, which the era scripts derive from DRUG_EXPOSURE after loading, so no person has a record in it."
+  },
+  {
+    "check": "measurePersonCompleteness",
+    "table": "CONDITION_ERA",
+    "reason": "The conversion does not build CONDITION_ERA, which the era scripts derive from CONDITION_OCCURRENCE after loading, so no person has a record in it."
+  },
+  {
+    "check": "measureConditionEraCompleteness",
+    "table": "CONDITION_ERA",
+    "reason": "The conversion does not build CONDITION_ERA, so no person with a condition occurrence has a condition era yet."
+  },
+  {
+    "check": "fkClass",
+    "table": "DRUG_STRENGTH",
+    "field": "INGREDIENT_CONCEPT_ID",
+    "reason": "DRUG_STRENGTH is a vocabulary table from the Athena download that the OMOP database already holds; the conversion does not write to it, and the rows that fail are the vocabulary release's own."
+  }
+]

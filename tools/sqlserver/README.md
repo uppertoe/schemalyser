@@ -73,7 +73,7 @@ The harness compares the custom tables that the derived layer writes in the anae
 
 The harness plants the conversion's scenarios on both engines. It loads `clarity_shadow` with the sandbox's rows as they were before any scenario was planted, runs each scenario's `rows.sql` on SQL Server as written, and, once the release script has run, evaluates each expectation on the published schema and reports whether it is met on each engine. `--scenarios` names the scenarios to plant, and `--no-scenarios` plants none.
 
-The harness prints what it found and exits with 1 if any table, gate, count, safeguard or check row differs, or if the DuckDB run itself was not clean. A difference is a finding to be explained, not a fault in the harness. The scripts are removed from the container at the end of a run, and the two databases stay until the next run.
+The harness prints what it found and exits with 1 if any table, gate, count, safeguard or check row differs, or if the DuckDB run itself was not clean. Beside the release script, it writes `summary.json`, which holds the same findings for a machine: each OMOP object's row counts and a checksum of its rows on both engines, each scenario's outcome on each engine, each gate's outcome, and the versions used. The OMOP testbed reads that file. A difference is a finding to be explained, not a fault in the harness. The scripts are removed from the container at the end of a run, and the two databases stay until the next run.
 
 ## Exporting the published schema for OHDSI
 
