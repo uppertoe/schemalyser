@@ -538,7 +538,7 @@ def test_a_column_that_identifies_a_person_is_never_offered_for_a_flag_a_kind_a_
     s = fresh()
     assert describe.identifies_person("GIVEN_NAME") and describe.identifies_person("RECORD_NO")
     assert describe.identifies_person("STAFF_LABEL", "The name of the staff member.")
-    assert describe.identifies_person("ADD_LINE_1", "The first line of the patient's street address.")
+    assert describe.identifies_person("HOME_STREET_1", "The first line of the patient's street address.")
     assert not describe.identifies_person("BIRTH_TS", "The date and time on which the patient was born.")
     assert not describe.identifies_person("LABEL", "The name of the category.")
     columns = {c["name"]: c for c in s.columns_of("PERSON_MASTER")["columns"]}
