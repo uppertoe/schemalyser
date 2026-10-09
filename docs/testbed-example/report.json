@@ -20,10 +20,10 @@
     "conversion": "conversion",
     "rows": 50,
     "catalogue_sha256": "fec2984677b5fd81ea77fb9d5017e66b662d01b46d164c63fecfdb6ce3f91fa9",
-    "conversion_sha256": "53ff2a84a61df2710e1b824aa9759f32eb028a785254c86722b9d965561ffa4a",
+    "conversion_sha256": "38780ef8e9e2071267ca71b2b336a20d916f28b879301b2e67d4981307ca9eb3",
     "requests_sha256": "24d5a27cd6bae6b8064ecda92948103275873ce94be602f572dd2c0cd9c9ac62",
     "expectations": "testbed.json",
-    "run_at": "2026-10-08T23:12:10+00:00"
+    "run_at": "2026-10-09T00:18:09+00:00"
   },
   "engines": {
     "build": "duckdb",
@@ -221,8 +221,8 @@
             "object": "dbo.condition_occurrence",
             "duckdb_rows": 50,
             "sqlserver_rows": 50,
-            "duckdb_checksum": "3c416e9b60a3c54dcdbde58ea16bdbbd43d508f45addb2fe142985d5167626ce",
-            "sqlserver_checksum": "3c416e9b60a3c54dcdbde58ea16bdbbd43d508f45addb2fe142985d5167626ce",
+            "duckdb_checksum": "fb2f0a7fcaae30c76a9fd697f5fd3629257bb9d1f8ff187f0d18a5fb625c7a83",
+            "sqlserver_checksum": "fb2f0a7fcaae30c76a9fd697f5fd3629257bb9d1f8ff187f0d18a5fb625c7a83",
             "agree": true,
             "error": null
           },
@@ -230,8 +230,8 @@
             "object": "anaes_pub.condition_occurrence",
             "duckdb_rows": 50,
             "sqlserver_rows": 50,
-            "duckdb_checksum": "3c416e9b60a3c54dcdbde58ea16bdbbd43d508f45addb2fe142985d5167626ce",
-            "sqlserver_checksum": "3c416e9b60a3c54dcdbde58ea16bdbbd43d508f45addb2fe142985d5167626ce",
+            "duckdb_checksum": "fb2f0a7fcaae30c76a9fd697f5fd3629257bb9d1f8ff187f0d18a5fb625c7a83",
+            "sqlserver_checksum": "fb2f0a7fcaae30c76a9fd697f5fd3629257bb9d1f8ff187f0d18a5fb625c7a83",
             "agree": true,
             "error": null
           },
@@ -248,8 +248,8 @@
             "object": "anaes_cdm.drug_exposure",
             "duckdb_rows": 15,
             "sqlserver_rows": 15,
-            "duckdb_checksum": "a44d209a6258d0a6ad6aa632af30fa05abf840afe254e7b2bb74794019cab37c",
-            "sqlserver_checksum": "a44d209a6258d0a6ad6aa632af30fa05abf840afe254e7b2bb74794019cab37c",
+            "duckdb_checksum": "75529791300420119a3fa2b59e17844dcf87bfbcd2dc5999d8eda4791afe4fb1",
+            "sqlserver_checksum": "75529791300420119a3fa2b59e17844dcf87bfbcd2dc5999d8eda4791afe4fb1",
             "agree": true,
             "error": null
           },
@@ -257,8 +257,8 @@
             "object": "anaes_pub.drug_exposure",
             "duckdb_rows": 41,
             "sqlserver_rows": 41,
-            "duckdb_checksum": "63f867a28702604677f36958ecfc6d54d97fce404465a67cbc4a16c1d5c8b023",
-            "sqlserver_checksum": "63f867a28702604677f36958ecfc6d54d97fce404465a67cbc4a16c1d5c8b023",
+            "duckdb_checksum": "11be059964931eeb91953fe35d1ac3eec22a30fd5184b1fb730ff45ca0b688ed",
+            "sqlserver_checksum": "11be059964931eeb91953fe35d1ac3eec22a30fd5184b1fb730ff45ca0b688ed",
             "agree": true,
             "error": null
           },
@@ -266,8 +266,8 @@
             "object": "dbo.procedure_occurrence",
             "duckdb_rows": 50,
             "sqlserver_rows": 50,
-            "duckdb_checksum": "de1bc1b8200f1e1bde42ea13a5b7a4bd0c683c9675950d29eb27e0f4b7691507",
-            "sqlserver_checksum": "de1bc1b8200f1e1bde42ea13a5b7a4bd0c683c9675950d29eb27e0f4b7691507",
+            "duckdb_checksum": "c0a5cab594c8c582cf8fd62c9dc7c51977797e6e7c170d87cc365e954fee2b3e",
+            "sqlserver_checksum": "c0a5cab594c8c582cf8fd62c9dc7c51977797e6e7c170d87cc365e954fee2b3e",
             "agree": true,
             "error": null
           },
@@ -284,8 +284,8 @@
             "object": "anaes_pub.procedure_occurrence",
             "duckdb_rows": 148,
             "sqlserver_rows": 148,
-            "duckdb_checksum": "39b36fc7adb401b2da3b67ab0b4a7da771fc55ae38dd7339f69e274c859aebf0",
-            "sqlserver_checksum": "39b36fc7adb401b2da3b67ab0b4a7da771fc55ae38dd7339f69e274c859aebf0",
+            "duckdb_checksum": "b8a756b7272514ae2a43f02ce75da29ac53b4b6d17b615f3f9526bb554465d9f",
+            "sqlserver_checksum": "b8a756b7272514ae2a43f02ce75da29ac53b4b6d17b615f3f9526bb554465d9f",
             "agree": true,
             "error": null
           },
@@ -309,19 +309,19 @@
           },
           {
             "object": "anaes_cdm.measurement",
-            "duckdb_rows": 4006,
-            "sqlserver_rows": 4006,
-            "duckdb_checksum": "2cbc79f803864404bb024f4ca5656a0bf51486af72f968222369a78f40f479e0",
-            "sqlserver_checksum": "2cbc79f803864404bb024f4ca5656a0bf51486af72f968222369a78f40f479e0",
+            "duckdb_rows": 4049,
+            "sqlserver_rows": 4049,
+            "duckdb_checksum": "bc025c8fcc596e0bc177018f897f1f2778030436505a4345df34442b48ee3c52",
+            "sqlserver_checksum": "bc025c8fcc596e0bc177018f897f1f2778030436505a4345df34442b48ee3c52",
             "agree": true,
             "error": null
           },
           {
             "object": "anaes_pub.measurement",
-            "duckdb_rows": 4006,
-            "sqlserver_rows": 4006,
-            "duckdb_checksum": "2cbc79f803864404bb024f4ca5656a0bf51486af72f968222369a78f40f479e0",
-            "sqlserver_checksum": "2cbc79f803864404bb024f4ca5656a0bf51486af72f968222369a78f40f479e0",
+            "duckdb_rows": 4049,
+            "sqlserver_rows": 4049,
+            "duckdb_checksum": "bc025c8fcc596e0bc177018f897f1f2778030436505a4345df34442b48ee3c52",
+            "sqlserver_checksum": "bc025c8fcc596e0bc177018f897f1f2778030436505a4345df34442b48ee3c52",
             "agree": true,
             "error": null
           },
@@ -435,19 +435,19 @@
           },
           {
             "object": "dbo.source_to_concept_map",
-            "duckdb_rows": 173,
-            "sqlserver_rows": 173,
-            "duckdb_checksum": "c83c0d6e4f145ef0fb946aea9ef2808c65630d8f88d588d7d165da62bde663af",
-            "sqlserver_checksum": "c83c0d6e4f145ef0fb946aea9ef2808c65630d8f88d588d7d165da62bde663af",
+            "duckdb_rows": 191,
+            "sqlserver_rows": 191,
+            "duckdb_checksum": "7fdffdd7c7535068ceed92a12eb3f85376d08af1620db6df55e100716537b794",
+            "sqlserver_checksum": "7fdffdd7c7535068ceed92a12eb3f85376d08af1620db6df55e100716537b794",
             "agree": true,
             "error": null
           },
           {
             "object": "anaes_cdm.source_to_concept_map",
-            "duckdb_rows": 173,
-            "sqlserver_rows": 173,
-            "duckdb_checksum": "c83c0d6e4f145ef0fb946aea9ef2808c65630d8f88d588d7d165da62bde663af",
-            "sqlserver_checksum": "c83c0d6e4f145ef0fb946aea9ef2808c65630d8f88d588d7d165da62bde663af",
+            "duckdb_rows": 191,
+            "sqlserver_rows": 191,
+            "duckdb_checksum": "7fdffdd7c7535068ceed92a12eb3f85376d08af1620db6df55e100716537b794",
+            "sqlserver_checksum": "7fdffdd7c7535068ceed92a12eb3f85376d08af1620db6df55e100716537b794",
             "agree": true,
             "error": null
           },
@@ -455,8 +455,8 @@
             "object": "anaes_cdm.anaesthetic",
             "duckdb_rows": 85,
             "sqlserver_rows": 85,
-            "duckdb_checksum": "ebbe0d88eddb7b9e40126808bcc63073330d7a6166a5fd7037fe8727f4135687",
-            "sqlserver_checksum": "ebbe0d88eddb7b9e40126808bcc63073330d7a6166a5fd7037fe8727f4135687",
+            "duckdb_checksum": "7bb647f508321ea1c30ee066ebd9bec3d2d0e304c1c7cef1e395e7828a90ce20",
+            "sqlserver_checksum": "7bb647f508321ea1c30ee066ebd9bec3d2d0e304c1c7cef1e395e7828a90ce20",
             "agree": true,
             "error": null
           },
@@ -464,8 +464,8 @@
             "object": "anaes_pub.anaesthetic",
             "duckdb_rows": 85,
             "sqlserver_rows": 85,
-            "duckdb_checksum": "ebbe0d88eddb7b9e40126808bcc63073330d7a6166a5fd7037fe8727f4135687",
-            "sqlserver_checksum": "ebbe0d88eddb7b9e40126808bcc63073330d7a6166a5fd7037fe8727f4135687",
+            "duckdb_checksum": "7bb647f508321ea1c30ee066ebd9bec3d2d0e304c1c7cef1e395e7828a90ce20",
+            "sqlserver_checksum": "7bb647f508321ea1c30ee066ebd9bec3d2d0e304c1c7cef1e395e7828a90ce20",
             "agree": true,
             "error": null
           },
@@ -1142,16 +1142,16 @@
     }
   },
   "build": {
-    "sentence": "Schemalyser has built 24 tables containing 1,731 rows.",
+    "sentence": "Schemalyser has built 24 tables containing 1,757 rows.",
     "mapping_rows": 38,
     "derived_mappings": [
       {
         "vocabulary": "SITE_DRUG",
-        "matched": 50
+        "matched": 53
       },
       {
         "vocabulary": "SITE_PROC",
-        "matched": 35
+        "matched": 50
       },
       {
         "vocabulary": "SITE_DIAGNOSIS",
@@ -1188,16 +1188,16 @@
         "relationship"
       ],
       "note": "CONCEPT_RELATIONSHIP keeps only its 'Maps to' rows; the download stays on this machine.",
-      "seconds_to_load_into_the_cdm": 0.9
+      "seconds_to_load_into_the_cdm": 1.8
     },
     "vocabulary_rows": {
-      "concept": 123,
-      "concept_relationship": 122,
-      "concept_synonym": 419
+      "concept": 134,
+      "concept_relationship": 133,
+      "concept_synonym": 465
     },
-    "concept_notes": 7,
+    "concept_notes": 3,
     "unmapped": {
-      "rows": 100,
+      "rows": 0,
       "variables": 0
     }
   },
@@ -1311,7 +1311,7 @@
       "layer": "anaesthesia",
       "table": "measurement",
       "status": "ok",
-      "rows": 3913,
+      "rows": 3912,
       "sha256": "ce2f1e42910b0af2f434db50024da851064321364c325f15bbf1249bf1231461"
     },
     {
@@ -1319,7 +1319,7 @@
       "layer": "anaesthesia",
       "table": "measurement",
       "status": "ok",
-      "rows": 43,
+      "rows": 87,
       "sha256": "17efe93fde171700fa10ec0197c54618d5cbe2468ab009bb0eaed66641b13de2"
     },
     {
@@ -1473,7 +1473,7 @@
     {
       "name": "anaesthetic_without_stop",
       "description": "One child has an anaesthetic with a recorded start and no recorded stop, two blood pressures on its record, one half an hour and one three hours after the start, and an infusion started during it.",
-      "planted_rows": 8,
+      "planted_rows": 9,
       "fails_gate": null,
       "expectations": [
         {
@@ -1644,7 +1644,7 @@
     {
       "name": "infusion_never_stopped",
       "description": "One child has an infusion that is started during a general anaesthetic and never stopped.",
-      "planted_rows": 6,
+      "planted_rows": 7,
       "fails_gate": null,
       "expectations": [
         {
@@ -1660,7 +1660,7 @@
     {
       "name": "infusion_rate_changes_twice",
       "description": "One child has an infusion that is started during a general anaesthetic, changed in rate twice, and then stopped.",
-      "planted_rows": 9,
+      "planted_rows": 10,
       "fails_gate": null,
       "expectations": [
         {
@@ -2112,11 +2112,11 @@
     "totals": {
       "steps": 22,
       "steps_traced": 20,
-      "source_rows": 13004,
-      "reached": 4833,
-      "dropped": 8171,
-      "target_rows": 4854,
-      "extra_target_rows": 21,
+      "source_rows": 13070,
+      "reached": 4854,
+      "dropped": 8216,
+      "target_rows": 4897,
+      "extra_target_rows": 43,
       "steps_with_unexpected_several_rows": [],
       "all_sums_agree": true
     },
@@ -2153,7 +2153,7 @@
           {
             "step": "measurement_blood_pressure_through_anaesthetic.sql",
             "expected": "several rows may come from one source row: each accepted charted pressure gives two rows, one systolic and one diastolic.",
-            "source_rows_with_several_target_rows": 21
+            "source_rows_with_several_target_rows": 43
           }
         ]
       },
@@ -2460,11 +2460,11 @@
         "step": "measurement.sql",
         "layer": "anaesthesia",
         "target": "measurement",
-        "written": 3913,
+        "written": 3912,
         "traced": true,
         "source_table": "OBS_READING",
-        "source_rows": 3939,
-        "reached": 3913,
+        "source_rows": 3961,
+        "reached": 3912,
         "dropped": [
           {
             "by": "the inner join to omop.visit_occurrence AS vo on vo.visit_source_value = CAST(s.VISIT_KEY AS VARCHAR(50))",
@@ -2472,14 +2472,14 @@
           },
           {
             "by": "the condition NOT TRY_CAST(r.READ_VALUE AS FLOAT) IS NULL",
-            "rows": 24
+            "rows": 47
           },
           {
             "by": "the condition COALESCE(r.ACCEPTED_FLAG, 'Y') <> 'N'",
             "rows": 1
           }
         ],
-        "target_rows": 3913,
+        "target_rows": 3912,
         "source_rows_with_several_target_rows": 0,
         "extra_target_rows": 0,
         "starts_from_a_nested_query": false,
@@ -2493,11 +2493,11 @@
         "step": "measurement_blood_pressure_through_anaesthetic.sql",
         "layer": "anaesthesia",
         "target": "measurement",
-        "written": 43,
+        "written": 87,
         "traced": true,
         "source_table": "OBS_READING",
-        "source_rows": 3939,
-        "reached": 22,
+        "source_rows": 3961,
+        "reached": 44,
         "dropped": [
           {
             "by": "the nested query's own joins and conditions",
@@ -2516,9 +2516,9 @@
             "rows": 1
           }
         ],
-        "target_rows": 43,
-        "source_rows_with_several_target_rows": 21,
-        "extra_target_rows": 21,
+        "target_rows": 87,
+        "source_rows_with_several_target_rows": 43,
+        "extra_target_rows": 43,
         "starts_from_a_nested_query": true,
         "start_agrees": true,
         "sums_agree": true,
@@ -2533,7 +2533,7 @@
         "written": 0,
         "traced": true,
         "source_table": "OBS_READING",
-        "source_rows": 3939,
+        "source_rows": 3961,
         "reached": 0,
         "dropped": [
           {
@@ -2542,7 +2542,7 @@
           },
           {
             "by": "the inner join to omop.source_to_concept_map AS setting on setting.source_vocabulary_id = 'SITE_SETTING' AND setting.source_code = 'CALCULATED_MEAN_PRESSURE' AND setting.target_concept_id = 1",
-            "rows": 3937
+            "rows": 3959
           }
         ],
         "target_rows": 0,
@@ -2816,8 +2816,8 @@
       },
       {
         "table": "DRUG_DEF",
-        "rows": 50,
-        "planted_rows": 0,
+        "rows": 53,
+        "planted_rows": 3,
         "read_by": [
           {
             "step": "drug_exposure.sql",
@@ -2854,7 +2854,7 @@
       },
       {
         "table": "OBS_READING",
-        "rows": 3939,
+        "rows": 3961,
         "planted_rows": 3120,
         "read_by": [
           {
@@ -2874,7 +2874,7 @@
           }
         ],
         "rows_reaching_each_target": {
-          "measurement": 3935
+          "measurement": 3956
         }
       },
       {
@@ -3091,8 +3091,8 @@
       },
       {
         "table": "measurement",
-        "rows_from_steps": 4006,
-        "rows_held": 4006,
+        "rows_from_steps": 4049,
+        "rows_held": 4049,
         "agree": true
       },
       {
@@ -3204,8 +3204,9 @@
     "load": "(cd csv && psql -h 127.0.0.1 -p PORT -U postgres -f load_postgresql.sql)",
     "command": "docker run --rm --platform linux/amd64 -e PG_PORT=PORT -v \"$PWD/dqd/run_dqd.R:/run_dqd.R:ro\" -v \"PASSWORD_FILE:/run/pg-password.txt:ro\" -v jdbc-drivers-data:/jdbc -v \"$PWD/dqd/out:/out\" broadsea-broadsea-run-dqd Rscript /run_dqd.R",
     "script": "dqd/run_dqd.R",
-    "seconds": 294.8,
+    "seconds": 332.6,
     "check_seconds": 300,
+    "paused_seconds": 0,
     "vocabulary_schema": {
       "schema": "cdm",
       "release": "v5.0 29-AUG-26",
@@ -3216,16 +3217,16 @@
     "results_file": "dqd/out/dqd_results.json",
     "output": "dqd/dqd.txt",
     "checks": 2374,
-    "passed": 1180,
-    "failed": 13,
+    "passed": 1188,
+    "failed": 6,
     "could_not_run": 33,
     "did_not_finish": 0,
-    "not_applicable": 1148,
+    "not_applicable": 1147,
     "by_category": {
       "Completeness": {
         "checks": 501,
-        "passed": 278,
-        "failed": 7,
+        "passed": 282,
+        "failed": 3,
         "could_not_run": 11,
         "did_not_finish": 0,
         "not_applicable": 205
@@ -3240,15 +3241,15 @@
       },
       "Plausibility": {
         "checks": 813,
-        "passed": 217,
-        "failed": 3,
+        "passed": 221,
+        "failed": 0,
         "could_not_run": 4,
         "did_not_finish": 0,
-        "not_applicable": 589
+        "not_applicable": 588
       }
     },
     "expected_failures": 39,
-    "unexpected_failures": 7,
+    "unexpected_failures": 0,
     "failures": [
       {
         "check": "cdmTable",
@@ -3706,58 +3707,6 @@
         "reason": "The conversion does not build COHORT_DEFINITION, which ATLAS fills when it defines cohorts, so the dashboard finds the table missing and cannot run its field checks on it."
       },
       {
-        "check": "standardConceptRecordCompleteness",
-        "table": "DRUG_EXPOSURE",
-        "field": "DRUG_CONCEPT_ID",
-        "concept": null,
-        "unit": null,
-        "category": "Completeness",
-        "outcome": "failed",
-        "violated_rows": 5,
-        "denominator_rows": 41,
-        "expected": false,
-        "reason": null
-      },
-      {
-        "check": "standardConceptRecordCompleteness",
-        "table": "PROCEDURE_OCCURRENCE",
-        "field": "PROCEDURE_CONCEPT_ID",
-        "concept": null,
-        "unit": null,
-        "category": "Completeness",
-        "outcome": "failed",
-        "violated_rows": 15,
-        "denominator_rows": 148,
-        "expected": false,
-        "reason": null
-      },
-      {
-        "check": "sourceValueCompleteness",
-        "table": "MEASUREMENT",
-        "field": "MEASUREMENT_SOURCE_VALUE",
-        "concept": null,
-        "unit": null,
-        "category": "Completeness",
-        "outcome": "failed",
-        "violated_rows": 1,
-        "denominator_rows": 7,
-        "expected": false,
-        "reason": null
-      },
-      {
-        "check": "sourceValueCompleteness",
-        "table": "PROCEDURE_OCCURRENCE",
-        "field": "PROCEDURE_SOURCE_VALUE",
-        "concept": null,
-        "unit": null,
-        "category": "Completeness",
-        "outcome": "failed",
-        "violated_rows": 9,
-        "denominator_rows": 30,
-        "expected": false,
-        "reason": null
-      },
-      {
         "check": "plausibleValueLow",
         "table": "COHORT",
         "field": "COHORT_END_DATE",
@@ -3808,45 +3757,6 @@
         "denominator_rows": null,
         "expected": true,
         "reason": "The conversion does not build COHORT, which holds the cohorts that ATLAS generates, so the dashboard finds the table missing and cannot run its field checks on it."
-      },
-      {
-        "check": "plausibleGender",
-        "table": "PROCEDURE_OCCURRENCE",
-        "field": "PROCEDURE_CONCEPT_ID",
-        "concept": "4310552",
-        "unit": null,
-        "category": "Plausibility",
-        "outcome": "failed",
-        "violated_rows": 1,
-        "denominator_rows": 1,
-        "expected": false,
-        "reason": null
-      },
-      {
-        "check": "plausibleGenderUseDescendants",
-        "table": "CONDITION_OCCURRENCE",
-        "field": "CONDITION_CONCEPT_ID",
-        "concept": "4090861, 4025213",
-        "unit": null,
-        "category": "Plausibility",
-        "outcome": "failed",
-        "violated_rows": 2,
-        "denominator_rows": 3,
-        "expected": false,
-        "reason": null
-      },
-      {
-        "check": "plausibleGenderUseDescendants",
-        "table": "PROCEDURE_OCCURRENCE",
-        "field": "PROCEDURE_CONCEPT_ID",
-        "concept": "4250917, 4077750, 4043199, 4040577",
-        "unit": null,
-        "category": "Plausibility",
-        "outcome": "failed",
-        "violated_rows": 1,
-        "denominator_rows": 2,
-        "expected": false,
-        "reason": null
       }
     ],
     "expectations": {
@@ -3893,16 +3803,8 @@
     },
     {
       "check": "the Data Quality Dashboard reported no failure that dqd-expectations.json does not permit",
-      "passed": false,
-      "detail": [
-        "standardConceptRecordCompleteness on DRUG_EXPOSURE.DRUG_CONCEPT_ID",
-        "standardConceptRecordCompleteness on PROCEDURE_OCCURRENCE.PROCEDURE_CONCEPT_ID",
-        "sourceValueCompleteness on MEASUREMENT.MEASUREMENT_SOURCE_VALUE",
-        "sourceValueCompleteness on PROCEDURE_OCCURRENCE.PROCEDURE_SOURCE_VALUE",
-        "plausibleGender on PROCEDURE_OCCURRENCE.PROCEDURE_CONCEPT_ID for the concept 4310552",
-        "plausibleGenderUseDescendants on CONDITION_OCCURRENCE.CONDITION_CONCEPT_ID for the concept 4090861, 4025213",
-        "plausibleGenderUseDescendants on PROCEDURE_OCCURRENCE.PROCEDURE_CONCEPT_ID for the concept 4250917, 4077750, 4043199, 4040577"
-      ]
+      "passed": true,
+      "detail": []
     },
     {
       "check": "release equivalence",
@@ -3930,20 +3832,20 @@
   ],
   "summary": {
     "profile": "full",
-    "outcome": "failed: the Data Quality Dashboard reported 7 failures that dqd-expectations.json does not permit (standardConceptRecordCompleteness on DRUG_EXPOSURE.DRUG_CONCEPT_ID, standardConceptRecordCompleteness on PROCEDURE_OCCURRENCE.PROCEDURE_CONCEPT_ID, sourceValueCompleteness on MEASUREMENT.MEASUREMENT_SOURCE_VALUE, sourceValueCompleteness on PROCEDURE_OCCURRENCE.PROCEDURE_SOURCE_VALUE, plausibleGender on PROCEDURE_OCCURRENCE.PROCEDURE_CONCEPT_ID for the concept 4310552, plausibleGenderUseDescendants on CONDITION_OCCURRENCE.CONDITION_CONCEPT_ID for the concept 4090861, 4025213, plausibleGenderUseDescendants on PROCEDURE_OCCURRENCE.PROCEDURE_CONCEPT_ID for the concept 4250917, 4077750, 4043199, 4040577)",
-    "checks_passed": 10,
+    "outcome": "passed",
+    "checks_passed": 11,
     "checks_judged": 11,
     "scenarios_passed": 20,
     "scenarios": 20,
-    "seconds": 425.3,
+    "seconds": 512.3,
     "sentences": [
-      "The conversion ran 22 of 22 steps cleanly over 24 tables containing 1,731 rows.",
+      "The conversion ran 22 of 22 steps cleanly over 24 tables containing 1,757 rows.",
       "20 of 20 planted scenarios passed against their written expectations.",
       "The reconciliation traced 20 of 22 steps and accounted for every excluded row in them; 2 steps could not be traced (observation_period.sql, cdm_source.sql), so their rows are not reconciled.",
       "In 1 of the traced steps (measurement_blood_pressure_through_anaesthetic.sql), a source row gave several target rows, as testbed.json allows.",
-      "Counted step by step, the tables that the traced steps start from held 13,004 rows, of which 4,833 reached a target and 8,171 were left out by a join or a condition, and the steps wrote 4,854 rows from them.",
+      "Counted step by step, the tables that the traced steps start from held 13,070 rows, of which 4,854 reached a target and 8,216 were left out by a join or a condition, and the steps wrote 4,897 rows from them.",
       "9 of 9 gates passed, and 2 of 2 counts ran.",
-      "The Data Quality Dashboard ran 2,374 checks: 1,180 passed, 13 failed, 33 could not run, 0 did not finish within 300 seconds and 1,148 did not apply. Of the 46 that failed, could not run or did not finish, 39 are expected, with a reason in dqd-expectations.json, and 7 are not.",
+      "The Data Quality Dashboard ran 2,374 checks: 1,188 passed, 6 failed, 33 could not run, 0 did not finish within 300 seconds and 1,147 did not apply. Of the 39 that failed, could not run or did not finish, 39 are expected, with a reason in dqd-expectations.json, and 0 are not.",
       "Release equivalence passed: on SQL Server, the release script produced the same derived rows and scenario rows as DuckDB."
     ]
   }

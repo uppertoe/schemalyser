@@ -1,21 +1,21 @@
 # OMOP testbed report
 
-The run in the full profile did not pass, because the Data Quality Dashboard reported 7 failures that dqd-expectations.json does not permit (standardConceptRecordCompleteness on DRUG_EXPOSURE.DRUG_CONCEPT_ID, standardConceptRecordCompleteness on PROCEDURE_OCCURRENCE.PROCEDURE_CONCEPT_ID, sourceValueCompleteness on MEASUREMENT.MEASUREMENT_SOURCE_VALUE, sourceValueCompleteness on PROCEDURE_OCCURRENCE.PROCEDURE_SOURCE_VALUE, plausibleGender on PROCEDURE_OCCURRENCE.PROCEDURE_CONCEPT_ID for the concept 4310552, plausibleGenderUseDescendants on CONDITION_OCCURRENCE.CONDITION_CONCEPT_ID for the concept 4090861, 4025213, plausibleGenderUseDescendants on PROCEDURE_OCCURRENCE.PROCEDURE_CONCEPT_ID for the concept 4250917, 4077750, 4043199, 4040577). 10 of 11 judged checks passed, and the run took 425.3 seconds.
+The run in the full profile passed. 11 of 11 judged checks passed, and the run took 512.3 seconds.
 
-The conversion ran 22 of 22 steps cleanly over 24 tables containing 1,731 rows.
+The conversion ran 22 of 22 steps cleanly over 24 tables containing 1,757 rows.
 20 of 20 planted scenarios passed against their written expectations.
 The reconciliation traced 20 of 22 steps and accounted for every excluded row in them; 2 steps could not be traced (observation_period.sql, cdm_source.sql), so their rows are not reconciled.
 In 1 of the traced steps (measurement_blood_pressure_through_anaesthetic.sql), a source row gave several target rows, as testbed.json allows.
-Counted step by step, the tables that the traced steps start from held 13,004 rows, of which 4,833 reached a target and 8,171 were left out by a join or a condition, and the steps wrote 4,854 rows from them.
+Counted step by step, the tables that the traced steps start from held 13,070 rows, of which 4,854 reached a target and 8,216 were left out by a join or a condition, and the steps wrote 4,897 rows from them.
 9 of 9 gates passed, and 2 of 2 counts ran.
-The Data Quality Dashboard ran 2,374 checks: 1,180 passed, 13 failed, 33 could not run, 0 did not finish within 300 seconds and 1,148 did not apply. Of the 46 that failed, could not run or did not finish, 39 are expected, with a reason in dqd-expectations.json, and 7 are not.
+The Data Quality Dashboard ran 2,374 checks: 1,188 passed, 6 failed, 33 could not run, 0 did not finish within 300 seconds and 1,147 did not apply. Of the 39 that failed, could not run or did not finish, 39 are expected, with a reason in dqd-expectations.json, and 0 are not.
 Release equivalence passed: on SQL Server, the release script produced the same derived rows and scenario rows as DuckDB.
 
 ## Versions
 
 Schemalyser is schemalyser 0.1.0, the CDM is version 5.4, the vocabulary is the Athena release v5.0 29-AUG-26, of 2026-08-29, and DuckDB is version 1.5.1.
 
-The testbed reused its working copy of the Athena download in 0.0 seconds, with 4,254,036 concepts and 3,476,264 'Maps to' rows, and loaded the concepts that the CDM names into its tables in 0.9 seconds.
+The testbed reused its working copy of the Athena download in 0.0 seconds, with 4,254,036 concepts and 3,476,264 'Maps to' rows, and loaded the concepts that the CDM names into its tables in 1.8 seconds.
 
 ## Checks
 
@@ -27,7 +27,7 @@ The testbed reused its working copy of the Athena download in 0.0 seconds, with 
 - the reconciliation found no unexplained discrepancy: passed.
 - the release script was written and carries every step that ran: passed.
 - the Data Quality Dashboard ran: passed.
-- the Data Quality Dashboard reported no failure that dqd-expectations.json does not permit: failed.
+- the Data Quality Dashboard reported no failure that dqd-expectations.json does not permit: passed.
 - release equivalence: passed.
 - SQL Server agrees with DuckDB: passed.
 
@@ -80,9 +80,9 @@ A gate removes no rows: it fails the run. Every row left out is put down to a jo
 | visit_detail_through_case.sql | ANAES_RECORD | 88 | 85 | 3 | 85 | 0 | yes |
 | procedure_occurrence_anaesthetic.sql | ANAES_RECORD | 88 | 85 | 3 | 85 | 0 | yes |
 | procedure_occurrence_events.sql | ANAES_EVENT | 50 | 13 | 37 | 13 | 0 | yes |
-| measurement.sql | OBS_READING | 3939 | 3913 | 26 | 3913 | 0 | yes |
-| measurement_blood_pressure_through_anaesthetic.sql | OBS_READING | 3939 | 22 | 3917 | 43 | 21 | yes |
-| measurement_mean_pressure_calculated.sql | OBS_READING | 3939 | 0 | 3939 | 0 | 0 | yes |
+| measurement.sql | OBS_READING | 3961 | 3912 | 49 | 3912 | 0 | yes |
+| measurement_blood_pressure_through_anaesthetic.sql | OBS_READING | 3961 | 44 | 3917 | 87 | 43 | yes |
+| measurement_mean_pressure_calculated.sql | OBS_READING | 3961 | 0 | 3961 | 0 | 0 | yes |
 | measurement_asa.sql | ANAES_RECORD | 88 | 50 | 38 | 50 | 0 | yes |
 | observation_anaesthesia_events.sql | ANAES_EVENT | 50 | 37 | 13 | 37 | 0 | yes |
 | drug_exposure_infusion.sql | DRUG_GIVEN | 56 | 15 | 41 | 15 | 0 | yes |
@@ -102,14 +102,14 @@ Each row left out is put down to the join or condition that left it out:
 - procedure_occurrence_anaesthetic.sql: 3 rows, by the inner join to omop.visit_detail AS vd on vd.visit_detail_source_value = CAST(ar.ANAES_KEY AS VARCHAR(50)).
 - procedure_occurrence_events.sql: 37 rows, by the inner join to omop.source_to_concept_map AS what on what.source_vocabulary_id = 'SITE_EVENT_PROC' AND what.source_code = CAST(ev.EVENT_TYPE_KEY AS VARCHAR(50)).
 - measurement.sql: 1 rows, by the inner join to omop.visit_occurrence AS vo on vo.visit_source_value = CAST(s.VISIT_KEY AS VARCHAR(50)).
-- measurement.sql: 24 rows, by the condition NOT TRY_CAST(r.READ_VALUE AS FLOAT) IS NULL.
+- measurement.sql: 47 rows, by the condition NOT TRY_CAST(r.READ_VALUE AS FLOAT) IS NULL.
 - measurement.sql: 1 rows, by the condition COALESCE(r.ACCEPTED_FLAG, 'Y') <> 'N'.
 - measurement_blood_pressure_through_anaesthetic.sql: 2 rows, by the nested query's own joins and conditions.
 - measurement_blood_pressure_through_anaesthetic.sql: 1 rows, by the inner join to omop.visit_detail AS vd on vd.visit_detail_source_value = CAST(s.ANAES_KEY AS VARCHAR(50)).
 - measurement_blood_pressure_through_anaesthetic.sql: 3913 rows, by the inner join to omop.source_to_concept_map AS what on what.source_vocabulary_id = bp.vocabulary AND what.source_code = CAST(bp.OBS_TYPE_KEY AS VARCHAR(50)).
 - measurement_blood_pressure_through_anaesthetic.sql: 1 rows, by the condition NOT bp.reading IS NULL.
 - measurement_mean_pressure_calculated.sql: 2 rows, by the nested query's own joins and conditions.
-- measurement_mean_pressure_calculated.sql: 3937 rows, by the inner join to omop.source_to_concept_map AS setting on setting.source_vocabulary_id = 'SITE_SETTING' AND setting.source_code = 'CALCULATED_MEAN_PRESSURE' AND setting.target_concept_id = 1.
+- measurement_mean_pressure_calculated.sql: 3959 rows, by the inner join to omop.source_to_concept_map AS setting on setting.source_vocabulary_id = 'SITE_SETTING' AND setting.source_code = 'CALCULATED_MEAN_PRESSURE' AND setting.target_concept_id = 1.
 - measurement_asa.sql: 3 rows, by the inner join to omop.visit_detail AS vd on vd.visit_detail_source_value = CAST(ar.ANAES_KEY AS VARCHAR(50)).
 - measurement_asa.sql: 35 rows, by the inner join to omop.source_to_concept_map AS grade on grade.source_vocabulary_id = 'SITE_RISK_GRADE' AND grade.source_code = CAST(ar.RISK_GRADE_CAT AS VARCHAR(50)).
 - observation_anaesthesia_events.sql: 13 rows, by the inner join to omop.source_to_concept_map AS what on what.source_vocabulary_id = 'SITE_EVENT_OBS' AND what.source_code = CAST(ev.EVENT_TYPE_KEY AS VARCHAR(50)).
@@ -126,22 +126,15 @@ The release script carries 12 of 12 steps, 9 gates and 2 counts, and it is in re
 
 ## Data Quality Dashboard
 
-The dashboard ran 2,374 checks in 294.8 seconds: 1,180 passed, 13 failed, 33 could not run, 0 did not finish within 300 seconds and 1,148 did not apply. It read the vocabulary from the schema cdm, which holds v5.0 29-AUG-26. Its results are in dqd/out/dqd_results.json.
+The dashboard ran 2,374 checks in 332.6 seconds: 1,188 passed, 6 failed, 33 could not run, 0 did not finish within 300 seconds and 1,147 did not apply. It read the vocabulary from the schema cdm, which holds v5.0 29-AUG-26. Its results are in dqd/out/dqd_results.json.
 
 | Category | Checks | Passed | Failed | Could not run | Did not finish | Not applicable |
 |---|---:|---:|---:|---:|---:|---:|
-| Completeness | 501 | 278 | 7 | 11 | 0 | 205 |
+| Completeness | 501 | 282 | 3 | 11 | 0 | 205 |
 | Conformance | 1060 | 685 | 3 | 18 | 0 | 354 |
-| Plausibility | 813 | 217 | 3 | 4 | 0 | 589 |
+| Plausibility | 813 | 221 | 0 | 4 | 0 | 588 |
 
-7 of the checks that failed or could not run are not permitted by dqd-expectations.json, and each of them fails the full profile:
-- standardConceptRecordCompleteness on DRUG_EXPOSURE.DRUG_CONCEPT_ID (Completeness): failed, with 5 of 41 rows in breach.
-- standardConceptRecordCompleteness on PROCEDURE_OCCURRENCE.PROCEDURE_CONCEPT_ID (Completeness): failed, with 15 of 148 rows in breach.
-- sourceValueCompleteness on MEASUREMENT.MEASUREMENT_SOURCE_VALUE (Completeness): failed, with 1 of 7 rows in breach.
-- sourceValueCompleteness on PROCEDURE_OCCURRENCE.PROCEDURE_SOURCE_VALUE (Completeness): failed, with 9 of 30 rows in breach.
-- plausibleGender on PROCEDURE_OCCURRENCE.PROCEDURE_CONCEPT_ID for the concept 4310552 (Plausibility): failed, with 1 of 1 rows in breach.
-- plausibleGenderUseDescendants on CONDITION_OCCURRENCE.CONDITION_CONCEPT_ID for the concept 4090861, 4025213 (Plausibility): failed, with 2 of 3 rows in breach.
-- plausibleGenderUseDescendants on PROCEDURE_OCCURRENCE.PROCEDURE_CONCEPT_ID for the concept 4250917, 4077750, 4043199, 4040577 (Plausibility): failed, with 1 of 2 rows in breach.
+0 of the checks that failed or could not run are not permitted by dqd-expectations.json.
 
 39 are expected, each for the reason given:
 - cdmDatatype on COHORT.COHORT_DEFINITION_ID, cdmDatatype on COHORT.SUBJECT_ID, cdmTable on COHORT, isRequired on COHORT.COHORT_DEFINITION_ID and 11 more (15 checks): The conversion does not build COHORT, which holds the cohorts that ATLAS generates, so the dashboard finds the table missing and cannot run its field checks on it.

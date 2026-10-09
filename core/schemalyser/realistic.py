@@ -32,6 +32,8 @@ REASONS = ("database", "prerequisite", "reference data")
 # The longest span drawn from the open-ended band of a spans result, in minutes: two weeks.
 LONGEST_SPAN = 20160
 # Roles that are placed around the anaesthetic, rather than written from reference data.
+# The sexes that the reference lists name, as the subject table numbers them.
+SEXES = {"male": 1, "female": 2}
 TIMED_ROLES = ("event_time", "administration_time", "time_during_anaesthetic", "placement_time", "removal_time",
                "admission_time", "discharge_time")
 
@@ -89,8 +91,10 @@ def _drawn(bands, seed_expression, salt):
 
 
 class Realism:
-    def __init__(self, con, catalogue, roles, sizes, kinds, tuning=None, spans=None, lineage=None, listed=None):
+    def __init__(self, con, catalogue, roles, sizes, kinds, tuning=None, spans=None, lineage=None, listed=None, pairs=None):
         self.con, self.catalogue, self.sizes, self.kinds = con, catalogue, sizes, kinds
+        # The joined pairs of columns, each as ((table, column), (table, column)), by which one table refers to another.
+        self.pairs = list(pairs or ())
         # The roles that add rows of their own write them only where the check results list their code, because only
         # then does the source hold such readings. listed holds those roles.
         self.listed = set(listed or ())
@@ -240,6 +244,11 @@ class Realism:
         self.medications = [r["name"] for r in _load("medications.csv") if r.get("name")]
         self.procedures = [r["name"] for r in _load("procedures.csv") if r.get("name")]
         self.diagnoses = [r["icd10_code"] for r in _load("diagnoses.csv") if r.get("icd10_code")]
+        # The procedures and diagnoses that belong to one sex only, such as an orchidopexy, by the sex they belong to.
+        self.procedure_sexes = {r["name"]: SEXES[r["sex"]] for r in _load("procedures.csv")
+                                if r.get("name") and r.get("sex") in SEXES}
+        self.diagnosis_sexes = {r["icd10_code"]: SEXES[r["sex"]] for r in _load("diagnoses.csv")
+                                if r.get("icd10_code") and r.get("sex") in SEXES}
 
     def sexes(self):
         for role in self.by_role.get("sex", []):
@@ -684,10 +693,69 @@ class Realism:
         self.update(role, f"([{listed}])[CAST(1 + hash(r.rowid + {salt}) % {len(values)} AS BIGINT)]")
 
     def write_procedure_name(self, role):
-        return self.one_of(role, self.procedures, 109)
+        written = self.one_of(role, self.procedures, 109)
+        if written is None:
+            self.respect_sex(role, self.procedure_sexes, 167)
+        return written
 
     def write_diagnosis_code(self, role):
-        return self.one_of(role, self.diagnoses, 113)
+        written = self.one_of(role, self.diagnoses, 113)
+        if written is None:
+            self.respect_sex(role, self.diagnosis_sexes, 173)
+        return written
+
+    def respect_sex(self, role, sexes, salt):
+        """Gives no subject a procedure or diagnosis that belongs to the other sex.
+
+        The names are written on a table of definitions, and other tables refer to its rows by their key. A row that
+        refers to a definition of the other sex from its subject's swaps its key with a row whose subject is of the
+        definition's sex and whose definition belongs to neither sex, so that each key is used as often as before and a
+        key that was unique stays unique. The pairs are chosen in the same way each time. A row left without a partner is
+        pointed instead at a definition that belongs to neither sex. Without a subject table, or without the joins, the
+        rows are left as they are.
+        """
+        if not sexes or self.subjects is None:
+            return
+        restricted = ", ".join(_text(name) for name in sexes)
+        for (child, child_column), (parent, key) in self.references(role.table):
+            kind = self.kinds[(child, child_column)]
+            column = _quoted(child_column)
+            label = (f"(SELECT MAX(CAST(d.{_quoted(role.column)} AS VARCHAR)) FROM {_quoted(parent)} d "
+                     f"WHERE CAST(d.{_quoted(key)} AS VARCHAR) = CAST(r.{column} AS VARCHAR))")
+            sex = f"(SELECT sub.sex FROM realism_subject sub WHERE sub.s = {self.subject_of(child)})"
+            self.run(f"CREATE OR REPLACE TEMP TABLE realism_sex_rows AS SELECT r.rowid AS rn, {label} AS label, {sex} AS sex "
+                     f"FROM {_quoted(child)} AS r WHERE r.{column} IS NOT NULL")
+            for belongs in sorted(set(sexes.values())):
+                names = ", ".join(_text(name) for name, sex_of in sexes.items() if sex_of == belongs)
+                unfit = f"SELECT rn, row_number() OVER (ORDER BY rn) AS n FROM realism_sex_rows WHERE label IN ({names}) AND sex <> {belongs}"
+                partner = (f"SELECT rn, row_number() OVER (ORDER BY hash(rn + {salt}), rn) AS n FROM realism_sex_rows "
+                           f"WHERE sex = {belongs} AND label IS NOT NULL AND label NOT IN ({restricted})")
+                self.run(f"CREATE OR REPLACE TEMP TABLE realism_sex_swap AS SELECT u.rn AS a, p.rn AS b, "
+                         f"(SELECT x.{column} FROM {_quoted(child)} x WHERE x.rowid = u.rn) AS ka, "
+                         f"(SELECT x.{column} FROM {_quoted(child)} x WHERE x.rowid = p.rn) AS kb "
+                         f"FROM ({unfit}) u JOIN ({partner}) p ON p.n = u.n")
+                self.run(f"UPDATE {_quoted(child)} AS r SET {column} = w.k FROM (SELECT a AS rn, kb AS k FROM realism_sex_swap "
+                         f"UNION ALL SELECT b, ka FROM realism_sex_swap) w WHERE r.rowid = w.rn")
+                # The swapped rows now fit; the table of rows is brought up to date for the next sex.
+                self.run("UPDATE realism_sex_rows AS t SET label = NULL WHERE t.rn IN (SELECT a FROM realism_sex_swap) "
+                         "OR t.rn IN (SELECT b FROM realism_sex_swap)")
+                other = (f"(SELECT CAST(d.{_quoted(key)} AS {kind}) FROM {_quoted(parent)} d WHERE d.{_quoted(key)} IS NOT NULL "
+                         f"AND CAST(d.{_quoted(role.column)} AS VARCHAR) NOT IN ({restricted}) "
+                         f"ORDER BY hash(d.rowid * 7919 + r.rowid + {salt}) LIMIT 1)")
+                self.run(f"UPDATE {_quoted(child)} AS r SET {column} = COALESCE({other}, r.{column}) WHERE {label} IN ({names}) "
+                         f"AND {sex} <> {belongs}")
+            self.run("DROP TABLE IF EXISTS realism_sex_rows")
+            self.run("DROP TABLE IF EXISTS realism_sex_swap")
+
+    def references(self, table):
+        """Each column of another table that refers to a column of this one through a join, beside the column it refers to."""
+        found = []
+        for left, right in self.pairs:
+            for (child, child_column), (parent, key) in ((left, right), (right, left)):
+                if parent == table and child != table and child in self.sizes and (child, child_column) in self.kinds \
+                        and ((child, child_column), (parent, key)) not in found:
+                    found.append(((child, child_column), (parent, key)))
+        return found
 
     def write_death_date(self, role):
         """Nearly everyone is alive. A small share of subjects has a date of death, after their last event."""

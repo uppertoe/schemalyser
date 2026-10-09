@@ -534,6 +534,16 @@ class Sandbox:
                     added.add(role)
                     kept[(role.table, role.when_column)] = [entry for entry in kept[(role.table, role.when_column)]
                                                             if not _same_code(entry[0], role.when_value)]
+        # Where those codes were the only ones listed, as when the other codes fall below the count that the check
+        # results show, the other rows take the codes that the site rules give a meaning to in that column, in equal
+        # shares, so that every row still holds a code. Without such codes the column is drawn as if nothing were listed.
+        for key in [key for key, entries in kept.items() if not entries and listed.get(key)]:
+            named = list(dict.fromkeys(role.when_value for role in self.roles if role.role not in meanings.ADDED_ROWS
+                                       and (role.table, role.when_column) == key and role.when_value))
+            if named:
+                kept[key] = [(code, "", 1) for code in named]
+            else:
+                del kept[key]
         listed = kept
         years = self.checks.years if self.checks else {}
         # Joined date columns are left out of the key groups, so that they stay dates.
@@ -664,7 +674,10 @@ class Sandbox:
         # A role that cannot be applied leaves the filler in place, and is listed in the result.
         spans = self.checks.spans if self.checks else {}
         try:
-            realism = Realism(self.con, self.catalogue, self.roles, sizes, kinds, self.tuning, spans, self.lineage, added)
+            joined = [(a, b) for a, b in ((self._key(*left), self._key(*right)) for left, right in self.pairs)
+                      if a is not None and b is not None]
+            realism = Realism(self.con, self.catalogue, self.roles, sizes, kinds, self.tuning, spans, self.lineage, added,
+                              joined)
             failures = realism.apply()
             total += realism.added
         except duckdb.Error:

@@ -77,3 +77,7 @@ Two meanings have no file here, and the generator writes invented values for the
 ## procedures.csv and diagnoses.csv
 
 `procedures.csv` lists forty operations and investigations that children commonly have under anaesthesia, and `diagnoses.csv` lists thirty ICD-10 codes for the conditions that lead to them. Both lists were written for this project from general knowledge. The names are ordinary clinical terms and the codes are those of the World Health Organization's ICD-10. Neither list comes from any hospital, and neither says how often anything happens.
+
+Each procedure is named as a standard SNOMED procedure is named, or by one of its synonyms, so that matching by exact name finds one standard concept for every procedure in the Athena release of 29 August 2026. Where a familiar short name, such as "cystoscopy" or "repair of cleft palate", matched several concepts, the list uses the fuller name of one of them.
+
+The `sex` column marks the procedures and diagnoses that belong to one sex only, such as an orchidopexy or an undescended testicle, and is empty for the rest. The generator gives such a procedure or diagnosis only to a child of that sex.

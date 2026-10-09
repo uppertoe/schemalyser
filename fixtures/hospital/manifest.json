@@ -161,7 +161,7 @@
      "VARCHAR"
     ]
    ],
-   "rows": 200
+   "rows": 203
   },
   {
    "name": "DRUG_GIVEN",
