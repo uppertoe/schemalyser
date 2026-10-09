@@ -6,7 +6,9 @@ and how large they are, confirm each binding, settle the local codes of each voc
 they settle is written to the hospital folder:
 
     map/map.json                    every binding, its evidence quoting the dictionary, its confirmation, its date and
-                                    where it came from, with a section of the named normalisations (normalise.py)
+                                    where it came from, with a section of the named normalisations (normalise.py), the
+                                    further pathways of a part that records events with their source kinds, and the
+                                    concept translations of the mapping views (concepts), which only this file holds
     map/role_*.sql                  one SQL view for each role, written from the bindings and the codes
     journal.json                    the append-only journal of every query offered, every result returned, every
                                     answer, choice of codes, judgement, test run and import of evidence (evidence.py)
@@ -42,6 +44,7 @@ import io
 import json
 import hashlib
 import re
+import secrets
 import tempfile
 import time
 import zipfile
@@ -112,6 +115,12 @@ def identifies_person(column, description=""):
     return bool(PERSON_NAME.search(column or "") or PERSON_WORDS.search(description or ""))
 
 WORDING = {
+    "concepts_unknown": "The contract holds no mapping view named {name}.",
+    "concepts_rows": "Each row of a translation gives a local code, a standard concept as a whole number, whether the code is mapped, unmapped or ambiguous, and where the mapping came from. Only an unmapped code has the concept 0, and only an ambiguous code has more than one row.",
+    "pathway_part": "Only a part that records events, which the hospital schema already holds, can be reached by a further pathway.",
+    "pathway_name": "Please name the pathway in plain lower-case letters, digits and underscores, starting with a letter, and with a name that this part does not already use.",
+    "source_kind_unknown": "{kind} is not one of the kinds of source record that the contract knows.",
+    "source_kind_says": "A person named the kind of record of this pathway as {kind}.",
     "headings": "Schemalyser could not find a heading for the {fields} in the dictionary's first row. The clinician names the "
                 "heading under Name the headings yourself, then loads the file again.",
     "cohort_comment": "Part 1 puts into #cohort at most {limit} anaesthetics that started in {year}, the earliest first, "
@@ -886,7 +895,7 @@ class Describe:
         yes, "list": whether step 7 can list its codes}. A flag bound to a column of numbers is read as 1 and 0 and
         needs no translation."""
         binding = item.get("binding")
-        if not binding or column["type"] not in ("flag", "flag_or_empty", "kind") or binding.get("window") or binding.get("joined"):
+        if not binding or column["type"] not in ("flag", "flag_or_empty", "kind") or binding.get("joined"):
             return None
         about = f"{view_name}.{column['name']}"
         if column["type"] == "kind":
@@ -1467,7 +1476,7 @@ class Describe:
         for view_name, role in (self.data or {}).get("roles", {}).items():
             view = self.views[view_name]
             for column in view["columns"]:
-                if column["type"] != "kind":
+                if column["type"] != "kind" or column.get("per_pathway"):
                     continue
                 item = role["columns"][column["name"]]
                 binding = item.get("binding")
@@ -1504,7 +1513,6 @@ class Describe:
         role = self.data["roles"][view_name]
         base = role["rows"]["binding"]["table"]
         link_binding = role["columns"][link]["binding"]
-        window = link_binding.get("window")
         path = [list(step) for step in link_binding["path"]]
         aliases = {(): "t0"}
         tables = {(): base}
@@ -1514,17 +1522,9 @@ class Describe:
             tables[prefix] = path[i][2]
         last = tuple(propose.step_key(s) for s in path)
         where = []
-        if window:
-            # A link by a shared key and a time window: from #cohort to the anaesthetic's own table, then to the rows
-            # that share its key, whose time is tested against the window below.
-            lines = ["FROM   #cohort AS c",
-                     f"JOIN   {_name(window['table'])} AS w WITH (NOLOCK) ON w.{_name(window['output'])} = c.{cohort_column}",
-                     f"JOIN   {_name(tables[last])} AS {aliases[last]} WITH (NOLOCK) ON {aliases[last]}.{_name(link_binding['column'])} = w.{_name(window['key'])}"]
-            order = [window["table"], tables[last]]
-        else:
-            lines = ["FROM   #cohort AS c",
-                     f"JOIN   {_name(tables[last])} AS {aliases[last]} WITH (NOLOCK) ON {aliases[last]}.{_name(link_binding['column'])} = c.{cohort_column}"]
-            order = [tables[last]]
+        lines = ["FROM   #cohort AS c",
+                 f"JOIN   {_name(tables[last])} AS {aliases[last]} WITH (NOLOCK) ON {aliases[last]}.{_name(link_binding['column'])} = c.{cohort_column}"]
+        order = [tables[last]]
         for i in range(len(path) - 1, -1, -1):
             before = tuple(propose.step_key(s) for s in path[:i])
             after = tuple(propose.step_key(s) for s in path[:i + 1])
@@ -1553,9 +1553,6 @@ class Describe:
                 expressions[name] = propose._empty(specs[name])
                 continue
             ref = f"{forward(binding['path'])}.{_name(binding['column'])}"
-            if binding.get("window"):
-                expressions[name] = f"w.{_name(binding['window']['output'])}" if name == link else "NULL"
-                continue
             if binding.get("joined"):
                 expressions[name] = propose.joined_sql(binding["joined"], ref, f"j{len(aliases)}")
                 continue
@@ -1568,11 +1565,9 @@ class Describe:
                     codes = {k: item.get("codes", []) for k, item in self.data["kinds"].items()}
                 else:
                     codes = self._vocabulary_codes(view_name).get(name, {})
+            elif specs[name]["type"] == "local_key":
+                codes = rolemap.concept_codes(self.data, specs[name].get("mapping"))
             expressions[name] = propose.render(propose.plan(specs[name], binding, codes), ref)
-        if window:
-            time_binding = role["columns"][window["time"]].get("binding")
-            time_ref = f"{forward(time_binding['path'])}.{_name(time_binding['column'])}" if time_binding else "NULL"
-            where.append(propose.window_on("w", window, time_ref))
         for item in (role["rows"]["binding"].get("filter") or []) if filters else []:
             where.append(propose.filter_sql(item, f"{forward(item['path'])}.{_name(item['column'])}"))
         return lines, expressions, order, where
@@ -1584,10 +1579,10 @@ class Describe:
         role = self.data["roles"][view_name]
         link_binding = role["columns"][link].get("binding") or {}
         binding = role["columns"][column].get("binding") or {}
-        if not link_binding or link_binding.get("path") or link_binding.get("window") or role["rows"]["binding"].get("filter"):
+        if not link_binding or link_binding.get("path") or role["rows"]["binding"].get("filter"):
             return None
         path = binding.get("path") or []
-        if len(path) != 1 or len(path[0]) != 4 or binding.get("window") or binding.get("joined"):
+        if len(path) != 1 or len(path[0]) != 4 or binding.get("joined"):
             return None
         start, one, table, other = path[0]
         if start.upper() != link_binding["table"].upper() or one.upper() != link_binding["column"].upper():
@@ -1715,6 +1710,109 @@ class Describe:
                                                                   figure={"chosen": len(chosen), "listed": len(listed_codes)})
                   if shown else None)
 
+    # The concept translations, which populate the mapping views, and the pathways and source kinds of a part.
+
+    def translate_concepts(self, mapping, rows, date=None, actor=None):
+        """Records the translation of one mapping view's local codes: rows is [{"code", "description", "concept_id",
+        "status", "provenance"}], one for each code that is mapped or unmapped and one for each concept that an
+        ambiguous code may mean. The codes and descriptions are the hospital's and stay in the saved schema; the
+        compiled mapping view and every part that names it give each code as an opaque key made with this schema's
+        own salt. The translation replaces any earlier one of the same view, and the journal records it."""
+        if mapping not in rolemap.mapping_views(self.model):
+            raise DescribeError(WORDING["concepts_unknown"].format(name=mapping))
+        if self.data is None:
+            raise DescribeError(WORDING["no_dictionary"])
+        date = date or _today()
+        held = []
+        for row in rows or []:
+            try:
+                concept = int(row.get("concept_id") or 0)
+            except (TypeError, ValueError):
+                raise DescribeError(WORDING["concepts_rows"]) from None
+            held.append({"code": " ".join(str(row.get("code", "")).split())[:100],
+                         "description": " ".join(str(row.get("description") or "").split())[:200],
+                         "concept_id": concept, "status": row.get("status"), "provenance": row.get("provenance") or PERSON})
+        concepts = copy.deepcopy(self.data.get("concepts") or {"salt": secrets.token_hex(16), "views": {}})
+        concepts["views"][mapping] = {"rows": held, "date": date}
+        try:
+            rolemap.check_concepts(concepts)
+        except rolemap.MapError:
+            raise DescribeError(WORDING["concepts_rows"]) from None
+        self.data["concepts"] = concepts
+        self.settings["updated"] = date
+        latest = self.log.latest("concepts translated", mapping=mapping)
+        provenances = sorted({r["provenance"] for r in held})
+        made = self._append("concepts translated", {"mapping": mapping, "rows": held, "date": date}, actor,
+                            provenances[0] if len(provenances) == 1 and provenances[0] in evidence.PROVENANCES else PERSON,
+                            supersedes=latest["id"] if latest else None, codes=mapping)
+        confirmed = any(r["provenance"] == PERSON for r in held)
+        self._set("translations", mapping, "confirmed", evidence.record(date, self._current("translations", mapping), by=made["actor"],
+                                                                        entry=made["id"]) if confirmed else None)
+        return {"mapping": mapping, "codes": len({r["code"] for r in held}),
+                "statuses": {s: sum(1 for r in held if r["status"] == s) for s in ("mapped", "unmapped", "ambiguous")}}
+
+    def concept_rows(self, mapping):
+        """The public rows of one mapping view as the hospital schema now gives them, each code replaced by its key."""
+        return rolemap.mapping_rows(self.data, mapping)
+
+    def add_pathway(self, view_name, table, source_kind, name, date=None, actor=None):
+        """Adds a further pathway to a part that records events: the rows of another table, with every column proposed
+        again from it and the source kind that a person names. Each pathway's bindings carry evidence of their own,
+        named as role_x@name rows and role_x@name.column."""
+        if view_name not in rolemap.event_parts(self.model) or view_name not in (self.data or {}).get("roles", {}):
+            raise DescribeError(WORDING["pathway_part"])
+        if source_kind not in rolemap.source_kinds(self.model):
+            raise DescribeError(WORDING["source_kind_unknown"].format(kind=source_kind))
+        role = self.data["roles"][view_name]
+        if not rolemap.PATHWAY_NAME.fullmatch(name or "") or name in [p["name"] for p in role.get("pathways") or []]:
+            raise DescribeError(WORDING["pathway_name"])
+        if self.dictionary is None or not NAME.match(table or "") or self.dictionary.table(table) is None:
+            raise DescribeError(WORDING["no_table"].format(name=table))
+        date = date or _today()
+        if self.proposer is None:
+            self.proposer = propose.Proposer(self.dictionary, self.model, self.reference)
+        bases = {n: r["rows"]["binding"]["table"] for n, r in self.data["roles"].items() if r["rows"].get("binding")}
+        bases[view_name] = self.dictionary.table(table).name
+        drafted = propose.draft(self.proposer.propose(bases), self.dictionary, self.model, date, "the hospital")["roles"][view_name]
+        drafted["rows"].update(status="person", confirmation={"answer": "yes", "date": date, "by": actor or NOT_RECORDED},
+                               provenance=PERSON)
+        drafted["rows"].pop("question", None)
+        pathway = {"name": name, "source_kind": source_kind, "rows": drafted["rows"], "columns": drafted["columns"]}
+        pathway["columns"]["source_kind"] = propose.source_kind_evidence(source_kind, self.views[view_name])
+        self._person_source_kind(pathway, source_kind, date, actor)
+        role.setdefault("pathways", []).append(pathway)
+        entry = self._log_confirmation(f"{view_name}@{name} rows", "yes", bases[view_name], f"source kind {source_kind}", date, actor)
+        self._settled(f"{view_name}@{name} rows", entry, date)
+        self.settings["updated"] = date
+        return pathway
+
+    def choose_source_kind(self, about, kind, date=None, actor=None):
+        """Records the source kind of a pathway, named as role_x or role_x@name, which every row of the pathway carries."""
+        date = date or _today()
+        if kind not in rolemap.source_kinds(self.model):
+            raise DescribeError(WORDING["source_kind_unknown"].format(kind=kind))
+        view_name, pathway, _ = _about_parts(about)
+        role = self._pathway(view_name, pathway)
+        if role is None or view_name not in rolemap.event_parts(self.model):
+            raise DescribeError(WORDING["pathway_part"])
+        role["source_kind"] = kind
+        self._person_source_kind(role, kind, date, actor)
+        entry = self._log_confirmation(f"{about}.source_kind", "yes", kind, "", date, actor)
+        self._settled(f"{about}.source_kind", entry, date)
+        self.settings["updated"] = date
+
+    def _person_source_kind(self, role, kind, date, actor):
+        item = role["columns"]["source_kind"]
+        item.update(status="person", says=WORDING["source_kind_says"].format(kind=kind),
+                    confirmation={"answer": "yes", "date": date, "by": actor or NOT_RECORDED}, provenance=PERSON)
+        item.pop("question", None)
+
+    def _pathway(self, view_name, pathway):
+        role = ((self.data or {}).get("roles") or {}).get(view_name)
+        if role is None or pathway is None:
+            return role
+        return next((p for p in role.get("pathways") or [] if p["name"] == pathway), None)
+
     def _vocabulary_codes(self, view_name):
         found = {}
         for key, held in self.codes.items():
@@ -1733,7 +1831,8 @@ class Describe:
     def view_sql(self, view_name):
         role = dict(self.data["roles"][view_name])
         role["_date"] = propose._proposed_on(self.data)
-        return propose.view_sql(view_name, role, self.data["kinds"], self.model, self._vocabulary_codes(view_name))
+        return propose.view_sql(view_name, role, self.data["kinds"], self.model, self._vocabulary_codes(view_name),
+                                propose.concepts_of(self.data))
 
     def _compiled(self, sql, views):
         parts = []
@@ -2190,8 +2289,8 @@ ORDER  BY g.kind;"""
     # checked, which is derived from them and never stored.
 
     def _binding_of(self, about):
-        view, _, column = about.partition(".")
-        role = ((self.data or {}).get("roles") or {}).get(view.split(" ")[0])
+        view_name, pathway, column = _about_parts(about)
+        role = self._pathway(view_name, pathway)
         if role is None:
             return None
         return (role["rows"] if about.endswith(" rows") else role["columns"].get(column) or {}).get("binding")
@@ -2210,14 +2309,15 @@ ORDER  BY g.kind;"""
         """Everything that carries a dimensions record, as (kind, subject, part): each binding of a part's rows or
         columns, each code translation, and each link, whose part is the pair of parts it joins."""
         for view, role in (self.data or {}).get("roles", {}).items():
-            if role["rows"].get("binding"):
-                yield "bindings", f"{view} rows", view
-            for column, item in role["columns"].items():
+            for about, item in rolemap.role_items(view, role):
                 if item.get("binding"):
-                    yield "bindings", f"{view}.{column}", view
+                    yield "bindings", about, view
         for key, held in sorted(self.codes.items()):
             if held.get("chosen") and key.split(".")[0] in (self.data or {}).get("roles", {}):
                 yield "translations", key, key.split(".")[0]
+        # Each mapping view's translation carries its own dimensions, apart from the codes of any part.
+        for mapping in sorted(((self.data or {}).get("concepts") or {}).get("views") or {}):
+            yield "translations", mapping, mapping
         for link, source, target in self._links():
             yield "links", link, (source.split(".")[0], target.split(".")[0])
 
@@ -2235,7 +2335,10 @@ ORDER  BY g.kind;"""
             source, target = subject.split(" -> ")
             return {"link": evidence.digest([self._binding_of(source), self._binding_of(target)]),
                     "contract": evidence.digest([self.parts.get(source.split(".")[0]), self.parts.get(target.split(".")[0])])}
-        view = subject.split(" ")[0].split(".")[0]
+        view = subject.split(" ")[0].split(".")[0].split("@")[0]
+        if kind == "translations" and subject in rolemap.mapping_views(self.model):
+            return {"codes": evidence.digest(((((self.data or {}).get("concepts") or {}).get("views") or {}).get(subject) or {}).get("rows")),
+                    "contract": self.parts.get(subject)}
         if kind == "translations":
             return {"codes": evidence.digest((self.codes.get(subject) or {}).get("chosen")),
                     "binding": evidence.digest(self._binding_of(subject)), "contract": self.parts.get(view)}
@@ -2700,7 +2803,14 @@ ORDER  BY g.kind;"""
             fresh.catalogue = self.catalogue
             for row in self.confirmations:
                 try:
-                    if row.get("correction"):
+                    view, pathway, column = _about_parts(row["attribute"])
+                    kind = re.search(r"source kind (\w+)", row.get("note") or "")
+                    if pathway and row["attribute"].endswith(" rows") and kind and fresh._pathway(view, pathway) is None:
+                        # A further pathway is added again from its table and the source kind it was given.
+                        fresh.add_pathway(view, row.get("replacement") or "", kind.group(1), pathway, row.get("date") or None)
+                    elif column == "source_kind" and row["answer"] == "yes" and row.get("replacement"):
+                        fresh.choose_source_kind(row["attribute"].rsplit(".", 1)[0], row["replacement"], row.get("date") or None)
+                    elif row.get("correction"):
                         fresh.replay_correction(json.loads(row["correction"]), row.get("date") or None, row.get("test") or "",
                                                 row.get("reason") or "")
                     else:
@@ -2714,6 +2824,9 @@ ORDER  BY g.kind;"""
                         fresh.choose_codes(key, held["chosen"], held.get("date"))
                     except DescribeError:
                         problems.append(WORDING["check_codes"].format(key=rolemap.plain_about(key)))
+            # The translations of the mapping views are a person's or a conversion's, which no dictionary rebuilds.
+            if self.data.get("concepts"):
+                fresh.data["concepts"] = copy.deepcopy(self.data["concepts"])
             self.proposer = fresh.proposer
             rebuilt = {"rebuilt": True, "differences": problems + _differences(self.data, fresh.data)}
             rebuilt["same"] = not rebuilt["differences"]
@@ -3048,11 +3161,19 @@ def _read_dictionary(data, tables, own):
         raise DescribeError(message) from None
 
 
+def _about_parts(about):
+    """(part, pathway or None, column or None) of a binding named as role_x rows, role_x.column, role_x@name rows or
+    role_x@name.column."""
+    head, _, column = (about or "").split(" ")[0].partition(".")
+    view, _, pathway = head.partition("@")
+    return view, pathway or None, column or None
+
+
 def _binding_form(binding):
-    """The form of a binding in words of one item, for the page: column, derived, window, joined or filter."""
+    """The form of a binding in words of one item, for the page: column, derived, joined or filter."""
     if not binding:
         return None
-    for form in ("window", "joined", "derive", "filter"):
+    for form in ("joined", "derive", "filter"):
         if binding.get(form):
             return "derived" if form == "derive" else form
     if any(len(step) > 4 for step in binding.get("path") or []):

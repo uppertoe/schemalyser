@@ -18,14 +18,15 @@ and map.json gains a section
 path and joined are the structure from which both the normalisation's own SQL and the part's view are written, so the
 two cannot drift apart. Inside the sitting a binding holds its route inline, as the correction forms make it; lift()
 writes the reference and the section when the map is saved, and resolve() reads them back, so that the compiled view
-of a part is always written from the normalisation that the file names. The time window and the filter are left as
-they are: the contract reserves both decisions for layer 3, and a later phase lifts them out of the bindings.
+of a part is always written from the normalisation that the file names. A filter on a code that says what kind of
+record a row is stays in the binding of the part's rows; no binding attributes a row by a time window. A binding of a
+further pathway to a part is named with the pathway, as drug@orders.drug, and its record names the pathway.
 """
 import copy
 
 from . import propose, rolemap
 
-FIELDS = {"name", "part", "column", "inputs", "grain", "sql", "assumptions", "tests", "path", "joined"}
+FIELDS = {"name", "part", "column", "inputs", "grain", "sql", "assumptions", "tests", "path", "joined", "pathway"}
 
 WORDING = {
     "step": "The route assumes that each row of {a} matches at most one row of {b} on {pairs}, so that it repeats no "
@@ -41,15 +42,15 @@ WORDING = {
 
 def qualifies(binding):
     """Whether a binding is more than naming a column: a route through two or more joins, or rows joined into one
-    text. A time window and a filter are left in the binding (see the module's description)."""
-    if not binding or binding.get("window"):
+    text. A filter is left in the binding of the part's rows (see the module's description)."""
+    if not binding:
         return False
     return bool(binding.get("joined")) or len(binding.get("path") or []) >= 2
 
 
-def name_of(view, column):
-    """The name of a column's normalisation, as reading.anaesthetic_key."""
-    return f"{view.removeprefix('role_')}.{column}"
+def name_of(view, column, pathway=None):
+    """The name of a column's normalisation, as reading.anaesthetic_key, or drug@orders.drug for a further pathway."""
+    return f"{view.removeprefix('role_')}{'@' + pathway if pathway else ''}.{column}"
 
 
 def _inputs(base, binding):
@@ -106,13 +107,17 @@ def lift(data, model=None, tests=None):
     data = copy.deepcopy(data)
     data.pop("normalisations", None)
     found = {}
-    for view, role in data.get("roles", {}).items():
+    for view, whole in data.get("roles", {}).items():
+      for pathway, role in rolemap.pathways(view, whole):
         base = (role["rows"].get("binding") or {}).get("table")
+        part = view if pathway is None else f"{view}@{pathway}"
         for column, item in role["columns"].items():
             binding = item.get("binding")
             if not base or not qualifies(binding):
                 continue
-            record = describe_one(view, column, base, binding, model, (tests or {}).get(f"{view}.{column}", ()))
+            record = describe_one(view, column, base, binding, model, (tests or {}).get(f"{part}.{column}", ()))
+            if pathway is not None:
+                record["name"], record["pathway"] = name_of(view, column, pathway), pathway
             found[record["name"]] = record
             item["binding"] = {k: v for k, v in binding.items() if k not in ("path", "joined")}
             item["binding"]["normalisation"] = record["name"]
@@ -137,13 +142,15 @@ def resolve(data, where=rolemap.MAP_FILE):
                 where=f"{where}, normalisation {name}", problem="a normalisation holds its name, part, column, inputs, "
                                                                 "grain, SQL, assumptions, tests and route"))
     used = set()
-    for view, role in data.get("roles", {}).items():
-        for column, item in role.get("columns", {}).items():
+    for view, whole in data.get("roles", {}).items():
+      for pathway, role in ([(None, whole)] + [(p.get("name"), p) for p in whole.get("pathways") or [] if isinstance(p, dict)]
+                            if isinstance(whole, dict) else []):
+        for column, item in (role.get("columns") or {}).items():
             binding = item.get("binding")
             if not isinstance(binding, dict) or "normalisation" not in binding:
                 continue
             record = held.get(binding["normalisation"])
-            if record is None or record["part"] != view or record["column"] != column:
+            if record is None or record["part"] != view or record["column"] != column or record.get("pathway") != pathway:
                 raise rolemap.MapError(rolemap.WORDING["map_shape"].format(
                     where=f"{where}, {view}.{column}", problem="a binding names a normalisation of its own part and column"))
             resolved = {k: v for k, v in binding.items() if k != "normalisation"}

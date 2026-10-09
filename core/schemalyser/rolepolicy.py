@@ -9,12 +9,14 @@ the text with sqlglot in the SQL Server dialect and checks it against the role c
     dynamic     no EXEC, no dynamic SQL, no procedure, no OPENQUERY, OPENROWSET or OPENDATASOURCE, no variable, and no
                 table read through a function
     names       no name of another database, of a linked server or of a schema: a role view is named alone
-    tables      only the role views of the contract and the question's own common table expressions; no draft view,
-                temporary table or source table
+    tables      only the role views of the contract, the mapping views, and the question's own common table
+                expressions; no draft view, temporary table or source table
     columns     every column read from a role view is a column of that view in the contract, and every column read from
                 one of the question's own steps is a column that the step returns
     functions   only the functions that policy.py allows in a script, with ROW_NUMBER, LEAD and LAG used with a window
     kinds       every literal compared with a column of a kind is a kind that the contract's vocabulary knows
+    capabilities  every capability that the question names, in a leading comment -- capability: NAME, is one of the
+                catalogue's
 
 Each rule is passed, or failed with the fragment that broke it. Anything the parser cannot understand is refused.
 
@@ -35,10 +37,11 @@ RULES = {
     "statements": "The question is one SELECT, which may use common table expressions, and fills no table.",
     "dynamic": "The question runs no procedure and no dynamic SQL, uses no variable and reaches no other server.",
     "names": "The question names no other database, no linked server and no schema.",
-    "tables": "The question reads only the role views of the contract and its own steps.",
+    "tables": "The question reads only the role views of the contract, the mapping views and its own steps.",
     "columns": "Every column that the question reads is a column of the contract or of one of its own steps.",
     "functions": "The question uses only the functions of the allowlist.",
     "kinds": "Every kind that the question names is a kind of the contract's vocabularies.",
+    "capabilities": "Every capability that the question names is one of the catalogue's.",
 }
 # Statements that change something, wherever they appear inside the one statement.
 CHANGES = tuple(getattr(exp, name) for name in ("Insert", "Update", "Delete", "Merge", "Create", "Drop", "Alter",
@@ -49,6 +52,9 @@ def contract_views():
     """{view: {column, ...}} for the views of the contract, and {view: status} for every view of the role model."""
     model = rolemap.contract()
     views = {v["name"]: {c["name"] for c in v["columns"]} for v in model["views"] if v.get("status") == "contract"}
+    # A mapping view translates a hospital's codes into standard concepts and names none of them, so any question may
+    # read it, as it reads the parts of the contract.
+    views.update({name: {c["name"] for c in v["columns"]} for name, v in rolemap.mapping_views(model).items()})
     status = {v["name"]: v.get("status") for v in model["views"]}
     return views, status
 
@@ -209,6 +215,9 @@ def check(sql):
         checker.columns(tree, ctes)
         if not any(checker.failures[r] for r in ("parse", "statements", "dynamic")):
             checker.kinds(sql)
+    for name in feasibility.named_capabilities(sql):
+        if name not in rolemap.capabilities():
+            checker.fail("capabilities", f"{name} is not a capability of the catalogue")
     rules = [{"id": rule, "rule": RULES[rule], "passed": not checker.failures[rule], "fragments": checker.failures[rule]}
              for rule in RULES]
     failed = [r["id"] for r in rules if not r["passed"]]

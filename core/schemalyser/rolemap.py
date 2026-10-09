@@ -7,8 +7,13 @@ three role views with fixed columns:
     role_anaesthetic (anaesthetic_key, patient_key, start_time, stop_time)
     role_reading     (anaesthetic_key, kind, reading_time, value, accepted, reading_key, value_text)
 
-These three are version 1.0 of the contract, and each carries the status contract in contract.json; the further views
-carry the status draft, because no audit reads them yet.
+These three are version 1 of the contract, and each carries the status contract in contract.json; the further views
+carry the status draft, because no audit reads them yet. Version 1.1 adds beside them the mapping views (mapping_views),
+which give the standard concept of each opaque local key that a draft part holds in place of a hospital's code, the
+vocabulary of source kinds that marks each row of a part that records events (event_parts, source_kinds), and the
+capability catalogue (capabilities). A map's private translation of its codes is its "concepts" section, from which
+mapping_sql writes each mapping view with every code replaced by its key, and a part that records events may hold
+further "pathways", each with its own source kind, which the compiled view unites.
 
 An audit, such as rolemodel/neonatal_low_mean_pressure.sql, is one T-SQL SELECT that reads only those views.
 
@@ -73,6 +78,7 @@ from .extract import decode
 MODEL = Path(__file__).parent / "rolemodel"
 AUDIT = MODEL / "neonatal_low_mean_pressure.sql"
 PLANTED = MODEL / "planted_neonates.json"
+PLANTED_CONCEPTS = MODEL / "planted_concepts.json"
 MAP_FILE = "map.json"
 STATUSES = ("proposed", "seen", "person", "count")
 CONFIRMED = ("person", "count")
@@ -113,6 +119,7 @@ WORDING = {
     "compiled": "-- Schemalyser compiled this query from the audit above and the map of {world}. Each role view is one SELECT from the map, read WITH (NOLOCK), which takes no row locks but holds a schema lock while it runs, so the query should not run during the nightly load.",
     "names": "-- The map names the tables and local codes of the hospital's database, so this query is for use inside the hospital only.",
     "view": "-- {view}: {says}",
+    "mapping": "-- {view}: the hospital schema's translation of its local codes, each replaced by its opaque key.",
     "blank": "-- The final SELECT leaves blank any count from 1 to 4, so that no small number can point to a child. It may be removed where the audit's approval allows exact small numbers.",
     # The findings that the reader gives.
     "cliff": "The share of anaesthetics {figure} falls from {best_count} of {best_total} in {best_year} to {count} of {total} in {year}. A fall as sharp as this between years usually means that the data is held differently in those years, so the map may not reach it there.",
@@ -145,19 +152,77 @@ def contract():
 
 def part_hashes(model=None):
     """The hash of each part's definition in the contract, as {view: hash}: the view itself, with the kinds or the
-    vocabularies that its columns of a kind name. A change to any of them is a change to the part, which makes the
-    evidence that rested on it stale."""
+    vocabularies that its columns of a kind name and the mapping views that its columns of a local key name, and the
+    hash of each mapping view. A change to any of them is a change to the part, which makes the evidence that rested
+    on it stale."""
     import hashlib
     model = model or contract()
     found = {}
-    for view in model["views"]:
+    mappings = {m["name"]: m for m in model.get("mapping_views", [])}
+    for view in model["views"] + model.get("mapping_views", []):
         named = sorted({c.get("vocabulary") for c in view["columns"] if c.get("vocabulary")})
         definition = {"view": view, "vocabularies": {n: model["vocabularies"].get(n) for n in named}}
+        mapped = sorted({c["mapping"] for c in view["columns"] if c.get("mapping")})
+        if mapped:
+            definition["mappings"] = {n: mappings.get(n) for n in mapped}
         if view["name"] == "role_reading":
             definition["kinds"] = model["kinds"]
         text = json.dumps(definition, sort_keys=True, ensure_ascii=False)
         found[view["name"]] = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
     return found
+
+
+def mapping_views(model=None):
+    """The mapping views of the contract, as {name: view}, each with the same four columns: local_key, concept_id,
+    status and provenance."""
+    return {m["name"]: m for m in (model or contract()).get("mapping_views", [])}
+
+
+def mapping_columns():
+    """The columns of every mapping view, in order."""
+    return [c["name"] for c in next(iter(mapping_views().values()))["columns"]]
+
+
+def source_kinds(model=None):
+    """The kinds of source record that a part which records events may mark its rows with."""
+    return [k["kind"] for k in (model or contract())["vocabularies"]["source_kind"]]
+
+
+def event_parts(model=None):
+    """The parts that record events, which are those with a column of the source kind, as {name: view}."""
+    return {v["name"]: v for v in (model or contract())["views"] if any(c.get("per_pathway") for c in v["columns"])}
+
+
+def capabilities(model=None):
+    """The capability catalogue, as {name: capability}."""
+    return {c["name"]: c for c in (model or contract()).get("capabilities", [])}
+
+
+def concept_key(salt, mapping, code):
+    """The opaque local key of a hospital's code in a mapping view: a stable hash of the code with the hospital
+    schema's own salt, so that the key names no code and cannot be turned back into one without the schema."""
+    import hashlib
+    text = json.dumps([salt or "", mapping, str(code)], ensure_ascii=False)
+    return "k" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:15]
+
+
+# What a column of a local key gives for a code that the hospital schema has not listed in its mapping view, and that
+# key's one row in the view.
+UNLISTED = "unlisted"
+
+
+def mapping_sql(name, rows):
+    """The SQL of one mapping view from the private translation's rows, with every local code replaced by its key:
+    one SELECT of literal rows for each, joined by UNION ALL, and an empty SELECT where there are none. rows is
+    [{"local_key", "concept_id", "status", "provenance"}]."""
+    def literal(value):
+        return "'" + str(value).replace("'", "''") + "'"
+    if not rows:
+        return (f"SELECT CAST(NULL AS varchar(32)) AS local_key, CAST(NULL AS int) AS concept_id, "
+                f"CAST(NULL AS varchar(16)) AS status, CAST(NULL AS varchar(40)) AS provenance WHERE 1 = 0")
+    lines = [f"SELECT {literal(r['local_key'])} AS local_key, {int(r['concept_id'] or 0)} AS concept_id, "
+             f"{literal(r['status'])} AS status, {literal(r['provenance'])} AS provenance" for r in rows]
+    return "\nUNION ALL\n".join(lines)
 
 
 def views():
@@ -169,6 +234,13 @@ def views():
 def all_views():
     """Every role view of the contract, the further views that a map may supply included, as {name: [column, ...]}."""
     return {view["name"]: [column["name"] for column in view["columns"]] for view in contract()["views"]}
+
+
+def public_views():
+    """Every view that a query over the roles may name: the role views and the mapping views, as {name: [column]}."""
+    found = all_views()
+    found.update({name: [c["name"] for c in view["columns"]] for name, view in mapping_views().items()})
+    return found
 
 
 def anchors(view):
@@ -293,9 +365,9 @@ def read_map_json(folder):
     except (OSError, ValueError):
         raise MapError(WORDING["map_json"].format(where=MAP_FILE)) from None
     if not isinstance(data, dict) or not {"world", "description", "roles", "kinds"} <= set(data) \
-            <= {"world", "description", "roles", "kinds", "eras", "questions", "normalisations"}:
+            <= {"world", "description", "roles", "kinds", "eras", "questions", "normalisations", "concepts"}:
         raise MapError(WORDING["map_shape"].format(where=MAP_FILE, problem="the map holds world, description, roles, kinds and, "
-                                                                           "optionally, eras, questions and normalisations"))
+                                                                           "optionally, eras, questions, normalisations and concepts"))
     # A binding that names a normalisation is read back into its route, so that what follows checks the route itself.
     from .normalise import resolve
     data = resolve(data)
@@ -309,16 +381,23 @@ def read_map_json(folder):
             continue
         role = data["roles"][view]
         where = f"{MAP_FILE}, {view}"
-        if not isinstance(role, dict) or set(role) != {"file", "rows", "columns"} or role["file"] != f"{view}.sql":
-            raise MapError(WORDING["map_shape"].format(where=where, problem=f"a role holds file ({view}.sql), rows and columns"))
-        from .corrections import check_shape
-        _evidence(role["rows"], f"{where}, rows")
-        check_shape(role["rows"].get("binding"), f"{where}, rows")
-        if not isinstance(role["columns"], dict) or set(role["columns"]) != set(columns):
-            raise MapError(WORDING["map_shape"].format(where=where, problem=f"columns gives evidence for exactly {', '.join(columns)}"))
-        for column in columns:
-            _evidence(role["columns"][column], f"{where}.{column}")
-            check_shape(role["columns"][column].get("binding"), f"{where}.{column}")
+        if not isinstance(role, dict) or not {"file", "rows", "columns"} <= set(role) <= {"file", "rows", "columns", "source_kind", "pathways"} \
+                or role["file"] != f"{view}.sql":
+            raise MapError(WORDING["map_shape"].format(where=where, problem=f"a role holds file ({view}.sql), rows and columns, and "
+                                                                           f"a part that records events may add its source kind and further pathways"))
+        _pathway(view, role, columns, where)
+        if "pathways" in role and (view not in event_parts() or not isinstance(role["pathways"], list)):
+            raise MapError(WORDING["map_shape"].format(where=where, problem="only a part that records events takes further pathways"))
+        for number, pathway in enumerate(role.get("pathways") or []):
+            if view not in event_parts() or not isinstance(pathway, dict) or set(pathway) != {"name", "source_kind", "rows", "columns"} \
+                    or not isinstance(pathway["name"], str) or not PATHWAY_NAME.fullmatch(pathway["name"]) \
+                    or pathway["name"] in [p["name"] for p in role["pathways"][:number]]:
+                raise MapError(WORDING["map_shape"].format(where=where, problem="a further pathway of a part that records events "
+                                                                               "holds a plain name of its own, its source kind, rows and columns"))
+            _pathway(view, pathway, columns, f"{where}@{pathway['name']}")
+            if not pathway["rows"].get("binding"):
+                raise MapError(WORDING["map_shape"].format(where=f"{where}@{pathway['name']}", problem="a further pathway names its table"))
+    check_concepts(data.get("concepts"))
     if not isinstance(data["kinds"], dict) or not set(data["kinds"]) <= set(kinds()) - {"other"} or set(MEAN_KINDS) - set(data["kinds"]):
         raise MapError(WORDING["map_shape"].format(where=MAP_FILE, problem="kinds gives the local codes of map_arterial and map_cuff"))
     for kind, item in data["kinds"].items():
@@ -334,6 +413,86 @@ def read_map_json(folder):
             raise MapError(WORDING["map_shape"].format(where=f"{MAP_FILE}, questions", problem="a question holds about and question"))
         _sentence(entry["question"], f"{MAP_FILE}, questions", "a question")
     return data
+
+
+# The name of a further pathway to a part, which the map's evidence names as role_x@name.
+PATHWAY_NAME = re.compile(r"[a-z][a-z0-9_]{0,30}")
+
+
+def _pathway(view, role, columns, where):
+    """Checks one pathway to a part: the evidence of its rows and of every column, and its source kind, which only a
+    part that records events carries and which is a kind of the source kind vocabulary."""
+    from .corrections import check_shape
+    _evidence(role["rows"], f"{where}, rows")
+    check_shape(role["rows"].get("binding"), f"{where}, rows")
+    if not isinstance(role["columns"], dict) or set(role["columns"]) != set(columns):
+        raise MapError(WORDING["map_shape"].format(where=where, problem=f"columns gives evidence for exactly {', '.join(columns)}"))
+    for column in columns:
+        _evidence(role["columns"][column], f"{where}.{column}")
+        check_shape(role["columns"][column].get("binding"), f"{where}.{column}")
+    if "source_kind" in role and (view not in event_parts() or role["source_kind"] not in source_kinds()):
+        raise MapError(WORDING["map_shape"].format(where=where, problem="a source kind belongs to a part that records events, "
+                                                                       "and is one of the kinds of the source kind vocabulary"))
+
+
+def pathways(view, role):
+    """The pathways to a part, as [(name, pathway)]: the first, whose name is None, and each further one."""
+    return [(None, role)] + [(p["name"], p) for p in role.get("pathways") or []]
+
+
+def role_items(view, role):
+    """Every binding of a part and its further pathways, as [(about, evidence)]: role_x rows, role_x.column, and for
+    a further pathway role_x@name rows and role_x@name.column."""
+    found = []
+    for name, pathway in pathways(view, role):
+        part = view if name is None else f"{view}@{name}"
+        found.append((f"{part} rows", pathway["rows"]))
+        found += [(f"{part}.{c}", e) for c, e in pathway["columns"].items()]
+    return found
+
+
+def check_concepts(concepts):
+    """Checks the concept translations of a map: {"salt", "views": {mapping view: {"rows": [{"code", "description",
+    "concept_id", "status", "provenance"}], ...}}}. A code that is mapped or unmapped has one row, an ambiguous code a
+    row for each concept it may mean, and an unmapped row has the concept 0. Raises MapError."""
+    if concepts is None:
+        return
+    model = contract()
+    statuses = {k["kind"] for k in model["vocabularies"]["mapping_status"]}
+    provenances = {k["kind"] for k in model["vocabularies"]["mapping_provenance"]}
+
+    def bad(problem):
+        raise MapError(WORDING["map_shape"].format(where=f"{MAP_FILE}, concepts", problem=problem))
+    if not isinstance(concepts, dict) or not isinstance(concepts.get("salt"), str) or not isinstance(concepts.get("views"), dict):
+        bad("the concepts hold a salt and the translation of each mapping view")
+    for name, held in concepts["views"].items():
+        if name not in mapping_views(model) or not isinstance(held, dict) or not isinstance(held.get("rows"), list):
+            bad("each translation names a mapping view of the contract and holds its rows")
+        by_code = {}
+        for row in held["rows"]:
+            if not isinstance(row, dict) or not {"code", "concept_id", "status", "provenance"} <= set(row) \
+                    or not str(row["code"]).strip() or row["status"] not in statuses or row["provenance"] not in provenances \
+                    or not isinstance(row["concept_id"], int) or (row["status"] == "unmapped") != (row["concept_id"] == 0):
+                bad("each row gives a code, a concept, a status and a provenance, and only an unmapped row has the concept 0")
+            by_code.setdefault(str(row["code"]), []).append(row)
+        for code, rows in by_code.items():
+            if len({r["status"] for r in rows}) != 1 or (rows[0]["status"] != "ambiguous" and len(rows) != 1):
+                bad("a code that is mapped or unmapped has one row, and only an ambiguous code has several")
+
+
+def concept_codes(data, mapping):
+    """{code: local key} for every code that a map's translation of one mapping view lists."""
+    concepts = (data or {}).get("concepts") or {}
+    rows = ((concepts.get("views") or {}).get(mapping) or {}).get("rows") or []
+    return {str(r["code"]): concept_key(concepts.get("salt"), mapping, r["code"]) for r in rows}
+
+
+def mapping_rows(data, mapping):
+    """The public rows of one mapping view, from a map's private translation: the code replaced by its key."""
+    concepts = (data or {}).get("concepts") or {}
+    rows = ((concepts.get("views") or {}).get(mapping) or {}).get("rows") or []
+    return [{"local_key": concept_key(concepts.get("salt"), mapping, r["code"]), "concept_id": r["concept_id"],
+             "status": r["status"], "provenance": r["provenance"]} for r in rows]
 
 
 def _single_select(sql, where):
@@ -426,6 +585,9 @@ def read_map(folder, catalogue=None):
             raise MapError(WORDING["map_shape"].format(where=view, problem=f"the map folder holds {view}.sql")) from None
         tables[view] = check_view(sql, view, catalogue)
         found[view] = sql
+    # The mapping views are written from the map's own translations, with each code replaced by its key.
+    for name in mapping_views():
+        found[name] = mapping_sql(name, mapping_rows(data, name))
     return {"folder": folder, "data": data, "views": found, "tables": tables}
 
 
@@ -435,7 +597,7 @@ def open_items(roles_map):
     data = roles_map["data"] if "data" in roles_map else roles_map
     items = []
     for view, role in data["roles"].items():
-        for about, item in [(f"{view} rows", role["rows"])] + [(f"{view}.{c}", e) for c, e in role["columns"].items()]:
+        for about, item in role_items(view, role):
             if item["status"] not in CONFIRMED:
                 items.append({"about": about, "status": item["status"], "says": item["says"], "question": item["question"]})
     for kind, item in data["kinds"].items():
@@ -453,7 +615,7 @@ def check_audit(sql, where="audit"):
     tree = _single_select(sql, where)
     named = {cte.alias.lower() for cte in tree.find_all(exp.CTE)}
     for table in tree.find_all(exp.Table):
-        if table.db or table.catalog or table.name.lower() not in set(all_views()) | named:
+        if table.db or table.catalog or table.name.lower() not in set(public_views()) | named:
             raise MapError(WORDING["audit_reads"].format(where=where, table=table.sql(dialect="tsql")))
     return tree
 
@@ -539,6 +701,10 @@ def compile_query(sql, roles_map, blank=False, nolock=True):
         text = view_sql(roles_map["views"][view], nolock)
         indented = "\n".join("  " + line for line in text.splitlines())
         parts.append((WORDING["view"].format(view=view, says=data["roles"][view]["rows"]["says"]), f"{view} AS (\n{indented}\n)"))
+    for view in [name for name in mapping_views() if name in read]:
+        text = roles_map["views"].get(view) or mapping_sql(view, mapping_rows(data, view))
+        indented = "\n".join("  " + line for line in text.splitlines())
+        parts.append((WORDING["mapping"].format(view=view), f"{view} AS (\n{indented}\n)"))
     ctes = parts[0][0] + "\nWITH " + parts[0][1] + "".join(f",\n{comment}\n{text}" for comment, text in parts[1:])
     split = _with_token(body)
     head = [line for line in (header, WORDING["compiled"].format(world=data["world"]), WORDING["names"]) if line]
@@ -1040,13 +1206,19 @@ def result(run, audit_sql=None, least=MINIMUM_COUNT, step=MINIMUM_COUNT, blank=F
 
 # The role-level shadow.
 
-ROLE_TYPES = {"key": "VARCHAR", "date": "DATE", "datetime": "TIMESTAMP", "number": "DOUBLE", "whole": "INTEGER", "flag": "INTEGER",
+ROLE_TYPES = {"key": "VARCHAR", "local_key": "VARCHAR", "date": "DATE", "datetime": "TIMESTAMP", "number": "DOUBLE", "whole": "INTEGER", "flag": "INTEGER",
               "flag_or_empty": "INTEGER", "kind": "VARCHAR", "text": "VARCHAR"}
 
 
 def planted():
     """The planted neonates, written once as rows of the three role views, with their expectations."""
     return json.loads(PLANTED.read_text(encoding="utf-8"))
+
+
+def planted_concepts():
+    """The planted rows of the mapping views, with the drug events that name them: a key mapped, one unmapped, one
+    ambiguous between two concepts, and one that the view does not list."""
+    return json.loads(PLANTED_CONCEPTS.read_text(encoding="utf-8"))
 
 
 def generated_rows(seed=1, anaesthetics=400, first_year=2019, last_year=2025):
@@ -1106,22 +1278,24 @@ def generated_rows(seed=1, anaesthetics=400, first_year=2019, last_year=2025):
 
 
 def role_shadow(seed=1, anaesthetics=400, with_planted=True, extra=None):
-    """A DuckDB database that holds the role views as tables, the three that every map supplies filled from a seed
-    and, with_planted, with the planted neonates, and the further views empty. extra, when given, is
+    """A DuckDB database that holds the role views and the mapping views as tables, the three that every map supplies
+    filled from a seed and, with_planted, with the planted neonates and the planted rows of the mapping views and the
+    drug events that name them, and the further views otherwise empty. extra, when given, is
     {view: [row, ...]} of further rows for any view. Returns the connection."""
     import duckdb
     con = duckdb.connect()
-    shape = {view["name"]: view["columns"] for view in contract()["views"]}
+    model = contract()
+    shape = {view["name"]: view["columns"] for view in model["views"] + model.get("mapping_views", [])}
     for name, columns in shape.items():
         con.execute(f"CREATE TABLE {name} (" + ", ".join(f"{c['name']} {ROLE_TYPES[c['type']]}" for c in columns) + ")")
     rows = {name: [] for name in shape}
     if anaesthetics:
         rows.update(generated_rows(seed, anaesthetics))
     if with_planted:
-        cases = planted()
-        for name in shape:
-            if name in cases:
-                rows[name] = rows[name] + cases[name]["rows"]
+        for cases in (planted(), planted_concepts()):
+            for name in shape:
+                if name in cases:
+                    rows[name] = rows[name] + cases[name]["rows"]
     for name, more in (extra or {}).items():
         rows[name] = rows[name] + more
     for name, columns in shape.items():

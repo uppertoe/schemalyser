@@ -80,7 +80,7 @@ def test_the_neonatal_audit_builds_a_package_of_class_b_whose_policy_passes(pack
     assert manifest["plan_review"] == {"state": audit.NOT_REVIEWED}
     assert manifest["sql_sha256"] == audit.sha256((out / "query.sql").read_text(encoding="utf-8"))
     assert manifest["query"]["sha256"] == audit.sha256(rolemap.AUDIT.read_text(encoding="utf-8"))
-    assert manifest["role_model_version"] == "1.0" and manifest["schema_file"]["sha256"]
+    assert manifest["role_model_version"] == "1.1" and manifest["schema_file"]["sha256"]
     assert manifest["period"] == {"from": "2024-01-01", "to": "2024-12-31"}
     assert manifest["decisions"]["decisions"][0]["about"] == "The period"
     assert manifest["schema_file"]["readiness"]["parts"]["role_reading"]["runs"] == DATE

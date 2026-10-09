@@ -255,3 +255,30 @@ def test_the_role_policy_names_the_rule_that_a_question_breaks(sql, rule):
 def test_the_role_policy_passes_the_neonatal_audit():
     found = rolepolicy.check((ROOT / workspace.EXAMPLE_SOURCE).read_text(encoding="utf-8"))
     assert found["outcome"] == "passed", [r for r in found["rules"] if not r["passed"]]
+
+
+def test_the_role_policy_lets_a_question_read_a_mapping_view_and_checks_the_capabilities_it_names():
+    reads = ("-- capability: principal_diagnosis\n"
+             "SELECT m.status, COUNT(*) AS n FROM role_anaesthetic a JOIN map_diagnosis_concept m ON m.local_key = a.anaesthetic_key "
+             "WHERE m.status IN ('mapped', 'ambiguous') GROUP BY m.status")
+    assert rolepolicy.check(reads)["outcome"] == "passed"
+    assert rolepolicy.check(reads.replace("'ambiguous'", "'guessed'"))["failed"] == ["kinds"]
+    assert rolepolicy.check(reads.replace("m.status,", "m.code,").replace("BY m.status", "BY m.code"))["failed"] == ["columns"]
+    unknown = rolepolicy.check("-- capability: minutes_of_unicorns\nSELECT a.anaesthetic_key FROM role_anaesthetic a")
+    assert unknown["failed"] == ["capabilities"]
+    # A draft part stays closed to a question, whatever capability it names.
+    assert "tables" in rolepolicy.check("-- capability: transfusion\nSELECT f.volume_ml FROM role_fluid f")["failed"]
+
+
+def test_the_export_holds_the_mapping_views_and_the_catalogue_and_no_hospital_s_translation(exported):
+    out, _ = exported
+    model = json.loads((out / "core/schemalyser/rolemodel/contract.json").read_text(encoding="utf-8"))
+    assert model["version"] == "1.1" and model["mapping_views"] and model["capabilities"]
+    assert (out / "core/schemalyser/rolemodel/planted_concepts.json").is_file()
+    queries = (out / "QUERIES.md").read_text(encoding="utf-8")
+    assert "map_drug_concept" in queries and "-- capability: NAME" in queries and "fifteen further views" in queries
+    # The invented schema in the workspace holds no translation of codes, and nothing exported carries a salt.
+    import zipfile
+    with zipfile.ZipFile(out / "schemas" / workspace.SCHEMA_NAME) as archive:
+        assert "concepts" not in json.loads(archive.read("map/map.json"))
+    assert not any(b'"salt"' in p.read_bytes() for p in out.rglob("*.json"))

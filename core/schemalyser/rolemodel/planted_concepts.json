@@ -1,0 +1,201 @@
+{
+ "description": "The planted rows of the mapping views on the role-level shadow, with drug events that name them. Each local key is invented, and each concept is an invented number from 9100000 upward, which no vocabulary holds. The drug view holds a key that is mapped, one that is unmapped, one that is ambiguous between two concepts, and the drug events name as well a key that the view does not list at all, so that a query is tested on each outcome.",
+ "map_drug_concept": {
+  "rows": [
+   [
+    "kdrugmapped0001",
+    9100001,
+    "mapped",
+    "a person"
+   ],
+   [
+    "kdrugunmapped01",
+    0,
+    "unmapped",
+    "a person"
+   ],
+   [
+    "kdrugambiguous1",
+    9100002,
+    "ambiguous",
+    "a reference conversion"
+   ],
+   [
+    "kdrugambiguous1",
+    9100003,
+    "ambiguous",
+    "a reference conversion"
+   ]
+  ]
+ },
+ "map_unit_concept": {
+  "rows": [
+   [
+    "kunitmgperkg001",
+    9100101,
+    "mapped",
+    "a person"
+   ],
+   [
+    "kunitmicrogkgmn",
+    9100102,
+    "mapped",
+    "a person"
+   ]
+  ]
+ },
+ "role_drug": {
+  "rows": [
+   [
+    "990009001",
+    "990002400",
+    null,
+    "990009500",
+    "kdrugmapped0001",
+    "ordered",
+    10.0,
+    "kunitmicrogkgmn",
+    "intravenous",
+    "2024-05-11 08:55:00",
+    "order",
+    null,
+    null
+   ],
+   [
+    "990009002",
+    "990002400",
+    null,
+    "990009500",
+    "kdrugmapped0001",
+    "infusion_start",
+    10.0,
+    "kunitmicrogkgmn",
+    "intravenous",
+    "2024-05-11 09:05:00",
+    "administration",
+    null,
+    null
+   ],
+   [
+    "990009003",
+    "990002400",
+    null,
+    "990009500",
+    "kdrugmapped0001",
+    "rate_change",
+    15.0,
+    "kunitmicrogkgmn",
+    "intravenous",
+    "2024-05-11 09:20:00",
+    "administration",
+    null,
+    null
+   ],
+   [
+    "990009004",
+    "990002400",
+    null,
+    "990009500",
+    "kdrugmapped0001",
+    "infusion_pause",
+    null,
+    null,
+    "intravenous",
+    "2024-05-11 09:40:00",
+    "administration",
+    null,
+    null
+   ],
+   [
+    "990009005",
+    "990002400",
+    null,
+    "990009500",
+    "kdrugmapped0001",
+    "infusion_restart",
+    15.0,
+    "kunitmicrogkgmn",
+    "intravenous",
+    "2024-05-11 09:50:00",
+    "administration",
+    null,
+    null
+   ],
+   [
+    "990009006",
+    "990002400",
+    null,
+    "990009500",
+    "kdrugmapped0001",
+    "rate_change",
+    5.0,
+    "kunitmicrogkgmn",
+    "intravenous",
+    "2024-05-11 10:05:00",
+    "correction",
+    "2024-05-11 14:00:00",
+    "990009003"
+   ],
+   [
+    "990009007",
+    "990002400",
+    null,
+    null,
+    "kdrugunmapped01",
+    "dose",
+    0.1,
+    "kunitmgperkg001",
+    "intravenous",
+    "2024-05-11 09:02:00",
+    "administration",
+    null,
+    null
+   ],
+   [
+    "990009008",
+    "990002400",
+    null,
+    null,
+    "kdrugambiguous1",
+    "dose",
+    0.02,
+    "kunitmgperkg001",
+    "intravenous",
+    "2024-05-11 09:03:00",
+    "administration",
+    null,
+    null
+   ],
+   [
+    "990009009",
+    "990002400",
+    null,
+    null,
+    "kdrugnotlisted1",
+    "dose",
+    1.0,
+    "kunitmgperkg001",
+    "intravenous",
+    "2024-05-11 09:04:00",
+    "administration",
+    null,
+    null
+   ],
+   [
+    "990009010",
+    null,
+    "990009900",
+    null,
+    "kdrugmapped0001",
+    "dose",
+    1.0,
+    "kunitmgperkg001",
+    "intravenous",
+    "2024-05-11 12:00:00",
+    "administration",
+    null,
+    null
+   ]
+  ]
+ }
+}

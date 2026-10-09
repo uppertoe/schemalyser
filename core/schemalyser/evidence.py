@@ -31,13 +31,15 @@ import json
 # or a reference conversion's lineage.
 COMPLETE, SAMPLE, METADATA, PERSON, INFERENCE = "complete data", "a sample", "metadata", "a person", "an inference"
 REFERENCE = "a reference conversion"
-PROVENANCES = (COMPLETE, SAMPLE, METADATA, PERSON, INFERENCE, REFERENCE)
+# The hospital's own conversion to OMOP, which may give the concept of a local code.
+HOSPITAL_CONVERSION = "the hospital's own conversion"
+PROVENANCES = (COMPLETE, SAMPLE, METADATA, PERSON, INFERENCE, REFERENCE, HOSPITAL_CONVERSION)
 # The actor recorded where the page collected no name, and the actor of what the tool did itself.
 NOT_RECORDED = "not recorded"
 TOOL = "Schemalyser"
 JOURNAL_FORMAT = 2
 KINDS = ("dictionary loaded", "vendor descriptions added", "reference lineage loaded", "query offered", "result returned",
-         "answer", "correction kept", "codes chosen", "judgement", "setting", "test run", "evidence imported")
+         "answer", "correction kept", "codes chosen", "concepts translated", "judgement", "setting", "test run", "evidence imported")
 DIMENSIONS = ("confirmed", "present", "tested", "reconciled", "validated")
 # Why a dimension is stale, by the part of what it rested on that changed.
 REASONS = {"binding": "the binding changed", "link": "the link changed", "codes": "the codes changed",

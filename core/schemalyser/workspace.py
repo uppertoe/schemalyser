@@ -279,11 +279,15 @@ A question is one SELECT over the role views, written in SQL Server's dialect of
 
 ## The role views
 
-A question may read the three views of version {version} of the contract, and its own common table expressions over them. The fourteen further views in `contract.json` are drafts, and no question may read them until they join the contract.
+A question may read the three views of version {version} of the contract, the mapping views, and its own common table expressions over them. The fifteen further views in `contract.json` are drafts, and no question may read them until they join the contract.
 
 {table}
 
 A column of the type `kind` holds a word of the contract's vocabulary rather than a hospital's code. The kinds of `role_reading.kind` are {kinds}. A literal compared with a column of a kind must be one of these words, and the hospital schema translates each into that hospital's codes.
+
+A mapping view, such as `map_drug_concept`, translates a hospital's local codes of an open domain into standard concepts. It has four columns, `local_key`, `concept_id`, `status` and `provenance`, and a part's column of the type `local_key` joins it on `local_key`. A question never sees a hospital's code: it names drugs, procedures, diagnoses, tests and units by their standard concepts, and it handles a key whose status is `unmapped` or `ambiguous`, or that the view does not list, as an ordinary outcome.
+
+A question may name the capabilities of the catalogue in `contract.json` that it computes, each on a line of its leading comment written as `-- capability: NAME`. The feasibility report then resolves the question's requirements through each capability's own, and a name that the catalogue does not hold breaks the rule on capabilities.
 
 `core/schemalyser/rolemodel/roles.md` sets out the rules of the record. The most consequential is that a reading belongs to an anaesthetic by its link to that anaesthetic, `role_reading.anaesthetic_key`, and never because its time falls within the anaesthetic.
 

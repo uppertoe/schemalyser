@@ -19,8 +19,9 @@ from test_describe import DATE, DICTIONARY, TABLES, tables_result
 
 PATH = {"form": "path", "about": "role_anaesthetic.patient_key", "column": "PERSON_KEY",
         "steps": [{"from": "CASE_KEY", "table": "THEATRE_CASE", "to": "CASE_KEY"}, {"from": "VISIT_KEY", "table": "VISIT", "to": "VISIT_KEY"}]}
-JOINED = {"form": "joined", "about": "role_drug.route", "on_table": "DRUG_GIVEN", "on_column": "ROUTE_CAT", "table": "LK_ROUTE",
-          "link": "ROUTE_CAT", "text": "LABEL", "order": "LABEL", "separator": " "}
+# The route of a drug is a kind in version 1.1, so rows joined into one text are tried on the size of a device.
+JOINED = {"form": "joined", "about": "role_device.size", "on_table": "AIRWAY_DEVICE", "on_column": "ANAES_KEY", "table": "ANAES_EVENT",
+          "link": "ANAES_KEY", "text": "EVENT_TYPE_KEY", "order": "SEQ", "separator": " "}
 PATIENT_LINK = "role_anaesthetic.patient_key -> role_patient.patient_key"
 
 
@@ -209,9 +210,9 @@ def test_a_route_through_several_tables_and_rows_joined_into_one_text_are_saved_
     assert "LEFT JOIN VISIT" in record["sql"] and record["path"] == s.data["roles"]["role_anaesthetic"]["columns"]["patient_key"]["binding"]["path"]
     assert all(a.endswith(".") and "?" not in a for a in record["assumptions"]) and len(record["assumptions"]) == 3
     assert record["tests"][0]["outcome"] == "passed" and s.log.get(record["tests"][0]["entry"])["kind"] == "test run"
-    joined = data["normalisations"]["drug.route"]
-    assert joined["joined"]["table"] == "LK_ROUTE" and "STRING_AGG" in joined["sql"]
-    # The window and the filter stay as they are, for a later phase.
+    joined = data["normalisations"]["device.size"]
+    assert joined["joined"]["table"] == "ANAES_EVENT" and "STRING_AGG" in joined["sql"]
+    # A filter stays in the binding of the part's rows, and no binding holds a time window.
     assert not any(n.endswith("anaesthetic_key") and n.startswith("reading") for n in data["normalisations"])
     # The part's SQL is written from the normalisation, and says so.
     sql = files["map/role_anaesthetic.sql"].decode()
@@ -221,7 +222,7 @@ def test_a_route_through_several_tables_and_rows_joined_into_one_text_are_saved_
     assert again.data == s.data
     # A reference to a normalisation that the map does not hold is refused.
     broken = json.loads(files["map/map.json"])
-    del broken["normalisations"]["drug.route"]
+    del broken["normalisations"]["device.size"]
     with pytest.raises(rolemap.MapError, match="names a normalisation"):
         normalise.resolve(broken)
 

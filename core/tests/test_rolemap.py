@@ -94,17 +94,19 @@ def test_the_contract_holds_three_role_views_and_the_kinds_of_mean_pressure():
 
 def test_the_contract_is_version_one_and_marks_its_further_views_as_drafts():
     model = rolemap.contract()
-    assert model["version"] == "1.0"
+    # Version 1.1 is additive: the three parts of version 1 are unchanged, and the mapping views, the source kinds and
+    # the capability catalogue sit beside them. The unit stay gave way to transfers, and techniques joined the drafts.
+    assert model["version"] == "1.1"
     statuses = rolemap.statuses()
     assert {name for name, status in statuses.items() if status == "contract"} == set(rolemap.views())
-    assert len([s for s in statuses.values() if s == "draft"]) == 14 and set(statuses.values()) == {"contract", "draft"}
+    assert len([s for s in statuses.values() if s == "draft"]) == 15 and set(statuses.values()) == {"contract", "draft"}
     # A reading is identified by its own key, because two readings may share their anaesthetic, kind and time, and it
     # still belongs in the view only through its anaesthetic.
     reading = next(v for v in model["views"] if v["name"] == "role_reading")
     assert reading["key"] == ["reading_key"] and rolemap.anchors(reading) == {"anaesthetic_key"}
     assert "daylight saving" in model["rules"][1] and "value_text" in model["rules"][7]
     roles = (rolemap.MODEL / "roles.md").read_text()
-    assert "## How each role relates to OMOP" in roles and roles.count("draft, not yet used by any audit") == 14
+    assert "## How each role relates to OMOP" in roles and roles.count("draft, not yet used by any audit") == 15
 
 
 def test_the_count_of_empty_values_gives_each_reason_apart():
@@ -129,8 +131,9 @@ def test_the_invented_map_is_checked_against_the_catalogue_and_lists_its_open_it
     assert items and all(item["question"].startswith("Please confirm whether") for item in items)
     # Nothing in the invented map is confirmed yet, so every binding is open, and so is the map's own question. The map
     # supplies the staff and the diagnoses as well, and leaves the fluids and the laboratory results unsupplied, because
-    # the invented world records neither.
-    assert len(items) == 3 + 13 + 2 + 1 + 9 + 8
+    # the invented world records neither. The diagnoses carry their own key, their source kind, the time each was
+    # entered and the row it amends, in place of the hospital's code, classification and name, so they have ten.
+    assert len(items) == 3 + 13 + 2 + 1 + 9 + 10
     assert {"role_staff", "role_diagnosis"} <= set(roles_map["views"]) and not {"role_fluid", "role_lab"} & set(roles_map["views"])
     assert {"kind map_arterial", "role_anaesthetic.patient_key"} <= {item["about"] for item in items}
 
@@ -312,7 +315,7 @@ def test_the_command_line_checks_a_map_lists_its_open_items_and_compiles_the_aud
         rolemap.main(["open", str(MAP)])
         rolemap.main(["compile", str(MAP)])
     text = out.getvalue()
-    assert "role_reading: one SELECT over OBS_READING, OBS_SHEET" in text and "The map has 36 open items." in text
+    assert "role_reading: one SELECT over OBS_READING, OBS_SHEET" in text and "The map has 38 open items." in text
     assert "kind map_cuff (proposed): Please confirm whether" in text and "WITH (NOLOCK)" in text
 
 
@@ -382,3 +385,157 @@ def test_the_scoreboard_counts_each_category_of_column_apart(tmp_path):
     with redirect_stdout(out):
         rolemap.main(["scoreboard", str(saved)])
     assert out.getvalue() == rolemap.scoreboard(data)["text"]
+
+
+# Version 1.1: the mapping views, the source kinds, the shapes of the event parts, and the capability catalogue.
+
+VERSION_1_0_KINDS = {"map_arterial", "map_cuff", "heart_rate", "spo2", "etco2", "temperature", "systolic_arterial",
+                     "diastolic_arterial", "systolic_cuff", "diastolic_cuff", "central_venous_pressure", "fio2", "peep",
+                     "tidal_volume", "respiratory_rate", "end_tidal_agent", "pain_score", "blood_glucose", "other"}
+
+
+def test_every_mapping_view_has_one_shape_and_every_open_code_is_a_local_key_of_one():
+    model = rolemap.contract()
+    mappings = rolemap.mapping_views()
+    assert set(mappings) == {"map_drug_concept", "map_procedure_concept", "map_diagnosis_concept", "map_lab_concept",
+                             "map_unit_concept"}
+    for name, mapping in mappings.items():
+        assert [(c["name"], c["type"]) for c in mapping["columns"]] == [
+            ("local_key", "local_key"), ("concept_id", "whole"), ("status", "kind"), ("provenance", "kind")]
+        assert mapping["key"] == ["local_key", "concept_id"] and mapping["used_by"]
+    assert [k["kind"] for k in model["vocabularies"]["mapping_status"]] == ["mapped", "unmapped", "ambiguous"]
+    assert {"a person", "a reference conversion", "the hospital's own conversion"} <= {
+        k["kind"] for k in model["vocabularies"]["mapping_provenance"]}
+    # No draft part carries a hospital's own code or name: each column of an open domain is a local key of the mapping
+    # view that names it, and nothing else names a mapping view.
+    columns = {(v["name"], c["name"]): c for v in model["views"] for c in v["columns"]}
+    for gone in ("role_drug.drug_name", "role_operation.procedure_code", "role_operation.procedure_name",
+                 "role_diagnosis.code", "role_diagnosis.code_system", "role_diagnosis.name"):
+        assert tuple(gone.split(".")) not in columns, gone
+    keyed = {f"{v}.{c}": spec["mapping"] for (v, c), spec in columns.items() if spec["type"] == "local_key"}
+    assert keyed == {used: name for name, mapping in mappings.items() for used in mapping["used_by"]}
+    assert "local_key" in model["types"]
+
+
+def test_the_shadow_plants_a_mapped_an_unmapped_an_ambiguous_and_an_unlisted_drug():
+    con = rolemap.role_shadow(seed=1, anaesthetics=0)
+    rows = con.execute("SELECT d.drug_event_key, m.status, m.concept_id FROM role_drug d "
+                       "LEFT JOIN map_drug_concept m ON m.local_key = d.drug "
+                       "WHERE d.action = 'dose' ORDER BY d.drug_event_key, m.concept_id").fetchall()
+    statuses = [status for _, status, _ in rows]
+    assert {"mapped", "unmapped", "ambiguous"} <= set(statuses) and None in statuses
+    # An ambiguous key has a row for each concept it may mean, and an unmapped key the concept 0.
+    assert sum(1 for _, status, _ in rows if status == "ambiguous") == 2
+    assert all(concept == 0 for _, status, concept in rows if status == "unmapped")
+    # The infusion is recorded as charted: an order, a start, a change of rate, a pause, a restart and a retrospective
+    # correction that amends an earlier row, each a row with its own key and source kind, and no stop.
+    infusion = con.execute("SELECT action, source_kind, amends_key, documented_time IS NOT NULL FROM role_drug "
+                           "WHERE order_key = '990009500' ORDER BY given_time").fetchall()
+    assert [a for a, _, _, _ in infusion] == ["ordered", "infusion_start", "rate_change", "infusion_pause", "infusion_restart",
+                                              "rate_change"]
+    assert infusion[0][1] == "order" and infusion[-1][1:] == ("correction", "990009003", True)
+    # A drug whose source carries only the stay keeps the stay and an empty anaesthetic.
+    assert con.execute("SELECT COUNT(*) FROM role_drug WHERE anaesthetic_key IS NULL AND stay_key IS NOT NULL").fetchone()[0] == 1
+
+
+def test_every_event_part_has_a_key_of_its_own_a_source_kind_and_its_documentation_and_amendment():
+    model = rolemap.contract()
+    events = rolemap.event_parts()
+    assert set(events) == {"role_transfer", "role_event", "role_drug", "role_technique", "role_fluid", "role_device",
+                           "role_lab", "role_diagnosis"}
+    for name, view in events.items():
+        columns = {c["name"]: c for c in view["columns"]}
+        # Its own key, so that no rule of the map collapses rows that share a time or a kind.
+        assert len(view["key"]) == 1 and view["key"][0].endswith("_key") and view["key"][0] not in {l["column"] for l in view["links"]}
+        assert columns["source_kind"]["vocabulary"] == "source_kind" and columns["source_kind"]["per_pathway"]
+        assert set(view["source_kinds"]) <= set(rolemap.source_kinds())
+        assert columns["documented_time"]["type"] == "datetime" and columns["amends_key"]["type"] == "key"
+        # A part of an anaesthetic carries the stay as well, and no anchor drops a row that carries only the stay.
+        if "anaesthetic_key" in columns and name != "role_technique":
+            assert {"column": "stay_key", "to": "role_stay.stay_key"} in view["links"], name
+            assert not rolemap.anchors(view), name
+    # The source kinds are few and name no vendor's table.
+    assert len(rolemap.source_kinds()) <= 12 and "correction" in rolemap.source_kinds()
+    views = {v["name"]: v for v in model["views"]}
+    assert "role_unit_stay" not in views
+    transfer = [c["name"] for c in views["role_transfer"]["columns"]]
+    assert transfer[:5] == ["transfer_key", "stay_key", "unit_kind", "direction", "transfer_time"]
+    assert [k["kind"] for k in model["vocabularies"]["transfer_direction"]] == ["in", "out"]
+    assert [k["kind"] for k in model["vocabularies"]["volume_form"]] == ["amount", "running_total"]
+    assert "volume_form" in [c["name"] for c in views["role_fluid"]["columns"]]
+    assert "technique" not in [c["name"] for c in views["role_anaesthetic_detail"]["columns"]]
+    technique = [c["name"] for c in views["role_technique"]["columns"]]
+    assert technique == ["anaesthetic_key", "technique_key", "kind", "laterality", "guidance", "catheter", "recorded_time",
+                         "documented_time", "performer", "source_kind", "amends_key"]
+    assert [k["kind"] for k in model["vocabularies"]["guidance"]] == ["ultrasound", "nerve_stimulator", "landmark", "none"]
+    assert {"perineural", "epidural", "caudal", "intrathecal"} <= {k["kind"] for k in model["vocabularies"]["route"]}
+    assert {"block_failure", "conversion_to_general", "block_complication"} <= {k["kind"] for k in model["vocabularies"]["event"]}
+    assert {"infusion_pause", "infusion_restart", "ordered"} <= {k["kind"] for k in model["vocabularies"]["drug_action"]}
+    # The parts are listed in the order of the export's sections: the drugs, then the techniques, then the fluids.
+    order = [v["name"] for v in model["views"]]
+    assert order.index("role_drug") + 1 == order.index("role_technique") == order.index("role_fluid") - 1
+    # role_reading takes no source kind in version 1; that is a question for version 2.
+    assert "source_kind" not in [c["name"] for c in views["role_reading"]["columns"]]
+
+
+def test_two_events_that_share_their_anaesthetic_kind_and_time_are_both_kept():
+    con = rolemap.role_shadow(seed=1, anaesthetics=0, with_planted=False, extra={"role_event": [
+        ["E1", "A1", None, "induction", "2024-01-01 10:00:00", "procedure_log", None, None],
+        ["E2", "A1", None, "induction", "2024-01-01 10:00:00", "charted_value", "2024-01-01 12:00:00", None]]})
+    assert con.execute("SELECT COUNT(*), COUNT(DISTINCT event_key), COUNT(DISTINCT source_kind) FROM role_event").fetchone() == (2, 2, 2)
+
+
+def test_the_reading_kinds_grow_without_changing_a_kind_of_version_1():
+    kinds = {k["kind"]: k for k in rolemap.contract()["kinds"]}
+    assert VERSION_1_0_KINDS <= set(kinds) and list(kinds)[-1] == "other"
+    added = set(kinds) - VERSION_1_0_KINDS
+    assert {"fresh_gas_flow", "inspired_sevoflurane", "expired_desflurane", "inspired_nitrous_oxide", "peak_airway_pressure",
+            "plateau_pressure", "ventilation_mode", "pain_score_flacc", "pain_score_numeric", "pain_score_faces",
+            "nausea_score", "sedation_score", "ciba", "paed"} <= added
+    assert all("unit" in k for k in kinds.values())
+    assert kinds["fresh_gas_flow"]["unit"] == "L/min" and kinds["ventilation_mode"]["unit"] is None
+    assert kinds["map_cuff"]["meaning"] == "A mean arterial pressure from a non-invasive cuff, in mmHg."
+
+
+def test_the_parts_of_version_1_keep_their_definitions_and_the_mapping_views_have_hashes_of_their_own():
+    hashes = rolemap.part_hashes()
+    assert set(rolemap.mapping_views()) <= set(hashes)
+    model = rolemap.contract()
+    # A change to a mapping view is a change to every part that names it.
+    changed = json.loads(json.dumps(model))
+    changed["mapping_views"][0]["description"] += " Changed."
+    again = rolemap.part_hashes(changed)
+    assert again["map_drug_concept"] != hashes["map_drug_concept"] and again["role_drug"] != hashes["role_drug"]
+    assert again["role_patient"] == hashes["role_patient"] and again["role_lab"] == hashes["role_lab"]
+
+
+def test_a_map_s_concepts_and_pathways_are_checked_when_it_is_read(tmp_path):
+    data = json.loads((MAP / "map.json").read_text())
+    folder = tmp_path / "map"
+    shutil.copytree(MAP, folder)
+
+    def refused(change, says):
+        held = json.loads(json.dumps(data))
+        change(held)
+        (folder / "map.json").write_text(json.dumps(held))
+        with pytest.raises(rolemap.MapError, match=says):
+            rolemap.read_map_json(folder)
+    rows = [{"code": "1000000", "concept_id": 9100001, "status": "mapped", "provenance": "a person"}]
+    refused(lambda d: d.update(concepts={"salt": "s", "views": {"map_nothing": {"rows": rows}}}), "mapping view of the contract")
+    refused(lambda d: d.update(concepts={"salt": "s", "views": {"map_diagnosis_concept": {"rows": rows * 2}}}), "only an ambiguous code")
+    refused(lambda d: d.update(concepts={"salt": "s", "views": {"map_diagnosis_concept": {"rows": [
+        dict(rows[0], concept_id=0)]}}}), "only an unmapped row has the concept 0")
+    refused(lambda d: d["roles"]["role_diagnosis"].update(source_kind="DIAG_TABLE"), "source kind")
+    refused(lambda d: d["roles"]["role_staff"].update(pathways=[]), "only a part that records events")
+    refused(lambda d: d["roles"]["role_diagnosis"].update(pathways=[{"name": "Bad name", "source_kind": "booking",
+                                                                      "rows": {}, "columns": {}}]), "further pathway")
+    # A sound translation is read, and the compiled mapping view gives each code as its key and never the code.
+    held = json.loads(json.dumps(data))
+    held["concepts"] = {"salt": "s", "views": {"map_diagnosis_concept": {"rows": rows}}}
+    (folder / "map.json").write_text(json.dumps(held))
+    found = rolemap.read_map(folder, CATALOGUE)
+    key = rolemap.concept_key("s", "map_diagnosis_concept", "1000000")
+    assert key in found["views"]["map_diagnosis_concept"] and "1000000" not in found["views"]["map_diagnosis_concept"]
+    compiled = rolemap.compile_query("SELECT m.concept_id, COUNT(*) AS n FROM role_anaesthetic a JOIN map_diagnosis_concept m "
+                                     "ON m.local_key = a.anaesthetic_key GROUP BY m.concept_id", found)
+    assert "map_diagnosis_concept AS (" in compiled and "map_drug_concept AS (" not in compiled

@@ -11,9 +11,6 @@ column each. A correction can now say more, each in a form with plain words on t
     filter      only the rows of the role whose column holds one of a list of values
     path        a link through one, two or three tables, each step a join of one column to another
     pair        a link whose join matches two columns at once
-    window      a link by the key that a row shares with its anaesthetic, and also by a time window around the
-                anaesthetic's start and stop, with a margin in minutes before and after (rule 3 of the record requires
-                the shared key, so a window without one is refused)
     joined      several rows joined back in order into one text, as the lines of a note
     codes       the local codes of a kind column, translated to the role's kinds
 
@@ -23,11 +20,21 @@ In map.json each is written into the binding as data, never as SQL:
                                                              [A, a, B, b, [[a2, b2], ...]] where it joins on more pairs
     + "derive": {"form": "flag", "values": [...]}            or {"form": "scale", "factor": f, "offset": o},
                                                              {"form": "date"} or {"form": "trim"}
-    + "window": {"table", "key", "output", "start", "stop",  where table, column and path name the row's side of the
-                 "time", "before", "after"}                  shared key, and window names the anaesthetic's table
     + "joined": {"table", "link", "text", "order",           where table, column and path name the column of the
                  "separator"}                                view's own row that the joined rows carry
     rows binding + "filter": [{"table", "column", "path", "values"}]
+
+The filter has one rule, which the page states beside its form. A filter on a code that the source stores to say
+what kind of record a row is, such as the type of a line of a shared table of events or a flag that marks a row as
+deleted, interprets the vendor's storage and is a normalisation, which the hospital schema may hold. A filter by
+clinical meaning, such as keeping only the drugs of one class or only the anaesthetics of one specialty, is a decision
+of a question, which the contract reserves for the public logic over the roles, and the hospital schema does not hold
+it. Nor does it attribute a row to an anaesthetic by a time window: a row whose source carries only its stay keeps its
+stay and an empty anaesthetic key, and a question attributes it. The window form that once did so is gone, and a saved
+binding that still holds a window is refused when the map is read.
+
+A part that records events may be reached by several pathways, each a binding of its own with its own source kind
+(rolemap.pathways). The check places the invented rows of such a part through every pathway, and expects the union.
 
 propose.view_sql writes the SQL of each form, and propose.plan describes what it does with a column, so that the
 check's own model of a binding (evaluate, below) reads the same description as the SQL writer.
@@ -53,14 +60,13 @@ from . import propose, rolemap
 from .catalogue import NAME
 from .evidence import PERSON
 
-FORMS = ("column", "rows", "derived", "filter", "path", "pair", "window", "joined", "codes")
+FORMS = ("column", "rows", "derived", "filter", "path", "pair", "joined", "codes")
 DERIVED = ("flag", "scale", "date", "trim")
 # Which derived forms suit which types of the role model.
 DERIVED_TYPES = {"flag": ("flag", "flag_or_empty"), "scale": ("number", "whole"), "date": ("date",),
                  "trim": ("text", "kind", "key")}
 MOST_STEPS = 3
 MOST_VALUES = 50
-MOST_MARGIN = 24 * 60
 # The codes that the shadow gives a kind whose local codes are not yet chosen, and the code of a reading of no kind
 # the map translates. Each is a number written as text, so that it suits a column of either type.
 OTHER_CODE = "9899"
@@ -95,11 +101,6 @@ WORDING = {
     "step_chain": "Step {number} starts from {table}, the table that step {before} reaches.",
     "pair_needed": "A join on two columns needs a second pair of columns in its step.",
     "not_a_link": "{about} is not a link to another part of the record, so it cannot be a link through other tables.",
-    "window_link": "A time window links a row to its anaesthetic, so it applies only to the anaesthetic's identifier.",
-    "window_key": "Rule 3 of the record says that a row belongs to an anaesthetic by its link to that anaesthetic, and never because its time falls within the anaesthetic, so a time window always needs the key that the row shares with its anaesthetic as well. Please choose that key on both sides.",
-    "window_time": "The window reads the time of each row from {column}, so please choose the column for {column} first.",
-    "window_anaesthetic": "Please name the anaesthetic's table and its columns that hold the key, the start and the stop.",
-    "margin": "Please give each margin as a whole number of minutes from 0 to {most}.",
     "joined_type": "Rows joined into one text suit a column of text, and {about} is {type_words}.",
     "joined_fields": "Please name the table of the rows, the column that links each to this row, the column of text and the column that gives their order.",
     "separator": "Please give a separator of at most ten characters, with no line break.",
@@ -118,10 +119,6 @@ WORDING = {
     "say_filter": "The rows of {view} are only those in which {source} holds {values}{how}.",
     "say_rows": "The rows of {view} come from {table}, one row for each {what}, and the page proposes every column of this part again from that table.",
     "say_path": "{column} is {source}, which {base} reaches {steps}.",
-    "say_window": "A {thing} belongs to the anaesthetic whose {key} it shares ({pairs}), if its {time} lies between the anaesthetic's start and stop, {margin}.",
-    "say_margin_same": "allowing {before} {minutes} either side",
-    "say_margin": "allowing {before} {before_minutes} before the start and {after} {after_minutes} after the stop",
-    "say_margin_none": "with no margin either side",
     "say_joined": "{column} is every {text} of the rows of {table} whose {link} matches {on}, joined in the order of {order} with {separator} between them.",
     "say_codes": "The local {codes} of {source} {are} translated as follows: {pairs}. Every other code is other.",
     "say_how": ", reached {path}",
@@ -137,7 +134,6 @@ WORDING = {
     "check_mends": "This change also mends {count} that {were} there before it.",
     "check_now_breaks": "The hospital schema as it stands has {count}:",
     "placeholders": "The local codes of {kinds} are not chosen yet, so the test on made-up rows gives {them}.",
-    "outside_window": "In {view}, the page leaves out {count} of the made-up rows because their time lies outside the anaesthetic's window, as the window intends.",
     "orphans": "In {view}, {count} made-up rows link to an anaesthetic that Anaesthetics does not hold, which can be right where Anaesthetics leaves some anaesthetics out.",
     "contract": "In {view}, {problem}",
     "runs_not": "In {view}, the page could not run this SQL on made-up rows: {error}.",
@@ -196,7 +192,7 @@ def _fit(sentence):
 
 def named_columns(binding):
     """Every (table, column) that a binding names, in order: its column, the columns of each join, and the columns of
-    its window, its joined rows or its filters."""
+    its joined rows or its filters."""
     if not binding:
         return []
     found = []
@@ -208,9 +204,6 @@ def named_columns(binding):
         if derive.get("form") == "key":
             found += [(binding["table"], other) for other in derive.get("with") or []]
         found.append((binding["table"], binding["column"]))
-    window = binding.get("window")
-    if window:
-        found += [(window["table"], window[k]) for k in ("key", "output", "start", "stop")]
     joined = binding.get("joined")
     if joined:
         found += [(joined["table"], joined[k]) for k in ("link", "text", "order")]
@@ -268,13 +261,9 @@ def check_shape(binding, where):
             bad("a derived flag lists its values")
         if derive["form"] == "scale" and not all(isinstance(derive.get(k, 0), (int, float)) for k in ("factor", "offset")):
             bad("a change of unit gives its factor and offset as numbers")
-    window = binding.get("window")
-    if window is not None:
-        if not isinstance(window, dict) or not {"table", "key", "output", "start", "stop", "time"} <= set(window):
-            bad("a time window names the anaesthetic's table, its key, output, start and stop, and the time of the row")
-        names(window["table"], window["key"], window["output"], window["start"], window["stop"])
-        if not binding.get("column"):
-            bad("a time window needs the key that the row shares with its anaesthetic")
+    if "window" in binding:
+        bad("a binding never attributes a row to an anaesthetic by a time window; a row whose source carries only its "
+            "stay keeps the stay and an empty anaesthetic key, and a question attributes it")
     joined = binding.get("joined")
     if joined is not None:
         if not isinstance(joined, dict) or not {"table", "link", "text", "order"} <= set(joined):
@@ -540,63 +529,6 @@ def build(state, correction):
         built.update(binding=binding, source=propose._from_text(binding), sentence=_fit(WORDING["say_path"].format(
             column=subject, source=f"{table}.{name}", base=base, steps=steps)))
         return built
-    if form == "window":
-        if links.get(column["name"]) != "role_anaesthetic.anaesthetic_key":
-            raise CorrectionError(WORDING["window_link"])
-        if not correction.get("table") or not correction.get("column") or not correction.get("key"):
-            raise CorrectionError(WORDING["window_key"])
-        table, name, data_type = _column(state, correction.get("table"), correction.get("column"))
-        path = path_to(state, role, table)
-        anaesthetic = (state.data["roles"].get("role_anaesthetic") or {})
-        defaults = {}
-        if anaesthetic:
-            a_base = anaesthetic["rows"]["binding"]["table"]
-            for wanted, column_name in (("output", "anaesthetic_key"), ("start", "start_time"), ("stop", "stop_time")):
-                held = anaesthetic["columns"][column_name].get("binding")
-                if held and not held.get("path") and not held.get("window") and held["table"].upper() == a_base.upper():
-                    defaults[wanted] = held["column"]
-            defaults["table"] = a_base
-        a_table = correction.get("anaesthetic") or defaults.get("table")
-        if not a_table:
-            raise CorrectionError(WORDING["window_anaesthetic"])
-        a_table = _table(state, a_table)
-        fields = {}
-        for wanted in ("key", "output", "start", "stop"):
-            given = correction.get(wanted) or (defaults.get(wanted) if a_table.upper() == (defaults.get("table") or "").upper() else None)
-            if not given:
-                raise CorrectionError(WORDING["window_anaesthetic"] if wanted != "key" else WORDING["window_key"])
-            fields[wanted] = _column(state, a_table, given)[1]
-        time_column = correction.get("time") or next((c["name"] for c in spec["columns"] if c["type"] == "datetime"
-                                                       and c["name"] in spec["key"]), None) \
-            or next((c["name"] for c in spec["columns"] if c["type"] == "datetime"), None)
-        if not time_column or not role["columns"].get(time_column, {}).get("binding"):
-            raise CorrectionError(WORDING["window_time"].format(
-                column=f"the {rolemap.column_title(view_name, time_column)}" if time_column else "a time"))
-        margins = []
-        for wanted in ("before", "after"):
-            given = correction.get(wanted, 0)
-            try:
-                minutes = int(given)
-            except (TypeError, ValueError):
-                raise CorrectionError(WORDING["margin"].format(most=MOST_MARGIN)) from None
-            if str(given).strip() not in (str(minutes), f"{minutes}.0") or not 0 <= minutes <= MOST_MARGIN:
-                raise CorrectionError(WORDING["margin"].format(most=MOST_MARGIN))
-            margins.append(minutes)
-        before, after = margins
-        window = {"table": a_table, **fields, "time": time_column, "before": before, "after": after}
-        binding = {"table": table, "column": name, "path": path, "data_type": data_type, "window": window}
-        minutes = lambda n: "minute" if n == 1 else "minutes"  # noqa: E731
-        if before == after == 0:
-            margin = WORDING["say_margin_none"]
-        elif before == after:
-            margin = WORDING["say_margin_same"].format(before=before, minutes=minutes(before))
-        else:
-            margin = WORDING["say_margin"].format(before=before, after=after, before_minutes=minutes(before), after_minutes=minutes(after))
-        pairs = f"{table}.{name} = {a_table}.{fields['key']}"
-        built.update(binding=binding, source=f"{a_table}.{fields['output']}", sentence=_fit(WORDING["say_window"].format(
-            thing=THING.get(view_name, "row"), key=fields["key"], pairs=pairs, time=rolemap.column_title(view_name, time_column),
-            margin=margin)))
-        return built
     if form == "joined":
         if column["type"] != "text":
             raise CorrectionError(WORDING["joined_type"].format(about=subject, type_words=type_words))
@@ -810,11 +742,12 @@ def _key_columns(state):
     """(table, column) of every column bound as a whole key of a view in the view's own table, such as the key of an
     anaesthetic in the anaesthetic's table."""
     found = set()
-    for name, role in state.data["roles"].items():
+    for name, whole in state.data["roles"].items():
         spec = state.views[name]
-        for column in spec["key"]:
+        for _, role in rolemap.pathways(name, whole):
+          for column in spec["key"]:
             binding = role["columns"][column].get("binding")
-            if binding and not binding.get("path") and not binding.get("window") and not binding.get("derive") and len(spec["key"]) == 1:
+            if binding and not binding.get("path") and not binding.get("derive") and len(spec["key"]) == 1:
                 found.add((binding["table"].upper(), binding["column"].upper()))
     return found
 
@@ -838,6 +771,8 @@ class Shadow:
     def codes_of(self, view_name, column):
         if view_name == "role_reading" and column["name"] == "kind":
             return {k: item.get("codes", []) for k, item in self.kinds.items()}
+        if column["type"] == "local_key":
+            return rolemap.concept_codes(self.state.data, column.get("mapping"))
         if column["type"] == "kind":
             return self.vocabularies.get(view_name, {}).get(column["name"])
         return None
@@ -874,6 +809,11 @@ class Shadow:
             return f"  {value} "
         if op == "held_text":
             return value
+        if op == "local_key":
+            for code, key in step[1]:
+                if key == value:
+                    return code
+            return NOT_IN_LIST
         return value
 
     # Placing the role rows.
@@ -936,10 +876,11 @@ class Shadow:
         key = self.source.table(table)["key"]
         return {(table.upper(), column.upper())} if key == (column.upper(),) else set()
 
-    def place(self, view_name, values, decoy=None):
-        """Writes one row of a role view into the tables, as its bindings name them. values is {column: value}."""
+    def place(self, view_name, values, decoy=None, role=None):
+        """Writes one row of a role view into the tables, as the bindings of one of its pathways name them (the first
+        unless role is given). values is {column: value}."""
         state, source = self.state, self.source
-        role = state.data["roles"][view_name]
+        role = role or state.data["roles"][view_name]
         spec = state.views[view_name]
         base = role["rows"]["binding"]["table"]
         base_row = {}
@@ -950,7 +891,7 @@ class Shadow:
             if not binding:
                 continue
             plans[column["name"]] = propose.plan(column, binding, self.codes_of(view_name, column))
-            if not binding.get("path") and not binding.get("window") and not binding.get("joined"):
+            if not binding.get("path") and not binding.get("joined"):
                 direct.append((column, binding))
             else:
                 later.append((column, binding))
@@ -979,12 +920,10 @@ class Shadow:
                 row["__same"] = source.rows_of[values["__same"]]
         ctx = {(): row}
         links = {link["column"] for link in spec.get("links", [])}
-        later.sort(key=lambda item: (item[0]["name"] not in links, bool(item[1].get("window"))))
+        later.sort(key=lambda item: item[0]["name"] not in links)
         for column, binding in later:
             value = values.get(column["name"])
-            if binding.get("window"):
-                self._place_window(ctx, binding, value)
-            elif binding.get("joined"):
+            if binding.get("joined"):
                 self._place_joined(ctx, binding, value)
             else:
                 encoded = self.encode(plans[column["name"]], value)
@@ -995,21 +934,6 @@ class Shadow:
             source.set(end, item["table"], item["column"], (NOT_IN_LIST if NOT_IN_LIST not in item["values"] else "0" + NOT_IN_LIST)
                        if decoy else item["values"][0])
         return row
-
-    def _place_window(self, ctx, binding, value):
-        window, source = binding["window"], self.source
-        if value is None:
-            return
-        found = source.find(window["table"], window["output"], value)
-        if not found:
-            return
-        anaesthetic = found[0]
-        shared = anaesthetic.get(window["key"].upper())
-        if shared is None:
-            source.set(anaesthetic, window["table"], window["key"], source.fresh(window["table"], window["key"], anaesthetic))
-            shared = anaesthetic.get(window["key"].upper())
-        end = self.reach(ctx, binding["path"])
-        source.set(end, binding["table"], binding["column"], shared)
 
     def _place_joined(self, ctx, binding, value):
         joined, source = binding["joined"], self.source
@@ -1034,8 +958,8 @@ class Shadow:
             return
         held = self.source.table(table)
         joined = set()
-        for role in self.state.data["roles"].values():
-            for item in [role["rows"], *role["columns"].values()]:
+        for view_name, whole in self.state.data["roles"].items():
+            for _, item in rolemap.role_items(view_name, whole):
                 binding = item.get("binding") or {}
                 steps = list(binding.get("path") or []) + [s for f in binding.get("filter") or [] for s in f["path"]]
                 for step in steps:
@@ -1044,9 +968,6 @@ class Shadow:
                             joined.add(a.upper())
                         if step[2].upper() == table.upper():
                             joined.add(b.upper())
-                window = binding.get("window")
-                if window and window["table"].upper() == table.upper():
-                    joined.add(window["key"].upper())
         joined -= set(held["key"])
         for row in held["rows"]:
             first = row.get("__same")
@@ -1060,9 +981,10 @@ class Shadow:
 
     def register(self):
         """Every table and column that a view names, so that each exists in the shadow although no row fills it."""
-        for name, role in self.state.data["roles"].items():
-            self.source.table(role["rows"]["binding"]["table"])
-            for item in [role["rows"], *role["columns"].values()]:
+        for name, whole in self.state.data["roles"].items():
+            for _, role in rolemap.pathways(name, whole):
+                self.source.table(role["rows"]["binding"]["table"])
+            for _, item in rolemap.role_items(name, whole):
                 for table, column in named_columns(item.get("binding")):
                     self.source.column(table, column)
 
@@ -1085,20 +1007,30 @@ class Shadow:
         return row
 
     def expected(self, view_name):
-        """The rows that a view should give, by the model of its bindings, over the shadow's tables: one for each row of
-        its own table that passes its filters, with each join reaching at most one row. A join that reaches more is
-        what the comparison with the view's own rows finds."""
+        """The rows that a view should give, by the model of its bindings, over the shadow's tables: for each pathway,
+        one for each row of its own table that passes its filters, with each join reaching at most one row and the
+        pathway's source kind on each. A join that reaches more is what the comparison with the view's own rows finds.
+        Returns (rows, 0); the second figure once counted rows left out by a time window, which no binding holds now."""
+        found = []
+        held = rolemap.pathways(view_name, self.state.data["roles"][view_name])
+        for _, role in held:
+            found += self._expected(view_name, role)
+        if len(held) > 1:
+            # A part with several pathways gives every key as text, as its view casts them.
+            keys = [i for i, c in enumerate(self.state.views[view_name]["columns"]) if c["type"] == "key"]
+            found = [tuple(_text(v) if i in keys else v for i, v in enumerate(row)) for row in found]
+        return found, 0
+
+    def _expected(self, view_name, role):
         state, source = self.state, self.source
-        role = state.data["roles"][view_name]
         spec = state.views[view_name]
         base = role["rows"]["binding"]["table"]
-        links = {link["column"] for link in spec.get("links", [])}
         anchor = None
         for column in spec["columns"]:
             if column["name"] in rolemap.anchors(spec) and role["columns"][column["name"]].get("binding"):
                 anchor = column["name"]
                 break
-        found, outside = [], 0
+        found = []
         for row in source.table(base)["rows"]:
             ctx = {(): row}
             passes = True
@@ -1109,9 +1041,11 @@ class Shadow:
                     passes = False
             if not passes:
                 continue
-            out, raws = {}, {}
-            windows = []
+            out = {}
             for column in spec["columns"]:
+                if column.get("per_pathway"):
+                    out[column["name"]] = role.get("source_kind")
+                    continue
                 binding = role["columns"][column["name"]].get("binding")
                 if not binding:
                     empty = propose._empty(column)
@@ -1119,10 +1053,7 @@ class Shadow:
                     continue
                 end = self.follow(ctx, binding["path"])
                 raw = end.get(binding["column"].upper()) if end is not None else None
-                raws[column["name"]] = raw
-                if binding.get("window"):
-                    windows.append((column, binding, raw))
-                elif binding.get("joined"):
+                if binding.get("joined"):
                     out[column["name"]] = self._joined(binding, raw)
                 elif (binding.get("derive") or {}).get("form") == "key":
                     # A key made from several columns: each as text, joined by a hyphen, an empty one as nothing.
@@ -1130,33 +1061,9 @@ class Shadow:
                     out[column["name"]] = "-".join(_text(end.get(part.upper())) or "" if end is not None else "" for part in parts)
                 else:
                     out[column["name"]] = evaluate(propose.plan(column, binding, self.codes_of(view_name, column)), raw)
-            dropped = False
-            for column, binding, shared in windows:
-                window = binding["window"]
-                time_value = raws.get(window["time"])
-                matches = self._window(window, shared, time_value)
-                out[column["name"]] = matches[0].get(window["output"].upper()) if matches else None
-                if not matches and shared is not None:
-                    dropped = True
             if anchor is not None and out.get(anchor) is None:
-                outside += dropped
                 continue
             found.append(tuple(out[c["name"]] for c in spec["columns"]))
-        return found, outside
-
-    def _window(self, window, shared, time_value):
-        if shared is None or not isinstance(time_value, dt.datetime):
-            return []
-        found = []
-        for row in self.source.find(window["table"], window["key"], shared):
-            start, stop = row.get(window["start"].upper()), row.get(window["stop"].upper())
-            if not isinstance(start, dt.datetime):
-                continue
-            if time_value < start - dt.timedelta(minutes=int(window.get("before", 0))):
-                continue
-            if isinstance(stop, dt.datetime) and time_value > stop + dt.timedelta(minutes=int(window.get("after", 0))):
-                continue
-            found.append(row)
         return found
 
     def _joined(self, binding, on):
@@ -1295,6 +1202,10 @@ def evaluate(step, raw):
         return None if raw is None else _text(raw).strip(" ")
     if op == "held_text":
         return None if raw is None or _float(raw) is not None else _text(raw)
+    if op == "local_key":
+        if raw is None:
+            return None
+        return dict(step[1]).get(_text(raw), rolemap.UNLISTED)
     return raw
 
 
@@ -1389,6 +1300,11 @@ def further_rows(state, view, anaesthetics, rng):
                     value = rng.choice((0, 1))
                 elif kind == "flag_or_empty":
                     value = rng.choice((0, 1, None))
+                elif column.get("per_pathway"):
+                    value = None
+                elif kind == "local_key":
+                    listed = sorted(set(rolemap.concept_codes(state.data, column.get("mapping")).values()))
+                    value = rng.choice(listed + [rolemap.UNLISTED])
                 elif kind == "kind":
                     kinds = sorted(set(chosen.values())) if name == "kind" else []
                     value = rng.choice(kinds + ["other"]) if kinds else "other"
@@ -1400,6 +1316,15 @@ def further_rows(state, view, anaesthetics, rng):
                 continue
             keys.add(key)
             found.append(row)
+    return found
+
+
+def _keyed(values, view, links, suffix):
+    """A row with every text key of its own, other than a link, given a suffix, so that it is a row of its own."""
+    found = dict(values)
+    for column in view["key"]:
+        if isinstance(found.get(column), str) and column not in links:
+            found[column] = f"{found[column]}{suffix}"
     return found
 
 
@@ -1470,7 +1395,7 @@ def run_check(state, seed=SHADOW_SEED, anaesthetics=SHADOW_ANAESTHETICS):
     for name in data["roles"]:
         role = dict(data["roles"][name])
         role["_date"] = ""
-        views[name] = propose.view_sql(name, role, kinds, state.model, vocabularies[name])
+        views[name] = propose.view_sql(name, role, kinds, state.model, vocabularies[name], propose.concepts_of(data))
     for name, sql in views.items():
         source = "the dictionary"
         try:
@@ -1489,15 +1414,15 @@ def run_check(state, seed=SHADOW_SEED, anaesthetics=SHADOW_ANAESTHETICS):
     order = [v for v in ("role_patient", "role_anaesthetic") if v in data["roles"]] + \
             [v for v in data["roles"] if v not in ("role_patient", "role_anaesthetic")]
     for name in order:
-        for values in rows.get(name, []):
-            shadow.place(name, values)
-        if (data["roles"][name]["rows"]["binding"].get("filter")):
-            for number, values in enumerate(rows.get(name, [])[:3]):
-                decoy = dict(values)
-                for column in state.views[name]["key"]:
-                    if isinstance(decoy.get(column), str) and column not in {l["column"] for l in state.views[name].get("links", [])}:
-                        decoy[column] = f"{decoy[column]}D{number}"
-                shadow.place(name, decoy, decoy=True)
+        links = {l["column"] for l in state.views[name].get("links", [])}
+        for at, (_, role) in enumerate(rolemap.pathways(name, data["roles"][name])):
+            # Each further pathway reads a table of its own, so its rows carry keys of their own.
+            for values in rows.get(name, []):
+                shadow.place(name, _keyed(values, state.views[name], links, f"P{at}") if at else values, role=role)
+            if role["rows"]["binding"].get("filter"):
+                for number, values in enumerate(rows.get(name, [])[:3]):
+                    decoy = _keyed(values, state.views[name], links, f"D{number}" + (f"P{at}" if at else ""))
+                    shadow.place(name, decoy, decoy=True, role=role)
     shadow.pair_encounters()
     con, date_columns = shadow.database()
     try:
@@ -1523,10 +1448,7 @@ def _run_views(state, data, views, order, shadow, con, date_columns, problems, n
             about[problems[-1]] = f"{name} rows"
             continue
         results[name] = got
-        expected, outside = shadow.expected(name)
-        if outside:
-            notes.append(WORDING["outside_window"].format(view=title(name), count=_cases(outside)))
-            about[notes[-1]] = f"{name}.anaesthetic_key"
+        expected, _ = shadow.expected(name)
         for text, concerns in _compare(name, spec, got, expected, state):
             problems.append(text)
             about[text] = concerns

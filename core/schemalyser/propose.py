@@ -135,6 +135,8 @@ WORDING = {
     "reference_field_says": "A conversion at another hospital reads this table for {target}, and fills {field} from {table}.{column}.",
     "reference_filter_says": "A conversion at another hospital reads this table for {target}, and tests {table}.{column} to choose its rows.",
     "reference_link_says": "A conversion at another hospital reads this table for {target}, and joins {table}.{column} to {other}.",
+    "source_kind_says": "The page proposes that the rows of this pathway are of the kind {kind}: {meaning}.",
+    "source_kind_question": "Please confirm what kind of record each {what} of this pathway comes from, such as an order, an administration or a charted value.",
     "nothing_says": "The dictionary holds no column within reach of {table} that fits {about}, so the page leaves it empty.",
     "nothing_question": "Please name the table and column that hold {about}, or say that the hospital does not record it.",
     "no_rows_says": "The dictionary holds no table that fits {view}, so the proposer has not drafted it.",
@@ -144,6 +146,8 @@ WORDING = {
     "header_none": "-- No person has confirmed any of its columns yet, and the saved hospital schema gives each one with its evidence and its question.",
     "header_nothing": "-- The dictionary holds no column that fits {columns}, so this part gives {them} empty.",
     "header_vocabulary": "-- The hospital's codes in {columns} are not yet translated into the kinds the page knows or into 1 and 0, so this part gives a kind as other and a flag as empty until a person translates them.",
+    "header_pathways": "-- This part reaches the record by {count} pathways, one SELECT for each, and each row carries the kind of record that its pathway reads.",
+    "header_concepts": "-- The hospital's codes in {columns} are not yet translated into standard concepts in the hospital schema, so this part gives each as the key unlisted until a person translates them.",
     "header_codes": "-- The hospital's codes of the mean pressures are not yet chosen, so every reading is of the kind other until a person chooses them.",
     "header_normalised": "-- The hospital schema records {columns} as {named} ({names}), with {its} route, assumptions and tests, and this part reads {them} from there.",
     "header_person": "-- A person has answered for some of its columns, and the saved hospital schema records each answer with its date.",
@@ -512,7 +516,9 @@ class Proposer:
     def _reference_candidates(self, base, view, column):
         """The columns that the reference reads for the view's OMOP tables and that share the column's meaning, within
         base's reach, as candidates ranked by the meaning they share and how far away they lie."""
-        if self.reference is None or column["type"] == "key" or column["name"] in self._links(view):
+        # A column that many sources do not record, such as the time a row was entered, shares its words of meaning with
+        # no OMOP field, and is never guessed from a reference.
+        if self.reference is None or column["type"] == "key" or column["name"] in self._links(view) or column.get("optional"):
             return []
         reach = self.graph.reach(base)
         found = {}
@@ -669,7 +675,10 @@ class Proposer:
         return frozenset(avoid)
 
     def column(self, base, view, column, bound):
-        """The proposal for one column of a view whose rows come from base: {"best", "candidates", "confidence"}."""
+        """The proposal for one column of a view whose rows come from base: {"best", "candidates", "confidence"}. A
+        column that each pathway gives as a literal, such as the source kind, is never proposed from the dictionary."""
+        if column.get("per_pathway"):
+            return {"best": None, "candidates": [], "confidence": "none", "per_pathway": True}
         links = self._links(view)
         own = self._own_key(base, view, column)
         if own is not None:
@@ -721,7 +730,10 @@ class Proposer:
         best_table = tables[0][0] if tables else 0
         described = {name.upper(): (score, phrase) for score, name, phrase in tables}
         links = self._links(view)
-        plain = [c for c in view["columns"] if c["name"] not in links and view["key"] != [c["name"]]]
+        # A column that each pathway gives as a literal, and one that many sources do not record, such as the time a row
+        # was entered, do not count towards whether a table fits the part.
+        plain = [c for c in view["columns"] if c["name"] not in links and view["key"] != [c["name"]]
+                 and not c.get("per_pathway") and not c.get("optional")]
         candidates = {name.upper() for _, name, _ in tables}
         tops = {}
         for column in plain:
@@ -774,11 +786,11 @@ class Proposer:
         scored.sort(key=lambda item: (-item[0], item[1]))
         if not view.get("required"):
             # A further view is drafted only where the table's own description fits it and at least half of the
-            # view's other columns fit within its reach.
+            # view's other columns, less one, fit within its reach.
             own = set(query)
             fitting = {name.upper() for _, name, phrase in tables if phrase or len(self._table_words(name) & own) >= 2}
             fitting |= keyed
-            scored = [item for item in scored if item[1].upper() in fitting and 2 * item[4] >= len(plain)]
+            scored = [item for item in scored if item[1].upper() in fitting and 2 * item[4] + 1 >= len(plain)]
         if not scored or scored[0][0] <= 0:
             return None
         total, name, score, phrase, _ = scored[0]
@@ -1077,6 +1089,10 @@ def draft(proposal, dictionary, model=None, date=None, world="the hospital"):
         for column in view["columns"]:
             item = found["columns"][column["name"]]
             best = item["best"]
+            if column.get("per_pathway"):
+                kind = (view.get("source_kinds") or [None])[0]
+                columns[column["name"]] = source_kind_evidence(kind, view)
+                continue
             candidates = [_candidate_entry(dictionary, c) for c in item["candidates"]]
             if best is None:
                 columns[column["name"]] = {
@@ -1095,6 +1111,8 @@ def draft(proposal, dictionary, model=None, date=None, world="the hospital"):
             if best.get("reference"):
                 columns[column["name"]]["proposed_from"] = REFERENCE
         roles[name] = {"file": f"{name}.sql", "rows": evidence, "columns": columns}
+        if any(c.get("per_pathway") for c in view["columns"]):
+            roles[name]["source_kind"] = (view.get("source_kinds") or rolemap.source_kinds(model))[0]
     kind_source = roles["role_reading"]["columns"]["kind"]["from"] if "role_reading" in roles else "the readings"
     kind_source = kind_source.split(",")[0]
     meanings = {item["kind"]: item["meaning"] for item in model["kinds"]}
@@ -1105,6 +1123,19 @@ def draft(proposal, dictionary, model=None, date=None, world="the hospital"):
                        "says": WORDING["kind_says"].format(kind=kind),
                        "question": WORDING["kind_question"].format(source=kind_source, meaning=meaning), "provenance": INFERENCE}
     return {"world": world, "description": WORDING["description"].format(date=date), "roles": roles, "kinds": kinds}
+
+
+def source_kind_evidence(kind, view, says=None):
+    """The evidence of the source kind of a pathway, which the hospital schema names rather than reads."""
+    meaning = next((k["meaning"] for k in rolemap.contract()["vocabularies"]["source_kind"] if k["kind"] == kind), "")
+    return {"status": "proposed", "from": "the pathway's source kind",
+            "says": says or WORDING["source_kind_says"].format(kind=kind, meaning=meaning[:1].lower() + meaning[1:].rstrip(".")),
+            "question": WORDING["source_kind_question"].format(what=view["one_row_per"]), "binding": None, "provenance": INFERENCE}
+
+
+def concepts_of(data):
+    """{mapping view: {code: local key}} from a map's translations, for writing the views."""
+    return {name: rolemap.concept_codes(data, name) for name in rolemap.mapping_views()}
 
 
 # The SQL of a view, from its bindings.
@@ -1122,7 +1153,8 @@ def plan(column, binding, codes=None):
     (render) and the check's model of the binding (corrections.evaluate) read, so that the two cannot drift apart.
 
     It is a tuple whose first item names the operation: raw, date, float, int, const, flag_in, kind, derive_flag,
-    scale, trim, key or held_text, with the operation's own settings after it. key makes one value of a row's key from
+    scale, trim, key, held_text or local_key, with the operation's own settings after it. local_key gives each code that
+    the translation of a mapping view lists as its opaque key, and any other code as the key unlisted. key makes one value of a row's key from
     several columns of its table, and held_text gives the text that a column holds only where it is not a number."""
     kind = column["type"]
     data_type = binding.get("data_type", "") if binding else ""
@@ -1161,6 +1193,8 @@ def plan(column, binding, codes=None):
             given = tuple((k, tuple(str(x) for x in c)) for k, c in codes.items() if c)
             return ("kind", given, True)
         return ("kind", (), False)
+    if kind == "local_key":
+        return ("local_key", tuple(sorted((str(code), key) for code, key in (codes or {}).items())))
     return ("raw",)
 
 
@@ -1222,6 +1256,9 @@ def render(step, ref):
         return "CONCAT(" + ", '-', ".join(f"CAST({part} AS varchar(254))" for part in parts) + ")"
     if op == "held_text":
         return f"CASE WHEN TRY_CAST({ref} AS float) IS NULL THEN CAST({ref} AS nvarchar(4000)) END"
+    if op == "local_key":
+        whens = " ".join(f"WHEN CAST({ref} AS varchar(254)) = {_literal(code)} THEN {_literal(key)}" for code, key in step[1])
+        return f"CASE {whens} WHEN {ref} IS NOT NULL THEN {_literal(rolemap.UNLISTED)} END"
     raise ValueError(op)
 
 
@@ -1256,15 +1293,6 @@ def walk(path, aliases, joins, prefix=(), outer="LEFT JOIN"):
     return aliases[prefix], prefix
 
 
-def window_on(alias, window, time_ref):
-    """The condition by which a row joins the anaesthetic that it shares a key with, within the anaesthetic's window."""
-    before, after = int(window.get("before", 0)), int(window.get("after", 0))
-    start, stop = f"{alias}.{_name(window['start'])}", f"{alias}.{_name(window['stop'])}"
-    low = f"DATEADD(minute, -{before}, {start})" if before else start
-    high = f"DATEADD(minute, {after}, {stop})" if after else stop
-    return f"{time_ref} >= {low} AND ({stop} IS NULL OR {time_ref} <= {high})"
-
-
 def joined_sql(joined, on_ref, alias):
     """The subquery that joins several rows back into one text, in order."""
     return (f"(SELECT STRING_AGG(CAST({alias}.{_name(joined['text'])} AS nvarchar(4000)), {_literal(joined.get('separator', ' '))}) "
@@ -1287,36 +1315,66 @@ def _empty(column):
     return "NULL"
 
 
-def view_sql(name, role, kinds=None, model=None, vocabularies=None):
+def view_sql(name, role, kinds=None, model=None, vocabularies=None, concepts=None):
     """The SQL of one view of a draft map, written from the bindings in its evidence. vocabularies, when given, is
     {column: {kind: [code, ...]}} for any column of a kind other than the readings' whose local codes a person has
-    chosen, and the view then translates those codes as it translates the readings' kinds."""
+    chosen, and the view then translates those codes as it translates the readings' kinds. concepts, when given, is
+    {mapping view: {code: local key}}, from which a column of a local key gives each listed code's opaque key. A part
+    with further pathways is the union of one SELECT for each, with each pathway's source kind as a literal."""
     model = model or rolemap.contract()
     view = next(v for v in model["views"] if v["name"] == name)
+    selects, notes = [], {"nothing": [], "vocabulary": [], "normalised": [], "unlisted": []}
+    several = len(rolemap.pathways(name, role)) > 1
+    for _, pathway in rolemap.pathways(name, role):
+        selects.append(_select_sql(name, view, pathway, kinds, vocabularies, concepts, notes, several))
+    header = [WORDING["header"].format(view=rolemap.view_title(name), date=role.get("_date", ""))]
+    items = [e for _, pathway in rolemap.pathways(name, role) for e in [pathway["rows"], *pathway["columns"].values()]]
+    header.append(WORDING["header_person"] if any(e.get("confirmation") for e in items) else WORDING["header_none"])
+    if len(selects) > 1:
+        header.append(WORDING["header_pathways"].format(count=len(selects)))
+    nothing = list(dict.fromkeys(notes["nothing"]))
+    if nothing:
+        header.append(WORDING["header_nothing"].format(columns=_and(nothing), them="it" if len(nothing) == 1 else "them"))
+    normalised = list(dict.fromkeys(notes["normalised"]))
+    if normalised:
+        many = len(normalised) > 1
+        header.append(WORDING["header_normalised"].format(
+            columns=_and([f"the {c.removeprefix('the ')}" for c, _ in normalised]), named="named normalisations" if many else "a named normalisation",
+            names=", ".join(n for _, n in normalised), its="their" if many else "its", them="them" if many else "it"))
+    vocabulary = list(dict.fromkeys(notes["vocabulary"]))
+    if vocabulary:
+        header.append(WORDING["header_vocabulary"].format(columns=_and(vocabulary)))
+    unlisted = list(dict.fromkeys(notes["unlisted"]))
+    if unlisted:
+        header.append(WORDING["header_concepts"].format(columns=_and(unlisted)))
+    if name == "role_reading" and not any((kinds or {}).get(k, {}).get("codes") for k in rolemap.MEAN_KINDS):
+        header.append(WORDING["header_codes"])
+    return "\n".join(header) + "\n" + "\nUNION ALL\n".join(selects) + "\n"
+
+
+def _select_sql(name, view, role, kinds, vocabularies, concepts, notes, keys_as_text=False):
+    """The SELECT of one pathway to a part, adding what its header should say to notes. With keys_as_text, as for a
+    part with several pathways, each key is given as text, so that keys that one table holds as numbers and another
+    as text are united as one type."""
     base = role["rows"]["binding"]["table"]
     aliases, joins = {(): "t0"}, []
-    lines, nothing, vocabulary, normalised = [], [], [], []
-    links = {link["column"] for link in view.get("links", [])}
+    lines = []
     anchor = None
-    refs, windows = {}, []
     for column in view["columns"]:
+        if column.get("per_pathway"):
+            kind = role.get("source_kind")
+            lines.append(f"{_literal(kind) if kind else 'NULL'} AS {column['name']}")
+            continue
         evidence = role["columns"][column["name"]]
         binding = evidence.get("binding")
         if not binding:
-            nothing.append(rolemap.column_title(name, column["name"]))
+            notes["nothing"].append(rolemap.column_title(name, column["name"]))
             lines.append(f"{_empty(column)} AS {column['name']}")
             continue
         alias, _ = walk(binding["path"], aliases, joins)
         ref = f"{alias}.{_name(binding['column'])}"
-        refs[column["name"]] = ref
         if normalise.qualifies(binding):
-            normalised.append((rolemap.column_title(name, column["name"]), normalise.name_of(name, column["name"])))
-        if binding.get("window"):
-            # A link by a shared key and a time window waits until every other column is placed, because its join
-            # reads the time of the row.
-            windows.append((len(lines), column, binding, ref))
-            lines.append(None)
-            continue
+            notes["normalised"].append((rolemap.column_title(name, column["name"]), normalise.name_of(name, column["name"])))
         if binding.get("joined"):
             lines.append(f"{joined_sql(binding['joined'], ref, f'j{len(aliases)}')} AS {column['name']}")
             continue
@@ -1325,48 +1383,28 @@ def view_sql(name, role, kinds=None, model=None, vocabularies=None):
             codes = {k: item.get("codes", []) for k, item in (kinds or {}).items()}
         elif column["type"] == "kind" and (vocabularies or {}).get(column["name"]) is not None:
             codes = vocabularies[column["name"]]
+        elif column["type"] == "local_key":
+            codes = (concepts or {}).get(column.get("mapping"))
+            if not codes and not binding.get("derive"):
+                notes["unlisted"].append(rolemap.column_title(name, column["name"]))
         elif not binding.get("derive") and (column["type"] == "kind" or (column["type"] in ("flag", "flag_or_empty") and _category(binding["column"]))):
-            vocabulary.append(rolemap.column_title(name, column["name"]))
-        lines.append(f"{render(plan(column, binding, codes), ref)} AS {column['name']}")
-        if column["name"] in rolemap.anchors(view) and anchor is None:
-            anchor = ref
-    for at, column, binding, shared_ref in windows:
-        window = binding["window"]
-        alias = f"w{len(aliases)}"
-        aliases[("window", column["name"])] = alias
-        time_ref = refs.get(window["time"], "NULL")
-        joins.append(f"LEFT JOIN {_name(window['table'])} {alias} ON {alias}.{_name(window['key'])} = {shared_ref} AND "
-                     f"{window_on(alias, window, time_ref)}")
-        ref = f"{alias}.{_name(window['output'])}"
-        lines[at] = f"{ref} AS {column['name']}"
+            notes["vocabulary"].append(rolemap.column_title(name, column["name"]))
+        expression = render(plan(column, binding, codes), ref)
+        if keys_as_text and column["type"] == "key":
+            expression = f"CAST({expression} AS varchar(254))"
+        lines.append(f"{expression} AS {column['name']}")
         if column["name"] in rolemap.anchors(view) and anchor is None:
             anchor = ref
     conditions = [f"{anchor} IS NOT NULL"] if anchor is not None else []
     for item in (role["rows"].get("binding") or {}).get("filter") or []:
         alias, _ = walk(item["path"], aliases, joins)
         conditions.append(filter_sql(item, f"{alias}.{_name(item['column'])}"))
-    header = [WORDING["header"].format(view=rolemap.view_title(name), date=role.get("_date", ""))]
-    if any(e.get("confirmation") for e in [role["rows"], *role["columns"].values()]):
-        header.append(WORDING["header_person"])
-    else:
-        header.append(WORDING["header_none"])
-    if nothing:
-        header.append(WORDING["header_nothing"].format(columns=_and(nothing), them="it" if len(nothing) == 1 else "them"))
-    if normalised:
-        many = len(normalised) > 1
-        header.append(WORDING["header_normalised"].format(
-            columns=_and([f"the {c.removeprefix('the ')}" for c, _ in normalised]), named="named normalisations" if many else "a named normalisation",
-            names=", ".join(n for _, n in normalised), its="their" if many else "its", them="them" if many else "it"))
-    if vocabulary:
-        header.append(WORDING["header_vocabulary"].format(columns=_and(vocabulary)))
-    if name == "role_reading" and not any((kinds or {}).get(k, {}).get("codes") for k in rolemap.MEAN_KINDS):
-        header.append(WORDING["header_codes"])
-    sql = "\n".join(header) + "\nSELECT " + ",\n       ".join(lines) + f"\nFROM   {_name(base)} t0"
+    sql = "SELECT " + ",\n       ".join(lines) + f"\nFROM   {_name(base)} t0"
     if joins:
         sql += "\n       " + "\n       ".join(joins)
     if conditions:
         sql += "\nWHERE  " + "\n  AND  ".join(conditions)
-    return sql + "\n"
+    return sql
 
 
 def _and(items):
@@ -1396,7 +1434,7 @@ def write(data, folder, date, invented=False, model=None):
             stale.unlink()
     for name, role in data["roles"].items():
         role["_date"] = date
-        (folder / f"{name}.sql").write_text(view_sql(name, role, data["kinds"], model), encoding="utf-8")
+        (folder / f"{name}.sql").write_text(view_sql(name, role, data["kinds"], model, concepts=concepts_of(data)), encoding="utf-8")
         role.pop("_date")
     (folder / rolemap.MAP_FILE).write_text(json.dumps(normalise.lift(data, model), indent=2, ensure_ascii=False) + "\n",
                                           encoding="utf-8")
@@ -1497,8 +1535,8 @@ def confirm(folder, confirmations, catalogue=None, dictionary=None, today=None, 
         if row["note"]:
             record["note"] = " ".join(row["note"].split())[:400]
         kind = re.fullmatch(r"kind\s+(\S+)", about)
-        rows_of = re.fullmatch(r"(role_\w+)(?:\s+rows)?", about)
-        column_of = re.fullmatch(r"(role_\w+)\.(\w+)", about)
+        rows_of = re.fullmatch(r"(role_\w+)(?:@(\w+))?(?:\s+rows)?", about)
+        column_of = re.fullmatch(r"(role_\w+)(?:@(\w+))?\.(\w+)", about)
         if kind:
             item = data["kinds"].get(kind.group(1))
             if item is None:
@@ -1515,12 +1553,12 @@ def confirm(folder, confirmations, catalogue=None, dictionary=None, today=None, 
             counts[answer] += 1
             continue
         if column_of:
-            view, name = column_of.groups()
-            role = data["roles"].get(view)
+            view, pathway, name = column_of.groups()
+            role = _pathway_of(data["roles"].get(view), pathway)
             item = role["columns"].get(name) if role else None
         elif rows_of:
-            view, name = rows_of.group(1), None
-            role = data["roles"].get(view)
+            view, pathway, name = rows_of.group(1), rows_of.group(2), None
+            role = _pathway_of(data["roles"].get(view), pathway)
             item = role["rows"] if role else None
         else:
             role = item = None
@@ -1575,11 +1613,18 @@ def confirm(folder, confirmations, catalogue=None, dictionary=None, today=None, 
             if "binding" not in role["rows"]:
                 continue
             role["_date"] = _proposed_on(data)
-            (folder / role["file"]).write_text(view_sql(name, role, data["kinds"], model), encoding="utf-8")
+            (folder / role["file"]).write_text(view_sql(name, role, data["kinds"], model, concepts=concepts_of(data)), encoding="utf-8")
             role.pop("_date")
     (folder / rolemap.MAP_FILE).write_text(json.dumps(normalise.lift(data, model), indent=2, ensure_ascii=False) + "\n",
                                           encoding="utf-8")
     return counts, rolemap.read_map(folder, catalogue)
+
+
+def _pathway_of(role, pathway):
+    """A part's role, or one of its further pathways by name."""
+    if role is None or pathway is None:
+        return role
+    return next((p for p in role.get("pathways") or [] if p["name"] == pathway), None)
 
 
 def _proposed_on(data):

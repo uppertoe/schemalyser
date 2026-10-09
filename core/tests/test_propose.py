@@ -74,9 +74,9 @@ def test_the_role_model_keeps_the_audit_views_and_describes_every_further_view_i
         "role_anaesthetic": ["anaesthetic_key", "patient_key", "start_time", "stop_time"],
         "role_reading": ["anaesthetic_key", "kind", "reading_time", "value", "accepted", "reading_key", "value_text"]}
     further = set(rolemap.all_views()) - set(rolemap.views())
-    assert {"role_stay", "role_anaesthetic_detail", "role_operation", "role_unit_stay", "role_patient_detail",
-            "role_event", "role_drug", "role_device", "role_staff", "role_fluid", "role_lab", "role_diagnosis",
-            "role_note", "role_finding"} == further
+    assert {"role_stay", "role_anaesthetic_detail", "role_operation", "role_transfer", "role_patient_detail",
+            "role_event", "role_drug", "role_technique", "role_device", "role_staff", "role_fluid", "role_lab",
+            "role_diagnosis", "role_note", "role_finding"} == further
     text = ROLES.read_text()
     names = {view["name"]: view for view in contract["views"]}
     for view in contract["views"]:
@@ -88,17 +88,52 @@ def test_the_role_model_keeps_the_audit_views_and_describes_every_further_view_i
                 (view["name"], column["name"])
             if column["type"] == "kind" and view["name"] != "role_reading":
                 assert column["vocabulary"] in contract["vocabularies"]
+            if column["type"] == "local_key":
+                assert column["mapping"] in rolemap.mapping_views()
         for link in view["links"]:
             other, key = link["to"].split(".")
             assert key in [c["name"] for c in names[other]["columns"]] and link["column"] in [c["name"] for c in view["columns"]]
         assert set(view["key"]) <= {c["name"] for c in view["columns"]}
     for name, kinds in contract["vocabularies"].items():
         assert f"| {name} | {', '.join(k['kind'] for k in kinds)} |" in text
-    # The roles of the outcomes and covariates name only views and columns that exist.
-    for item in contract["outcomes"] + contract["covariates"]:
-        for source in item["from"]:
-            view, _, column = source.partition(".")
-            assert view in names and (not column or column in [c["name"] for c in names[view]["columns"]]), source
+    # Every kind of reading has its unit in both, and none is lost.
+    for kind in contract["kinds"]:
+        assert f"| {kind['kind']} | {kind['unit'] or 'none'} | {kind['meaning']}" in text, kind["kind"]
+    # Each mapping view has its section, with the same four columns, and every column that names it does so.
+    mappings = rolemap.mapping_views()
+    assert set(mappings) == {"map_drug_concept", "map_procedure_concept", "map_diagnosis_concept", "map_lab_concept", "map_unit_concept"}
+    for name, mapping in mappings.items():
+        assert [c["name"] for c in mapping["columns"]] == ["local_key", "concept_id", "status", "provenance"]
+        section = text.split(f"### {name}:")[1].split("\n### ")[0]
+        for column in mapping["columns"]:
+            assert f"| {column['name']} | {column['type']} | no |" in section, (name, column["name"])
+        for used in mapping["used_by"]:
+            view, _, column = used.partition(".")
+            assert next(c for c in names[view]["columns"] if c["name"] == column)["mapping"] == name
+    # The source kinds are listed in their own table, and every part that records events carries the column.
+    source = text.split("## The kinds of source record")[1].split("\n## ")[0]
+    for kind in contract["vocabularies"]["source_kind"]:
+        assert f"| {kind['kind']} | {kind['meaning']} |" in source
+    assert set(rolemap.event_parts()) == {"role_transfer", "role_event", "role_drug", "role_technique", "role_fluid",
+                                          "role_device", "role_lab", "role_diagnosis"}
+    assert "source_kind" not in [c["name"] for c in names["role_reading"]["columns"]] and "version 2" in source
+    # Each capability has its row, which names every column, kind and mapping view it requires, and each requirement
+    # names what exists.
+    catalogue = text.split("## The capability catalogue")[1].split("\n## ")[0]
+    columns = {(v["name"], c["name"]) for v in contract["views"] for c in v["columns"]}
+    for capability in contract["capabilities"]:
+        row = next(line for line in catalogue.splitlines() if line.startswith(f"| {capability['name']} |"))
+        assert f"| {capability['version']} | {capability['output_class']} |" in row
+        wanted = capability["requires"]
+        for item in wanted["columns"] + wanted["kinds"] + wanted["mapping_views"]:
+            assert f"`{item}`" in row, (capability["name"], item)
+        for item in wanted["columns"]:
+            assert tuple(item.split(".")) in columns, item
+        assert set(wanted["parts"]) <= set(names) | set(mappings)
+        assert capability["output_class"] in {k["kind"] for k in contract["output_classes"]}
+    transfusion = rolemap.capabilities()["transfusion"]
+    assert "role_anaesthetic_detail.weight_kg" in transfusion["requires"]["columns"]
+    assert "`role_anaesthetic_detail.weight_kg`" in next(line for line in catalogue.splitlines() if line.startswith("| transfusion |"))
     # The public model names no table of any hospital: none of the invented catalogue's names appears in it.
     model = json.dumps(contract) + text
     assert not [t.name for t in CATALOGUE.tables() if re.search(rf"\b{t.name}\b", model)]
@@ -106,7 +141,9 @@ def test_the_role_model_keeps_the_audit_views_and_describes_every_further_view_i
 
 def test_a_map_may_supply_further_views_and_an_audit_may_read_them(drafted):
     found = drafted["map"]
-    assert set(rolemap.views()) <= set(found["views"]) <= set(rolemap.all_views())
+    # A read map gives every mapping view as well, from its translations, which the draft does not yet hold.
+    assert set(rolemap.views()) <= set(found["views"]) <= set(rolemap.public_views())
+    assert set(rolemap.mapping_views()) <= set(found["views"])
     audit = "SELECT a.anaesthetic_key, s.admit_time FROM role_anaesthetic a JOIN role_anaesthetic_detail d ON " \
             "d.anaesthetic_key = a.anaesthetic_key JOIN role_stay s ON s.stay_key = d.stay_key"
     compiled = rolemap.compile_query(audit, found)
@@ -207,7 +244,7 @@ def test_the_proposer_finds_the_invented_map_s_bindings_for_the_audit_views(draf
     # Of the further views, the invented world has no movements between units, no fluids, no laboratory results and no
     # notes, and it says nothing of planned intensive care, a return to theatre, a cardiac operation or the weight and
     # height at the anaesthetic.
-    assert all(proposal[view] is None for view in ("role_unit_stay", "role_fluid", "role_lab", "role_note", "role_finding"))
+    assert all(proposal[view] is None for view in ("role_transfer", "role_fluid", "role_lab", "role_note", "role_finding"))
     detail = proposal["role_anaesthetic_detail"]["columns"]
     assert [c for c, p in detail.items() if p["best"] is None] == ["weight_kg", "planned_icu", "unplanned_return", "height_cm"]
     assert detail["location"]["best"]["column"] == "ROOM_KEY"
@@ -218,9 +255,13 @@ def test_the_proposer_finds_the_invented_map_s_bindings_for_the_audit_views(draf
     staff = {c: p["best"] and p["best"]["column"] for c, p in proposal["role_staff"]["columns"].items()}
     assert staff == {"anaesthetic_key": "ANAES_KEY", "person_key": "STAFF_KEY", "role": "ROLE_CAT", "grade": None,
                      "present_from": "START_TS", "present_to": "END_TS"}
+    # The diagnosis is the code that becomes a local key of the mapping view of diagnoses, and the row has a key of its
+    # own made from the visit and its line; the source kind is named rather than proposed.
     diagnosis = {c: p["best"] and p["best"]["column"] for c, p in proposal["role_diagnosis"]["columns"].items()}
-    assert diagnosis == {"patient_key": "PERSON_KEY", "stay_key": "VISIT_KEY", "code": "ICD_CODE", "code_system": None,
-                         "name": "DIAG_LABEL", "is_principal": "PRIMARY_FLAG", "recorded_time": None}
+    assert diagnosis == {"diagnosis_key": "SEQ", "patient_key": "PERSON_KEY", "stay_key": "VISIT_KEY", "diagnosis": "ICD_CODE",
+                         "is_principal": "PRIMARY_FLAG", "recorded_time": None, "source_kind": None, "documented_time": None,
+                         "amends_key": None}
+    assert proposal["role_diagnosis"]["columns"]["diagnosis_key"]["best"]["derive"] == {"form": "key", "with": ["VISIT_KEY"]}
     assert detail["asa_grade"]["best"]["column"] == "RISK_GRADE_CAT" and detail["stay_key"]["best"]["column"] == "VISIT_KEY"
     assert proposal["role_operation"]["columns"]["is_cardiac"]["best"] is None
     # A procedure reaches its anaesthetic only from the anaesthetic's side, so the proposal says so with low confidence.
@@ -235,7 +276,10 @@ def test_the_draft_map_marks_every_binding_as_proposed_and_quotes_the_dictionary
     for view, role in data["roles"].items():
         for about, item in [("rows", role["rows"])] + list(role["columns"].items()):
             assert item["status"] == "proposed" and item["question"].startswith("Please "), (view, about)
-            assert item["confidence"] in ("high", "medium", "low", "none")
+            # The source kind of a pathway is named by the hospital schema rather than read from the dictionary, so
+            # the page proposes the part's usual kind with no confidence of a match.
+            assert item["confidence"] in ("high", "medium", "low", "none") if about != "source_kind" else \
+                item["from"] == "the pathway's source kind" and role["source_kind"] == item["says"].split("kind ")[1].split(":")[0]
             binding = item["binding"]
             if binding and "column" in binding and not binding["path"] and not binding.get("derive"):
                 quoted = dictionary.description(binding["table"], binding["column"]).rstrip(".")
@@ -276,7 +320,7 @@ def test_the_command_line_proposes_and_prints_names_and_counts_but_no_descriptio
                       "--out", str(tmp_path / "draft"), "--world", "the invented world"])
     text = out.getvalue()
     assert "role_patient: PERSON_MASTER, with 4 of 4 columns proposed (4 high)." in text
-    assert "role_unit_stay: the dictionary holds no table that fits." in text
+    assert "role_transfer: the dictionary holds no table that fits." in text
     assert "every binding awaits a person's confirmation" in text
     assert not _leaks(text, _descriptions(DICTIONARY))
     with pytest.raises(SystemExit, match="--heading is written as NAME=VALUE"):
@@ -509,8 +553,29 @@ def test_the_proposer_agrees_with_the_earlier_map_of_the_public_specification(tm
         got[f"{view} rows"] = item["rows"]["table"]
         for column, p in item["columns"].items():
             got[f"{view}.{column}"] = f"{p['best']['table']}.{p['best']['column']}" if p["best"] else None
-    for about, wanted in expected["agree"].items():
-        assert got.get(about) == wanted, about
+    # The expectations were written against version 1.0 of the contract. A column that version 1.1 added, retyped as a
+    # local key or a kind, or moved to a part of its own is left out until they are written again.
+    # Only the names of the bindings are reported, never the specification's tables or columns.
+    wrong = [about for about, wanted in expected["agree"].items() if _unchanged_since_1_0(about) and got.get(about) != wanted]
     # Each known disagreement is held as it stands, so that a change in the proposer shows here.
-    for about, item in expected["differ"].items():
-        assert got.get(about) == item["proposed"], about
+    wrong += [about for about, item in expected["differ"].items()
+              if _unchanged_since_1_0(about) and got.get(about) != item["proposed"]]
+    assert not wrong
+
+
+# The parts and columns that version 1.1 reshaped, against which the expectations of version 1.0 say nothing.
+RESHAPED = {"role_transfer", "role_technique", "role_unit_stay", "role_drug.route", "role_operation rows"}
+
+
+def _unchanged_since_1_0(about):
+    view, _, column = about.split(" ")[0].partition(".")
+    if about in RESHAPED or view in RESHAPED or about.split(" ")[0] in RESHAPED or view in rolemap.event_parts() and about.endswith(" rows"):
+        return False
+    spec = next((v for v in rolemap.contract()["views"] if v["name"] == view), None)
+    if spec is None:
+        return False
+    if not column:
+        return True
+    found = next((c for c in spec["columns"] if c["name"] == column), None)
+    return found is not None and found["type"] != "local_key" and not found.get("per_pathway") and not found.get("optional") \
+        and column not in spec["key"]

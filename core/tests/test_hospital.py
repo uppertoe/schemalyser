@@ -140,8 +140,9 @@ def test_a_values_query_and_a_test_query_run_on_it(invented):
     s = sitting()
     found = s.values_query("role_anaesthetic rows", "THEATRE_CASE", "CASE_STATUS_CAT", 2024, "6. Confirm each column")
     assert s.run_invented(invented, found["name"], "values")["values"]
-    s.correction_keep({"form": "window", "about": "role_reading.anaesthetic_key", "table": "OBS_SHEET", "column": "VISIT_KEY",
-                       "key": "VISIT_KEY", "before": 15, "after": 15}, date=DATE)
+    # The time window form is gone; the reading's link through its sheet is kept as a path instead.
+    s.correction_keep({"form": "path", "about": "role_reading.anaesthetic_key", "column": "ANAES_KEY",
+                       "steps": [{"from": "SHEET_KEY", "table": "OBS_SHEET", "to": "SHEET_KEY"}]}, date=DATE)
     probe = s.probe_query("role_reading.anaesthetic_key", 2024, "6. Confirm each column")
     assert len(invented.parts(probe["sql"])) == 2
     receipt = s.run_invented(invented, probe["name"], "probe", about="role_reading.anaesthetic_key")

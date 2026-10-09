@@ -42,7 +42,6 @@ export interface Deps {
   pasteBox(key: string, label: string): readonly [HTMLLabelElement, HTMLTextAreaElement];
   year(): number;
   base(view: string): string | null;
-  anaestheticTable(): string | null;
   kinds(about: string): string[];
   meanings(about: string): Record<string, string>;
   values(name: string): { value: string; rows: number | null }[] | null;
@@ -136,7 +135,6 @@ export function formsFor(item: CorrectionItem): string[] {
   const forms = ['column'];
   if (item.link) {
     forms.push('path', 'pair');
-    if (item.link === 'role_anaesthetic.anaesthetic_key') forms.push('window');
     return forms;
   }
   const type = item.type ?? '';
@@ -152,7 +150,7 @@ export function formsFor(item: CorrectionItem): string[] {
 function draftOf(item: CorrectionItem): Draft {
   let draft = drafts.get(item.about);
   if (!draft) {
-    draft = { form: formsFor(item)[0], f: { before: '15', after: '15', separator: ' ', offset: '0' }, steps: [blankStep()], codes: [['', '']],
+    draft = { form: formsFor(item)[0], f: { separator: ' ', offset: '0' }, steps: [blankStep()], codes: [['', '']],
               preview: null, problem: '', report: null, reason: '', although: false, valuesSql: '', valuesName: '', valueRows: [] };
     drafts.set(item.about, draft);
   }
@@ -193,8 +191,6 @@ function correctionOf(item: CorrectionItem, draft: Draft): Record<string, unknow
       return { form: draft.form, about, column: f.final,
         steps: steps.map((s) => ({ from: s.from, table: s.table, to: s.to, ...(draft.form === 'pair' ? { also: [[s.from2, s.to2]] } : {}) })) };
     }
-    case 'window':
-      return { form: 'window', about, table: f.table ?? '', column: f.column ?? '', key: f.key ?? '', before: f.before ?? '0', after: f.after ?? '0' };
     case 'joined':
       return f.on_table && f.on_column && f.rows_table && f.link && f.text && f.order
         ? { form: 'joined', about, on_table: f.on_table, on_column: f.on_column, table: f.rows_table, link: f.link, text: f.text, order: f.order,
@@ -580,7 +576,6 @@ function formFields(item: CorrectionItem, box: HTMLElement) {
   const draft = draftOf(item);
   const f = draft.f;
   const base = deps.base(view(item.about)) ?? '';
-  const anaesthetic = deps.anaestheticTable() ?? '';
   switch (draft.form) {
     case 'flag':
       if (!f.table && (item.table || base)) {
@@ -608,13 +603,6 @@ function formFields(item: CorrectionItem, box: HTMLElement) {
       break;
     case 'pair':
       stepsFields(item, box, true);
-      break;
-    case 'window':
-      box.append(deps.el('p', c.windowRule, 'note window-rule'));
-      if (!f.table && base) f.table = base;
-      box.append(tableField(item, 'table', c.sharedTable, () => { f.column = ''; }), columnField(item, 'column', f.table ?? '', c.sharedColumn),
-        columnField(item, 'key', anaesthetic, c.anaestheticKey(anaesthetic)),
-        textField(item, 'before', c.beforeLabel, 'number'), textField(item, 'after', c.afterLabel, 'number'));
       break;
     case 'joined':
       if (!f.on_table && base) f.on_table = base;

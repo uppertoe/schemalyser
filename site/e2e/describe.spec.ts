@@ -127,7 +127,7 @@ test('the record is described, saved as a hospital schema and opened again', asy
   const birth = page.locator('#proposal [data-about="role_patient.birth_date"]');
   await expect(birth).toContainText('PERSON_MASTER.BIRTH_TS');
   await expect(birth).toContainText('The date and time on which the patient was born.');
-  await expect(page.locator('#proposal [data-role="role_unit_stay"]')).toContainText(d.roleUndrafted);
+  await expect(page.locator('#proposal [data-role="role_transfer"]')).toContainText(d.roleUndrafted);
   await stage(page, '4-proposed', '#step-4');
 
   // The tables and columns query, and its result.
@@ -362,8 +362,8 @@ test('the record is described, saved as a hospital schema and opened again', asy
 });
 
 // Step 6's corrections: one of each kind made in its plain form, its sentence and SQL shown, tested on made-up rows
-// in the worker and kept or discarded; a link that repeats readings reported, and kept only with a reason; a window
-// with no key refused; and the probes of kept corrections written and read back.
+// in the worker and kept or discarded; a link that repeats readings reported, and kept only with a reason; no time
+// window offered; and the probes of kept corrections written and read back.
 test('each kind of correction is tested on made-up rows before it is kept', async ({ page, context, browserName }) => {
   test.setTimeout(900_000);
   const c = d.corrections;
@@ -470,16 +470,18 @@ test('each kind of correction is tested on made-up rows before it is kept', asyn
   await column(about, c.columnLabel, 'BIRTH_TS');
   await check(about, true);
   await keep(about);
-  // A finding of the test of the whole schema, landed at its row, is cleared once a kept change mends it.
-  about = 'role_drug.unit';
+  // A finding of the test of the whole schema lands at its row.
+  about = 'role_operation.anaesthetic_key';
   await page.locator(`#model-check-result a.finding-link[data-about="${about}"]`).first().click();
   await expect(entry(about).locator('.landed')).toHaveCount(1);
+  // Text with its spaces removed, on the staff member's key. The unit of a dose is a local key of a mapping view now,
+  // which no derived form may give.
+  about = 'role_staff.person_key';
   await open(about, 'trim');
-  await table(about, c.tableLabel, 'DRUG_GIVEN');
-  await column(about, c.columnLabel, 'DOSE_UNIT_CAT');
-  await expect(await check(about, true)).toContainText('This change also mends 1 problem that was there before it.');
+  await table(about, c.tableLabel, 'ANAES_STAFF');
+  await column(about, c.columnLabel, 'STAFF_KEY');
+  await check(about, true);
   await keep(about);
-  await expect(entry(about).locator('.landed')).toHaveCount(0);
 
   // Only some of the rows, kept and probed.
   about = 'role_anaesthetic rows';
@@ -528,37 +530,36 @@ test('each kind of correction is tested on made-up rows before it is kept', asyn
   await check(about, true);
   await entry(about).getByRole('button', { name: c.discard }).click();
 
-  // A window with no key is refused, with rule 3 beside it.
+  // No form attributes a row to an anaesthetic by a time window: that is a question's logic over the roles.
   about = 'role_event.anaesthetic_key';
-  await open(about, 'window');
-  await expect(entry(about).locator('.window-rule')).toHaveText(c.windowRule);
-  await expect(entry(about).locator('.problem-note')).toContainText('Rule 3 of the record says');
+  await entry(about).locator('.answer-another').click();
+  await expect(entry(about).locator('select.correction-form option[value="window"]')).toHaveCount(0);
   await entry(about).locator('.answer-another').click();
 
-  // A link that also needs a time window, kept, and its probe written as a script of two parts.
+  // The reading's link to its anaesthetic through its sheet, kept, and its probe written as a script of two parts.
   about = 'role_reading.anaesthetic_key';
-  await open(about, 'window');
-  await table(about, c.sharedTable, 'OBS_SHEET');
-  await column(about, c.sharedColumn, 'VISIT_KEY');
-  await column(about, c.anaestheticKey('ANAES_RECORD'), 'VISIT_KEY');
-  await expect(entry(about).locator('.correction .correction-sentence')).toHaveText(
-    "A reading belongs to the anaesthetic whose VISIT_KEY it shares (OBS_SHEET.VISIT_KEY = ANAES_RECORD.VISIT_KEY), if its time of the reading lies between the anaesthetic's start and stop, allowing 15 minutes either side.");
-  const windowed = await check(about, true);
-  await expect(windowed).toContainText("outside the anaesthetic's window, as the window intends");
-  await stage(page, 'c4-window-checked', '#confirm [data-about="role_reading.anaesthetic_key"]');
+  await open(about, 'path');
+  const sheet = (n: number) => entry(about).locator(`[data-step="${n}"]`);
+  await sheet(1).getByLabel(c.stepFrom('OBS_READING')).selectOption('SHEET_KEY');
+  await sheet(1).getByLabel(c.stepTo).fill('OBS_SHEET');
+  await sheet(1).getByLabel(c.stepTo).press('Tab');
+  await sheet(1).getByLabel(c.stepToColumn).selectOption('SHEET_KEY');
+  await column(about, c.finalColumn('OBS_SHEET'), 'ANAES_KEY');
+  await check(about, true);
+  await stage(page, 'c4-link-checked', '#confirm [data-about="role_reading.anaesthetic_key"]');
   await keep(about);
   await entry(about).getByRole('button', { name: c.probeWrite }).click();
   await expect(entry(about).locator('.probe pre')).toContainText('INTO   #cohort');
-  await expect(entry(about).locator('.probe pre')).toContainText('DATEADD(minute, -15, w.ANAES_START_TS)');
 
-  // Several rows joined into one text.
-  about = 'role_drug.route';
+  // Several rows joined into one text. The route of a drug is a kind now, so the size of a device, which is text,
+  // takes the form.
+  about = 'role_device.size';
   await open(about, 'joined');
-  await column(about, c.onColumn, 'ROUTE_CAT');
-  await table(about, c.rowsTable, 'LK_ROUTE');
-  await column(about, c.linkColumn, 'ROUTE_CAT');
-  await column(about, c.textColumn, 'LABEL');
-  await column(about, c.orderColumn, 'LABEL');
+  await column(about, c.onColumn, 'ANAES_KEY');
+  await table(about, c.rowsTable, 'ANAES_EVENT');
+  await column(about, c.linkColumn, 'ANAES_KEY');
+  await column(about, c.textColumn, 'EVENT_TYPE_KEY');
+  await column(about, c.orderColumn, 'SEQ');
   await expect(entry(about).locator('.correction-sql')).toContainText('STRING_AGG(');
   await check(about, true);
   await keep(about);
@@ -932,7 +933,8 @@ test('the invented hospital answers every query, and the walk reaches a complete
   await route.getByRole('button', { name: c.checkButton }).click();
   await expect(route.locator('.check-report')).toBeVisible({ timeout: 300_000 });
   await route.getByRole('button', { name: c.keep, exact: true }).click();
-  await expect(route).toContainText('Corrected to');
+  // The route is a kind, so the row says that its codes are still to be translated in step 7.
+  await expect(route).toContainText(/corrected to/i);
   // Problems that stood before the change are not hidden behind a plain pass.
   await expect(route.locator('.kept-correction')).toContainText(/broke nothing new; \d+ problems? (was|were) there before it and remains?\./);
   // The row says what the query of values showed, rather than that there is no test query.
@@ -946,7 +948,9 @@ test('the invented hospital answers every query, and the walk reaches a complete
     await unsure.first().click();
     await expect(unsure).toHaveCount(before - 1);
   }
-  await expect(page.locator('#step-6')).toHaveAttribute('data-state', 'done');
+  // The route of a drug is a kind, and it was corrected to a column of names whose codes step 7 translates, so step 6 is
+  // done only once its list is saved there.
+  await expect(page.locator('#step-6')).toHaveAttribute('data-state', 'current');
 
   // Step 7: every list written, run on the invented hospital and saved.
   await openStep(page, 7);
@@ -971,6 +975,7 @@ test('the invented hospital answers every query, and the walk reaches a complete
     await expect(list).toContainText('for this list on');
   }
   await expect(page.locator('#step-7')).toHaveAttribute('data-state', 'done');
+  await expect(page.locator('#step-6')).toHaveAttribute('data-state', 'done');
   await stage(page, 'h7-codes', '#step-7');
 
   // Step 8: the three counts, run on the invented hospital and judged.

@@ -1921,7 +1921,6 @@ corrections.setup({
   pasteBox,
   year: yearValue,
   base: (view) => model?.bases?.[view] ?? null,
-  anaestheticTable: () => model?.anaesthetic_table ?? null,
   kinds: (about) => model?.vocabularies.find((v) => v.key === about)?.kinds ?? [],
   meanings: (about) => model?.vocabularies.find((v) => v.key === about)?.meanings ?? {},
   values: (name) => model?.values?.[name] ?? null,

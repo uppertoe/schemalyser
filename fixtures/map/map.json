@@ -99,32 +99,69 @@
     },
     "role_diagnosis": {
       "file": "role_diagnosis.sql",
-      "rows": {"status": "proposed", "from": "VISIT_DIAGNOSIS through VISIT and DIAG_DEF",
-               "says": "One line of a visit's diagnoses is one coded diagnosis of that stay, with its code and name from the list of diagnoses.",
-               "question": "Please confirm whether the visit's diagnoses are those coded at discharge, and whether a code can appear twice for one visit."},
+      "rows": {
+        "status": "proposed",
+        "from": "VISIT_DIAGNOSIS through VISIT",
+        "says": "One line of a visit's diagnoses is one coded diagnosis of that stay, identified by the visit and the line.",
+        "question": "Please confirm whether the visit's diagnoses are those coded at discharge, and whether a code can appear twice for one visit."
+      },
       "columns": {
-        "patient_key": {"status": "proposed", "from": "VISIT.PERSON_KEY, through VISIT_DIAGNOSIS.VISIT_KEY",
-                        "says": "The patient is the patient of the visit for which the diagnosis was recorded.",
-                        "question": "Please confirm whether every visit carries its patient."},
-        "stay_key": {"status": "proposed", "from": "VISIT_DIAGNOSIS.VISIT_KEY",
-                     "says": "The diagnosis carries the key of the hospital visit, which is the stay.",
-                     "question": "Please confirm whether VISIT_DIAGNOSIS.VISIT_KEY is the same key that role_stay gives."},
-        "code": {"status": "proposed", "from": "DIAG_DEF.ICD_CODE, through VISIT_DIAGNOSIS.DIAG_KEY",
-                 "says": "The code is the diagnosis's code in the national classification, from the list of diagnoses.",
-                 "question": "Please confirm whether ICD_CODE is filled for every diagnosis in the list."},
-        "code_system": {"status": "proposed", "from": "a fixed value",
-                        "says": "The list of diagnoses holds its codes in one national classification, so the view names it as a fixed value.",
-                        "question": "Please confirm whether the list has ever held codes from more than one classification or edition."},
-        "name": {"status": "proposed", "from": "DIAG_DEF.DIAG_LABEL, through VISIT_DIAGNOSIS.DIAG_KEY",
-                 "says": "The name is the diagnosis's name in the list of diagnoses.",
-                 "question": "Please confirm whether DIAG_LABEL is the name of the diagnosis and not a local abbreviation."},
-        "is_principal": {"status": "proposed", "from": "VISIT_DIAGNOSIS.PRIMARY_FLAG",
-                         "says": "A diagnosis flagged Y is the principal diagnosis of the visit, and one flagged N is another.",
-                         "question": "Please confirm whether exactly one diagnosis of each visit is flagged Y."},
-        "recorded_time": {"status": "proposed", "from": "nothing in the invented world",
-                          "says": "The invented world records no time at which a diagnosis was noted or coded, so the view gives it empty.",
-                          "question": "Please confirm whether any table records when a diagnosis was coded."}
-      }
+        "diagnosis_key": {
+          "status": "proposed",
+          "from": "VISIT_DIAGNOSIS.VISIT_KEY and VISIT_DIAGNOSIS.SEQ",
+          "says": "A diagnosis is identified by the visit and its line in the visit's diagnoses, joined into one value.",
+          "question": "Please confirm whether the visit and the line together identify one diagnosis row."
+        },
+        "patient_key": {
+          "status": "proposed",
+          "from": "VISIT.PERSON_KEY, through VISIT_DIAGNOSIS.VISIT_KEY",
+          "says": "The patient is the patient of the visit for which the diagnosis was recorded.",
+          "question": "Please confirm whether every visit carries its patient."
+        },
+        "stay_key": {
+          "status": "proposed",
+          "from": "VISIT_DIAGNOSIS.VISIT_KEY",
+          "says": "The diagnosis carries the key of the hospital visit, which is the stay.",
+          "question": "Please confirm whether VISIT_DIAGNOSIS.VISIT_KEY is the same key that role_stay gives."
+        },
+        "diagnosis": {
+          "status": "proposed",
+          "from": "VISIT_DIAGNOSIS.DIAG_KEY",
+          "says": "The diagnosis is the visit's code in the list of diagnoses, which the hospital schema has not yet translated into standard concepts, so the view gives it as the key unlisted.",
+          "question": "Please confirm whether the list of diagnoses holds the codes that should be translated into standard concepts."
+        },
+        "is_principal": {
+          "status": "proposed",
+          "from": "VISIT_DIAGNOSIS.PRIMARY_FLAG",
+          "says": "A diagnosis flagged Y is the principal diagnosis of the visit, and one flagged N is another.",
+          "question": "Please confirm whether exactly one diagnosis of each visit is flagged Y."
+        },
+        "recorded_time": {
+          "status": "proposed",
+          "from": "nothing in the invented world",
+          "says": "The invented world records no time at which a diagnosis was noted or coded, so the view gives it empty.",
+          "question": "Please confirm whether any table records when a diagnosis was coded."
+        },
+        "source_kind": {
+          "status": "proposed",
+          "from": "the pathway's source kind",
+          "says": "The visit's diagnoses are coded after the stay, so every row is of the source kind coded_record.",
+          "question": "Please confirm whether the visit's diagnoses are coded at discharge rather than taken from a problem list or a booking."
+        },
+        "documented_time": {
+          "status": "proposed",
+          "from": "nothing in the invented world",
+          "says": "The invented world records no time at which a diagnosis was entered, so the view gives it empty.",
+          "question": "Please confirm whether any table records when a diagnosis was entered."
+        },
+        "amends_key": {
+          "status": "proposed",
+          "from": "nothing in the invented world",
+          "says": "The invented world records no correction of a diagnosis as a row of its own, so the view gives it empty.",
+          "question": "Please confirm whether a corrected diagnosis is ever recorded as a row of its own."
+        }
+      },
+      "source_kind": "coded_record"
     }
   },
   "kinds": {

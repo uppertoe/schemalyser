@@ -80,6 +80,16 @@ WORDING = {
     "link": "The link from {source} to {target}",
     "kind": "The hospital's codes for {meaning}",
     "gap_part": "A part named {name}",
+    "gap_capability": "A capability named {name}",
+    "mapping": "The translation of the hospital's codes of {title} into standard concepts",
+    "mapping_none": "The hospital schema does not yet translate these codes.",
+    "mapping_held": "The hospital schema translates {codes}: {mapped} mapped, {unmapped} unmapped and {ambiguous} ambiguous{date}.",
+    "mapping_person": "A person gave at least one of the concepts.",
+    "mapping_proposed": "No person has yet confirmed any of the concepts.",
+    "req_mapping": "The clinician and the database analyst translate the hospital's codes of {title} into standard concepts in the hospital schema, each with whether it is mapped, unmapped or ambiguous and where the mapping came from, and confirm the concepts that a conversion or the page proposed.",
+    "heading_capabilities": "The capabilities that the question names",
+    "capability_line": "{name}, version {version}: {meaning} It is {state}.",
+    "capability_unknown": "{name} is not a capability of the catalogue.",
     "gap_column": "A column named {column} in {part}",
     "gap_kind": "A kind named {kind} in {about}",
     "gap_link": "A link between {source} and {target}",
@@ -195,10 +205,27 @@ def _heading(name):
     return words[:1].upper() + words[1:] if words else "The question"
 
 
+CAPABILITY_LINE = re.compile(r"capabilit(?:y|ies)\s*:\s*(.+)", re.I)
+
+
+def named_capabilities(sql):
+    """The capabilities that a question names among its leading comments, as -- capability: NAME, or several
+    separated by commas after -- capabilities:, in order."""
+    found = []
+    for line in _leading_comments(sql):
+        match = CAPABILITY_LINE.fullmatch(line.strip())
+        if match:
+            found += [n.strip().rstrip(".") for n in match.group(1).split(",") if n.strip()]
+    return list(dict.fromkeys(found))
+
+
 def _contract():
     model = rolemap.contract()
     views = {view["name"]: view for view in model["views"]}
-    columns = {(view["name"], column["name"]): column for view in model["views"] for column in view["columns"]}
+    # The mapping views are read as parts are, with no links of their own: a part reaches one through the mapping
+    # that its column of a local key names.
+    views.update({name: {**view, "links": []} for name, view in rolemap.mapping_views(model).items()})
+    columns = {(view["name"], column["name"]): column for view in views.values() for column in view["columns"]}
     return model, views, columns
 
 
@@ -370,7 +397,7 @@ def requirements(sql, name="question.sql"):
                 left, right = tracer.within(scope, condition.left), tracer.within(scope, condition.right)
                 if len(left) == 1 and len(right) == 1 and next(iter(left))[0] != next(iter(right))[0]:
                     a, b = next(iter(left)), next(iter(right))
-                    if columns[a]["type"] == "key" and columns[b]["type"] == "key":
+                    if columns[a]["type"] in ("key", "local_key") and columns[b]["type"] in ("key", "local_key"):
                         link = _link(views, a, b)
                         if link:
                             links[link["id"]] = link
@@ -433,14 +460,51 @@ def requirements(sql, name="question.sql"):
             outcomes.append({"name": projection.alias_or_name, "columns": sorted(f"{v}.{c}" for v, c in behind)})
         break
     behind_result = {c for o in outcomes for c in o["columns"]}
+    # The capabilities of the catalogue whose every column the result reads, which the report names as the outcomes
+    # that the question appears to measure, apart from the capabilities that it names.
     named_outcomes = []
-    for outcome in model.get("outcomes", []):
-        wanted = outcome.get("from") or []
-        if wanted and all(("." in f and f in behind_result) for f in wanted):
-            named_outcomes.append({"name": outcome["name"], "meaning": outcome["meaning"]})
+    for capability in model.get("capabilities", []):
+        wanted = capability["requires"]["columns"]
+        if wanted and all(f in behind_result for f in wanted):
+            named_outcomes.append({"name": capability["name"], "meaning": capability["meaning"]})
     parts |= {v for v, _ in used}
     for link in links.values():
         parts |= {link["source"].split(".")[0], link["target"].split(".")[0]}
+    # The capabilities that the question names, each resolved into its requirements, which join the question's own.
+    catalogue = rolemap.capabilities(model)
+    capabilities, needed_by = [], {}
+    for name_ in named_capabilities(sql):
+        capability = catalogue.get(name_)
+        if capability is None:
+            gaps[f"gap:capability:{name_}"] = {"form": "capability", "name": name_}
+            continue
+        wanted = capability["requires"]
+        ids = []
+        for part in wanted["parts"]:
+            parts.add(part)
+            ids.append(part)
+        for column in wanted["columns"]:
+            view, _, col = column.partition(".")
+            used.add((view, col))
+            ids.append(column)
+        for item in wanted["kinds"]:
+            about, _, kind = item.partition(" = ")
+            view, _, col = about.partition(".")
+            known = _vocabulary(model, view, columns[(view, col)])
+            kinds[item] = {"id": item, "view": view, "column": col, "kind": kind, "meaning": known.get(kind, kind)}
+            ids.append(item)
+        for item in wanted["links"]:
+            source, _, target = item.partition(" -> ")
+            links[item] = {"id": item, "source": source, "target": target}
+            parts |= {source.split(".")[0], target.split(".")[0]}
+            ids.append(item)
+        for mapping in wanted["mapping_views"]:
+            parts.add(mapping)
+            ids.append(mapping)
+        for requirement in ids:
+            needed_by.setdefault(requirement, []).append(name_)
+        capabilities.append({"name": name_, "version": capability["version"], "meaning": capability["meaning"],
+                             "output_class": capability["output_class"], "requirements": list(dict.fromkeys(ids))})
     unique_times, seen = [], set()
     for item in times:
         if item["text"] not in seen:
@@ -452,9 +516,12 @@ def requirements(sql, name="question.sql"):
             seen.add(item["text"])
             unique_conditions.append(item)
     order = list(views)
+    mapping = set(rolemap.mapping_views(model))
     return {"name": Path(name).name, "heading": _heading(name), "question": question_text(sql),
-            "parts": sorted(parts, key=order.index),
-            "columns": sorted((f"{v}.{c}" for v, c in used), key=lambda a: (order.index(a.split(".")[0]), a)),
+            "parts": sorted((p for p in parts if p not in mapping), key=order.index),
+            "mapping_views": sorted((p for p in parts if p in mapping), key=order.index),
+            "capabilities": capabilities, "needed_by": needed_by,
+            "columns": sorted((f"{v}.{c}" for v, c in used if v not in mapping), key=lambda a: (order.index(a.split(".")[0]), a)),
             "links": sorted(links.values(), key=lambda l: l["id"]),
             "kinds": sorted(kinds.values(), key=lambda k: k["id"]),
             "conditions": unique_conditions, "time": unique_times, "outcomes": outcomes, "named_outcomes": named_outcomes,
@@ -462,7 +529,13 @@ def requirements(sql, name="question.sql"):
 
 
 def _link(views, a, b):
-    """The link of the role model that joins two role columns, as {"id", "source", "target"}, or None."""
+    """The link of the role model that joins two role columns, as {"id", "source", "target"}, or None: a link of a
+    part, or the join of a part's local key to the mapping view that its column names."""
+    for one, other in ((a, b), (b, a)):
+        column = next((c for c in views[one[0]]["columns"] if c["name"] == one[1]), None)
+        if column and column.get("mapping") == other[0] and other[1] == "local_key":
+            source = f"{one[0]}.{one[1]}"
+            return {"id": f"{source} -> {other[0]}.local_key", "source": source, "target": f"{other[0]}.local_key"}
     for one, other in ((a, b), (b, a)):
         for link in views[one[0]].get("links", []):
             if link["column"] == one[1] and link["to"] == f"{other[0]}.{other[1]}":
@@ -703,9 +776,26 @@ def kind_evidence(schema, kind):
             "state": state, "evidence": evidence, "key": key, "kind": kind["kind"], "meaning": _meaning_phrase(kind["meaning"])}
 
 
+def mapping_evidence(schema, mapping):
+    """The evidence of a mapping view: whether the hospital schema translates its codes, and who did. A translation
+    that only a reference conversion, the hospital's own conversion or an inference gave is proposed until a person
+    confirms it, and no count yet checks a mapping view against the database."""
+    held = ((((schema.map.get("concepts") or {}).get("views") or {}).get(mapping)) or {})
+    rows = held.get("rows") or []
+    codes = {str(r["code"]) for r in rows}
+    statuses = {s: len({str(r["code"]) for r in rows if r["status"] == s}) for s in ("mapped", "unmapped", "ambiguous")}
+    by_person = any(r["provenance"] == evidence.PERSON for r in rows)
+    state = NOT_MAPPED if not rows else CONFIRMED if by_person else PROPOSED
+    return {"id": mapping, "form": "mapping", "title": WORDING["mapping"].format(title=rolemap.mapping_views()[mapping]["title"].lower()),
+            "state": state, "evidence": {"codes": len(codes), "statuses": statuses, "by_person": by_person,
+                                         "date": held.get("date")}}
+
+
 def gap_evidence(gap):
     form = gap["form"]
-    if form == "part":
+    if form == "capability":
+        title = WORDING["gap_capability"].format(name=gap["name"])
+    elif form == "part":
         title = WORDING["gap_part"].format(name=gap["name"])
     elif form == "column":
         title = WORDING["gap_column"].format(column=gap["column"], part=rolemap.view_title(gap["view"]))
@@ -762,6 +852,14 @@ def _recorded(row):
                                                        else f"a {probe['database'] or 'unnamed'} database"))
         else:
             said.append(WORDING["no_probe"])
+    elif row["form"] == "mapping":
+        if not e["codes"]:
+            return WORDING["mapping_none"]
+        st = e["statuses"]
+        said.append(WORDING["mapping_held"].format(codes=f"{e['codes']} {'code' if e['codes'] == 1 else 'codes'}", mapped=st["mapped"],
+                                                   unmapped=st["unmapped"], ambiguous=st["ambiguous"],
+                                                   date=f" on {describe._day(e['date'])}" if e.get("date") else ""))
+        said.append(WORDING["mapping_person"] if e["by_person"] else WORDING["mapping_proposed"])
     elif row["form"] == "kind":
         count = f"{e['codes']} {'code' if e['codes'] == 1 else 'codes'}"
         said.append(WORDING["codes"].format(count=count, date=describe._day(e["date"])) if e["chosen"]
@@ -878,6 +976,10 @@ def _requests(schema, rows):
                     row["id"], sql=probe, form="test query")
             else:
                 _counts_request(schema, add, source.split(".")[0], row["id"])
+        elif row["form"] == "mapping":
+            if state in (NOT_MAPPED, PROPOSED, CONFIRMED):
+                add(f"mapping:{row['id']}", CLINICIAN, 7, WORDING["req_mapping"].format(
+                    title=rolemap.mapping_views()[row["id"]]["title"].lower()), row["id"], form="concept translation")
         elif row["form"] == "kind":
             if state in (NOT_MAPPED, PROPOSED):
                 _list_request(schema, add, row["key"], row["id"], meanings.get(row["key"]))
@@ -976,9 +1078,11 @@ def assess(schema, sql, name="question.sql"):
     rows += [column_evidence(schema, about, columns) for about in needs["columns"]]
     rows += [link_evidence(schema, link, columns) for link in needs["links"]]
     rows += [kind_evidence(schema, kind) for kind in needs["kinds"]]
+    rows += [mapping_evidence(schema, mapping) for mapping in needs["mapping_views"]]
     rows += [gap_evidence(gap) for gap in needs["gaps"]]
     for row in rows:
         row["recorded"] = _recorded(row)
+        row["capabilities"] = needs["needed_by"].get(row["id"], [])
     requests = _requests(schema, rows)
     if not requests and rows and all(RANK[r["state"]] >= RANK[CHECKED] for r in rows) \
             and not all(r["state"] == VALIDATED for r in rows):
@@ -996,9 +1100,18 @@ def assess(schema, sql, name="question.sql"):
     rank = {r["id"]: RANK[r["state"]] for r in rows}
     requests.sort(key=lambda request: min((rank.get(m, RANK[CONFIRMED]) for m in request["moves"]), default=RANK[CONFIRMED]))
     verdict = _verdict(rows)
+    states = {r["id"]: r["state"] for r in rows}
+    capabilities = []
+    for capability in needs["capabilities"]:
+        held = [states[r] for r in capability["requirements"] if r in states]
+        capabilities.append({**capability, "state": min(held, key=RANK.get) if held else CHECKED})
+    for gap in needs["gaps"]:
+        if gap["form"] == "capability":
+            capabilities.append({"name": gap["name"], "version": None, "meaning": None, "output_class": None,
+                                 "requirements": [gap["id"]], "state": NOT_DESCRIBED})
     return {"name": needs["name"], "heading": needs["heading"], "question": needs["question"],
             "verdict": verdict, "verdict_text": VERDICTS[verdict], "updated": schema.settings.get("updated"),
-            "requirements": needs, "states": rows, "requests": requests,
+            "requirements": needs, "states": rows, "requests": requests, "capabilities": capabilities,
             "time_zone": {"zone": schema.settings.get("time_zone"), "daylight_saving": schema.settings.get("daylight_saving")}}
 
 
@@ -1061,6 +1174,12 @@ def markdown(found):
               f"## {WORDING['heading_requirements']}", "", WORDING["table_head"], "| --- | --- | --- |"]
     for row in found["states"]:
         lines.append(f"| {_cell(row['title'])} | {_capital(row['state'])} | {_cell(row['recorded'])} |")
+    if found.get("capabilities"):
+        lines += ["", f"## {WORDING['heading_capabilities']}", ""]
+        for capability in found["capabilities"]:
+            lines.append("- " + (WORDING["capability_line"].format(name=capability["name"], version=capability["version"],
+                                                                   meaning=capability["meaning"], state=capability["state"])
+                                 if capability["version"] is not None else WORDING["capability_unknown"].format(name=capability["name"])))
     tests = _tests(found)
     if tests:
         lines += ["", f"## {WORDING['heading_tests']}", ""] + [f"- {t}" for t in tests]

@@ -186,3 +186,69 @@ def test_the_programme_orders_what_holds_back_the_most_questions_first(schema, s
     assert feasibility.main(["report", str(saved), str(folder / "c_births.sql"), "--out", str(report)]) == 0
     assert "This question can be answered from the hospital schema as it stands." in report.read_text()
     assert "reconciles a sample of anaesthetics" in report.read_text()
+
+
+# The capabilities that a question names, and the mapping views that they need.
+
+NAMED = """-- How much blood did each anaesthetic need, and what was the principal diagnosis of its stay?
+-- capability: transfusion
+-- capability: principal_diagnosis
+SELECT a.anaesthetic_key, a.start_time
+FROM   role_anaesthetic a
+"""
+
+
+def test_a_question_s_requirements_are_resolved_through_the_capabilities_it_names(schema):
+    needs = feasibility.requirements(NAMED, "blood.sql")
+    assert [c["name"] for c in needs["capabilities"]] == ["transfusion", "principal_diagnosis"]
+    # The capability's own requirements join the question's, the weight among them, and the mapping view of diagnoses.
+    assert {"role_fluid.volume_ml", "role_fluid.volume_form", "role_anaesthetic_detail.weight_kg", "role_diagnosis.diagnosis"} <= set(needs["columns"])
+    assert "role_fluid.kind = red_cells" in {k["id"] for k in needs["kinds"]}
+    assert needs["mapping_views"] == ["map_diagnosis_concept"] and "map_diagnosis_concept" not in needs["parts"]
+    assert needs["needed_by"]["role_anaesthetic_detail.weight_kg"] == ["transfusion"]
+    found = feasibility.assess(schema, NAMED, "blood.sql")
+    states = {c["name"]: c["state"] for c in found["capabilities"]}
+    # The invented hospital records no fluids, and translates no diagnosis, so neither capability is yet supported:
+    # an ordinary outcome, with the evidence requests that would change it.
+    assert states == {"transfusion": feasibility.NOT_MAPPED, "principal_diagnosis": feasibility.NOT_MAPPED}
+    row = next(r for r in found["states"] if r["id"] == "map_diagnosis_concept")
+    assert row["form"] == "mapping" and row["capabilities"] == ["principal_diagnosis"]
+    assert row["recorded"] == feasibility.WORDING["mapping_none"]
+    assert any(r["form"] == "concept translation" and r["moves"] == ["map_diagnosis_concept"] for r in found["requests"])
+    text = feasibility.markdown(found)
+    assert "## The capabilities that the question names" in text and "- transfusion, version 1:" in text and "!" not in text
+    # The report's shape is otherwise unchanged.
+    assert {"verdict", "states", "requests", "requirements"} <= set(found)
+
+
+def test_a_capability_that_the_catalogue_does_not_hold_is_a_gap_of_the_role_model(schema):
+    sql = "-- capability: minutes_of_unicorns\nSELECT a.anaesthetic_key FROM role_anaesthetic a\n"
+    found = feasibility.assess(schema, sql, "unknown.sql")
+    assert found["verdict"] == "model"
+    assert [c["state"] for c in found["capabilities"]] == [feasibility.NOT_DESCRIBED]
+    assert any(r["id"] == "gap:capability:minutes_of_unicorns" for r in found["states"])
+
+
+def test_a_translation_by_a_person_moves_a_mapping_view_and_one_from_a_reference_is_only_proposed(tmp_path):
+    s = describe.Describe()
+    s.version = "test"
+    s.load_dictionary(DICTIONARY.read_bytes(), TABLES.read_bytes(), {}, "invented-dictionary.csv", "invented-tables.csv")
+    s.propose(date=DATE)
+    s.translate_concepts("map_drug_concept", [{"code": "CEPHAZOLIN", "concept_id": 9100001, "status": "mapped",
+                                               "provenance": "a reference conversion"}], date=DATE)
+    s.translate_concepts("map_diagnosis_concept", [{"code": "Q36.9", "concept_id": 9100201, "status": "mapped", "provenance": "a person"},
+                                                   {"code": "S42.4", "concept_id": 0, "status": "unmapped", "provenance": "a person"}],
+                         date=DATE)
+    path = tmp_path / "schema.zip"
+    path.write_bytes(s.save_zip(DATE))
+    schema = feasibility.Schema.load(path)
+    sql = "-- capability: principal_diagnosis\n-- capability: exposure_intervals\nSELECT a.anaesthetic_key FROM role_anaesthetic a\n"
+    found = feasibility.assess(schema, sql, "two.sql")
+    rows = {r["id"]: r for r in found["states"]}
+    assert rows["map_diagnosis_concept"]["state"] == feasibility.CONFIRMED
+    assert rows["map_diagnosis_concept"]["evidence"]["statuses"] == {"mapped": 1, "unmapped": 1, "ambiguous": 0}
+    assert rows["map_drug_concept"]["state"] == feasibility.PROPOSED
+    assert "No person has yet confirmed any of the concepts." in rows["map_drug_concept"]["recorded"]
+    # A capability declared with no SQL yet is resolved like any other, and its requirements say what it would read.
+    exposure = next(c for c in found["capabilities"] if c["name"] == "exposure_intervals")
+    assert {"role_drug.order_key", "role_drug.amends_key", "map_drug_concept", "map_unit_concept"} <= set(exposure["requirements"])
