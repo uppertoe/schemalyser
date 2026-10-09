@@ -1,4 +1,7 @@
 -- DRUG_EXPOSURE, infusions: one row for each period that an infusion ran at one rate.
+-- The step over the roles, drug_exposure_infusion_roles.sql, has replaced this step, which is kept as a recorded
+-- alternative on the direct route so that a run can still compare its rows with those of the step over the roles. It
+-- reads neither the order key nor the corrections, so it cannot tell a corrected row from the row that it amends.
 -- An action under SITE_DRUG_RUNNING starts a period, and the next action for the same medicine in the same anaesthetic, whatever it is,
 -- ends it. An action under SITE_DRUG_STOPPED starts nothing. A period with no later action has no recorded end: the
 -- source does not say when the infusion stopped, so the step does not invent an end at the anaesthetic's stop. Its

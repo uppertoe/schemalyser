@@ -14,7 +14,7 @@ The page's first screen, describing the record, is built. The screens for writin
 
 ## The parts
 
-- `core/` is the Python core: the role model of the anaesthetic record, the dictionary loader and proposer, the hospital schema and its test on made-up rows, and the conversion to OMOP. It also still holds the modules of an earlier design, which no page uses.
+- `core/` is the Python core: the role model of the anaesthetic record, the dictionary loader and proposer, the hospital schema and its test on made-up rows, and the conversion to OMOP.
 - `site/` is the page, which runs the same core in the browser.
 - `fixtures/` is the invented hospital, with its invented data dictionary, used by the page and the tests.
 - `tools/` holds the harness that checks the tool's SQL on a real SQL Server.

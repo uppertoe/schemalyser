@@ -34,7 +34,7 @@ copied only where a person asks. No SQL that this module writes quotes a descrip
 Every query that this module writes for production reads the small tables only, or is a two-part script: part 1 puts
 at most COHORT_LIMIT anaesthetics of one year into #cohort from the anaesthetic's own tables, and part 2 reaches the
 larger table from #cohort by its keys alone, joining the table of readings last, so that SQL Server cannot read the
-readings before the cohort has been narrowed (see scripts.py for why).
+readings before the cohort has been narrowed (docs/architecture.md, under "Safe scripts for the real database", says why).
 """
 import copy
 import csv
@@ -249,6 +249,10 @@ WORDING = {
     "coverage_figures": "The assessment of {part} says that {mapped} of {found} recording pathways are mapped. The pathways mapped cannot be more than the pathways found, so Schemalyser has not imported the assessment.",
     "provenance_unknown": "The provenance of the result is one of {known}.",
     "imported": "Schemalyser imported the result of the request {request} and saved the new version {schema_id} as {file}.",
+    "walk_unknown": "Call {number} of the file asks for {call}, which is not one of the calls that the page makes.",
+    "walk_unreadable": "Schemalyser could not read the file of calls. It is a JSON file holding a list under calls.",
+    "walk_saved": "Schemalyser made the hospital schema from the calls and saved it as {file}.",
+    "walk_refused": "Schemalyser has not taken call {number}, just as the page does not, and has gone on with the rest. {why}",
 }
 # Where a result came from when it was not pasted: the journal records it beside the result.
 INVENTED_HOSPITAL = "invented hospital"
@@ -265,6 +269,27 @@ COUNT_OPTIONAL = {"readings_by_kind": ("cohort_anaesthetics", "with_needed_kind"
 # The kinds of reading that the audit needs, whose share of anaesthetics the readings count measures.
 NEEDED_KINDS = rolemap.MEAN_KINDS
 CHARTED_COLUMNS = ("code", "charted", "anaesthetics", "name")
+# Why a cell of a pasted result is shown as it is not: the query that wrote it leaves a count under ten empty. The
+# columns of each result whose empty cell means that, and the columns that hold counts, which the page writes with a
+# thousands separator. A count that a query never leaves empty, such as the keys repeated, is never shown as under ten.
+UNDER_TEN = "under_ten"
+COUNTED = {"coverage_by_year": COUNT_COLUMNS["coverage_by_year"][1:], "repeated_keys": ("keys_repeated", "rows_held"),
+           "readings_by_kind": COUNT_COLUMNS["readings_by_kind"][1:], "charted": ("charted", "anaesthetics"),
+           "values": ("rows",), "probe": tuple(dict.fromkeys(c for cs in PROBE_COLUMNS.values() for c in cs))}
+BLANKED_UNDER_TEN = {"coverage_by_year": COUNT_COLUMNS["coverage_by_year"][2:], "repeated_keys": (),
+                     "readings_by_kind": COUNT_COLUMNS["readings_by_kind"][1:], "charted": ("charted", "anaesthetics"),
+                     "values": ("rows",), "probe": COUNTED["probe"]}
+# The correction forms that step 6 offers beside a column, by the type of the column in the role model, after the form
+# that names another column, which every column offers. A column that links to another part offers the paths instead.
+FORMS_BY_TYPE = {"flag": ("flag",), "flag_or_empty": ("flag",), "number": ("scale",), "whole": ("scale",), "date": ("date",),
+                 "text": ("trim", "joined"), "key": ("trim",), "kind": ("codes",)}
+# The steps of the page whose state follows from the record, in order; step 1 is the page's own, since only the page
+# knows whether the tab is offline. Step 3, opening a saved schema, is optional.
+STEPS = ("2", "3", "4", "5", "6", "7", "8", "9")
+OPTIONAL_STEPS = ("3",)
+# Where the time zone of the database's clocks came from: a person typed or kept it, or the page proposed this
+# computer's own time zone and the person saved it unchanged, which the saved schema then says.
+TIME_ZONE_FROM = ("a person", "proposed from this computer")
 # The evidence requests of the feasibility report, which the evidence import takes back. The format is the request's,
 # and each form of request that a result answers names the shape of the result it expects; a request of any other form
 # is answered on the page.
@@ -462,6 +487,8 @@ class Describe:
         self.contract_saved = None
         self.parts = rolemap.part_hashes(self.model)
         self._tested = None
+        # The state of the sitting when it was last saved, and whether that save was a draft, which step 9 shows.
+        self._saved = None
         # A reference conversion's lineage, which the proposer reads beside the dictionary: the lineage as data, and
         # the bytes and name of its file, which the saved hospital schema keeps.
         self.reference = None
@@ -864,24 +891,29 @@ class Describe:
         counts = {"confirmed": 0, "corrected": 0, "not_sure": 0, "remaining": 0, "untranslated": 0, "total": 0,
                   "tables": 0, "tables_remaining": 0}
         for about, item in self._items():
-            answer = (item.get("confirmation") or {}).get("answer")
+            answered = self.answered_as(about, item)
             if about.endswith(" rows"):
                 counts["tables"] += 1
-                if not (answer in ("yes", "not sure") or (answer == "no" and item["status"] == "person")):
+                if answered is None:
                     counts["tables_remaining"] += 1
                 continue
             counts["total"] += 1
-            if (answer == "yes" or (answer == "no" and item["status"] == "person")) and self._untranslated(about, item):
-                counts["untranslated"] += 1
-            elif answer == "yes":
-                counts["confirmed"] += 1
-            elif answer == "no" and item["status"] == "person":
-                counts["corrected"] += 1
-            elif answer == "not sure":
-                counts["not_sure"] += 1
-            else:
-                counts["remaining"] += 1
+            counts[answered or "remaining"] += 1
         return counts
+
+    def answered_as(self, about, item):
+        """How a column or a part's table stands in the tally: "confirmed", "corrected", "not_sure", "untranslated"
+        for a column of a flag or a kind answered whose codes nobody has yet translated, or None while it waits for an
+        answer. The table of a part is never untranslated."""
+        answer = (item.get("confirmation") or {}).get("answer")
+        settled = answer == "yes" or (answer == "no" and item["status"] == "person")
+        if settled and not about.endswith(" rows") and self._untranslated(about, item):
+            return "untranslated"
+        if answer == "yes":
+            return "confirmed"
+        if answer == "no" and item["status"] == "person":
+            return "corrected"
+        return "not_sure" if answer == "not sure" else None
 
     def _items(self):
         for name, role in (self.data or {}).get("roles", {}).items():
@@ -2683,7 +2715,12 @@ ORDER  BY g.kind;"""
         files = self.folder_files(date)
         settings = json.loads(files["settings.json"])
         self.identity = {"schema_id": settings["schema_id"], "parent_id": settings["parent_id"], "lineage": settings["lineage"]}
+        self._saved = {"mark": self._state_mark(), "draft": bool(self.unfinished())}
         return files
+
+    def _state_mark(self):
+        """What a save records, so that the view can say whether anything has changed since the last one."""
+        return evidence.digest([len(self.log), self.data, self.codes, self.counts, self.settings, self.probes])
 
     def save_zip(self, date=None):
         """save() as the bytes of the one file, whose name file_name() then gives."""
@@ -2709,9 +2746,9 @@ ORDER  BY g.kind;"""
         self.queries, self.results, self.values, self.probes = {}, {}, {}, {}
         self.log, self.texts, self._journal_cache = evidence.Journal(), {}, None
         self.dimensions = {"bindings": {}, "links": {}, "translations": {}, "parts": {}}
-        self._checked, self._after, self._baseline, self._tested = {}, {}, None, None
+        self._checked, self._after, self._baseline, self._tested, self._saved = {}, {}, None, None, None
         held = _json_of(files.get("settings.json"))
-        for key in ("made", "updated", "database", "year", "time_zone", "daylight_saving", "hospital"):
+        for key in ("made", "updated", "database", "year", "time_zone", "time_zone_from", "daylight_saving", "hospital"):
             if key in held:
                 self.settings[key] = held[key]
         self.identity = {"schema_id": held.get("schema_id"), "parent_id": held.get("parent_id"),
@@ -2895,7 +2932,7 @@ ORDER  BY g.kind;"""
         after_columns, after = read_grid(text, before_columns)
         return {"differences": _grid_differences(before_columns, before, after), "previous": True}
 
-    def set_settings(self, database=None, year=None, time_zone=None, daylight_saving=None):
+    def set_settings(self, database=None, year=None, time_zone=None, daylight_saving=None, time_zone_from=None):
         if database in ("production", "training", "unsure"):
             self.settings["database"] = database
         if year is not None and re.fullmatch(r"(19|20)\d\d", str(year)):
@@ -2905,6 +2942,9 @@ ORDER  BY g.kind;"""
         if time_zone is not None and re.fullmatch(r"[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}", str(time_zone).strip()) \
                 and len(str(time_zone).strip()) <= 64:
             self.settings["time_zone"] = str(time_zone).strip()
+            # The page may propose this computer's own time zone; a zone saved as proposed is recorded as that, never
+            # as one a person gave.
+            self.settings["time_zone_from"] = time_zone_from if time_zone_from in TIME_ZONE_FROM else TIME_ZONE_FROM[0]
         if daylight_saving is not None:
             self.settings["daylight_saving"] = bool(daylight_saving)
 
@@ -3111,12 +3151,55 @@ ORDER  BY g.kind;"""
 
     # The model that the page shows.
 
-    def view(self):
+    def steps(self, vocabularies, invented_hospital=False):
+        """The state of each step of the page that follows from the record, as {step: {"state", "waits_for",
+        "progress", ...}}, with "current", the first step a person has still to do. A state is "done", "available",
+        "waiting" (for what waits_for names) or "attention", which a count judged wrong gives step 8. Step 1 and whether
+        the tab is offline are the page's own, so a step here never waits for those."""
+        proposed = self.data is not None
+        dictionary = self.dictionary is not None
+        t = self.tally()
+        lists = [v for v in vocabularies if not v["reason"]]
+        offered = [n[6:] for n in self.journal if n.startswith("count-")]
+        judged = [n for n in offered if (self.counts.get(n) or {}).get("looks_right")]
+        wrong = [n for n in offered if (self.counts.get(n) or {}).get("looks_right") == "no"]
+        saved = None if self._saved is None else "current" if self._saved["mark"] == self._state_mark() else "stale"
+        no_map = None if proposed else "map"
+        found = {
+            "2": {"done": dictionary},
+            "3": {"done": bool(self.restored and self.restored.get("map"))},
+            "4": {"done": proposed, "waits_for": None if dictionary or proposed else "dictionary"},
+            "5": {"done": self.catalogue is not None,
+                  "waits_for": None if self.catalogue_source == "database" and self.catalogue is not None else no_map or (
+                      "invented_hospital" if self.invented and not invented_hospital and self.catalogue is None else None)},
+            "6": {"done": proposed and t["remaining"] == 0 and t["tables_remaining"] == 0 and t["untranslated"] == 0,
+                  "waits_for": no_map},
+            "7": {"done": proposed and sum(1 for v in lists if v["date"]) == len(lists), "waits_for": no_map,
+                  "progress": {"done": sum(1 for v in lists if v["date"]), "of": len(lists)}},
+            "8": {"done": proposed and bool(offered) and len(judged) == len(offered), "waits_for": no_map,
+                  "attention": proposed and bool(wrong),
+                  "progress": {"done": len(judged), "of": len(offered), "wrong": len(wrong)}},
+            "9": {"done": saved == "current" and not self._saved["draft"], "waits_for": no_map, "saved": saved,
+                  "draft": bool(self._saved and self._saved["draft"])},
+        }
+        for step, held in found.items():
+            held.setdefault("waits_for", None)
+            held["optional"] = step in OPTIONAL_STEPS
+            held["state"] = "waiting" if held["waits_for"] else "attention" if held.get("attention") else \
+                "done" if held["done"] else "available"
+        current = next((s for s in STEPS if found[s]["state"] == "available" and not found[s]["optional"]), None)
+        return {"steps": found, "current": current}
+
+    def view(self, invented_hospital=False):
+        """Everything the page shows, as data: the page renders it and decides nothing. invented_hospital says whether
+        the worker holds the invented hospital, which answers step 5 while the invented dictionary is in use."""
         roles = []
         for view in self.model["views"]:
             role = (self.data or {}).get("roles", {}).get(view["name"])
             entry = {"name": view["name"], "title": rolemap.view_title(view["name"]), "description": rolemap.plain(view["description"]),
-                     "required": bool(view.get("required")), "drafted": role is not None, "items": []}
+                     "required": bool(view.get("required")), "drafted": role is not None, "items": [], "answered": 0,
+                     # The forms that a part with no table proposed offers, which is to give it one.
+                     "forms": correction_forms("rows", False, None, None)}
             if role is not None:
                 rows = role["rows"]
                 table = rows["binding"]["table"] if rows.get("binding") else rows["from"]
@@ -3131,17 +3214,36 @@ ORDER  BY g.kind;"""
                     shown["link"] = links.get(column["name"])
                     shown["coding"] = self.coding(view["name"], column, item)
                     shown["title"] = rolemap.column_title(view["name"], column["name"])
+                    shown["forms"] = correction_forms("column", shown["bound"], shown["link"], column["type"])
                     entry["items"].append(shown)
+                entry["items"][0]["forms"] = correction_forms("rows", entry["items"][0]["bound"], None, None)
+                # The part's own count, which takes neither a column still to translate nor one unanswered as answered.
+                entry["answered"] = sum(1 for i in entry["items"] if i["answer"] and i["answered_as"] != "untranslated")
             roles.append(entry)
         tally = self.tally()
+        vocabularies = [dict(v, rows=[dict(r, suppressed={k: UNDER_TEN for k in BLANKED_UNDER_TEN["charted"]
+                                                          if r.get(k) is None}) for r in v["rows"]])
+                        for v in self.vocabularies()]
+        steps = self.steps(vocabularies, invented_hospital)
         return {"dictionary": self.dictionary_receipt(), "proposed": self.data is not None, "roles": roles,
                 "tally": tally, "questions": self.questions(), "catalogue": self.catalogue is not None,
+                # The share of the columns answered, which the bar at the head of step 6 shows, and whether any column
+                # or table has an answer yet.
+                "answered_share": round(100 * (tally["total"] - tally["remaining"] - tally["untranslated"]) / tally["total"])
+                if tally["total"] else 0,
+                "answered_any": tally["total"] - tally["remaining"] + tally["tables"] - tally["tables_remaining"] > 0,
                 "catalogue_source": self.catalogue_source if self.catalogue is not None else None,
-                "vocabularies": self.vocabularies(), "values": self.values, "counts": {k: {kk: v.get(kk) for kk in ("columns", "rows", "looks_right", "note", "date", "database")}
-                                                                | {"findings": self.findings(k), "finding_about": self.finding_about(k),
-                                                                   "measured": (self.measured(k) or {}).get("says"),
-                                                                   "finding_codes": self.finding_codes(k)} for k, v in self.counts.items()},
-                "settings": {k: self.settings.get(k) for k in ("made", "updated", "database", "year", "time_zone", "daylight_saving")},
+                "vocabularies": vocabularies,
+                "values": {name: [dict(r, suppressed=UNDER_TEN if r.get("rows") is None else None) for r in rows]
+                           for name, rows in self.values.items()},
+                "counts": {k: {kk: v.get(kk) for kk in ("columns", "rows", "looks_right", "note", "date", "database")}
+                           | {"findings": self.findings(k), "finding_about": self.finding_about(k),
+                              "measured": (self.measured(k) or {}).get("says"),
+                              "finding_codes": self.finding_codes(k), "cells": _cells(v.get("columns"), v.get("rows"), k)}
+                           for k, v in self.counts.items()},
+                "steps": steps["steps"], "current_step": steps["current"],
+                "settings": {k: self.settings.get(k) for k in ("made", "updated", "database", "year", "time_zone",
+                                                               "time_zone_from", "daylight_saving")},
                 "readiness": self.readiness(),
                 "schema": {"schema_id": self.identity["schema_id"], "parent_id": self.identity["parent_id"],
                            "file": self.file_name(), "contract": {**self.contract_record(), "changed": self.contract_changes()}},
@@ -3182,7 +3284,9 @@ ORDER  BY g.kind;"""
         return {"correction": {"form": correction["form"], "says": rolemap.plain(item["says"] if attribute != "rows" or correction["form"] == "rows"
                                                                          else _filter_says(item, about)),
                                "check": confirmation.get("check") or "", "reason": confirmation.get("reason") or "",
-                               "probe": self.probe_kind(about), "probed": self.probes.get(about),
+                               "probe": self.probe_kind(about),
+                               "probed": dict(self.probes[about], cells=_cells(self.probes[about]["columns"], self.probes[about]["rows"], "probe"))
+                               if self.probes.get(about) else None,
                                "findings": self.probe_findings(about)} if correction else None,
                 "binding_form": _binding_form(binding), "coding": None,
                 "about": about, "attribute": attribute, "meaning": meaning, "type": role_type, "from": item["from"],
@@ -3191,10 +3295,31 @@ ORDER  BY g.kind;"""
                 "basis": _basis(item.get("says") or ""),
                 "candidates": candidates, "offers_identifying": offers, "withheld": withheld, "status": item["status"], "question": rolemap.plain(item.get("question") or ""),
                 "answer": confirmation.get("answer"), "date": confirmation.get("date"),
+                "answered_as": self.answered_as(about, item),
                 "replacement": confirmation.get("replacement"), "note": confirmation.get("note"),
                 "presence": self.presence(binding if attribute != "rows" else ({"table": table} if table else None)),
                 "dimensions": self.dimensions_of("bindings", about) if binding or attribute == "rows" else None}
 
+
+def _cells(columns, rows, name):
+    """What the page needs to show a pasted result as the core reads it: the positions of the columns that hold counts,
+    and for each cell the reason it is shown as it is not, which is UNDER_TEN where the query left a count under ten
+    empty, or None."""
+    columns = list(columns or [])
+    blanked = set(BLANKED_UNDER_TEN.get(name, ()))
+    return {"counted": [i for i, c in enumerate(columns) if c in COUNTED.get(name, ())],
+            "suppressed": [[UNDER_TEN if i < len(columns) and columns[i] in blanked and cell in ("", None) else None
+                            for i, cell in enumerate(row)] for row in rows or []]}
+
+
+def correction_forms(attribute, bound, link, role_type):
+    """The correction forms that step 6 offers for a column or for a part's table, the first being the one shown first.
+    A part for which the page found no table can only be given one."""
+    if attribute == "rows":
+        return ["rows"] if not bound else ["rows", "filter"]
+    if link:
+        return ["column", "path", "pair"]
+    return ["column", *FORMS_BY_TYPE.get(role_type or "", ())]
 
 def _kind_words(meaning, kind):
     """A kind of reading named in a sentence, from its meaning: "A mean arterial pressure from a non-invasive cuff, in
@@ -3556,11 +3681,80 @@ def _read_saved(path):
         return {name: archive.read(name) for name in archive.namelist() if not name.endswith("/")}
 
 
+def walk(calls, base=".", version="", sitting=None):
+    """Makes the hospital schema from the calls that the page makes of its bridge, in order, so that the command line can
+    do whatever the page does with the same files. Each call is {"call": the bridge function's name without describe_,
+    "request": what the page sends}. A file the page reads is named by "file" (and "tables" beside a dictionary), and a
+    pasted result by "text" or by "file", each relative to base. A call whose input the core refuses changes nothing
+    and the walk goes on, as the page does when it shows the refusal. Returns (the sitting, which the caller saves, and
+    [(the number of each call refused, why)])."""
+    base = Path(base)
+    s = sitting or Describe()
+    s.version = s.version or str(version or "")
+
+    def data(r, key="file"):
+        return (base / r[key]).read_bytes() if r.get(key) else None
+
+    def text(r):
+        return r["text"] if "text" in r else (base / r["file"]).read_text(encoding="utf-8")
+
+    def name(r, key, fallback):
+        return Path(r[key]).name if r.get(key) else fallback
+
+    actions = {
+        "dictionary_upload": lambda r: s.upload(data(r), data(r, "tables"), r.get("headings") or {},
+                                                name(r, "file", "dictionary.csv"), name(r, "tables", "tables.csv"),
+                                                r.get("step") or "", data(r, "reference"), name(r, "reference", "lineage.json")),
+        "dictionary": lambda r: s.load_dictionary(data(r), data(r, "tables"), r.get("headings") or {},
+                                                  name(r, "file", "dictionary.csv"), name(r, "tables", "tables.csv"),
+                                                  r.get("step") or "", invented=bool(r.get("invented"))),
+        "dictionary_database": lambda r: s.load_from_database(data(r) if r.get("file") else r["text"],
+                                                              name(r, "file", "data-dictionary.csv"), r.get("step") or ""),
+        "schema_open": lambda r: s.restore(_read_saved(base / r["file"])),
+        "propose": lambda r: s.propose(),
+        "settings": lambda r: s.set_settings(r.get("database"), r.get("year"), r.get("timeZone"), r.get("daylightSaving"),
+                                             r.get("timeZoneFrom")),
+        "tables_query": lambda r: s.tables_query(r.get("step") or ""),
+        "tables_read": lambda r: s.read_tables(text(r)),
+        "confirm": lambda r: s.confirm(r["about"], r["answer"], r.get("replacement") or "", r.get("note") or "",
+                                       actor=r.get("actor")),
+        "correction_preview": lambda r: s.correction_preview(r["correction"]),
+        "correction_check": lambda r: s.correction_check(r["correction"]),
+        "correction_keep": lambda r: s.correction_keep(r["correction"], bool(r.get("although")), r.get("reason") or "",
+                                                       actor=r.get("actor")),
+        "model_check": lambda r: s.check_model(),
+        "charted_query": lambda r: s.charted_query(r["key"], r["year"], r.get("step") or ""),
+        "charted_read": lambda r: s.read_charted(r["key"], text(r), r["year"]),
+        "codes": lambda r: s.choose_codes(r["key"], r["chosen"], actor=r.get("actor")),
+        "counts": lambda r: s.count_queries(r.get("year"), r.get("step") or ""),
+        "count_read": lambda r: s.read_count(r["name"], text(r)),
+        "count_judge": lambda r: s.judge_count(r["name"], r["looksRight"], r.get("note") or "", actor=r.get("actor")),
+        "values_query": lambda r: s.values_query(r["about"], r["table"], r["column"], r.get("year"), r.get("step") or ""),
+        "values_read": lambda r: s.read_values(r["name"], text(r)),
+        "probe_query": lambda r: s.probe_query(r["about"], r.get("year"), r.get("step") or ""),
+        "probe_read": lambda r: s.read_probe(r["about"], text(r)),
+    }
+    refused = []
+    for number, held in enumerate(calls, 1):
+        action = actions.get(str(held.get("call", "")).removeprefix("describe_"))
+        if action is None:
+            raise DescribeError(WORDING["walk_unknown"].format(number=number, call=held.get("call")))
+        try:
+            action(held.get("request") or {})
+        except DescribeError as error:
+            refused.append((number, str(error)))
+    return s, refused
+
+
 def main(argv=None):
     import argparse
     import sys
     parser = argparse.ArgumentParser(prog="python -m schemalyser.describe")
     commands = parser.add_subparsers(dest="command", required=True)
+    walked = commands.add_parser("walk", help="make a hospital schema from the calls that the page makes, and save it")
+    walked.add_argument("calls", help="a JSON file of {\"version\", \"calls\": [{\"call\", \"request\"}]}, whose files are "
+                                      "named relative to its own folder")
+    walked.add_argument("--out", default=None, help="the folder for the saved file (by default, the folder of CALLS)")
     one = commands.add_parser("import-evidence", help="import the result of an evidence request into a saved hospital schema")
     one.add_argument("schema")
     one.add_argument("request")
@@ -3570,6 +3764,8 @@ def main(argv=None):
     one.add_argument("--provenance", default=None, help=f"one of: {', '.join(evidence.PROVENANCES)}")
     one.add_argument("--out", default=None, help="the folder for the new version (by default, the folder of SCHEMA)")
     args = parser.parse_args(argv)
+    if args.command == "walk":
+        return _main_walk(args)
     try:
         held = json.loads(Path(args.request).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -3609,6 +3805,32 @@ def main(argv=None):
         return 1
     target.write_bytes(data)
     print(WORDING["imported"].format(request=held["request_id"], schema_id=found["schema_id"], file=target.name))
+    return 0
+
+
+
+def _main_walk(args):
+    import sys
+    path = Path(args.calls)
+    try:
+        held = json.loads(path.read_text(encoding="utf-8"))
+        calls = held["calls"]
+    except (OSError, ValueError, KeyError, TypeError):
+        print(WORDING["walk_unreadable"], file=sys.stderr)
+        return 2
+    try:
+        sitting, refused = walk(calls, path.resolve().parent, held.get("version") or "")
+    except DescribeError as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    for number, why in refused:
+        print(WORDING["walk_refused"].format(number=number, why=why), file=sys.stderr)
+    files = sitting.save()
+    out = Path(args.out) if args.out else path.resolve().parent
+    out.mkdir(parents=True, exist_ok=True)
+    target = out / sitting.file_name()
+    target.write_bytes(_zipped(files))
+    print(WORDING["walk_saved"].format(file=target.name))
     return 0
 
 

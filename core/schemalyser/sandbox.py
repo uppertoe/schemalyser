@@ -27,15 +27,17 @@ import random
 import re
 import zipfile
 import zlib
+from fnmatch import fnmatchcase
 
 import duckdb
 
 from . import vocabulary as v
 from . import roles as meanings
 from . import tuning as tunable
-from .checks import FANOUT_BANDS, Checks, ChecksError
+from .extract import SCALED_NUMBER_TYPES, WHOLE_NUMBER_TYPES, is_numeric, normalise
 from .realistic import Realism
 from .rules import SiteRules
+from .tuning import BAND_LABELS
 from .translate import SERVER_SCHEMA, Unreadable, Unsupported, to_duckdb
 
 ROW_LIMIT = 200
@@ -45,6 +47,328 @@ NUMBER = re.compile(r"^-?\d+(\.\d+)?$")
 SET_VARIABLE = re.compile(r"^SET VARIABLE (var_\w+)")
 # The most rows that a key value is given when it falls in the open-ended band of a fanout result.
 MOST_CHILD_ROWS = 20
+
+
+# The check results that an inventory may hold.
+#
+# The stand-in world answers the checks that harness.plan makes from the findings, and its answers come back in this
+# layout. The reader keeps only the rows that the checks could have returned, so that a results file cannot bring in
+# anything the checks would not have given, and the sandbox then builds its values from what it kept.
+
+LAYOUT = ("check_kind", "table_name", "column_name", "value", "label",
+          "row_count", "distinct_count", "null_count", "is_unique")
+KINDS = ("column", "rows", "values", "years", "spans", "fanout", "skipped", "sampled", "ran", "error", "matched", "defined")
+# The kinds of check that can find nothing. A row of the kind ran records that such a check has run, so that a
+# check that has run and found nothing is read as asked and answered with nothing.
+RAN_KINDS = ("values", "years", "spans", "fanout")
+# The kinds of check that the script runs, in the order in which it runs them: the cheapest and the most
+# useful first, so that the time allowed is spent on them, and the two that must read every row of a
+# table last.
+RUN_ORDER = ("rows", "values", "spans", "years", "column", "fanout")
+SAMPLED_KINDS = ("values", "years", "spans")
+# The reasons for which a check is recorded as skipped: the script's time ran out, the table is large, or the
+# server keeps no record of the table's size, as for a view.
+UNRECORDED = "unrecorded"
+SKIPPED_REASONS = ("time", "size", UNRECORDED)
+MINIMUM_COUNT = 10
+MAXIMUM_VALUES = 200
+MAXIMUM_DEFINITIONS = 5000
+MAXIMUM_TEXT_LENGTH = 70
+MAXIMUM_LABEL_LENGTH = 200
+TEXT_TYPES = {"CHAR", "VARCHAR", "NCHAR", "NVARCHAR"}
+DATE_TYPES = {"DATE", "DATETIME", "DATETIME2", "SMALLDATETIME", "DATETIMEOFFSET"}
+# Types that SQL Server cannot group or count distinctly.
+UNCOUNTABLE_TYPES = {"TEXT", "NTEXT", "IMAGE", "XML", "VARBINARY", "BINARY", "SQL_VARIANT", "GEOGRAPHY",
+                     "GEOMETRY", "HIERARCHYID", "TIMESTAMP", "ROWVERSION"}
+# A column whose name suggests free text or a person is never listed, whatever its contents.
+NEVER_LISTED = ("*NAME*", "*COMMENT*", "*ADDR*", "*TEXT*", "*NOTE*", "*DESC*", "*EMAIL*", "*PHONE*")
+# A value that a spreadsheet would read as a formula is never accepted.
+FORMULA_STARTS = ("=", "+", "@", "\t", "\r")
+# The bands of a fanout check: how many rows of the child table hold one key value, from (inclusive) and
+# to (exclusive). The labels are the only values that a fanout result may hold.
+FANOUT_BANDS = (("1 row", 1, 2), ("2 rows", 2, 3), ("3 to 5 rows", 3, 6), ("6 to 10 rows", 6, 11),
+                ("11 or more rows", 11, None))
+FANOUT_LABELS = tuple(label for label, _, _ in FANOUT_BANDS)
+# Lines that SQL Server prints among the results as information, and that a saved results file may hold.
+# Such a line is passed over when the results are read; any other line out of place refuses the file.
+SERVER_MESSAGES = ("Warning: Null value is eliminated by an aggregate or other SET operation.",)
+
+
+class ChecksError(ValueError):
+    """The check results file does not have the expected layout."""
+
+
+def _kind(column):
+    return column.data_type.strip().upper()
+
+
+def _matches(name, patterns):
+    return any(fnmatchcase(name.upper(), pattern.upper()) for pattern in patterns)
+
+
+def _listable(column, never_listed):
+    """Whether a column's values may be listed: short text or whole numbers, and not named like free text."""
+    if _matches(column.name, never_listed):
+        return False
+    kind = _kind(column)
+    if kind in WHOLE_NUMBER_TYPES:
+        return True
+    if kind in SCALED_NUMBER_TYPES:
+        return column.scale == 0
+    if kind in TEXT_TYPES:
+        return column.max_length is not None and 0 < column.max_length <= MAXIMUM_TEXT_LENGTH
+    return False
+
+
+def _definitions(catalogue, rules):
+    """The definition keys in the site rules: (table or "", column) -> (definition table, key, label)."""
+    people = {name.upper() for name in rules.person_tables}
+    found = {}
+    for rule in rules.definition_keys:
+        table = catalogue.table(rule.get("definitionTable", ""))
+        column = rule.get("column", "")
+        key = rule.get("keyColumn", column)
+        label = rule.get("labelColumn", "")
+        if table and table.name.upper() not in people and table.column(key) and table.column(label):
+            # A rule applies to one table when it names one, and otherwise to the column wherever it appears.
+            found[(rule.get("table", "").upper(), column.upper())] = (
+                table.name, table.column(key).name, table.column(label).name)
+    return found
+
+
+def _never_listed(rules):
+    return NEVER_LISTED + tuple(rules.never_list_columns) + tuple(rules.person_key_columns)
+
+
+def _number(text):
+    text = (text or "").strip()
+    if text in ("", "NULL"):
+        return None
+    if not text.isdecimal():
+        raise ChecksError
+    return int(text)
+
+
+def _acceptable(text, limit):
+    return 0 < len(text) <= limit and not text.startswith(FORMULA_STARTS) and "\n" not in text
+
+
+class Checks:
+    """The accepted rows of a check results file, with names in the catalogue's own spelling."""
+
+    def __init__(self):
+        self.rows = {}        # table -> row count
+        self.columns = {}     # (table, column) -> {"rows", "distinct", "nulls", "unique"}
+        self.values = {}      # (table, column) -> [(value, label, count)]
+        self.years = {}       # (table, column) -> [(year, count)]
+        self.spans = {}       # (table, first column, second column) -> [(band, count)]
+        self.fanout = {}      # (child table, child column, parent table, parent column) -> [(band, keys)]
+        self.errors = 0
+        self.failed = []      # (table, column or "", the server's error number) for each check that met an error
+        self.skipped = []     # (kind of check, table, column or "", "time", "size" or "unrecorded")
+        self.sampled = []     # (kind of check, table, column, the percentage of the table that was read)
+        self.matched = {}     # (table, column, other table, other column) -> (values sampled, values found)
+        self.defined = {}     # (table, column) -> [(code, name)]: each code that the column's lookup table defines,
+                              # with its name, whether or not any row holds it; it says nothing of use
+        self.ran = []         # (kind of check, table, column, second column or parent as TABLE.COLUMN, or ""), each a
+                              # plain query that has run, whatever it found
+        self.assumed_headers = False
+        self.read = 0         # the rows read, apart from headers and messages from the server
+        self.accepted = 0     # the rows kept, after the limits on values were applied
+
+    @classmethod
+    def from_csv(cls, text, catalogue, rules, limit_values=True):
+        """Reads check results, keeping only rows that the script could have returned.
+
+        limit_values is turned off when reading results that were already accepted once, where the
+        site rules that set each column's limit are no longer to hand.
+        """
+        checks = cls()
+        reader = csv.reader(io.StringIO(text))
+        people = {name.upper() for name in rules.person_tables}
+        never_listed = _never_listed(rules)
+        definitions = _definitions(catalogue, rules)
+        first = True
+        for row in reader:
+            if not row or not any(cell.strip() for cell in row):
+                continue
+            if len(row) == 1 and row[0].strip() in SERVER_MESSAGES:
+                continue    # a message that SQL Server printed among the results, not a result
+            if len(row) != len(LAYOUT):
+                raise ChecksError
+            if first:
+                first = False
+                if tuple(cell.strip().lower() for cell in row) == LAYOUT:
+                    continue
+                checks.assumed_headers = True
+            kind, table, column, value, label, row_count, distinct_count, null_count, unique = (c.strip() for c in row)
+            if kind not in KINDS:
+                raise ChecksError
+            checks.read += 1
+            entry = catalogue.table(table)
+            if entry is None:
+                continue
+            field = entry.column(column) if column and column != "NULL" else None
+            count = _number(row_count) or 0
+            if kind == "error":
+                # The check is named by its table and column alone, and the server's error number is a whole number.
+                if row_count.isdecimal() and len(row_count) <= 10 and (field is not None or not column or column == "NULL"):
+                    failure = (entry.name, field.name if field is not None else "", int(row_count))
+                    if failure not in checks.failed:
+                        checks.failed.append(failure)
+                        checks.errors += 1
+                        checks.accepted += 1
+                else:
+                    checks.errors += 1
+            elif kind == "rows":
+                checks.rows[entry.name] = count
+                checks.accepted += 1
+            elif kind == "skipped":
+                # The kind of check is in the value field, and the reason, one of three fixed words, in the label field.
+                if value in RUN_ORDER and label in SKIPPED_REASONS:
+                    checks.skipped.append((value, entry.name, field.name if field is not None else "", label))
+                    checks.accepted += 1
+            elif kind == "ran":
+                # The kind of check is in the value field; a spans check's second column, or a fanout check's parent, in the label.
+                other = ""
+                if value == "spans" and field is not None:
+                    later = entry.column(label) if label and label != "NULL" else None
+                    other = later.name if later is not None and _kind(later) in DATE_TYPES else None
+                elif value == "fanout" and field is not None:
+                    parent_name, _, parent_column = label.partition(".")
+                    parent = catalogue.table(parent_name) if parent_column else None
+                    found_column = parent.column(parent_column) if parent is not None else None
+                    other = f"{parent.name}.{found_column.name}" if found_column is not None else None
+                if value in RAN_KINDS and field is not None and other is not None:
+                    checks.ran.append((value, entry.name, field.name, other))
+                    checks.accepted += 1
+            elif kind == "matched":
+                other_table, _, other_column = label.partition(".")
+                other = catalogue.table(other_table) if other_column else None
+                found_column = other.column(other_column) if other is not None else None
+                if field is not None and found_column is not None:
+                    checks.matched[(entry.name, field.name, other.name, found_column.name)] = (count, _number(distinct_count) or 0)
+                    checks.accepted += 1
+            elif kind == "sampled":
+                if value in SAMPLED_KINDS and field is not None and 1 <= count <= 100:
+                    checks.sampled.append((value, entry.name, field.name, count))
+                    checks.accepted += 1
+            elif field is None:
+                continue
+            elif kind == "defined":
+                # A code of the column's lookup table with its name, which the lookup query returns without a count.
+                # Only a column that the site rules give a lookup table may have them, and only as the values would be.
+                looked_up = (entry.name.upper(), field.name.upper()) in definitions or ("", field.name.upper()) in definitions
+                if (looked_up and entry.name.upper() not in people and _listable(field, never_listed)
+                        and _acceptable(value, MAXIMUM_TEXT_LENGTH)):
+                    label = "" if label == "NULL" or not _acceptable(label, MAXIMUM_LABEL_LENGTH) else label
+                    found = checks.defined.setdefault((entry.name, field.name), [])
+                    if value not in {code for code, _ in found}:
+                        found.append((value, label))
+                        checks.accepted += 1
+            elif kind == "column":
+                checks.columns[(entry.name, field.name)] = {
+                    "rows": count, "distinct": _number(distinct_count) or 0,
+                    "nulls": _number(null_count) or 0, "unique": unique.upper() == "Y"}
+                # A column check also gives the size of its table.
+                checks.rows.setdefault(entry.name, count)
+                checks.accepted += 1
+            elif entry.name.upper() in people or count < MINIMUM_COUNT or count % 10:
+                # The script never returns a value for a table of people, a count under ten, or a count not rounded.
+                continue
+            elif kind == "years":
+                if value.isdecimal() and 1900 <= int(value) <= 2200 and _kind(field) in DATE_TYPES:
+                    checks.years.setdefault((entry.name, field.name), []).append((int(value), count))
+                    checks.accepted += 1
+            elif kind == "spans":
+                # The second column is in the label field, and the band must be one of the fixed labels.
+                later = entry.column(label) if label and label != "NULL" else None
+                if (later is not None and later.name != field.name and value in BAND_LABELS
+                        and _kind(field) in DATE_TYPES and _kind(later) in DATE_TYPES
+                        and not any(_matches(c.name, rules.person_key_columns) for c in (field, later))):
+                    found = checks.spans.setdefault((entry.name, field.name, later.name), [])
+                    if value not in {band for band, _ in found}:
+                        found.append((value, count))
+                        checks.accepted += 1
+            elif kind == "fanout":
+                # The parent's table and column are in the label field, and the band must be one of the fixed labels.
+                parent_name, _, parent_column = label.partition(".")
+                parent = catalogue.table(parent_name) if parent_column else None
+                other = parent.column(parent_column) if parent is not None else None
+                if (other is not None and value in FANOUT_LABELS and parent.name.upper() not in people
+                        and (parent.name, other.name) != (entry.name, field.name)
+                        and not any(_matches(c.name, rules.person_key_columns) for c in (field, other))):
+                    found = checks.fanout.setdefault((entry.name, field.name, parent.name, other.name), [])
+                    if value not in {band for band, _ in found}:
+                        found.append((value, count))
+                        checks.accepted += 1
+            elif _listable(field, never_listed) and _acceptable(value, MAXIMUM_TEXT_LENGTH):
+                label = "" if label == "NULL" or not _acceptable(label, MAXIMUM_LABEL_LENGTH) else label
+                checks.values.setdefault((entry.name, field.name), []).append((value, label, count))
+                checks.accepted += 1
+        if first:
+            raise ChecksError
+        if limit_values:
+            for key in list(checks.values):
+                defined = (key[0].upper(), key[1].upper()) in definitions or ("", key[1].upper()) in definitions
+                if len(checks.values[key]) > (MAXIMUM_DEFINITIONS if defined else MAXIMUM_VALUES):
+                    checks.accepted -= len(checks.values[key])
+                    del checks.values[key]
+            for key in list(checks.defined):
+                if len(checks.defined[key]) > MAXIMUM_DEFINITIONS:
+                    checks.accepted -= len(checks.defined[key])
+                    del checks.defined[key]
+        return checks
+
+    def confirmed(self, catalogue):
+        """For each column, the listed values keyed by their normalised form. An ambiguous key is left out."""
+        result = {}
+        for (table, column), listed in self.values.items():
+            numeric = is_numeric(catalogue.table(table).column(column))
+            keyed, clashed = {}, set()
+            for value, _, _ in listed:
+                key = normalise(value, numeric)
+                if key in keyed and keyed[key] != value:
+                    clashed.add(key)
+                keyed[key] = value
+            result[(table.upper(), column.upper())] = {k: val for k, val in keyed.items() if k not in clashed}
+        return result
+
+    def to_csv(self):
+        out = io.StringIO()
+        writer = csv.writer(out, lineterminator="\n")
+        writer.writerow(LAYOUT)
+        for (table, column), stats in sorted(self.columns.items()):
+            writer.writerow(["column", table, column, "", "", stats["rows"], stats["distinct"], stats["nulls"],
+                             "Y" if stats["unique"] else "N"])
+        for table, count in sorted(self.rows.items()):
+            writer.writerow(["rows", table, "", "", "", count, "", "", ""])
+        for (table, column), listed in sorted(self.values.items()):
+            for value, label, count in sorted(listed):
+                writer.writerow(["values", table, column, value, label, count, "", "", ""])
+        for (table, column), listed in sorted(self.defined.items()):
+            for code, label in sorted(listed):
+                writer.writerow(["defined", table, column, code, label, "", "", "", ""])
+        for (table, column), listed in sorted(self.years.items()):
+            for year, count in sorted(listed):
+                writer.writerow(["years", table, column, year, "", count, "", "", ""])
+        for (table, column, later), listed in sorted(self.spans.items()):
+            for band, count in sorted(listed, key=lambda item: BAND_LABELS.index(item[0])):
+                writer.writerow(["spans", table, column, band, later, count, "", "", ""])
+        for (table, column, parent, key), listed in sorted(self.fanout.items()):
+            for band, count in sorted(listed, key=lambda item: FANOUT_LABELS.index(item[0])):
+                writer.writerow(["fanout", table, column, band, f"{parent}.{key}", count, "", "", ""])
+        for kind, table, column, reason in sorted(set(self.skipped)):
+            writer.writerow(["skipped", table, column, kind, reason, "", "", "", ""])
+        for kind, table, column, other in sorted(set(self.ran)):
+            writer.writerow(["ran", table, column, kind, other, "", "", "", ""])
+        for kind, table, column, percent in sorted(set(self.sampled)):
+            writer.writerow(["sampled", table, column, kind, "", percent, "", "", ""])
+        for (table, column, other, key), (sampled, found) in sorted(self.matched.items()):
+            writer.writerow(["matched", table, column, "", f"{other}.{key}", sampled, found, "", ""])
+        for table, column, number in sorted(set(self.failed)):
+            writer.writerow(["error", table, column, "", "", number, "", "", ""])
+        return out.getvalue()
 
 
 class InventoryError(ValueError):

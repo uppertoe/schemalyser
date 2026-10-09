@@ -12,15 +12,16 @@ fixed vocabulary. Nothing in a finding is copied from the request.
 import re
 from collections import Counter
 from dataclasses import dataclass, field
+from decimal import Decimal
 
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import SqlglotError
 from sqlglot.optimizer.qualify import qualify
 from sqlglot.optimizer.scope import Scope, traverse_scope
+from sqlglot.tokens import Tokenizer
 
-from . import skeleton
-from .checks import VALUE_KINDS, VALUE_OPERATORS, is_numeric, normalise
+from . import vocabulary as v
 from .statements import drop_old_hints, parse
 
 GO = re.compile(r"^\s*GO\s*;?\s*$", re.I | re.M)
@@ -32,6 +33,34 @@ NEGATED = {"IN": "NOT IN", "LIKE": "NOT LIKE", "BETWEEN": "NOT BETWEEN", "IS NUL
            "=": "<>", "<>": "=", "<": ">=", "<=": ">", ">": "<=", ">=": "<"}
 FLIPPED = {"<": ">", "<=": ">=", ">": "<", ">=": "<="}
 DYNAMIC = {"execute", "executesql"}
+# The operators and kinds of value under which a filter's value is compared with a listed value of the check results.
+VALUE_OPERATORS = ("=", "<>", "IN", "NOT IN")
+VALUE_KINDS = ("number", "string")
+WHOLE_NUMBER_TYPES = {"INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BIT"}
+SCALED_NUMBER_TYPES = {"NUMERIC", "DECIMAL"}
+OTHER_NUMBER_TYPES = {"FLOAT", "REAL", "MONEY", "SMALLMONEY", "DOUBLE"}
+
+
+def is_numeric(column):
+    """Whether a column of the catalogue holds numbers, so that its values compare as numbers."""
+    return column.data_type.strip().upper() in WHOLE_NUMBER_TYPES | SCALED_NUMBER_TYPES | OTHER_NUMBER_TYPES
+
+
+def normalise(value, numeric=False):
+    """The form in which a literal in a request is compared with a value in the check results.
+
+    A numeric column compares as a number, so that 1 and 1.0 agree. A text column compares as
+    text, so that '01' and '1' stay different.
+    """
+    text = str(value).strip()
+    if numeric:
+        try:
+            number = Decimal(text)
+            if number.is_finite():
+                return format(number.normalize() + 0, "f")
+        except ArithmeticError:
+            pass
+    return text.upper()
 
 
 @dataclass
@@ -364,7 +393,7 @@ class _Extractor:
                 self.use(column, "derived", resolve)
             resolved = sorted({f"{c.table}.{c.name}" for c in map(resolve, columns) if c is not None})
             if resolved:
-                text = skeleton.write(inner, resolve, self.names)
+                text = skeleton(inner, resolve, self.names)
                 if text is None:
                     self.result.unresolved["derivation_withheld"] += 1
                 else:
@@ -530,3 +559,121 @@ def _analyse_request(sql, catalogue, held_back=frozenset(), dialect="tsql", conf
                 # One statement that the tool cannot handle must not end the run. It is counted as not analysed.
                 result.unresolved["opaque_statement"] += 1
     return result
+
+
+# Rebuilding a computed expression from allowlisted parts, for a derivation.
+#
+# The expression in a request is never copied. A new expression is built node by node: a resolved column becomes the
+# catalogue's own name, a literal becomes a placeholder, and a function, keyword, date part or type survives only if
+# the fixed vocabulary lists it. Anything else makes the whole expression unwritable. The rebuilt text is then checked
+# word by word before it is returned.
+
+SKELETON_WORD = re.compile(r"^[A-Za-z_@#$][\w@#$]*$")
+SKELETON_QUERY = (exp.Select, exp.SetOperation, exp.Subquery, exp.Exists)
+SKELETON_COLLAPSE = (exp.In, exp.Tuple)
+
+
+class _Unwritable(Exception):
+    """An expression that cannot be rebuilt from allowlisted parts."""
+
+
+def _skeleton_placeholder(name):
+    return exp.Var(this=name)
+
+
+def _skeleton_rebuild(node, resolve):
+    if isinstance(node, exp.Column):
+        found = resolve(node)
+        if found is None:
+            return _skeleton_placeholder(v.P_COLUMN)
+        return exp.column(found.name, table=found.table)
+    if isinstance(node, exp.Literal):
+        return _skeleton_placeholder(v.P_STRING if node.is_string else v.P_NUMBER)
+    if isinstance(node, (exp.Parameter, exp.SessionParameter, exp.Placeholder)):
+        return _skeleton_placeholder(v.P_VARIABLE)
+    if isinstance(node, SKELETON_QUERY):
+        return _skeleton_placeholder(v.P_SUBQUERY)
+    if isinstance(node, exp.Null):
+        return exp.Null()
+    if isinstance(node, exp.Boolean):
+        return exp.Boolean(this=bool(node.this))
+    if isinstance(node, exp.Star):
+        return exp.Star()
+    if isinstance(node, exp.TimeStrToTime):
+        # sqlglot wraps the arguments of date functions in this node; it is not in the request.
+        return _skeleton_rebuild(node.this, resolve)
+    if isinstance(node, exp.Var):
+        word = node.name.upper()
+        if word not in v.DATE_PARTS:
+            raise _Unwritable
+        return exp.Var(this=next(w for w in v.DATE_PARTS if w == word))
+    if isinstance(node, exp.DataType):
+        if not isinstance(node.this, exp.DataType.Type):
+            raise _Unwritable
+        return exp.DataType(this=node.this)
+    if isinstance(node, exp.Anonymous):
+        word = node.name.upper()
+        if word not in v.FUNCTIONS:
+            raise _Unwritable
+        name = next(w for w in v.FUNCTIONS if w == word)
+        return exp.Anonymous(this=name, expressions=[_skeleton_rebuild(a, resolve) for a in node.expressions])
+    if isinstance(node, (exp.Identifier, exp.Dot, exp.Command)):
+        raise _Unwritable
+
+    args = {}
+    for key, value in node.args.items():
+        if isinstance(node, exp.Ordered) and key == "nulls_first":
+            # Set to SQL Server's own default, so that the generator adds no code to emulate another.
+            args[key] = not node.args.get("desc")
+            continue
+        if value is None or isinstance(value, bool):
+            args[key] = value
+        elif isinstance(value, exp.Expression):
+            args[key] = _skeleton_rebuild(value, resolve)
+        elif isinstance(value, list):
+            items = []
+            for item in value:
+                if not isinstance(item, exp.Expression):
+                    raise _Unwritable
+                items.append(_skeleton_rebuild(item, resolve))
+            if isinstance(node, SKELETON_COLLAPSE):
+                items = _skeleton_collapse(items)
+            args[key] = items
+        elif isinstance(value, str) and value.upper() in v.KEYWORDS:
+            args[key] = next(w for w in v.KEYWORDS if w == value.upper())
+        else:
+            raise _Unwritable
+    return type(node)(**args)
+
+
+def _skeleton_collapse(items):
+    """A list of identical placeholders becomes one, so a list's length is not disclosed."""
+    kept = []
+    for item in items:
+        if kept and isinstance(item, exp.Var) and item.name in v.PLACEHOLDERS and item == kept[-1]:
+            continue
+        kept.append(item)
+    return kept
+
+
+def _skeleton_check(text, catalogue_names):
+    for token in Tokenizer(dialect="tsql").tokenize(text):
+        # The tokeniser returns some keyword pairs, such as ORDER BY, as one token.
+        for word in token.text.split():
+            if SKELETON_WORD.match(word):
+                if word.upper() not in catalogue_names and word.upper() not in v.WORDS:
+                    raise _Unwritable
+            elif any(ch.isalnum() for ch in word):
+                raise _Unwritable
+
+
+def skeleton(node, resolve, catalogue_names):
+    """Returns the rebuilt expression as text, or None if it cannot be written safely."""
+    try:
+        text = _skeleton_rebuild(node, resolve).sql(dialect="tsql", comments=False)
+        _skeleton_check(text, catalogue_names)
+    except _Unwritable:
+        return None
+    for sentinel, shown in v.PLACEHOLDERS.items():
+        text = text.replace(sentinel, shown)
+    return text

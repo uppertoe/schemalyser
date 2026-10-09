@@ -78,7 +78,7 @@ The hospital schema is a map from the parts of the record to one hospital's tabl
 
 **The evidence import.** The feasibility report's evidence requests carry their format, the `schema_id` they were made from, a stable `request_id`, and, for a request that a result answers, each query with the columns and types of the result it expects. `Describe.import_evidence` takes the result back: it refuses a result of the wrong shape and a request made from a version that is neither this one nor an ancestor, appends an entry that names the request, sets the dimension the request moves (a count or test query sets reconciled with its figure, a plan is kept for the execution package, and a production outcome or clinical reconciliation sets validated for the parts it covers), and saves a new version. `python -m schemalyser.describe import-evidence SCHEMA REQUEST.json RESULT` does the same without the page.
 
-**The scoreboard.** `rolemap.scoreboard` reads a saved hospital schema and reports how many proposals were confirmed as proposed, corrected to a listed alternative, corrected to something unlisted, or left open, and the share corrected at each level of confidence. It prints counts and the plain names of the parts only.
+**The scoreboard.** `rolemap.scoreboard` reads a saved hospital schema and reports how many proposals were confirmed as proposed, corrected to a listed alternative, corrected to something unlisted, or left open, and the share corrected at each level of confidence. It prints counts and the plain names of the parts only, and the command writes the same counts alone beside the saved schema, as `docs/summaries.md` describes.
 
 ## The invented hospital and the realistic stand-in
 
@@ -90,7 +90,7 @@ Two made-up worlds serve different purposes.
 
 ## Safe scripts for the real database
 
-Every query that the page offers for production reads only the server's own records, or only the small tables, or is a two-part script (`scripts.py`, and the same form in `describe.py`). Part 1 selects at most 5,000 anaesthetics of one period into a temporary table, `#cohort`, with a primary key. Part 2 reaches the larger tables from `#cohort` by key alone, with the table of readings joined last. SQL Server cannot reorder joins across statements, so the cohort is fixed before any reading is touched. This form was adopted after a single long query filled a test server's temporary database to about 96 GB in a rehearsal. A cohort that joins on an expression hiding a key is refused.
+Every query that the page offers for production reads only the server's own records, or only the small tables, or is a two-part script (`audit.py` for an audit's package, and the same form in `describe.py`). Part 1 selects at most 5,000 anaesthetics of one period into a temporary table, `#cohort`, with a primary key. Part 2 reaches the larger tables from `#cohort` by key alone, with the table of readings joined last. SQL Server cannot reorder joins across statements, so the cohort is fixed before any reading is touched. This form was adopted after a single long query filled a test server's temporary database to about 96 GB in a rehearsal. A cohort that joins on an expression hiding a key is refused.
 
 Each table is read `WITH (NOLOCK)`, which takes no row locks but still holds a schema lock, so the scripts should not run during the nightly load. Every count is rounded down to ten, and a group of fewer than ten rows is left out. The rounding has limits: the minimum applies to rows, not to people, so one patient with many rows can fill a group; and counts are rounded rather than randomised, so the difference between two runs can still reveal a small number. An audit's own result leaves blank any count from 1 to 4 unless its approval allows exact small numbers.
 
@@ -110,6 +110,14 @@ The page accepts no file and no paste until the browser reports that the tab is 
 
 These safeguards do not protect against a tampered host or against browser extensions; the defences there are a reviewed release served from a host the hospital controls and a clean browser profile.
 
+## What the page decides
+
+The page decides nothing about the record. After every call the worker returns the core's view, `describe.Describe.view()`, and the page draws it. The view gives the state of each step from 2 to 9 with what a waiting step waits for, how far steps 7 and 8 have gone, the step that comes next, and whether the schema has changed since it was last saved; for each row, how the tally counts its answer and which correction forms it offers; for each pasted result, which columns hold counts and which empty cells the query left empty because the count was under ten; and the share of columns answered. The page adds only what the tab itself knows, which is whether the page has loaded and whether the tab is offline.
+
+The time zone of the database's clocks is recorded as given by a person or as proposed from this computer. Where the saved schema holds none, the page fills in this computer's time zone, says that it has proposed it, and tells the core so when the person saves it unchanged.
+
+Anything the page does, the command line does with the same files. `python -m schemalyser.describe walk CALLS.json` takes the calls that the page makes of its bridge, each as its name and the request the page sends, and saves the hospital schema they make. The first page test records the page's calls, gives them to this command, and compares the two saved files file by file, with only the identifiers of entries and versions, the times, and the seconds a test took set aside.
+
 ## How it is tested
 
 Three jobs in `.github/workflows/tests.yml` run on every push to the main branch and on every pull request, and all of them use invented data only:
@@ -122,51 +130,54 @@ A second workflow publishes the page to GitHub Pages. Runs on the realistic stan
 
 ## The command line
 
-The command line serves the developer rather than the meeting. `python -m schemalyser.rolemap` checks and compiles a map, rehearses an audit on a role-level shadow, proposes and confirms a map, and prints the scoreboard of a saved schema. `schemalyser.convert`, `schemalyser.release` and the harness serve the OMOP side, and `schemalyser.testbed` runs them together on a synthetic world and reports the result, as `docs/testbed.md` describes.
+The command line serves the developer rather than the meeting, and every command reads and writes the same files as the surfaces do. `python -m schemalyser.describe` makes a hospital schema from the same calls that the page makes, and imports a result of the feasibility report's evidence requests into a saved one. `python -m schemalyser.rolemap` checks and compiles a map, rehearses an audit on a role-level shadow, runs one on a world's hospital-shaped shadow, proposes and confirms a map, lists a map's open items, and prints the scoreboard of a saved schema. `python -m schemalyser.feasibility`, `python -m schemalyser.specification`, `python -m schemalyser.audit` and `python -m schemalyser.results` make the feasibility report, compile a specification, build and approve an audit's execution package, and write its results package. `python -m schemalyser.rolepolicy` applies the policy on a question over the role views, and `python -m schemalyser.workspace` exports the public workspace and checks and imports a question from it. On the OMOP side, `python -m schemalyser.convert`, `python -m schemalyser.release`, `python -m schemalyser.mapping` and `python -m schemalyser.harness` run a conversion, write its release script, propose mapping rows and score a synthetic world, and `python -m schemalyser.testbed` runs them together on a synthetic world and reports the result, as `docs/testbed.md` describes. `python -m schemalyser.compare` is the reference adapter's command, and `python -m schemalyser.workbench` starts the local workbench.
 
-The modules of the earlier design remain in the core and its tests: the analyser of SQL repositories, the check script, the register of open questions, the target queries with their checklists, and the boundary command with its container. No page uses them, and screen 2 will take what it needs from them before they are retired.
+The modules of the earlier design, the analyser's command line among them, were retired on 9 October 2026, as `docs/history.md` records. What the synthetic world still needed of them moved into the modules that use it: the analysis of a world's requests and the checks that its stand-in database answers into `harness.py`, the reader of their results into `sandbox.py`, and the blanking of small counts into `blanking.py`.
 
 ## The modules of the core
 
-Every module in `core/schemalyser` falls into one of five classes. A module of the *active workflow* does the work of screen 1, of the hospital schema that it saves, or of the audit's package. A module of *shared infrastructure* belongs to the shared tier of `docs/contract.md`, section 6: it knows nothing of any layer, and any layer may use it. A *candidate for the testbed* belongs to the conversion to OMOP and to the one-command test run on the invented source. A *reference adapter* reads material from outside the hospital, such as a reference conversion, and the core reads only the files it writes. A *superseded* module belongs to the earlier design, which `docs/history.md` describes; no page uses it, and it is to be retired once nothing outside its own class depends on it. The table gives the class of each module, the layer of the contract that `core/schemalyser/LAYERS.toml` assigns it and that `core/tests/test_contract.py` enforces, and, where it matters, the dependency that holds it in place.
+Every module in `core/schemalyser` falls into one of four classes. A module of the *active workflow* does the work of screen 1, of the hospital schema that it saves, or of the audit's package. A module of *shared infrastructure* belongs to the shared tier of `docs/contract.md`, section 6: it knows nothing of any layer, and any layer may use it. A *candidate for the testbed* belongs to the conversion to OMOP and to the one-command test run on the invented source. A *reference adapter* reads material from outside the hospital, such as a reference conversion, and the core reads only the files it writes. `LAYERS.toml` can also mark a module *superseded*, which exempts it as an importer until it is retired; no module is marked so since the earlier design's modules were retired. The table gives the class of each module, the layer of the contract that `core/schemalyser/LAYERS.toml` assigns it and that `core/tests/test_contract.py` enforces, and, where it matters, the dependency that holds it in place.
 
 | Module | Class | Layer | What it does |
 | --- | --- | --- | --- |
-| `browser.py` | Active workflow | Layer 5 | The functions that the page's worker calls. The page now calls only its functions for describing the record; the rest serve the earlier pages. |
+| `browser.py` | Active workflow | Layer 5 | The functions that the page's worker calls, each of which hands its request to `describe.py` and returns the core's view. It holds nothing of the earlier pages. |
 | `describe.py` | Active workflow | Layer 2 | Screen 1, describing the record, and the saved hospital schema, with the evidence import and its command line. |
 | `evidence.py` | Active workflow | Layer 2 | The append-only journal, the dimensions records, and the identity of each saved version. |
 | `normalise.py` | Active workflow | Layer 2 | The named normalisations of `map.json`, written and read at the file's boundary. |
 | `propose.py` | Active workflow | Layer 2 | The proposer, which drafts a map from the role model and the data dictionary by plain matching. |
 | `corrections.py` | Active workflow | Layer 2 | The structured corrections of screen 1, each tested on made-up rows before it is kept. |
 | `datadict.py` | Active workflow | Layer 2 | Reads the vendor's data dictionary and holds its descriptions in memory only. |
-| `rolemap.py` | Active workflow | Layer 2 | The roles, the maps, the compiled audit, the standard counts and the scoreboard. It still takes the blanking of small counts from `target.py`, and its comparison with the OMOP target runs through `target.py` as well. |
+| `rolemap.py` | Active workflow | Layer 2 | The roles, the maps, the compiled audit, the standard counts and the scoreboard, whose command writes the scoreboard's summary. It takes the blanking of small counts from `blanking.py`. |
 | `hospital.py` | Active workflow | Layer 4 | The invented hospital, on which the page runs its own queries when the invented dictionary is in use. |
 | `first_ask.py` | Active workflow | Layer 2 | The query of the server's own records, which screen 1 uses for the tables and columns and for the data dictionary made from the database. |
 | `feasibility.py` | Active workflow | Layer 3 | Whether a question over the parts of the record can be answered from a saved hospital schema: its requirements, the state of each, the evidence requests that would move them, and the programme view over many questions. `docs/feasibility.md` describes it. |
 | `audit.py` | Active workflow | Orchestration | The audit's execution package: the feasibility report, the two-part script over the hospital's tables, its specification, the answer on made-up rows, the manifest and the README. `docs/audit.md` describes it. |
+| `specification.py` | Active workflow | Layer 3 | The first stage of compilation: a specification of an export, compiled into SQL over the roles. |
+| `capability.py` | Active workflow | Layer 3 | Reads the SQL of a capability of the catalogue and fills its parameters, for a derived section of an export. |
 | `policy.py` | Active workflow | Layer 3 | The static policy on the final text of an audit's script, and the execution class derived from it. |
 | `rolepolicy.py` | Active workflow | Layer 3 | The static policy on a question written over the role views, which the import applies before a question enters a hospital's project. |
 | `plan.py` | Active workflow | Orchestration | The review of an estimated plan of part 2 in SQL Server's SHOWPLAN XML. |
-| `workbench/` | Active workflow | Layer 5 | The local workbench: server-rendered pages over a project folder that start the core's commands for the audit's package, the plan review and the test on made-up rows, and render their reports. It has no logic of its own. `docs/workbench.md` describes it. |
+| `workbench/` | Active workflow | Layer 5 | The local workbench: server-rendered pages over a project folder that start the core's commands for the audit's package, the plan review and the test on made-up rows, and render their reports. It has no logic of its own: the author of a decision comes from the form, and every count and line it shows is read from the core's reports by name. `docs/workbench.md` describes it. |
 | `workspace.py` | Active workflow | Orchestration | The public workspace for a coding agent, written from an allowlist of public sources, and the one-way import of a question from it into a hospital's project, which returns a fixed status alone. `docs/workspace.md` describes it. |
+| `results.py` | Active workflow | Orchestration | The results package, written from an approved execution package and a production run's output, which stays inside the hospital. |
 | `project.py` | Active workflow | Orchestration | The project folder that the workbench and the import from the public workspace share: what it holds, and where each command writes. |
-| `__init__.py` | Shared infrastructure | Shared | Marks the package. It still exports the earlier analyser, which keeps that module in place. |
+| `__init__.py` | Shared infrastructure | Shared | Marks the package, and imports nothing of it. |
 | `catalogue.py` | Shared infrastructure | Shared | The tables and columns that exist, and the allowlist for names. |
-| `extract.py` | Shared infrastructure | Shared | Reads files safely for every module. Its finding of facts in a request belongs to the earlier design. |
+| `extract.py` | Shared infrastructure | Shared | Reads files safely for every module, and finds the facts in a request, which the synthetic world's analysis and the release's list of source columns read. |
 | `statements.py` | Shared infrastructure | Shared | Prepares T-SQL for the parser. |
 | `translate.py` | Shared infrastructure | Shared | Translates T-SQL into statements that DuckDB can run. |
 | `vocabulary.py` | Shared infrastructure | Shared | The fixed words that the tool may write. |
 | `memo.py` | Shared infrastructure | Shared | Keeps the results of pure work by the content of their inputs. |
+| `summaries.py` | Shared infrastructure | Shared | The named summaries of confidential material, as `docs/summaries.md` describes, written from each output as data. |
+| `blanking.py` | Shared infrastructure | Shared | Finds the counts of a result and leaves blank any count from 1 to 4, for the compiled audit and the query compiled through a map. |
 | `testbed.py` | Candidate for the testbed | Layer 4 | The one-command run over a synthetic world, which builds, converts, checks and reconciles. |
 | `convert.py` | Candidate for the testbed | Layer 4 | Runs a conversion to OMOP over the synthetic database, checks what it writes and exports it. |
 | `release.py` | Candidate for the testbed | Layer 3 | Writes the release script for the anaesthesia layer. |
-| `harness.py` | Candidate for the testbed | Layer 4 | Runs the pipeline over a world. The test run uses its worlds, although it was written for the earlier design. |
+| `harness.py` | Candidate for the testbed | Layer 4 | The synthetic world: the analysis of its requests, the checks that its stand-in database answers and the script that writes them, and the scorecard of a world. The conversion's run and the SQL Server harness both build on it. |
 | `mapping.py` | Candidate for the testbed | Layer 3 | Proposes mapping rows from the labels of local codes to standard concepts. |
-| `concepts.py` | Candidate for the testbed | Layer 4 | The names of the concepts that a conversion uses. Only `target.py` imports it, so it retires with `target.py`. |
-| `dictionary.py` | Candidate for the testbed | Layer 4 | The data dictionary of a conversion. Only `target.py` imports it, so it retires with `target.py`. |
 | `routes.py` | Candidate for the testbed | Layer 3 | Chooses, for each step of a conversion, a route whose tables and columns the catalogue holds. |
 | `sample_vocabulary.py` | Candidate for the testbed | Layer 4 | A few concepts from the public OMOP vocabulary, which the testbed's fast profile and the SQL Server harness both write. |
-| `sandbox.py` | Candidate for the testbed | Layer 4 | Builds the synthetic DuckDB database from a catalogue. It still reads the earlier check script's results. |
+| `sandbox.py` | Candidate for the testbed | Layer 4 | Builds the synthetic DuckDB database from a catalogue and the pack of a world's requests, with the reader of the check results from which it takes its values. |
 | `realistic.py` | Candidate for the testbed | Layer 4 | Writes realistic values into the synthetic database from public reference data. |
 | `realism/build_data.py` | Candidate for the testbed | Layer 4 | Regenerates the growth reference files that the realistic values use. |
 | `roles.py` | Candidate for the testbed | Layer 4 | Says what a column means, so that the synthetic database can fill it realistically. |
@@ -174,18 +185,5 @@ Every module in `core/schemalyser` falls into one of five classes. A module of t
 | `rules.py` | Candidate for the testbed | Layer 4 | The site rules file. |
 | `compare.py` | Reference adapter | Reference adapter | The lineage of a conversion to OMOP read from its SQL, and the comparison of ours with a reference conversion, whose summary holds counts alone. `docs/compare.md` describes it. |
 | `transplant.py` | Reference adapter | Reference adapter | Transplants the routes of a reference conversion, from its lineage, into a draft conversion folder of our own. |
-| `__main__.py` | Superseded | Superseded | Runs the earlier analysis from the command line. |
-| `analysis.py` | Superseded | Superseded | Runs the extraction over a set of requests and writes the inventory pack. |
-| `boundary.py` | Superseded | Superseded | Runs everything that reads confidential input in one run, for the earlier design. |
-| `checks.py` | Superseded | Superseded | The check script and the reading of its results. The synthetic database still depends on it. |
-| `charted.py` | Superseded | Superseded | The list of what is charted, composed over the source tables. `describe.py` now writes its own. |
-| `facts.py` | Superseded | Superseded | Facts that a person confirmed, for the earlier checklist. |
-| `questions.py` | Superseded | Superseded | The register of open questions about the real hospital. |
-| `restructure.py` | Superseded | Superseded | Rewrites a target query's source query to start from the cohort. |
-| `scripts.py` | Superseded | Superseded | The two-part scripts of the earlier design. Screen 2 takes their form, which `describe.py` already shares. |
-| `skeleton.py` | Superseded | Superseded | Rebuilds an expression from a request out of allowlisted parts. `extract.py` still depends on it. |
-| `sql_evidence.py` | Superseded | Superseded | What the team's SQL showed, kept for the earlier checklist. |
-| `profile.py` | Superseded | Superseded | The profile of a core OMOP database that the anaesthesia layer cannot see. Only superseded modules and the page's bridge for the earlier pages import it, and it imports `checks.py`. |
-| `target.py` | Superseded | Superseded | Ties the earlier project to one target query and its checklist. `rolemap.py` still depends on it, so it is retired last. |
 
-Sixteen modules are active workflow, seven are shared infrastructure, fifteen are candidates for the testbed, two are reference adapters and thirteen are superseded.
+Twenty-one modules are active workflow, nine are shared infrastructure, thirteen are candidates for the testbed and two are reference adapters.

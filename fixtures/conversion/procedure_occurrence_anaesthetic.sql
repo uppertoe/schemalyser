@@ -1,10 +1,15 @@
 -- PROCEDURE_OCCURRENCE: one row for each anaesthetic, with its start and its end.
 -- Where the kind of anaesthetic has a mapping row, its concept is used. Otherwise the row takes the
--- general concept for an anaesthetic or sedation.
+-- general concept for an anaesthetic or sedation, which is read from its one mapping row as a value, rather than
+-- joined on a constant, so that every join carries an equality between two columns that the policy can see.
 -- Each anaesthetic takes one number, so that an anaesthetic listed twice repeats its identifier and the primary key refuses it.
 SELECT DENSE_RANK() OVER (ORDER BY ar.ANAES_KEY) AS procedure_occurrence_id,
        vd.person_id                                AS person_id,
-       COALESCE(kind.target_concept_id, what.target_concept_id, 0) AS procedure_concept_id,
+       COALESCE(kind.target_concept_id,
+                (SELECT what.target_concept_id
+                 FROM   omop.source_to_concept_map what
+                 WHERE  what.source_vocabulary_id = 'SITE_PROCEDURE'
+                   AND  what.source_code = 'ANAESTHETIC'), 0) AS procedure_concept_id,
        CAST(ar.ANAES_START_TS AS date)             AS procedure_date,
        ar.ANAES_START_TS                           AS procedure_datetime,
        CAST(ar.ANAES_STOP_TS AS date)              AS procedure_end_date,
@@ -19,6 +24,3 @@ FROM   ANAES_RECORD ar
        LEFT JOIN omop.source_to_concept_map kind
               ON kind.source_vocabulary_id = 'SITE_ANAES_KIND'
              AND kind.source_code = CAST(ar.ANAES_KIND_CAT AS varchar(50))
-       LEFT JOIN omop.source_to_concept_map what
-              ON what.source_vocabulary_id = 'SITE_PROCEDURE'
-             AND what.source_code = 'ANAESTHETIC'

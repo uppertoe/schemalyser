@@ -5,9 +5,13 @@ import { describeStrings as d } from './describe-strings';
 
 const c = d.corrections;
 
+// Why the core shows a cell as it is not, such as a count that its query left empty because it is under ten.
+type Suppressed = 'under_ten' | null;
+interface Cells { counted: number[]; suppressed: Suppressed[][] }
+type ValueRow = { value: string; rows: number | null; suppressed?: Suppressed };
 export interface CorrectionHeld {
   form: string; says: string; check: string; reason: string; probe: string | null;
-  probed: { kind: string; columns: string[]; rows: string[][]; date: string } | null; findings: string[];
+  probed: { kind: string; columns: string[]; rows: string[][]; date: string; cells: Cells } | null; findings: string[];
 }
 export interface CorrectionItem {
   about: string; attribute: string; type: string | null; link: string | null; date: string | null; correction: CorrectionHeld | null;
@@ -16,6 +20,8 @@ export interface CorrectionItem {
   // alternatives were left out because they identify a person.
   offers_identifying?: boolean; withheld?: number;
   coding?: { form: string; translated: boolean; assumed: string; values: string[]; list?: boolean } | null;
+  // The correction forms that the core offers for this row, the first being the one shown first.
+  forms?: string[];
 }
 interface Report {
   passed: boolean; sentence: string; problems: string[]; remaining: string[]; mended: string; notes: string[]; seconds: number;
@@ -27,7 +33,7 @@ interface Step { from: string; table: string; to: string; from2: string; to2: st
 interface Draft {
   form: string; f: Record<string, string>; steps: Step[]; codes: [string, string][];
   preview: { sentence: string; sql: string } | null; problem: string; report: Report | null; reason: string; although: boolean;
-  valuesSql: string; valuesName: string; valueRows: { value: string; rows: number | null }[]; ran?: boolean;
+  valuesSql: string; valuesName: string; valueRows: ValueRow[]; ran?: boolean;
 }
 type Reply = { ok: boolean; problem?: string; [key: string]: unknown };
 
@@ -38,13 +44,13 @@ export interface Deps {
   setBusy(value: boolean): void;
   el<K extends keyof HTMLElementTagNameMap>(tag: K, content?: string, className?: string): HTMLElementTagNameMap[K];
   button(label: string, onClick: () => void, className?: string): HTMLButtonElement;
-  grid(columns: string[], rows: (string | number | null)[][], counted?: number[]): HTMLElement;
+  grid(columns: string[], rows: (string | number | null)[][], cells?: Cells): HTMLElement;
   pasteBox(key: string, label: string): readonly [HTMLLabelElement, HTMLTextAreaElement];
   year(): number;
   base(view: string): string | null;
   kinds(about: string): string[];
   meanings(about: string): Record<string, string>;
-  values(name: string): { value: string; rows: number | null }[] | null;
+  values(name: string): ValueRow[] | null;
   close(about: string): void;
   goTo(about: string, text?: string): void;
   // The link to a column's row in step 6, and the clearing from each row of a finding that no longer stands.
@@ -63,7 +69,7 @@ const probeSql = new Map<string, string>();
 // The test queries run on the invented hospital: '' once read, or the sentence that says why it could not be run.
 const probeRan = new Map<string, string>();
 // The values that the query of values showed for a column before its change was kept, which its row then shows.
-const valuesKept = new Map<string, { value: string; rows: number | null }[]>();
+const valuesKept = new Map<string, ValueRow[]>();
 let tables: string[] | 'loading' | null = null;
 let deps: Deps;
 let checking = '';
@@ -128,23 +134,9 @@ function joinsOf(table: string): Join[] | null {
   return null;
 }
 
-// Which forms suit an attribute.
+// The forms that suit an attribute, as the core offers them.
 export function formsFor(item: CorrectionItem): string[] {
-  // A part for which the page found no table can only be given one.
-  if (item.attribute === 'rows') return item.bound === false ? ['rows'] : ['rows', 'filter'];
-  const forms = ['column'];
-  if (item.link) {
-    forms.push('path', 'pair');
-    return forms;
-  }
-  const type = item.type ?? '';
-  if (type === 'flag' || type === 'flag_or_empty') forms.push('flag');
-  if (type === 'number' || type === 'whole') forms.push('scale');
-  if (type === 'date') forms.push('date');
-  if (type === 'text') forms.push('trim', 'joined');
-  if (type === 'key') forms.push('trim');
-  if (type === 'kind') forms.push('codes');
-  return forms;
+  return item.forms ?? [];
 }
 
 function draftOf(item: CorrectionItem): Draft {
@@ -412,7 +404,7 @@ function valuesHelper(item: CorrectionItem, box: HTMLElement, mode: 'flag' | 'fi
       try {
         const reply = await deps.runInvented({ query: draft.valuesName, read: 'values' });
         if (reply.ok) {
-          draft.valueRows = (reply.receipt as { values: Draft['valueRows'] }).values;
+          draft.valueRows = deps.values(draft.valuesName) ?? (reply.receipt as { values: Draft['valueRows'] }).values;
           draft.problem = '';
           draft.ran = true;
           if (mode !== 'look') followList(item, draft);
@@ -429,7 +421,8 @@ function valuesHelper(item: CorrectionItem, box: HTMLElement, mode: 'flag' | 'fi
       try {
         const reply = await parsed('describe_values_read', [JSON.stringify({ name: draft.valuesName, text: area.value })]);
         if (reply.ok) {
-          draft.valueRows = reply.values as Draft['valueRows'];
+          draft.valueRows = (reply.model as { values?: Record<string, ValueRow[]> } | undefined)?.values?.[draft.valuesName]
+            ?? (reply.values as Draft['valueRows']);
           draft.ran = false;
           area.value = '';
           draft.problem = '';
@@ -447,7 +440,7 @@ function valuesHelper(item: CorrectionItem, box: HTMLElement, mode: 'flag' | 'fi
     if (draft.ran) list.append(deps.el('p', d.invented.receipt(c.valuesRan(draft.valueRows.length)), 'status good'));
     list.append(deps.el('p', c.valuesLook, 'label'));
     const rows = deps.el('ul', undefined, 'value-list');
-    for (const row of draft.valueRows) rows.append(deps.el('li', c.valueRows(row.value, row.rows)));
+    for (const row of draft.valueRows) rows.append(deps.el('li', c.valueRows(row.value, row.rows, row.suppressed)));
     list.append(rows);
     box.append(list);
   } else if (draft.valueRows.length) {
@@ -469,7 +462,7 @@ function valuesHelper(item: CorrectionItem, box: HTMLElement, mode: 'flag' | 'fi
         draft.f.values = ticked.join(', ');
         void preview(item);
       });
-      option.append(tick, document.createTextNode(` ${c.valueRows(row.value, row.rows)}`));
+      option.append(tick, document.createTextNode(` ${c.valueRows(row.value, row.rows, row.suppressed)}`));
       fieldset.append(option);
     }
     box.append(fieldset);
@@ -814,7 +807,7 @@ export function kept(item: CorrectionItem): HTMLElement | null {
     if (values?.length) {
       box.append(deps.el('p', c.valuesKept(values.length), 'note values-kept'));
       const rows = deps.el('ul', undefined, 'value-list');
-      for (const row of values) rows.append(deps.el('li', c.valueRows(row.value, row.rows)));
+      for (const row of values) rows.append(deps.el('li', c.valueRows(row.value, row.rows, row.suppressed)));
       box.append(rows);
     } else box.append(deps.el('p', c.probeNone, 'note'));
     return box;
@@ -873,7 +866,7 @@ export function kept(item: CorrectionItem): HTMLElement | null {
   }
   if (held.probed) {
     if (probeRan.get(item.about) === '') probe.append(deps.el('p', d.invented.receipt(c.probeRan), 'status good'));
-    probe.append(deps.grid(held.probed.columns, held.probed.rows, held.probed.columns.map((_, at) => at)));
+    probe.append(deps.grid(held.probed.columns, held.probed.rows, held.probed.cells));
     if (held.findings.length) probe.append(list(held.findings));
   }
   box.append(probe);

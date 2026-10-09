@@ -23,6 +23,13 @@ FANOUT_FROM_CHECKS = "from check results"
 FANOUT_NOT_APPLIED = "uniform (the check results could not be applied)"
 FANOUT_DERIVED = "from check results on other joins"
 LAYOUT = ("key", "value")
+# The bands of a spans check: the minutes from the first date column to the second, from (inclusive)
+# and to (exclusive). The labels are the only values that a spans result may hold.
+BANDS = (("less than zero minutes", None, 0), ("under 15 minutes", 0, 15), ("15 to 29 minutes", 15, 30),
+         ("30 to 59 minutes", 30, 60), ("60 to 119 minutes", 60, 120), ("120 to 239 minutes", 120, 240),
+         ("240 to 479 minutes", 240, 480), ("8 to 23 hours", 480, 1440), ("1 to 2 days", 1440, 4320),
+         ("3 to 6 days", 4320, 10080), ("a week or more", 10080, None))
+BAND_LABELS = tuple(label for label, _, _ in BANDS)
 LONGEST_LIST = 200
 # The value that the site rules give for "still in place", from the first date among sentinelValues.
 STILL_IN_PLACE_VALUE = "still_in_place_value"

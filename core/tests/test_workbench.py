@@ -3,7 +3,8 @@
 The saved hospital schema is made as screen 1 makes it, as in test_feasibility.py, with the table of readings given
 400 million rows so that the audit's package is of class B. Every test works in a temporary folder that holds the
 project folder and a folder for the system's temporary files, and the last test checks that nothing was written outside
-the project folder. These tests need starlette, jinja2, markdown, python-multipart and httpx:
+the project folder or beside the Athena download. Requests go to 127.0.0.1, so that the workbench's own list of trusted
+hosts is the one under test. These tests need starlette, jinja2, markdown, python-multipart and httpx:
 
     uv run --with sqlglot==30.21.0 --with duckdb==1.5.1 --with pytest --with starlette==0.52.1 --with jinja2 \\
         --with markdown --with python-multipart --with httpx python -m pytest -q tests/test_workbench.py
@@ -25,10 +26,12 @@ pytest.importorskip("httpx")
 from starlette.testclient import TestClient  # noqa: E402
 
 from schemalyser import audit, describe, rolemap  # noqa: E402
+from schemalyser.workbench import __main__ as workbench_main  # noqa: E402
 from schemalyser.workbench import jobs  # noqa: E402
-from schemalyser.workbench.app import create_app  # noqa: E402
+from schemalyser.workbench.app import PLANTED_WORDS, create_app  # noqa: E402
 from test_describe import DATE, DICTIONARY, TABLES, tables_result  # noqa: E402
 from test_feasibility import CONFIRMED, COUNTS  # noqa: E402
+from test_testbed import _download  # noqa: E402
 
 PLANS = Path(__file__).parent / "plans"
 AUDIT_SQL = rolemap.AUDIT.read_text(encoding="utf-8")
@@ -65,14 +68,21 @@ def place(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
+def athena(tmp_path_factory):
+    """A small Athena download in a folder of its own outside the project, with what that folder held beforehand."""
+    folder = _download(tmp_path_factory.mktemp("download") / "athena")
+    return folder, sorted(p.relative_to(folder.parent) for p in folder.parent.rglob("*"))
+
+
+@pytest.fixture(scope="module")
 def client(place, saved):
     held = tempfile.tempdir
     tempfile.tempdir = str(place / "system-tmp")
     project = place / "project"
     (project / "schemas").mkdir(parents=True)
     shutil.copy(saved, project / "schemas" / saved.name)
-    app = create_app(project, hosts=["testserver"], describe_folder=place / "no-page")
-    with TestClient(app) as test_client:
+    app = create_app(project, describe_folder=place / "no-page")
+    with TestClient(app, base_url="http://127.0.0.1") as test_client:
         yield test_client
     jobs.wait_all(timeout=600)
     tempfile.tempdir = held
@@ -115,7 +125,8 @@ def test_a_question_added_on_the_page_has_its_feasibility_report(client, place):
 
 def test_an_audit_package_is_built_and_its_class_read_from_the_page(client, place):
     name = _question(client, "Among neonates, what was the mean pressure in the audit?")
-    location = _audit(client, name, **{"from": "2024-01-01", "to": "2024-06-30", "decisions": "The audit covers half a year."})
+    location = _audit(client, name, **{"from": "2024-01-01", "to": "2024-06-30", "decisions": "The audit covers half a year.",
+                                       "by": "Dr A. Clinician"})
     page = client.get(location).text
     assert "Class B: bounded validation." in page
     assert "The plan review is <span class=\"state\">not yet reviewed</span>" in page
@@ -123,6 +134,19 @@ def test_an_audit_package_is_built_and_its_class_read_from_the_page(client, plac
     package = place / "project" / "audits" / location.rsplit("/", 1)[1] / "package"
     assert (package / "manifest.json").is_file() and (package / "query.sql").is_file()
     assert "The audit covers half a year." in (package / "manifest.json").read_text()
+    # The decision is recorded with the name the form gave, and the planted cases with the core's own verdict on them.
+    decisions = json.loads((package.parent / "decisions.json").read_text())["decisions"]
+    assert [d["by"] for d in decisions] == ["Dr A. Clinician"]
+    expected = json.loads((package / "expected-output.json").read_text())
+    assert PLANTED_WORDS[expected["planted_match"]] in page
+
+
+def test_a_decision_without_a_name_is_recorded_as_not_recorded(client, place):
+    name = _question(client, "Among neonates, who decided the period?")
+    location = _audit(client, name, decisions="The audit counts every neonate.")
+    decisions = json.loads((place / "project" / "audits" / location.rsplit("/", 1)[1] / "decisions.json").read_text())
+    assert [d["by"] for d in decisions["decisions"]] == ["not recorded"]
+    assert "the clinician" not in json.dumps(decisions)
 
 
 def test_the_plan_review_is_voided_once_the_script_changes(client, place):
@@ -152,7 +176,9 @@ def test_a_fast_run_of_the_test_on_made_up_rows_and_its_report(client, place):
     assert client.get(f"{location}/progress").headers.get("HX-Refresh") == "true"
     page = client.get(location).text
     assert "The fast profile passed" in page
-    assert "Unexplained discrepancies: 0" in page and "Could not be traced: 2" in page
+    # Three steps cannot be traced: the period of observation, which combines rows; the source record, which reads no
+    # table; and the drug step over the roles, which starts from the role views compiled as named queries.
+    assert "Unexplained discrepancies: 0" in page and "Could not be traced: 3" in page
     assert "every planted scenario passed" in page.lower()
     step = re.search(rf'href="({re.escape(location)}/steps/person\.sql)"', page).group(1)
     detail = client.get(step).text
@@ -165,7 +191,40 @@ def test_a_form_from_another_site_is_refused(client):
     assert response.status_code == 403
 
 
-def test_nothing_is_written_outside_the_project_folder(client, place):
+def test_a_request_for_another_host_is_refused_by_the_real_list_of_trusted_hosts(client):
+    assert client.get("/").status_code == 200
+    assert client.get("/", headers={"Host": "localhost:8765"}).status_code == 200
+    for host in ("elsewhere.example", "0.0.0.0", "192.168.1.20:8765", "testserver"):
+        assert client.get("/", headers={"Host": host}).status_code == 400, host
+
+
+def test_the_workbench_listens_on_every_address_only_inside_its_container(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(workbench_main, "CONTAINER_MARKER", tmp_path / ".dockerenv")
+    assert workbench_main.host_allowed("127.0.0.1")
+    assert not workbench_main.host_allowed("0.0.0.0")
+    assert workbench_main.main(["--project", str(tmp_path / "project"), "--host", "0.0.0.0"]) == 2
+    assert "only inside its container" in capsys.readouterr().err
+    assert not (tmp_path / "project").exists()
+    (tmp_path / ".dockerenv").write_text("")
+    assert workbench_main.host_allowed("0.0.0.0")
+
+
+def test_a_run_with_the_athena_vocabulary_keeps_its_working_copy_inside_the_project(client, place, athena, monkeypatch):
+    download, _ = athena
+    monkeypatch.setenv("SCHEMALYSER_ATHENA", str(download))
+    response = client.post("/runs", data={"world": "fixtures", "rows": "60", "profile": "fast", "engine": "duckdb",
+                                          "vocabulary": "athena"}, follow_redirects=False)
+    assert response.status_code == 303
+    jobs.wait_all(timeout=600)
+    copies = list((place / "project" / ".cache" / "athena-working-copy").glob("*/complete"))
+    assert len(copies) == 1
+    assert not (download.parent / "athena-working-copy").exists()
+
+
+def test_nothing_is_written_outside_the_project_folder(client, place, athena):
     jobs.wait_all(timeout=600)
     outside = [p for p in place.rglob("*") if p.is_file() and not p.is_relative_to(place / "project")]
     assert outside == []
+    # Beside the Athena download, too, the folder holds what it held before any run.
+    download, before = athena
+    assert sorted(p.relative_to(download.parent) for p in download.parent.rglob("*")) == before

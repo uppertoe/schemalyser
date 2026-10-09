@@ -1,6 +1,6 @@
 {
   "world": "the invented world",
-  "description": "This map supplies the three role views, and the staff and the diagnoses, from the invented catalogue, and it follows the existing invented conversion wherever that affects the neonatal audit, so that the two answers can be compared.",
+  "description": "This map supplies the three role views, the staff, the diagnoses and the drugs, with the translations of the drug and unit codes, from the invented catalogue, and it follows the existing invented conversion wherever that affects the neonatal audit, so that the two answers can be compared.",
   "roles": {
     "role_patient": {
       "file": "role_patient.sql",
@@ -162,6 +162,332 @@
         }
       },
       "source_kind": "coded_record"
+    },
+    "role_drug": {
+      "file": "role_drug.sql",
+      "rows": {
+        "status": "proposed",
+        "from": "DRUG_GIVEN, the rows that amend no earlier row",
+        "says": "One administration row is one action of a drug given during an anaesthetic or the stay, as charted.",
+        "question": "Please confirm whether the administration table records every dose and every infusion action charted during an anaesthetic."
+      },
+      "columns": {
+        "drug_event_key": {
+          "status": "proposed",
+          "from": "DRUG_GIVEN.GIVEN_KEY",
+          "says": "The key is the administration row's own key, written after the word given so that it never meets the key of an order.",
+          "question": "Please confirm whether GIVEN_KEY is unique to each administration row, the corrections included."
+        },
+        "anaesthetic_key": {
+          "status": "proposed",
+          "from": "DRUG_GIVEN.ANAES_KEY",
+          "says": "The administration row carries the key of the anaesthetic record during which the drug was given.",
+          "question": "Please confirm whether ANAES_KEY is filled for every drug given during an anaesthetic, and empty only for a drug given elsewhere in the stay."
+        },
+        "stay_key": {
+          "status": "proposed",
+          "from": "DRUG_GIVEN.VISIT_KEY",
+          "says": "The administration row carries the key of the hospital visit, which is the stay.",
+          "question": "Please confirm whether DRUG_GIVEN.VISIT_KEY is the same key that the visits table holds."
+        },
+        "order_key": {
+          "status": "proposed",
+          "from": "DRUG_GIVEN.ORDER_KEY",
+          "says": "The administration row carries the key of the order that it carries out, so that the actions of one infusion can be told from those of another.",
+          "question": "Please confirm whether every action of one infusion carries the same ORDER_KEY, and whether a new bag starts a new order."
+        },
+        "drug": {
+          "status": "proposed",
+          "from": "the hospital schema's translation of DRUG_KEY into map_drug_concept",
+          "says": "The drug is the opaque key of the code in DRUG_KEY, and a code that the translation does not list gives the key unlisted.",
+          "question": "Please confirm whether DRUG_KEY names the drug given, rather than the product or the bag."
+        },
+        "action": {
+          "status": "proposed",
+          "from": "DRUG_GIVEN.ACTION_CAT",
+          "says": "The action codes 1, 6, 10, 7, 9 and 8 are a dose given and an infusion started, changed in rate, paused, restarted and stopped, and any other code gives no action.",
+          "question": "Please confirm whether each action code means what the map takes it to mean, and whether any other code has been used in any year."
+        },
+        "amount": {
+          "status": "proposed",
+          "from": "DRUG_GIVEN.DOSE_AMT",
+          "says": "The amount is the dose, or the rate of an infusion, as charted, and it is empty on a pause or a stop.",
+          "question": "Please confirm whether DOSE_AMT holds the rate of an infusion in the unit beside it, rather than a volume."
+        },
+        "unit": {
+          "status": "proposed",
+          "from": "the hospital schema's translation of DOSE_UNIT_CAT into map_unit_concept",
+          "says": "The unit is the opaque key of the code in DOSE_UNIT_CAT, and a code that the translation does not list gives the key unlisted.",
+          "question": "Please confirm whether DOSE_UNIT_CAT is the unit of DOSE_AMT on every row."
+        },
+        "route": {
+          "status": "proposed",
+          "from": "DRUG_GIVEN.ROUTE_CAT",
+          "says": "The route codes 1, 2 and 3 are intravenous, oral and inhaled, as the conversion's route rows name them, and any other code, or none, is other.",
+          "question": "Please confirm whether the route codes 1, 2 and 3 are intravenous, oral and inhaled, and say what the other codes mean."
+        },
+        "given_time": {
+          "status": "proposed",
+          "from": "DRUG_GIVEN.GIVEN_TS",
+          "says": "The time given is the time at which the action took place, as charted, and a correction keeps the time of the action it corrects.",
+          "question": "Please confirm whether GIVEN_TS is the time of the action rather than the time of filing, in local time in every year."
+        },
+        "source_kind": {
+          "status": "proposed",
+          "from": "the pathway's source kind",
+          "says": "A row that amends no earlier row is a record that the drug was given, so every row of this pathway is of the source kind administration.",
+          "question": "Please confirm whether every administration row records an action that was carried out, and not one that was planned."
+        },
+        "documented_time": {
+          "status": "proposed",
+          "from": "DRUG_GIVEN.DOC_TS",
+          "says": "The time documented is the time at which the row was filed, which the hospital records apart from the time of the action.",
+          "question": "Please confirm whether DOC_TS is the time of filing, and whether a late entry keeps the time of the action in GIVEN_TS."
+        },
+        "amends_key": {
+          "status": "proposed",
+          "from": "DRUG_GIVEN.AMENDS_KEY",
+          "says": "An administration amends no earlier row, so the view gives the row it amends empty.",
+          "question": "Please confirm whether AMENDS_KEY always names a row of DRUG_GIVEN, and whether a correction can itself be corrected."
+        }
+      },
+      "source_kind": "administration",
+      "pathways": [
+        {
+          "name": "corrections",
+          "source_kind": "correction",
+          "rows": {
+            "status": "proposed",
+            "from": "DRUG_GIVEN, the rows that name the row they amend",
+            "says": "A row that names in AMENDS_KEY the row it amends is a retrospective correction of that row, and it gives the action, time and amount as corrected.",
+            "question": "Please confirm whether a correction is always charted as a row of its own that names the row it amends.",
+            "binding": {
+              "table": "DRUG_GIVEN"
+            }
+          },
+          "columns": {
+            "drug_event_key": {
+              "status": "proposed",
+              "from": "DRUG_GIVEN.GIVEN_KEY",
+              "says": "The key is the administration row's own key, written after the word given so that it never meets the key of an order.",
+              "question": "Please confirm whether GIVEN_KEY is unique to each administration row, the corrections included."
+            },
+            "anaesthetic_key": {
+              "status": "proposed",
+              "from": "DRUG_GIVEN.ANAES_KEY",
+              "says": "The administration row carries the key of the anaesthetic record during which the drug was given.",
+              "question": "Please confirm whether ANAES_KEY is filled for every drug given during an anaesthetic, and empty only for a drug given elsewhere in the stay."
+            },
+            "stay_key": {
+              "status": "proposed",
+              "from": "DRUG_GIVEN.VISIT_KEY",
+              "says": "The administration row carries the key of the hospital visit, which is the stay.",
+              "question": "Please confirm whether DRUG_GIVEN.VISIT_KEY is the same key that the visits table holds."
+            },
+            "order_key": {
+              "status": "proposed",
+              "from": "DRUG_GIVEN.ORDER_KEY",
+              "says": "The administration row carries the key of the order that it carries out, so that the actions of one infusion can be told from those of another.",
+              "question": "Please confirm whether every action of one infusion carries the same ORDER_KEY, and whether a new bag starts a new order."
+            },
+            "drug": {
+              "status": "proposed",
+              "from": "the hospital schema's translation of DRUG_KEY into map_drug_concept",
+              "says": "The drug is the opaque key of the code in DRUG_KEY, and a code that the translation does not list gives the key unlisted.",
+              "question": "Please confirm whether DRUG_KEY names the drug given, rather than the product or the bag."
+            },
+            "action": {
+              "status": "proposed",
+              "from": "DRUG_GIVEN.ACTION_CAT",
+              "says": "The action codes 1, 6, 10, 7, 9 and 8 are a dose given and an infusion started, changed in rate, paused, restarted and stopped, and any other code gives no action.",
+              "question": "Please confirm whether each action code means what the map takes it to mean, and whether any other code has been used in any year."
+            },
+            "amount": {
+              "status": "proposed",
+              "from": "DRUG_GIVEN.DOSE_AMT",
+              "says": "The amount is the dose, or the rate of an infusion, as charted, and it is empty on a pause or a stop.",
+              "question": "Please confirm whether DOSE_AMT holds the rate of an infusion in the unit beside it, rather than a volume."
+            },
+            "unit": {
+              "status": "proposed",
+              "from": "the hospital schema's translation of DOSE_UNIT_CAT into map_unit_concept",
+              "says": "The unit is the opaque key of the code in DOSE_UNIT_CAT, and a code that the translation does not list gives the key unlisted.",
+              "question": "Please confirm whether DOSE_UNIT_CAT is the unit of DOSE_AMT on every row."
+            },
+            "route": {
+              "status": "proposed",
+              "from": "DRUG_GIVEN.ROUTE_CAT",
+              "says": "The route codes 1, 2 and 3 are intravenous, oral and inhaled, as the conversion's route rows name them, and any other code, or none, is other.",
+              "question": "Please confirm whether the route codes 1, 2 and 3 are intravenous, oral and inhaled, and say what the other codes mean."
+            },
+            "given_time": {
+              "status": "proposed",
+              "from": "DRUG_GIVEN.GIVEN_TS",
+              "says": "The time given is the time at which the action took place, as charted, and a correction keeps the time of the action it corrects.",
+              "question": "Please confirm whether GIVEN_TS is the time of the action rather than the time of filing, in local time in every year."
+            },
+            "source_kind": {
+              "status": "proposed",
+              "from": "the pathway's source kind",
+              "says": "A row that names the row it amends is a correction, so every row of this pathway is of the source kind correction.",
+              "question": "Please confirm whether a row with AMENDS_KEY filled is always a correction of the row it names."
+            },
+            "documented_time": {
+              "status": "proposed",
+              "from": "DRUG_GIVEN.DOC_TS",
+              "says": "The time documented is the time at which the row was filed, which the hospital records apart from the time of the action.",
+              "question": "Please confirm whether DOC_TS is the time of filing, and whether a late entry keeps the time of the action in GIVEN_TS."
+            },
+            "amends_key": {
+              "status": "proposed",
+              "from": "DRUG_GIVEN.AMENDS_KEY",
+              "says": "A correction names in AMENDS_KEY the administration row that it amends, written in the same form as the key.",
+              "question": "Please confirm whether AMENDS_KEY always names a row of DRUG_GIVEN, and whether a correction can itself be corrected."
+            }
+          }
+        },
+        {
+          "name": "orders",
+          "source_kind": "order",
+          "rows": {
+            "status": "proposed",
+            "from": "DRUG_ORDER",
+            "says": "One row of the order table is one order of a drug, written before it is given.",
+            "question": "Please confirm whether every infusion given during an anaesthetic has a row in the order table.",
+            "binding": {
+              "table": "DRUG_ORDER"
+            }
+          },
+          "columns": {
+            "drug_event_key": {
+              "status": "proposed",
+              "from": "DRUG_ORDER.ORDER_KEY",
+              "says": "The key is the order's own key, written after the word order so that it never meets the key of an administration.",
+              "question": "Please confirm whether ORDER_KEY is unique to each order."
+            },
+            "anaesthetic_key": {
+              "status": "proposed",
+              "from": "DRUG_ORDER.ANAES_KEY",
+              "says": "The order carries the key of the anaesthetic record for which it was written.",
+              "question": "Please confirm whether ANAES_KEY is filled for every order written during an anaesthetic."
+            },
+            "stay_key": {
+              "status": "proposed",
+              "from": "DRUG_ORDER.VISIT_KEY",
+              "says": "The order carries the key of the hospital visit, which is the stay.",
+              "question": "Please confirm whether DRUG_ORDER.VISIT_KEY is the same key that the visits table holds."
+            },
+            "order_key": {
+              "status": "proposed",
+              "from": "DRUG_ORDER.ORDER_KEY",
+              "says": "The order's own key is the key that its administrations carry.",
+              "question": "Please confirm whether DRUG_GIVEN.ORDER_KEY always names a row of DRUG_ORDER."
+            },
+            "drug": {
+              "status": "proposed",
+              "from": "the hospital schema's translation of DRUG_ORDER.DRUG_KEY into map_drug_concept",
+              "says": "The drug is the opaque key of the code that the order names, and a code that the translation does not list gives the key unlisted.",
+              "question": "Please confirm whether the order names the same drug codes as the administrations."
+            },
+            "action": {
+              "status": "proposed",
+              "from": "the pathway's own action",
+              "says": "Every row of the order table is an order, so its action is ordered.",
+              "question": "Please confirm whether the order table holds only orders, and not doses already given."
+            },
+            "amount": {
+              "status": "proposed",
+              "from": "DRUG_ORDER.DOSE_AMT",
+              "says": "The amount is the dose or the rate that was ordered.",
+              "question": "Please confirm whether DRUG_ORDER.DOSE_AMT is the ordered dose or rate in the unit beside it."
+            },
+            "unit": {
+              "status": "proposed",
+              "from": "the hospital schema's translation of DRUG_ORDER.DOSE_UNIT_CAT into map_unit_concept",
+              "says": "The unit is the opaque key of the order's unit code, and a code that the translation does not list gives the key unlisted.",
+              "question": "Please confirm whether the order's unit codes are those of the administrations."
+            },
+            "route": {
+              "status": "proposed",
+              "from": "DRUG_ORDER.ROUTE_CAT",
+              "says": "The route codes 1, 2 and 3 are intravenous, oral and inhaled, as the conversion's route rows name them, and any other code, or none, is other.",
+              "question": "Please confirm whether the route codes 1, 2 and 3 are intravenous, oral and inhaled, and say what the other codes mean."
+            },
+            "given_time": {
+              "status": "proposed",
+              "from": "DRUG_ORDER.ORDER_TS",
+              "says": "The time of an order is the time at which it was written.",
+              "question": "Please confirm whether ORDER_TS is the time at which the order was written, rather than the time for which it was due."
+            },
+            "source_kind": {
+              "status": "proposed",
+              "from": "the pathway's source kind",
+              "says": "Every row of the order table is an order, made before anything is given, so it is of the source kind order.",
+              "question": "Please confirm whether every row of the order table is an order."
+            },
+            "documented_time": {
+              "status": "proposed",
+              "from": "nothing in the invented world",
+              "says": "The invented hospital records no filing time on an order apart from the time it was written, so the view gives it empty.",
+              "question": "Please confirm whether any table records when an order was filed."
+            },
+            "amends_key": {
+              "status": "proposed",
+              "from": "nothing in the invented world",
+              "says": "The invented hospital records no correction of an order as a row of its own, so the view gives it empty.",
+              "question": "Please confirm whether a changed order is recorded as a new row that names the order it replaces."
+            }
+          }
+        }
+      ]
+    }
+  },
+  "concepts": {
+    "salt": "the invented hospital",
+    "views": {
+      "map_drug_concept": {
+        "rows": [
+          {
+            "code": "990005190",
+            "description": "Remifentanil",
+            "concept_id": 9100001,
+            "status": "mapped",
+            "provenance": "a person"
+          },
+          {
+            "code": "990005191",
+            "description": "Local infusion mixture",
+            "concept_id": 0,
+            "status": "unmapped",
+            "provenance": "a person"
+          },
+          {
+            "code": "990005192",
+            "description": "Opioid infusion of the ward's own make",
+            "concept_id": 9100002,
+            "status": "ambiguous",
+            "provenance": "a reference conversion"
+          },
+          {
+            "code": "990005192",
+            "description": "Opioid infusion of the ward's own make",
+            "concept_id": 9100003,
+            "status": "ambiguous",
+            "provenance": "a reference conversion"
+          }
+        ]
+      },
+      "map_unit_concept": {
+        "rows": [
+          {
+            "code": "12",
+            "description": "Micrograms per kilogram per minute",
+            "concept_id": 9100102,
+            "status": "mapped",
+            "provenance": "a person"
+          }
+        ]
+      }
     }
   },
   "kinds": {

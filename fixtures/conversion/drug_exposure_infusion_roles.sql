@@ -1,7 +1,8 @@
 -- DRUG_EXPOSURE, infusions, over the roles: one row for each interval during which an infusion ran at one rate.
 -- The step reads role_drug, map_drug_concept and the OMOP tables that the core and the anaesthesia layer have already
 -- written, and nothing of the hospital's own tables, so that it runs unchanged at any hospital whose schema supplies
--- role_drug. It is the route over the roles for the infusions that drug_exposure_infusion.sql writes directly.
+-- role_drug. It has replaced drug_exposure_infusion.sql, which wrote the infusions directly from the source tables
+-- and is kept as a recorded alternative on the direct route.
 -- The events of one infusion are the rows of role_drug that share an order_key. Where a row carries no order_key, its
 -- infusion is told apart by its anaesthetic and its drug instead, as the direct step does.
 -- A retrospective correction supersedes the row it amends: a row whose key another row names as its amends_key is
@@ -19,8 +20,10 @@
 -- carries the mapping's status and the opaque key, as status:key, so that the rows can be counted and mapped later.
 -- An ambiguous key gives one row, not one for each concept that it may mean.
 -- The rate and its unit are kept as text, as the direct step keeps them, because the model has no field for a rate:
--- sig holds the amount and dose_unit_source_value the unit's opaque key. The contract gives the route kinds no
--- standard concepts yet, so route_concept_id is 0 and route_source_value holds the route's kind.
+-- sig holds the amount and dose_unit_source_value the unit's opaque key. The route's kind is kept in route_source_value,
+-- and its concept is the standard concept of that route: 4171047 for intravenous, 4132161 for oral and 40486069 for
+-- inhaled, the concepts that the direct step's route rows name. Any other kind takes the concept 0 until its concept is
+-- named here.
 -- A row of role_drug that carries only the stay, with no anaesthetic_key, is not written by this step, because the
 -- step writes the exposures of an anaesthetic and finds each through its visit detail.
 -- The type concept 32818 is the EHR administration record.
@@ -81,7 +84,8 @@ SELECT ROW_NUMBER() OVER (ORDER BY r.anaesthetic_key, r.order_key, r.started, r.
        32818                                                   AS drug_type_concept_id,
        CASE WHEN r.ended IS NULL THEN 'stop not recorded' END AS stop_reason,
        CAST(r.amount AS varchar(50))                           AS sig,
-       0                                                       AS route_concept_id,
+       CASE r.route WHEN 'intravenous' THEN 4171047 WHEN 'oral' THEN 4132161
+                    WHEN 'inhaled' THEN 40486069 ELSE 0 END    AS route_concept_id,
        vd.visit_occurrence_id                                  AS visit_occurrence_id,
        vd.visit_detail_id                                      AS visit_detail_id,
        CONCAT(COALESCE(c.status, 'unlisted'), ':', r.drug)     AS drug_source_value,

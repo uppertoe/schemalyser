@@ -1,0 +1,143 @@
+{
+  "expectations": [
+    {
+      "says": "The two anaesthetics give eight intervals of exposure between them, each of the planted child and of the planted stay, from four drugs charted in one unit that the hospital schema has mapped.",
+      "query": "SELECT COUNT(*) AS intervals, COUNT(DISTINCT d.drug_source_value) AS drugs, COUNT(DISTINCT d.dose_unit_source_value) AS units, SUM(CASE WHEN d.dose_unit_source_value = 'unlisted' THEN 1 ELSE 0 END) AS unlisted_units, SUM(CASE WHEN p.person_source_value = '990005100' AND vo.visit_source_value = '990005200' THEN 1 ELSE 0 END) AS of_the_child_and_stay FROM omop.drug_exposure d JOIN omop.visit_detail vd ON vd.visit_detail_id = d.visit_detail_id JOIN omop.person p ON p.person_id = d.person_id JOIN omop.visit_occurrence vo ON vo.visit_occurrence_id = d.visit_occurrence_id WHERE vd.visit_detail_source_value IN ('990005300', '990005301')",
+      "result": [
+        8,
+        4,
+        1,
+        0,
+        8
+      ]
+    },
+    {
+      "says": "The first interval runs from the start of the infusion to its first change of rate, at the rate first charted; the order before it starts nothing.",
+      "query": "SELECT d.drug_concept_id, LEFT(d.drug_source_value, CHARINDEX(':', d.drug_source_value) - 1) AS mapping_status, d.drug_exposure_end_datetime, d.drug_exposure_start_date, d.drug_exposure_end_date, d.stop_reason, d.sig, d.route_source_value, d.drug_type_concept_id FROM omop.drug_exposure d JOIN omop.visit_detail vd ON vd.visit_detail_id = d.visit_detail_id WHERE vd.visit_detail_source_value = '990005300' AND d.drug_exposure_start_datetime = CAST('2024-08-06 08:20:00' AS datetime2)",
+      "result": [
+        9100001,
+        "mapped",
+        "2024-08-06 08:50:00",
+        "2024-08-06",
+        "2024-08-06",
+        null,
+        0.1,
+        "intravenous",
+        32818
+      ]
+    },
+    {
+      "says": "The second interval runs from the first change of rate to the pause, at the new rate.",
+      "query": "SELECT d.drug_concept_id, LEFT(d.drug_source_value, CHARINDEX(':', d.drug_source_value) - 1) AS mapping_status, d.drug_exposure_end_datetime, d.drug_exposure_start_date, d.drug_exposure_end_date, d.stop_reason, d.sig, d.route_source_value, d.drug_type_concept_id FROM omop.drug_exposure d JOIN omop.visit_detail vd ON vd.visit_detail_id = d.visit_detail_id WHERE vd.visit_detail_source_value = '990005300' AND d.drug_exposure_start_datetime = CAST('2024-08-06 08:50:00' AS datetime2)",
+      "result": [
+        9100001,
+        "mapped",
+        "2024-08-06 09:10:00",
+        "2024-08-06",
+        "2024-08-06",
+        null,
+        0.2,
+        "intravenous",
+        32818
+      ]
+    },
+    {
+      "says": "The third interval runs from the restart to the second change of rate, so that the pause adds no exposure.",
+      "query": "SELECT d.drug_concept_id, LEFT(d.drug_source_value, CHARINDEX(':', d.drug_source_value) - 1) AS mapping_status, d.drug_exposure_end_datetime, d.drug_exposure_start_date, d.drug_exposure_end_date, d.stop_reason, d.sig, d.route_source_value, d.drug_type_concept_id FROM omop.drug_exposure d JOIN omop.visit_detail vd ON vd.visit_detail_id = d.visit_detail_id WHERE vd.visit_detail_source_value = '990005300' AND d.drug_exposure_start_datetime = CAST('2024-08-06 09:25:00' AS datetime2)",
+      "result": [
+        9100001,
+        "mapped",
+        "2024-08-06 09:45:00",
+        "2024-08-06",
+        "2024-08-06",
+        null,
+        0.2,
+        "intravenous",
+        32818
+      ]
+    },
+    {
+      "says": "The last interval runs at the corrected rate, which supersedes the rate first charted, and it has no recorded end, so it is kept as an interval of unknown end and is not ended at the anaesthetic's stop or at the next day's infusion.",
+      "query": "SELECT d.drug_concept_id, LEFT(d.drug_source_value, CHARINDEX(':', d.drug_source_value) - 1) AS mapping_status, d.drug_exposure_end_datetime, d.drug_exposure_start_date, d.drug_exposure_end_date, d.stop_reason, d.sig, d.route_source_value, d.drug_type_concept_id FROM omop.drug_exposure d JOIN omop.visit_detail vd ON vd.visit_detail_id = d.visit_detail_id WHERE vd.visit_detail_source_value = '990005300' AND d.drug_exposure_start_datetime = CAST('2024-08-06 09:45:00' AS datetime2)",
+      "result": [
+        9100001,
+        "mapped",
+        null,
+        "2024-08-06",
+        "2024-08-06",
+        "stop not recorded",
+        0.12,
+        "intravenous",
+        32818
+      ]
+    },
+    {
+      "says": "The second anaesthetic's infusion of the same drug runs from its start to its stop under its own order.",
+      "query": "SELECT d.drug_concept_id, LEFT(d.drug_source_value, CHARINDEX(':', d.drug_source_value) - 1) AS mapping_status, d.drug_exposure_end_datetime, d.drug_exposure_start_date, d.drug_exposure_end_date, d.stop_reason, d.sig, d.route_source_value, d.drug_type_concept_id FROM omop.drug_exposure d JOIN omop.visit_detail vd ON vd.visit_detail_id = d.visit_detail_id WHERE vd.visit_detail_source_value = '990005301' AND d.drug_exposure_start_datetime = CAST('2024-08-07 14:10:00' AS datetime2)",
+      "result": [
+        9100001,
+        "mapped",
+        "2024-08-07 15:00:00",
+        "2024-08-07",
+        "2024-08-07",
+        null,
+        0.1,
+        "intravenous",
+        32818
+      ]
+    },
+    {
+      "says": "The drug that the hospital schema has not mapped is written once with the concept 0 and its status.",
+      "query": "SELECT d.drug_concept_id, LEFT(d.drug_source_value, CHARINDEX(':', d.drug_source_value) - 1) AS mapping_status, d.drug_exposure_end_datetime, d.drug_exposure_start_date, d.drug_exposure_end_date, d.stop_reason, d.sig, d.route_source_value, d.drug_type_concept_id FROM omop.drug_exposure d JOIN omop.visit_detail vd ON vd.visit_detail_id = d.visit_detail_id WHERE vd.visit_detail_source_value = '990005301' AND d.drug_exposure_start_datetime = CAST('2024-08-07 14:20:00' AS datetime2)",
+      "result": [
+        0,
+        "unmapped",
+        "2024-08-07 14:50:00",
+        "2024-08-07",
+        "2024-08-07",
+        null,
+        2,
+        "intravenous",
+        32818
+      ]
+    },
+    {
+      "says": "The drug whose code may mean two concepts is written once with the concept 0 and its status, and not once for each concept.",
+      "query": "SELECT d.drug_concept_id, LEFT(d.drug_source_value, CHARINDEX(':', d.drug_source_value) - 1) AS mapping_status, d.drug_exposure_end_datetime, d.drug_exposure_start_date, d.drug_exposure_end_date, d.stop_reason, d.sig, d.route_source_value, d.drug_type_concept_id FROM omop.drug_exposure d JOIN omop.visit_detail vd ON vd.visit_detail_id = d.visit_detail_id WHERE vd.visit_detail_source_value = '990005301' AND d.drug_exposure_start_datetime = CAST('2024-08-07 14:30:00' AS datetime2)",
+      "result": [
+        0,
+        "ambiguous",
+        "2024-08-07 14:40:00",
+        "2024-08-07",
+        "2024-08-07",
+        null,
+        1,
+        "intravenous",
+        32818
+      ]
+    },
+    {
+      "says": "The drug that the hospital schema does not list is written with the concept 0 and the status unlisted, and is not left out.",
+      "query": "SELECT d.drug_concept_id, LEFT(d.drug_source_value, CHARINDEX(':', d.drug_source_value) - 1) AS mapping_status, d.drug_exposure_end_datetime, d.drug_exposure_start_date, d.drug_exposure_end_date, d.stop_reason, d.sig, d.route_source_value, d.drug_type_concept_id FROM omop.drug_exposure d JOIN omop.visit_detail vd ON vd.visit_detail_id = d.visit_detail_id WHERE vd.visit_detail_source_value = '990005301' AND d.drug_exposure_start_datetime = CAST('2024-08-07 14:35:00' AS datetime2)",
+      "result": [
+        0,
+        "unlisted",
+        "2024-08-07 14:45:00",
+        "2024-08-07",
+        "2024-08-07",
+        null,
+        3,
+        "intravenous",
+        32818
+      ]
+    }
+  ],
+  "cases": [
+    "An order starts no interval and ends none, so the first anaesthetic's infusion begins at its start.",
+    "A pause ends the interval before it and begins nothing, so the time between the pause and the restart adds no exposure.",
+    "A correction that names the row it amends takes that row's place, with the corrected rate.",
+    "An infusion with no recorded stop is an interval of unknown end, with the reason that no stop was recorded, and is not ended at the anaesthetic's stop.",
+    "The second anaesthetic's infusion of the same drug is told apart from the first by its own order.",
+    "A drug that is unmapped, ambiguous or not listed in the translation is written once with the concept 0 and its status, and none is left out."
+  ]
+}

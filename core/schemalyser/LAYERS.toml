@@ -11,13 +11,15 @@
 # A note says why an assignment is arguable.
 
 [modules]
-"schemalyser" = { layer = "shared", note = "The package's marker. It still exports the earlier analyser, so that importing any module of the core runs analysis.py." }
+"schemalyser" = { layer = "shared", note = "The package's marker, which imports nothing of the package." }
 "schemalyser.catalogue" = { layer = "shared" }
-"schemalyser.extract" = { layer = "shared", note = "Safe reading of files is shared; its finding of facts in a request belongs to the earlier design, and it still imports checks.py and skeleton.py." }
+"schemalyser.extract" = { layer = "shared", note = "Safe reading of files, and the finding of facts in a request, which the synthetic world's analysis (harness.py) and the release's list of the source columns that the steps read (release.py) both use. It knows nothing of any layer." }
 "schemalyser.statements" = { layer = "shared" }
 "schemalyser.translate" = { layer = "shared", note = "The DuckDB translation is layer 4's work, but layer 2's test of a correction on made-up rows uses it as well." }
 "schemalyser.memo" = { layer = "shared" }
+"schemalyser.blanking" = { layer = "shared", note = "The blanking of small counts in a result, which the compiled audit (audit.py) and the query compiled through a map (rolemap.py) both use." }
 "schemalyser.vocabulary" = { layer = "shared" }
+"schemalyser.summaries" = { layer = "shared", note = "By its purpose it is orchestration, but the reference adapters that write two of the three named summaries may import only layers 1 and 3 and the shared tier, and the scoreboard sits in layer 2, so the exporters import nothing from the package and take each output as data." }
 
 "schemalyser.rolemap" = { layer = "2", note = "It loads contract.json (layer 1), reads and writes maps (layer 2), compiles an audit through a map (layer 3) and builds the role-level shadow (layer 4). Layer 2 is where the most of it sits." }
 "schemalyser.describe" = { layer = "2", note = "The saved hospital schema and every operation that writes it; it is also the core behind the Describe screen." }
@@ -39,17 +41,15 @@
 
 "schemalyser.testbed" = { layer = "4" }
 "schemalyser.convert" = { layer = "4", note = "It runs a conversion over the synthetic database and checks what it writes, which is layer 4's; it also defines the conversion folder's format, which release.py takes from it." }
-"schemalyser.harness" = { layer = "4" }
+"schemalyser.harness" = { layer = "4", note = "The synthetic world: the analysis of its requests, the checks that its stand-in database answers and the script that writes them, which the conversion's run and the SQL Server harness both use." }
 "schemalyser.sample_vocabulary" = { layer = "4", note = "A few public concepts for the fast profile, which the testbed and the SQL Server harness both write." }
 "schemalyser.hospital" = { layer = "4" }
-"schemalyser.sandbox" = { layer = "4" }
+"schemalyser.sandbox" = { layer = "4", note = "The synthetic database, with the reader of the check results from which it builds its values." }
 "schemalyser.realistic" = { layer = "4" }
 "schemalyser.roles" = { layer = "4", note = "What a column means for the synthetic database, which has nothing to do with the role model despite its name." }
 "schemalyser.tuning" = { layer = "4" }
-"schemalyser.rules" = { layer = "4", note = "The site rules file, which only the synthetic database and superseded modules read." }
+"schemalyser.rules" = { layer = "4", note = "The site rules file, which only the synthetic world reads." }
 "schemalyser.realism.build_data" = { layer = "4" }
-"schemalyser.concepts" = { layer = "4", note = "The names of a conversion's concepts; it reads them through convert.py, and only target.py imports it, so it retires with target.py." }
-"schemalyser.dictionary" = { layer = "4", note = "The data dictionary of a conversion, read through convert.py; only target.py imports it, so it retires with target.py, as does its own import of target.py and questions.py." }
 
 "schemalyser.audit" = { layer = "orchestration", note = "It assembles the execution package. compile_audit, script and specification are layer 3's compilation and could move to a module of their own." }
 "schemalyser.plan" = { layer = "orchestration", note = "The plan review is one of the package's contents, and it takes its wording from audit.py." }
@@ -65,17 +65,3 @@
 
 "schemalyser.compare" = { layer = "adapter" }
 "schemalyser.transplant" = { layer = "adapter" }
-
-"schemalyser.__main__" = { layer = "superseded" }
-"schemalyser.analysis" = { layer = "superseded" }
-"schemalyser.boundary" = { layer = "superseded" }
-"schemalyser.checks" = { layer = "superseded" }
-"schemalyser.charted" = { layer = "superseded" }
-"schemalyser.facts" = { layer = "superseded" }
-"schemalyser.profile" = { layer = "superseded", note = "The profile of a core OMOP database. It was layer 3 on paper, but only superseded modules (boundary.py, questions.py, target.py) and the page's bridge for the earlier pages import it, and it imports checks.py, so it goes with the earlier design. If the OMOP layer needs a core profile, it returns to layer 3 once it no longer imports checks.py." }
-"schemalyser.questions" = { layer = "superseded" }
-"schemalyser.restructure" = { layer = "superseded" }
-"schemalyser.scripts" = { layer = "superseded" }
-"schemalyser.skeleton" = { layer = "superseded" }
-"schemalyser.sql_evidence" = { layer = "superseded" }
-"schemalyser.target" = { layer = "superseded" }

@@ -5,7 +5,9 @@ import json
 import sys
 from pathlib import Path
 
-from schemalyser import Analysis, browser
+from schemalyser.catalogue import Catalogue
+from schemalyser.harness import Analysis
+from schemalyser.sandbox import Sandbox
 from schemalyser.statements import drop_old_hints, separate
 from schemalyser.translate import to_duckdb
 
@@ -72,9 +74,9 @@ def test_a_reading_falls_inside_its_anaesthetic_in_the_sandbox():
         JOIN OBS_SHEET s ON s.ANAES_KEY = ar.ANAES_KEY JOIN OBS_READING r ON r.SHEET_KEY = s.SHEET_KEY
         WHERE r.READ_TS BETWEEN ar.ANAES_START_TS AND ar.ANAES_STOP_TS"""
     _, analysis = pack_for(sql)
-    assert browser.sandbox_start(CATALOGUE.encode(), make_checks.inventory_zip(analysis)) == "ok"
-    browser.sandbox_build(200)
-    assert json.loads(browser.sandbox_run(sql))["rows"] == [["200"]]
+    sandbox = Sandbox(Catalogue.from_csv(CATALOGUE), make_checks.inventory_zip(analysis))
+    sandbox.build(200)
+    assert json.loads(json.dumps(sandbox.run(sql)))["rows"] == [["200"]]
 
 
 def test_the_year_counts_are_planned_for_date_columns_the_requests_use():

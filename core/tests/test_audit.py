@@ -16,6 +16,7 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 import pytest
+import sqlglot
 
 from schemalyser import audit, corrections, describe, feasibility, plan, policy, propose, results, rolemap, specification
 from schemalyser.translate import to_duckdb
@@ -104,9 +105,9 @@ def test_the_script_is_in_two_parts_with_the_cohort_capped_and_the_readings_reac
     assert audit.part2_text(text).startswith("WITH role_reading AS (")
 
 
-def test_the_two_part_script_gives_every_planted_case_its_answer_on_a_shadow_of_the_hospitals_tables(schema):
-    """The compiled script runs in DuckDB on a shadow shaped as the hospital schema names the tables, with #cohort as a
-    temporary table; each planted neonate must give its expected minutes and death."""
+def _shadow(schema):
+    """A shadow in DuckDB shaped as the hospital schema names the tables, holding the planted role rows, with the role
+    views of the schema. Returns (the connexion, its date columns, {view: the view's T-SQL})."""
     sitting = schema.sitting
     data = copy.deepcopy(sitting.data)
     vocabularies = {name: sitting._vocabulary_codes(name) for name in data["roles"]}
@@ -125,15 +126,54 @@ def test_the_two_part_script_gives_every_planted_case_its_answer_on_a_shadow_of_
             shadow.place(name, values)
     shadow.pair_encounters()
     con, date_columns = shadow.database()
-    compiled = audit.compile_audit(schema, rolemap.AUDIT.read_text(encoding="utf-8"), dt.date(2024, 1, 1), dt.date(2024, 12, 31),
-                                   final="SELECT x.anaesthetic_key, x.minutes_below_40, x.died FROM banded x")
+    return con, date_columns, views
+
+
+def _two_parts(con, date_columns, compiled):
+    """The rows of part 2 once part 1 has filled the cohort, as the script runs them, with #cohort as a table."""
     filling = next(s for s in policy.split(compiled["part1"])[0] if "INTO   #cohort" in s)
     # DuckDB will not mix a text key with the 0 by which SQL Server makes the key fit for a primary key.
     filling = filling.replace("INTO   #cohort\n", "").replace("ISNULL(k.anaesthetic_key, 0)", "k.anaesthetic_key")
-    con.execute("CREATE TEMP TABLE cohort_rehearsal AS " + to_duckdb(filling, date_columns)[0])
-    got = con.execute(to_duckdb(compiled["part2"].replace("#cohort", "cohort_rehearsal"), date_columns)[0]).fetchall()
-    found = {str(k): (None if m is None else float(m), int(d)) for k, m, d in got}
+    con.execute("CREATE OR REPLACE TEMP TABLE cohort_rehearsal AS " + to_duckdb(filling, date_columns)[0])
+    return con.execute(to_duckdb(compiled["part2"].replace("#cohort", "cohort_rehearsal"), date_columns)[0]).fetchall()
+
+
+PER_ANAESTHETIC = "SELECT x.anaesthetic_key, x.minutes_below_40, x.died FROM banded x"
+
+
+def test_the_two_part_script_gives_every_planted_case_its_answer_on_a_shadow_of_the_hospitals_tables(schema):
+    """The compiled script runs in DuckDB on a shadow shaped as the hospital schema names the tables, with #cohort as a
+    temporary table; each planted neonate must give its expected minutes and death."""
+    con, date_columns, _ = _shadow(schema)
+    compiled = audit.compile_audit(schema, rolemap.AUDIT.read_text(encoding="utf-8"), dt.date(2024, 1, 1), dt.date(2024, 12, 31),
+                                   final=PER_ANAESTHETIC)
+    found = {str(k): (None if m is None else float(m), int(d)) for k, m, d in _two_parts(con, date_columns, compiled)}
     assert found and corrections._neonates(found) == []
+
+
+@pytest.mark.parametrize("final", [PER_ANAESTHETIC, None])
+def test_the_two_part_script_gives_the_same_rows_as_the_audit_as_one_query_over_the_role_views(schema, final):
+    """Carried from the earlier design's scripts (B8). The audit, run as one query over the role views of the same
+    shadow with the anaesthetics of the period alone, gives the rows that part 1 and part 2 give together, both for
+    each anaesthetic and for the audit's own answer with its small counts left as they are."""
+    con, date_columns, views = _shadow(schema)
+    audit_sql = rolemap.AUDIT.read_text(encoding="utf-8")
+    compiled = audit.compile_audit(schema, audit_sql, dt.date(2024, 1, 1), dt.date(2024, 12, 31), blank=False, final=final)
+    for name, sql in views.items():
+        view = to_duckdb(sql, date_columns)[0]
+        if name == "role_anaesthetic":
+            view = (f"SELECT * FROM ({view}) AS a WHERE a.start_time >= TIMESTAMP '2024-01-01' "
+                    "AND a.start_time < TIMESTAMP '2025-01-01'")
+        con.execute(f"CREATE VIEW {name} AS {view}")
+    tree = rolemap.check_audit(audit_sql)
+    if final is not None:
+        tree = tree.copy()
+        chosen = sqlglot.parse_one(final, dialect="tsql")
+        chosen.set("with_" if "with_" in chosen.arg_types else "with", (tree.args.get("with_") or tree.args.get("with")).copy())
+        tree = chosen
+    single = con.execute(to_duckdb(tree.sql(dialect="tsql"), date_columns)[0]).fetchall()
+    two = _two_parts(con, date_columns, compiled)
+    assert single and sorted(map(repr, two)) == sorted(map(repr, single))
 
 
 def test_the_expected_output_comes_from_made_up_rows_with_every_planted_case_matching(package):

@@ -523,7 +523,14 @@ export const describeStrings = {
   // The time zone of the database's clocks, asked once before the save.
   timeZoneLegend: "The time zone of the hospital's database",
   timeZoneWhy:
-    "The hospital schema gives each time as the database holds it, without converting it, so the saved file records the time zone that the database's clocks follow. The page has filled in this computer's time zone. If the database analyst knows that the database keeps another, such as UTC, the clinician changes it here.",
+    "The hospital schema gives each time as the database holds it, without converting it, so the saved file records the time zone that the database's clocks follow. If the database analyst knows that the database keeps another, such as UTC, the clinician changes it here before saving.",
+  // Where the time zone in the box came from. The page never records this computer's zone as if a person had given it.
+  timeZoneProposed:
+    "The page has proposed this computer's own time zone and daylight saving. If you save them unchanged, the saved file records that the page proposed them from this computer, rather than that a person gave them.",
+  timeZoneRecorded: {
+    'a person': 'The hospital schema records this time zone as given by a person.',
+    'proposed from this computer': "The hospital schema records this time zone as proposed from this computer, because it was saved unchanged. If the database analyst confirms the zone, type it into the box again, and the next save records it as given by a person.",
+  } as Record<string, string>,
   timeZoneLabel: 'The time zone, as a name such as Australia/Sydney or UTC:',
   daylightLabel: "The database's clocks change with daylight saving",
   // How the proposals fared, under step 9.
@@ -587,7 +594,9 @@ export const describeStrings = {
     withheld: "The page does not offer columns that hold a person's name, address, contact details or medical record number.",
     valuesRan: (n: number) => `The page has read ${plural(n, 'value', 'values')} of this column.`,
     probeRan: 'The page has read the result of the test query.',
-    valueRows: (value: string, rows: number | null) => `${value || '(empty)'}${rows === null ? ', in fewer than ten rows' : `, in about ${rows.toLocaleString('en-AU')} rows`}`,
+    // A value with its rows. The core marks a count that its query left empty because it was under ten.
+    valueRows: (value: string, rows: number | null, suppressed?: string | null) => `${value || '(empty)'}${rows !== null
+      ? `, in about ${rows.toLocaleString('en-AU')} rows` : suppressed === 'under_ten' ? ', in fewer than ten rows' : ''}`,
     factorLabel: 'then multiply it by',
     offsetLabel: 'and add this, which is usually 0',
     stepHeading: (n: number) => `Link ${n}`,

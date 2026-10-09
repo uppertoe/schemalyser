@@ -18,6 +18,8 @@
       <input type="date" name="to"></label>
     <label class="wide">The clinicians' decisions, one on each line, which the package records:
       <textarea name="decisions" rows="3"></textarea></label>
+    <label>The name of the clinician who made the decisions, which the package records beside each one. If you leave it empty, the package records the name as not recorded:
+      <input type="text" name="by" maxlength="100" autocomplete="name"></label>
     <label class="wide check"><input type="checkbox" name="exact" value="1"> The audit's approval allows exact small numbers, so the result keeps counts from 1 to 4.</label>
     <button type="submit">Build the package</button>
   </form>

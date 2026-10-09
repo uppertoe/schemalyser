@@ -29,11 +29,6 @@ FROM  (SELECT x.SHEET_KEY, x.SEQ, x.OBS_TYPE_KEY, x.READ_TS, x.READ_VALUE,
                    THEN TRY_CAST(NULLIF(LTRIM(RTRIM(SUBSTRING(x.READ_VALUE, CHARINDEX('/', x.READ_VALUE) + 1, 20))), '') AS float) END AS diastolic
        FROM   OBS_READING x
        WHERE  COALESCE(x.ACCEPTED_FLAG, 'Y') <> 'N') bp
-       -- Without the setting's mapping row, or with its target 0, this join keeps no row, so the step writes nothing.
-       JOIN omop.source_to_concept_map setting
-              ON setting.source_vocabulary_id = 'SITE_SETTING'
-             AND setting.source_code = 'CALCULATED_MEAN_PRESSURE'
-             AND setting.target_concept_id = 1
        JOIN OBS_SHEET s ON s.SHEET_KEY = bp.SHEET_KEY
        JOIN omop.visit_detail vd ON vd.visit_detail_source_value = CAST(s.ANAES_KEY AS varchar(50))
        JOIN omop.visit_occurrence vo ON vo.visit_occurrence_id = vd.visit_occurrence_id
@@ -41,14 +36,19 @@ FROM  (SELECT x.SHEET_KEY, x.SEQ, x.OBS_TYPE_KEY, x.READ_TS, x.READ_VALUE,
        -- its end, with the margin either side, or from its start less the margin where it has no end. The margin, in minutes, is
        -- the target of the one mapping row under SITE_SETTING (EVENT_LINK_MARGIN_MINUTES), so that it is set in one place.
        -- A row outside that window keeps the anaesthetic's visit_detail_id. The field concept 1147082 names procedure_occurrence_id.
-       LEFT JOIN omop.source_to_concept_map margin
-              ON margin.source_vocabulary_id = 'SITE_SETTING'
-             AND margin.source_code = 'EVENT_LINK_MARGIN_MINUTES'
-       LEFT JOIN omop.procedure_occurrence po
+       -- The margin is read from that row as a value beside each anaesthetic, rather than joined on a constant, so that
+       -- every join carries an equality between two columns that the policy can see; a second such row stops the step,
+       -- where a join would have repeated every row.
+       LEFT JOIN (SELECT p.procedure_occurrence_id, p.visit_detail_id, p.procedure_datetime, p.procedure_end_datetime,
+                         (SELECT margin.target_concept_id
+                          FROM   omop.source_to_concept_map margin
+                          WHERE  margin.source_vocabulary_id = 'SITE_SETTING'
+                            AND  margin.source_code = 'EVENT_LINK_MARGIN_MINUTES') AS margin_minutes
+                  FROM   omop.procedure_occurrence p
+                  WHERE  p.procedure_source_value = 'ANAESTHETIC') po
               ON po.visit_detail_id = vd.visit_detail_id
-             AND po.procedure_source_value = 'ANAESTHETIC'
-             AND bp.READ_TS >= DATEADD(minute, -margin.target_concept_id, po.procedure_datetime)
-             AND (po.procedure_end_datetime IS NULL OR bp.READ_TS <= DATEADD(minute, margin.target_concept_id, po.procedure_end_datetime))
+             AND bp.READ_TS >= DATEADD(minute, -po.margin_minutes, po.procedure_datetime)
+             AND (po.procedure_end_datetime IS NULL OR bp.READ_TS <= DATEADD(minute, po.margin_minutes, po.procedure_end_datetime))
        -- A charted pressure is one whose observation type has a mapping row for its systolic part and one for its diastolic part.
        JOIN omop.source_to_concept_map systolic_part
               ON systolic_part.source_vocabulary_id = 'SITE_OBS_SYSTOLIC'
@@ -59,3 +59,10 @@ FROM  (SELECT x.SHEET_KEY, x.SEQ, x.OBS_TYPE_KEY, x.READ_TS, x.READ_VALUE,
 WHERE  bp.systolic IS NOT NULL
   AND  bp.diastolic IS NOT NULL
   AND  bp.READ_TS IS NOT NULL
+  -- Without the setting's mapping row, or with its target 0, this condition keeps no row, so the step writes nothing.
+  -- The setting is read as a value rather than joined on a constant, so that every join carries an equality between
+  -- two columns, and a second such row stops the step.
+  AND  (SELECT setting.target_concept_id
+        FROM   omop.source_to_concept_map setting
+        WHERE  setting.source_vocabulary_id = 'SITE_SETTING'
+          AND  setting.source_code = 'CALCULATED_MEAN_PRESSURE') = 1

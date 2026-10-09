@@ -449,13 +449,16 @@ def test_every_count_column_is_a_plain_name_written_in_brackets():
 
 def test_the_script_states_the_share_of_steps_on_each_route_and_names_each_step_s_route():
     text = release.script(CONVERSION)
-    assert ("-- " + release.WORDING["routes"].format(count=10, roles=0, direct=10, roles_verb="are", direct_verb="are")) in text
+    assert ("-- " + release.WORDING["routes"].format(count=10, roles=1, direct=9, roles_verb="is", direct_verb="are")) in text
     at = text.index("-- visit_detail_through_case.sql\n")
     following = text[at:].splitlines()[1]
     assert following.startswith("-- This step is written directly from the source tables. It rests on the invented world's own conversion")
-    # A derived step takes neither route, so its comment names none.
-    assert text[text.index("-- anaesthetic.sql\n"):].splitlines()[1].startswith("INSERT INTO")
-    assert release.route_summary(CONVERSION)["direct"] == 10
+    at = text.index("-- drug_exposure_infusion_roles.sql\n")
+    assert text[at:].splitlines()[1] == "-- " + release.WORDING["route_roles_compiled"].format(world="the invented world")
+    # A derived step takes neither route, so its comment names none, and names only its class.
+    assert text[text.index("-- anaesthetic.sql\n"):].splitlines()[1] == "-- " + release.WORDING["class_step"].format(grade="C")
+    assert text[text.index("-- anaesthetic.sql\n"):].splitlines()[2].startswith("INSERT INTO")
+    assert (release.route_summary(CONVERSION)["direct"], release.route_summary(CONVERSION)["roles"]) == (9, 1)
 
 
 @pytest.mark.parametrize("drop, what", [("review", "the review"), ("reference", "the reference"), ("reason", "the reason")])
@@ -484,23 +487,134 @@ def test_a_draft_is_refused_until_its_marker_is_removed(tmp_path):
     release.script(folder)
 
 
-def test_a_step_over_the_roles_is_refused_as_a_step_and_checked_where_it_waits_beside_one(tmp_path):
+def test_a_step_over_the_roles_is_compiled_through_the_hospital_schema_and_carried():
+    text = release.script(CONVERSION)
+    at = text.index("-- drug_exposure_infusion_roles.sql\n")
+    step = text[at:text.index("AS [step];", at)]
+    # The role view and the mapping view that the step reads come first, written from the invented map over the source
+    # tables, and the step's own common table expressions follow them; the direct step is not carried.
+    assert step.index("WITH [role_drug] AS (") < step.index("[map_drug_concept] AS (") < step.index("[superseded] AS (")
+    assert "FROM $(SourcePrefix)[DRUG_GIVEN] AS [g]" in step and "FROM $(SourcePrefix)[DRUG_ORDER] AS [o]" in step
+    assert "$(SourcePrefix)[role_drug]" not in text and "$(SourcePrefix)[map_drug_concept]" not in text
+    assert "-- drug_exposure_infusion.sql\n" not in text
+    assert "-- " + release.WORDING["roles_compiled"].format(world="the invented world") in text
+    # The compiled step is one SELECT over the hospital's tables and the OMOP tables, and names no role view as a table.
+    compiled = release.compile_roles_step((CONVERSION / "drug_exposure_infusion_roles.sql").read_text(),
+                                          release.read_schema(CONVERSION), "drug_exposure_infusion_roles.sql")
+    tree = sqlglot.parse_one(compiled, dialect="tsql")
+    named = {cte.alias for cte in tree.find_all(sqlglot.exp.CTE)}
+    assert {"role_drug", "map_drug_concept"} <= named
+    read = {(t.db, t.name) for t in tree.find_all(sqlglot.exp.Table) if t.name not in named}
+    assert read == {("", "DRUG_GIVEN"), ("", "DRUG_ORDER"), ("omop", "visit_detail")}
+    # The source manifest lists what the compiled step reads.
+    from schemalyser.catalogue import Catalogue
+    manifest = release.source_manifest(CONVERSION, Catalogue.from_csv((FIXTURES / "invented-catalogue.csv").read_text()))
+    assert "DRUG_GIVEN,AMENDS_KEY" in manifest and "DRUG_ORDER,ORDER_KEY" in manifest
+
+
+def _changed_roles_step(tmp_path, change=lambda sql: sql):
+    """A copy of the invented conversion whose step over the roles is changed, so that it is no longer the invented
+    world's own file and no map lies beside the copy."""
+    folder = tmp_path / "copy" / "conversion"
+    shutil.copytree(CONVERSION, folder)
+    path = folder / "drug_exposure_infusion_roles.sql"
+    path.write_text(change(path.read_text()) + "\n-- A copy, changed for the test.\n")
+    return folder
+
+
+def test_a_step_over_the_roles_is_refused_without_a_hospital_schema_and_with_one_that_does_not_supply_it(tmp_path):
+    folder = _changed_roles_step(tmp_path)
+    assert convert.hospital_schema(folder) is None
+    with pytest.raises(Refused, match="drug_exposure_infusion_roles.sql: the step is written over the roles, and no hospital schema"):
+        release.script(folder)
+    assert "WITH [role_drug] AS (" in release.script(folder, schema=FIXTURES / "map")
+    # A map that does not bind role_drug cannot compile the step, which says which view it lacks.
+    bare = tmp_path / "bare"
+    shutil.copytree(FIXTURES / "map", bare)
+    data = json.loads((bare / "map.json").read_text())
+    data["roles"].pop("role_drug")
+    (bare / "map.json").write_text(json.dumps(data))
+    with pytest.raises(Refused, match="the step reads role_drug, which the hospital schema of the invented world does not supply"):
+        release.script(folder, schema=bare)
+
+
+def test_a_step_over_the_roles_that_reads_a_source_table_or_hides_one_is_refused(tmp_path):
+    folder = _changed_roles_step(tmp_path, lambda sql: sql.replace("FROM   role_drug d", "FROM   DRUG_GIVEN d"))
+    with pytest.raises(Refused, match="reads only the role views, the mapping views and the OMOP tables"):
+        release.script(folder, schema=FIXTURES / "map")
+    # A common table expression of the step that bears the name of a table that the map's view reads would hide it.
+    folder = _changed_roles_step(tmp_path / "again", lambda sql: sql.replace("concept AS (", "drug_order AS (").replace(
+        "LEFT JOIN concept c", "LEFT JOIN drug_order c"))
+    with pytest.raises(Refused, match="the view role_drug of the hospital schema reads a table named DRUG_ORDER"):
+        release.script(folder, schema=FIXTURES / "map")
+
+
+def test_a_step_over_the_roles_that_waits_beside_a_direct_step_is_checked_and_not_carried(tmp_path):
     folder = tmp_path / "conversion"
     shutil.copytree(CONVERSION, folder)
     steps = json.loads((folder / "conversion.json").read_text())
-    infusion = next(s for s in steps if s["file"] == "drug_exposure_infusion.sql")
-    # Waiting beside the direct step, it is checked for what it reads and what it writes, and the script carries the
-    # direct step.
+    infusion = next(s for s in steps if s["file"] == "drug_exposure_infusion_roles.sql")
+    direct = infusion["alternatives"][0]
+    infusion.clear()
+    infusion.update(table="drug_exposure", file="drug_exposure_infusion.sql", layer="anaesthesia", roles_step="drug_exposure_infusion_roles.sql",
+                    **{k: direct[k] for k in ("route", "reference", "reason", "review")})
+    (folder / "conversion.json").write_text(json.dumps(steps))
     text = release.script(folder)
     assert "-- drug_exposure_infusion.sql\n" in text and "role_drug" not in text
     (folder / "drug_exposure_infusion_roles.sql").write_text(
         (CONVERSION / "drug_exposure_infusion_roles.sql").read_text().replace("FROM   role_drug d", "FROM   DRUG_GIVEN d"))
     with pytest.raises(Refused, match="reads only the role views, the mapping views and the OMOP tables"):
         release.script(folder)
-    # As the step itself, the script cannot yet compile the role views it reads, so it refuses the step by name.
-    shutil.copy(CONVERSION / "drug_exposure_infusion_roles.sql", folder / "drug_exposure_infusion_roles.sql")
-    infusion.pop("roles_step")
-    infusion.update(file="drug_exposure_infusion_roles.sql", route="roles")
-    (folder / "conversion.json").write_text(json.dumps(steps))
-    with pytest.raises(Refused, match="drug_exposure_infusion_roles.sql: the step is written over the roles"):
+
+
+# The classes that the static policy derives for the steps and gates.
+
+def test_the_release_records_the_class_of_every_step_and_gate():
+    from schemalyser import policy
+    classes = release.step_classes(CONVERSION)
+    steps = json.loads((CONVERSION / "conversion.json").read_text())
+    assert [e["file"] for e in classes if e["what"] == "step"] == [s["file"] for s in steps]
+    assert all(e["policy_version"] == policy.POLICY_VERSION and e["report"]["purpose"] == "conversion" for e in classes)
+    # Every step and gate that the script carries is of class C, the roles step as compiled through the map.
+    carried = [e for e in classes if e["carried"]]
+    assert len(carried) == 12 + 9 and all(e["execution_class"] == "C" for e in carried)
+    # The core step that states the release date reads the server's clock, and conversion.json records why it is class D.
+    (source,) = [e for e in classes if e["execution_class"] == "D"]
+    assert source["file"] == "cdm_source.sql" and not source["carried"] and source["failed_rules"] == ["functions"]
+    assert source["recorded"]["class"] == "D" and "GETDATE" in source["recorded"]["reason"]
+    text = release.script(CONVERSION)
+    header = text.split("\n:on error exit")[0]
+    assert "-- " + release.WORDING["classes"].format(version=policy.POLICY_VERSION, count=21, c=21, c_verb="are") in header
+    assert "-- " + release.WORDING["class_justified"].format(layer="core", name="cdm_source.sql", grade="D") in header
+    assert "-- " + source["recorded"]["reason"] in header
+    for entry in carried:
+        if entry["what"] == "step":
+            assert text[text.index(f"-- {entry['file']}\n"):].splitlines()[1:3].count(
+                "-- " + release.WORDING["class_step"].format(grade="C")) == 1, entry["file"]
+
+
+def test_a_carried_step_of_class_d_is_refused_and_a_stale_record_of_a_class_too(tmp_path):
+    folder = _folder(tmp_path, GOOD_STEP + "\nLEFT JOIN omop.source_to_concept_map m ON m.source_code = 'X'")
+    with pytest.raises(Refused, match=r"step\.sql: the static policy places this step in class D .* the rule joins"):
         release.script(folder)
+    copy = tmp_path / "copy" / "conversion"
+    shutil.copytree(CONVERSION, copy)
+    steps = json.loads((copy / "conversion.json").read_text())
+    source = next(s for s in steps if s["file"] == "cdm_source.sql")
+    source["policy_class"]["class"] = "C"
+    (copy / "conversion.json").write_text(json.dumps(steps))
+    with pytest.raises(Refused, match="cdm_source.sql: conversion.json records the class C for this step, and the static policy now derives the class D"):
+        release.script(copy)
+    source["policy_class"] = {"class": "D"}
+    (copy / "conversion.json").write_text(json.dumps(steps))
+    with pytest.raises(Refused, match="cdm_source.sql: policy_class is"):
+        release.script(copy)
+
+
+def test_the_command_writes_the_class_of_every_step_beside_the_script(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["release", str(CONVERSION), "--catalogue", str(FIXTURES / "invented-catalogue.csv"),
+                                      "--out", str(tmp_path / "out"), "--schema", str(FIXTURES / "map")])
+    assert release.main() == 0
+    written = json.loads((tmp_path / "out" / "step_classes.json").read_text())
+    assert {e["file"]: e["execution_class"] for e in written}["drug_exposure_infusion_roles.sql"] == "C"
+    assert all(set(e["report"]) >= {"policy_version", "rules", "execution_class"} for e in written)

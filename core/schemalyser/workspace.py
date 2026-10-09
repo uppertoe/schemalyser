@@ -53,12 +53,11 @@ HOME_PATH = re.compile(rb"(/Users/[A-Za-z0-9._-]+|/home/[a-z][a-z0-9._-]*/|[A-Za
 # The modules of the core that the feasibility report, the audit's package and the testbed import, with the role
 # policy and this module, so that an agent can check a question before handing it back.
 CORE_MODULES = (
-    "__init__", "analysis", "audit", "capability", "catalogue", "charted", "checks", "concepts", "convert", "corrections", "datadict",
-    "describe", "dictionary", "evidence", "extract", "facts", "feasibility", "first_ask", "harness", "hospital", "mapping", "memo",
-    "normalise",
-    "plan", "policy", "profile", "project", "propose", "questions", "realistic", "release", "restructure", "rolemap", "rolepolicy", "roles",
-    "routes", "rules", "sample_vocabulary", "sandbox", "scripts", "skeleton", "specification", "sql_evidence", "statements", "target", "testbed",
-    "translate", "tuning", "vocabulary", "workspace",
+    "__init__", "audit", "blanking", "capability", "catalogue", "convert", "corrections", "datadict", "describe",
+    "evidence", "extract", "feasibility", "first_ask", "harness", "hospital", "mapping", "memo", "normalise", "plan",
+    "policy", "project", "propose", "realistic", "release", "rolemap", "rolepolicy", "roles", "routes", "rules",
+    "sample_vocabulary", "sandbox", "specification", "statements", "summaries", "testbed", "translate", "tuning",
+    "vocabulary", "workspace",
 )
 
 # Each entry is a file, or a folder whose files must all have one of its suffixes.

@@ -1,7 +1,0 @@
-# The packages that the boundary image installs, pinned with the checksum of each wheel that PyPI publishes.
-# duckdb is needed only because harness.py and convert.py import it at the top. The boundary never calls it.
-sqlglot==30.21.0 \
-    --hash=sha256:816d1a4815b7562b3976efcc0b561c928a743f976efd0fb8ad6db7a5b96c069e
-duckdb==1.5.1 \
-    --hash=sha256:da137802688190835b4c863cafa77fd7e29dff662ee6d905a9ffc14f00299c91 \
-    --hash=sha256:5d4147422d91ccdc2d2abf6ed24196025e020259d1d267970ae20c13c2ce84b1

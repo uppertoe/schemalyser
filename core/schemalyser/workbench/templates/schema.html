@@ -26,9 +26,9 @@
 
 <section>
   <h2>How the proposals fared</h2>
-  <p>{{ board.lines[2] }}</p>
+  <p>{{ overall }}</p>
   <details x-data><summary>The figures for each part and each category of column</summary>
-    {% for line in board.lines[3:] %}{% if line %}<p>{{ line }}</p>{% endif %}{% endfor %}
+    {% for line in rest %}<p>{{ line }}</p>{% endfor %}
   </details>
 </section>
 

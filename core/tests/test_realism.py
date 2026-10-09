@@ -7,9 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from schemalyser import browser, roles
+from schemalyser import roles
 from schemalyser.catalogue import Catalogue
 from schemalyser.rules import SiteRules
+from schemalyser.sandbox import Sandbox
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 REALISM = Path(__file__).resolve().parents[1] / "schemalyser" / "realism"
@@ -23,11 +24,11 @@ CATALOGUE = (FIXTURES / "invented-catalogue.csv").read_text()
 def run():
     analysis = make_checks.analysis((FIXTURES / "invented-checks.csv").read_text())
     assert "roles.csv" in analysis.pack()
-    assert browser.sandbox_start(CATALOGUE.encode(), make_checks.inventory_zip(analysis)) == "ok"
-    browser.sandbox_build(400)
+    sandbox = Sandbox(Catalogue.from_csv(CATALOGUE), make_checks.inventory_zip(analysis))
+    sandbox.build(400)
 
     def query(sql):
-        result = json.loads(browser.sandbox_run(sql))
+        result = json.loads(json.dumps(sandbox.run(sql)))
         assert result["status"] == "ok", result
         return result["rows"]
     return query
@@ -99,9 +100,9 @@ def test_a_medication_filter_now_finds_rows(run):
 
 # Tunable parameters, roles that cannot be applied, repeat anaesthetics and the sentinel date.
 
-from schemalyser import Analysis, tuning  # noqa: E402
+from schemalyser import tuning  # noqa: E402
+from schemalyser.harness import Analysis  # noqa: E402
 from schemalyser.catalogue import Catalogue as _Catalogue  # noqa: E402
-from schemalyser.sandbox import Sandbox  # noqa: E402
 
 RULES = json.loads((FIXTURES / "invented-site-rules.json").read_text())
 CHECKS = (FIXTURES / "invented-checks.csv").read_text()

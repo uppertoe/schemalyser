@@ -17,11 +17,26 @@ interface Item {
   answer: string | null; date: string | null; replacement: string | null; presence: Presence | null;
   link: string | null; correction: corrections.CorrectionHeld | null; title: string; offers_identifying?: boolean; withheld?: number;
   coding: { form: string; translated: boolean; assumed: string; values: string[]; list?: boolean } | null;
+  // How the core counts the answer in the tally, and the correction forms it offers for this row.
+  answered_as?: 'confirmed' | 'corrected' | 'not_sure' | 'untranslated' | null; forms?: string[];
 }
-interface Role { name: string; title: string; description: string; required: boolean; drafted: boolean; items: Item[] }
+interface Role {
+  name: string; title: string; description: string; required: boolean; drafted: boolean; items: Item[];
+  // How many of the part's rows the core counts as answered, and the forms a part with no table offers.
+  answered: number; forms: string[];
+}
+// Why the core shows a cell as it is not, such as a count that its query left empty because it is under ten.
+type Suppressed = 'under_ten' | null;
+interface Cells { counted: number[]; suppressed: Suppressed[][] }
+// The state of a step as the core derives it from the record. Step 1 and the tab's being offline are the page's own.
+interface StepHeld {
+  state: 'done' | 'available' | 'waiting' | 'attention'; waits_for: 'dictionary' | 'map' | 'invented_hospital' | null; optional: boolean;
+  progress?: { done: number; of: number; wrong?: number }; saved?: 'current' | 'stale' | null; draft?: boolean;
+}
 interface Vocabulary {
   key: string; title: string; view: string; column: string; vocabulary: string; kinds: string[]; meanings: Record<string, string>; bound: string;
-  lookup: [string, string] | null; reason: string; link: string | null; rows: { code: string; charted: number | null; anaesthetics: number | null; name: string }[];
+  lookup: [string, string] | null; reason: string; link: string | null;
+  rows: { code: string; charted: number | null; anaesthetics: number | null; name: string; suppressed: Record<string, Suppressed> }[];
   chosen: Record<string, string>; year: number | null; date: string | null;
 }
 interface CountHeld {
@@ -32,6 +47,7 @@ interface CountHeld {
   // The list of codes at step 7 that a finding of a count leads to, as {finding: key}.
   finding_codes?: Record<string, string>;
   database: string | null;
+  cells: Cells;
 }
 interface Tally {
   confirmed: number; corrected: number; not_sure: number; remaining: number; untranslated: number; total: number;
@@ -46,14 +62,18 @@ interface Model {
   untranslated: { about: string; title: string; from: string }[]; unfinished: string; counts_offered: string[];
   questions: { about: string; title: string; question: string; meaning: string }[]; catalogue: boolean;
   catalogue_source: 'database' | 'query' | null; vocabularies: Vocabulary[]; counts: Record<string, CountHeld>;
-  settings: { made: string | null; updated: string | null; database: string | null; year: number | null; time_zone?: string | null; daylight_saving?: boolean | null };
+  settings: {
+    made: string | null; updated: string | null; database: string | null; year: number | null; time_zone?: string | null;
+    time_zone_from?: string | null; daylight_saving?: boolean | null;
+  };
+  steps: Record<string, StepHeld>; current_step: string | null; answered_share: number; answered_any: boolean;
   restored: Record<string, unknown> | null;
   // The state of readiness that the core derives from the evidence, the lines of how the proposals fared, and where the
   // result of each query came from (a sample, complete data or metadata).
   readiness?: { reached: string | null } | null; scoreboard?: string[]; provenance?: Record<string, string>;
   // The version the sitting carries on from, and the name of its saved file, which carries the version's schema_id.
   schema?: { schema_id: string | null; parent_id: string | null; file: string };
-  values: Record<string, { value: string; rows: number | null }[]>; anaesthetic_table: string | null; bases: Record<string, string>;
+  values: Record<string, { value: string; rows: number | null; suppressed: Suppressed }[]>; anaesthetic_table: string | null; bases: Record<string, string>;
 }
 interface CountQuery { name: string; safe: boolean; sql: string; tables: [string, number | null][] }
 interface CheckQuery { name: string; number: number; step: string | null; sql: string; file: string; pasted: string | null; database: string | null; columns: string[]; rows: string[][]; more: number }
@@ -95,22 +115,15 @@ const changing = new Set<string>();
 // The steps that a person has opened or hidden by hand; otherwise the current step is open and the rest are folded.
 const opened = new Set<string>();
 const hidden = new Set<string>();
-let written = false;
 // Whether the worker holds the invented hospital, which answers the page's queries while the invented dictionary is in use.
 let hospitalReady = false;
 // Whether the page is still fetching the invented hospital's files, during which the tab must stay online.
 let hospitalFetching = false;
 // The name of the one file that holds the saved hospital schema, until the core names the version it saved.
 const SCHEMA_FILE = 'hospital-schema.schemalyser.zip';
-// Whether the hospital schema last saved was a draft, which leaves step 9 to be done again.
-let writtenDraft = false;
 // The text of a finding, shown at the row that its link leads to, with where it came from: the test of the whole
 // hospital schema on made-up rows, or a count at step 8.
 const landed = new Map<string, { text: string; from: 'test' | 'count' }>();
-// Whether something has changed since the hospital schema was saved, which makes step 9 to be done again.
-let changedSinceWritten = false;
-// The calls that change nothing that the saved hospital schema holds.
-const READING = new Set(['describe_model', 'describe_check', 'describe_compare', 'describe_dictionary_query']);
 // The sentence that says why an answer could not be recorded, beside the binding it was given for.
 const problems = new Map<string, string>();
 // The receipt of each list of codes and each count, which stays in view when the step is drawn again.
@@ -153,10 +166,6 @@ function call(name: string, args: unknown[] = [], extra: Record<string, unknown>
 async function ask(name: string, args: unknown[] = [], extra: Record<string, unknown> = {}, progress?: (done: number, total: number) => void): Promise<Reply> {
   const reply = await call(name, args, extra, progress);
   const parsed = JSON.parse(reply.reply as string) as Reply;
-  if (parsed.ok && !READING.has(name) && written) {
-    written = false;
-    changedSinceWritten = true;
-  }
   if (parsed.model) {
     model = parsed.model;
     render();
@@ -228,7 +237,6 @@ function lock() {
   judging.clear();
   countQueries = [];
   tablesSql = '';
-  written = false;
   hospitalReady = false;
   for (const input of document.querySelectorAll<HTMLInputElement>('input[type=file]')) input.value = '';
   for (const area of document.querySelectorAll<HTMLTextAreaElement>('textarea')) area.value = '';
@@ -257,49 +265,15 @@ function open() {
 
 type StepState = 'done' | 'current' | 'available' | 'waiting' | 'problem';
 const STEPS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
-const OPTIONAL = new Set(['3']);
 
-// Step 7 is done once every list that a bound column of a kind offers is saved.
-function listsSaved(m: Model) {
-  return m.vocabularies.filter((v) => !v.reason && v.date).length;
-}
-
-function listsOffered(m: Model) {
-  return m.vocabularies.filter((v) => !v.reason).length;
-}
-
-function vocabulariesDone(m: Model) {
-  return listsSaved(m) === listsOffered(m);
-}
-
-// Step 8 is done once every count offered has a saved judgement.
-function judged(m: Model) {
-  return m.counts_offered.filter((name) => !!m.counts[name]?.looks_right).length;
-}
-
-function countsDone(m: Model) {
-  return m.counts_offered.length > 0 && judged(m) === m.counts_offered.length;
-}
-
-// The counts judged to look wrong, which keep step 8 in need of attention.
-function judgedWrong(m: Model) {
-  return m.counts_offered.filter((name) => m.counts[name]?.looks_right === 'no').length;
-}
-
-// Step 6 is done once every column and table has an answer and every code is translated.
-function confirmDone(t: Tally) {
-  return t.remaining === 0 && t.tables_remaining === 0 && t.untranslated === 0;
-}
-
-// What each step is: its state, the line that a folded step shows, and what a waiting step waits for.
+// What each step is: its state, the line that a folded step shows, and what a waiting step waits for. The core says
+// how far the record has gone at each step and which step comes next; the page adds only what the tab itself knows,
+// which is whether the page has loaded and whether the tab is offline.
 function stepStates() {
   const m = model;
   const ready = open();
-  const proposed = !!m?.proposed;
-  const restoredMap = !!(m?.restored && (m.restored as { map?: boolean }).map);
-  const done = [ready, !!m?.dictionary, restoredMap, proposed, !!m?.catalogue, proposed && confirmDone(m!.tally),
-    proposed && vocabulariesDone(m!), proposed && countsDone(m!), written && !writtenDraft];
-  const waits = STEPS.map((_, i) => {
+  const held = (n: string): StepHeld | undefined => m?.steps?.[n];
+  const waits = STEPS.map((n, i) => {
     if (i === 0) return '';
     // Until the page has loaded, every step waits for that, and nothing else.
     if (state === 'loading') return d.waitingFor.loading;
@@ -307,19 +281,15 @@ function stepStates() {
     // Step 2 is open while the tab is still online, for the invented dictionary; its file controls wait for offline.
     if (i === 1) return '';
     if (!ready) return d.waitingFor.offline;
-    if (i === 3) return m?.dictionary || proposed ? '' : d.waitingFor.dictionary;
-    // Step 5 is answered by the data dictionary made from the database, which needs no proposal first.
-    if (i === 4 && m?.catalogue_source === 'database') return '';
-    if (i >= 4 && !proposed) return d.waitingFor.map;
-    // With the invented dictionary and no invented hospital, no database can answer step 5, so it says to go on.
-    if (i === 4 && m?.dictionary?.invented && !hospitalReady && !m.catalogue) return d.waitingFor.inventedNoHospital;
-    return '';
+    const reason = held(n)?.waits_for;
+    return reason === 'dictionary' ? d.waitingFor.dictionary : reason === 'map' ? d.waitingFor.map
+      : reason === 'invented_hospital' ? d.waitingFor.inventedNoHospital : '';
   });
-  const wrong = proposed ? judgedWrong(m!) : 0;
-  const states: StepState[] = STEPS.map((_, i) => {
+  const states: StepState[] = STEPS.map((n, i) => {
     if (i === 0) return ready ? 'done' : state === 'load-failed' || state === 'locked' ? 'problem' : 'current';
-    if (i === 7 && !waits[i] && wrong) return 'problem';
-    return waits[i] ? 'waiting' : done[i] ? 'done' : 'available';
+    if (waits[i]) return 'waiting';
+    const value = held(n)?.state ?? 'available';
+    return value === 'attention' ? 'problem' : value === 'waiting' ? 'available' : value;
   });
   // Once the page has sent the reader to step 2 to load the invented dictionary before going offline, step 2 is the
   // step in hand until the dictionary is loaded, and then step 1 is again.
@@ -327,9 +297,12 @@ function stepStates() {
     states[0] = 'available';
     states[1] = 'current';
   }
-  const first = states.findIndex((value, i) => value === 'available' && !OPTIONAL.has(STEPS[i]) && i > 0);
-  if (first >= 0 && !states.includes('current')) states[first] = 'current';
+  const next = m?.current_step ? STEPS.indexOf(m.current_step) : -1;
+  if (next > 0 && states[next] === 'available' && !states.includes('current')) states[next] = 'current';
   const statusText = (id: string) => ($(id).hidden ? '' : $(id).textContent ?? '');
+  const codes = held('7')?.progress;
+  const counts = held('8')?.progress;
+  const wrong = counts?.wrong ?? 0;
   const receipts = [
     d.offlineDone,
     m?.dictionary ? d.dictionaryReceipt(m.dictionary) : '',
@@ -337,8 +310,8 @@ function stepStates() {
     m ? d.receipt.proposed(m.roles.filter((r) => r.drafted).length, m.roles.length) : '',
     m?.catalogue_source === 'database' ? d.tablesAnswered : statusText('t-tables-status') || d.receipt.tables,
     m ? d.receipt.confirmed(m.tally.total, m.roles.filter((r) => !r.drafted).length) : '',
-    m ? d.receipt.codes(listsSaved(m), listsOffered(m)) : '',
-    m ? (wrong ? `${d.state.problem}: ${d.receipt.countsWrong(wrong)}.` : d.receipt.counts(judged(m), m.counts_offered.length)) : '',
+    codes ? d.receipt.codes(codes.done, codes.of) : '',
+    counts ? (wrong ? `${d.state.problem}: ${d.receipt.countsWrong(wrong)}.` : d.receipt.counts(counts.done, counts.of)) : '',
     statusText('t-write-status'),
   ];
   return { states, waits, receipts };
@@ -375,9 +348,10 @@ function show() {
     if (value === 'current') step.setAttribute('aria-current', 'step');
     else step.removeAttribute('aria-current');
     // Step 9, once saved as a draft, says so with what is still to answer, rather than that it is ready.
-    const draftLeft = n === '9' && written && writtenDraft && model?.proposed
+    const saving = model?.steps?.['9'];
+    const draftLeft = n === '9' && saving?.saved === 'current' && saving.draft && model?.proposed
       ? d.savedDraft(d.stillToAnswer(model.tally.remaining, model.tally.tables_remaining, model.tally.untranslated)) : '';
-    const word = draftLeft || (value === 'available' && OPTIONAL.has(n) ? d.state.optional : d.state[value]);
+    const word = draftLeft || (value === 'available' && model?.steps?.[n]?.optional ? d.state.optional : d.state[value]);
     text(`state-${n}`, word);
     const receipt = $(`receipt-${n}`);
     // A folded step shows its receipt when done, and otherwise its first instruction.
@@ -406,12 +380,13 @@ function show() {
     const name = d.steps[i].replace(/^\d+\.\s*/, '');
     // Steps 6 to 9 say how far each has gone until it is done.
     let progress = '';
-    if (model?.proposed && n === '8' && value === 'problem') progress = d.receipt.countsWrong(judgedWrong(model));
+    const far = model?.steps?.[n]?.progress;
+    if (model?.proposed && n === '8' && value === 'problem') progress = d.receipt.countsWrong(far?.wrong ?? 0);
     else if (model?.proposed && value !== 'done' && value !== 'waiting') {
       const t = model.tally;
       if (n === '6') progress = d.stillToAnswer(t.remaining, t.tables_remaining, t.untranslated);
-      if (n === '7' && listsOffered(model)) progress = d.receipt.codes(listsSaved(model), listsOffered(model)).replace(/\.$/, '');
-      if (n === '8' && model.counts_offered.length) progress = d.receipt.counts(judged(model), model.counts_offered.length).replace(/\.$/, '');
+      if (n === '7' && far?.of) progress = d.receipt.codes(far.done, far.of).replace(/\.$/, '');
+      if (n === '8' && far?.of) progress = d.receipt.counts(far.done, far.of).replace(/\.$/, '');
     }
     const railWord = value === 'waiting' ? waits[i] : progress ? `${word}: ${progress}` : word;
     link.append(el('span', value === 'done' ? '✓' : value === 'problem' ? '!' : n, 'marker'), el('span', name, 'rail-name'),
@@ -551,9 +526,9 @@ function render() {
   $('tables-write').classList.toggle('secondary', !!tablesSql);
   $('counts-write').classList.toggle('secondary', countQueries.length > 0);
   $('t-counts-again').hidden = countQueries.length === 0;
-  if (changedSinceWritten && !written) status('t-write-status', d.writtenStale);
+  if (model?.steps?.['9']?.saved === 'stale') status('t-write-status', d.writtenStale);
   // The check of the whole map says, once something is answered, that it checks the map as it now stands.
-  const answeredAny = !!model?.proposed && (model.tally.total - model.tally.remaining + model.tally.tables - model.tally.tables_remaining) > 0;
+  const answeredAny = !!model?.proposed && model.answered_any;
   text('t-model-check-what', answeredAny ? d.corrections.modelCheckWhatAfter : d.corrections.modelCheckWhat);
   text('model-check', d.corrections.modelCheck);
   renderDraft();
@@ -561,16 +536,65 @@ function render() {
   show();
 }
 
-// Step 9 asks once for the time zone of the database's clocks, filled in from this computer, and shows how the
-// proposals fared.
+// Step 9 asks once for the time zone of the database's clocks, and shows how the proposals fared. A zone that the
+// hospital schema holds is shown as it is recorded; otherwise the page proposes this computer's own zone and says so,
+// and a save that keeps the proposal unchanged tells the core that it was proposed, never given.
+let proposedZone: { zone: string; daylight: boolean } | null = null;
+// Whether the person has typed into the time zone or changed the daylight saving since the page filled them in.
+let zoneTouched = false;
+
+function zoneNote() {
+  let note = document.getElementById('t-time-zone-from');
+  if (!note) {
+    note = el('p', '', 'note');
+    note.id = 't-time-zone-from';
+    $('f-time-zone').append(note);
+  }
+  return note;
+}
+
+function zoneFrom(): string {
+  const zone = $<HTMLInputElement>('time-zone').value.trim();
+  const daylight = $<HTMLInputElement>('daylight-saving').checked;
+  if (zoneTouched) return 'a person';
+  if (proposedZone && zone === proposedZone.zone && daylight === proposedZone.daylight) return 'proposed from this computer';
+  const held = model?.settings;
+  if (held?.time_zone && zone === held.time_zone && daylight === !!held.daylight_saving && held.time_zone_from) return held.time_zone_from;
+  return 'a person';
+}
+
+// The note under the time zone says where the zone in the box came from, as the box now stands.
+function renderZoneNote() {
+  const from = zoneFrom();
+  const held = model?.settings;
+  const zone = $<HTMLInputElement>('time-zone').value.trim();
+  const recorded = held?.time_zone && zone === held.time_zone && from === held.time_zone_from ? d.timeZoneRecorded[from] ?? '' : '';
+  const note = zoneNote();
+  note.textContent = recorded || (from === 'proposed from this computer' ? d.timeZoneProposed : '');
+  note.hidden = !note.textContent;
+}
+
 function renderSaving() {
   const zone = $<HTMLInputElement>('time-zone');
   const daylight = $<HTMLInputElement>('daylight-saving');
-  if (!zone.value) {
-    zone.value = model?.settings.time_zone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC';
-    const year = new Date().getFullYear();
-    daylight.checked = model?.settings.daylight_saving ?? new Date(year, 0, 1).getTimezoneOffset() !== new Date(year, 6, 1).getTimezoneOffset();
+  // A zone that the hospital schema records takes the place of one the page proposed and nobody has changed.
+  if (!zone.value || (proposedZone && zoneFrom() === 'proposed from this computer' && model?.settings.time_zone)) {
+    zoneTouched = false;
+    if (model?.settings.time_zone) {
+      zone.value = model.settings.time_zone;
+      daylight.checked = !!model.settings.daylight_saving;
+      proposedZone = null;
+    } else {
+      const year = new Date().getFullYear();
+      proposedZone = {
+        zone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC',
+        daylight: new Date(year, 0, 1).getTimezoneOffset() !== new Date(year, 6, 1).getTimezoneOffset(),
+      };
+      zone.value = proposedZone.zone;
+      daylight.checked = proposedZone.daylight;
+    }
   }
+  renderZoneNote();
   const lines = model?.proposed ? model.scoreboard ?? [] : [];
   $('b-scoreboard').hidden = !lines.length;
   $('scoreboard').textContent = lines.join('\n');
@@ -609,8 +633,7 @@ function renderTally(t: Model['tally']) {
     box.append(el('dt', d.tallyLabels[key]), el('dd', t[key].toLocaleString('en-AU')));
     figures.append(box);
   }
-  const answered = t.total ? (t.total - t.remaining - t.untranslated) / t.total : 0;
-  $('tally-meter').style.width = `${Math.round(answered * 100)}%`;
+  $('tally-meter').style.width = `${model?.answered_share ?? 0}%`;
 }
 
 function quote(definition: string | null, says: string) {
@@ -735,7 +758,7 @@ function presenceText(presence: Presence, table = false) {
 
 // The answer that a column holds, as a state: confirmed, corrected or not sure, with its date.
 function untranslated(item: Item) {
-  return !!item.coding && !item.coding.translated && (item.answer === 'yes' || (item.answer === 'no' && item.status === 'person'));
+  return item.answered_as === 'untranslated';
 }
 
 function answeredNode(item: Item) {
@@ -893,12 +916,11 @@ function renderConfirm() {
     const items: Item[] = role.drafted ? role.items : [{
       about: `${role.name} rows`, attribute: 'rows', meaning: role.description, type: null, from: '', table: null, column: null, bound: false,
       definition: null, says: d.roleUndrafted, confidence: '', basis: '', candidates: [], status: 'proposed', question: '', answer: null, date: null,
-      replacement: null, presence: null, link: null, correction: null, title: '', coding: null,
+      replacement: null, presence: null, link: null, correction: null, title: '', coding: null, answered_as: null, forms: role.forms,
     }];
     // A column still to translate is not yet answered, as the figures of step 6 count it.
-    const answeredCount = items.filter((item) => item.answer && !untranslated(item)).length;
     const heading = roleHeading(role);
-    heading.append(el('span', d.partCount(answeredCount, items.length), 'role-count'));
+    heading.append(el('span', d.partCount(role.answered, items.length), 'role-count'));
     const who = d.teamParts.includes(role.name) ? 'team' : 'colleague';
     section.append(heading, el('p', role.description, 'role-what'), el('p', d.whoAnswers[who], `who ${who}`));
     const list = el('ul', undefined, 'bindings');
@@ -1049,23 +1071,27 @@ function queryBlock(sql: string, copyLabel: string, after?: HTMLElement, run?: (
   return box;
 }
 
-function grid(columns: string[], rows: (string | number | null)[][], counted: number[] = []) {
+// A pasted result as a table. The core says which columns hold counts and, for each cell, whether it shows a count that
+// its query left empty, such as one under ten; an empty cell that the core does not mark stays empty.
+function grid(columns: string[], rows: (string | number | null)[][], cells?: Cells) {
+  const counted = cells?.counted ?? [];
   const frame = el('div', undefined, 'table-frame');
   const table = el('table');
   const head = el('tr');
   for (const column of columns) head.append(el('th', column));
   const body = el('tbody');
-  for (const row of rows) {
+  rows.forEach((row, r) => {
     const line = el('tr');
     row.forEach((cell, at) => {
       let value = cell === null || cell === undefined ? '' : String(cell);
       // A count takes a thousands separator; a year or a code is shown as it is.
       if (counted.includes(at) && /^-?\d+$/.test(value)) value = Number(value).toLocaleString('en-AU');
-      if (!value && counted.includes(at)) value = d.underTen;
-      line.append(el('td', value, /^-?[\d,]+(\.\d+)?$/.test(value) || value === d.underTen ? 'number' : ''));
+      const suppressed = cells?.suppressed[r]?.[at];
+      if (!value && suppressed === 'under_ten') value = d.underTen;
+      line.append(el('td', value, /^-?[\d,]+(\.\d+)?$/.test(value) || (!!suppressed && !cell) ? 'number' : ''));
     });
     body.append(line);
-  }
+  });
   const thead = el('thead');
   thead.append(head);
   table.append(thead, body);
@@ -1172,7 +1198,11 @@ function renderVocabularies() {
     section.append(status_);
     shown(status_);
     if (vocabulary.rows.length) {
-      const frame = grid(d.chartedColumns, vocabulary.rows.map((r) => [r.code, r.charted, r.anaesthetics, r.name, '']), [1, 2]);
+      // The list's own columns, in the page's order: the code, the two counts, the name and the kind chosen.
+      const frame = grid(d.chartedColumns, vocabulary.rows.map((r) => [r.code, r.charted, r.anaesthetics, r.name, '']), {
+        counted: [1, 2],
+        suppressed: vocabulary.rows.map((r) => [null, r.suppressed?.charted ?? null, r.suppressed?.anaesthetics ?? null, null, null]),
+      });
       const body = frame.querySelectorAll('tbody tr');
       vocabulary.rows.forEach((row, i) => {
         const select = el('select');
@@ -1307,7 +1337,7 @@ function renderCounts() {
       // A part of the record is named in words, as everywhere else on the page.
       const titles = new Map((model.roles ?? []).map((r) => [r.name, r.title || r.name]));
       const rows = held.rows.map((row) => row.map((cell) => titles.get(cell) ?? cell));
-      section.append(grid(held.columns, rows, held.columns.map((_, at) => at).filter((at) => at > 0)));
+      section.append(grid(held.columns, rows, held.cells));
       // The figures of a count that reads one year's anaesthetics in #cohort say that they are from a sample.
       if (model.provenance?.[`count-${query.name}`] === 'a sample') section.append(el('p', d.fromSample(yearValue(), (5000).toLocaleString('en-AU')), 'note sample-note'));
       // A finding that names a column of step 6 links to it.
@@ -1650,6 +1680,13 @@ $('scoreboard-copy').addEventListener('click', () => {
   void navigator.clipboard?.writeText($('scoreboard').textContent ?? '').then(() => status('t-scoreboard-copied', d.copied, 'good'), () => undefined);
 });
 
+for (const [id, event] of [['time-zone', 'input'], ['daylight-saving', 'change']]) {
+  $(id).addEventListener(event, () => {
+    zoneTouched = true;
+    renderZoneNote();
+  });
+}
+
 $('year').addEventListener('change', async () => {
   try {
     await ask('describe_settings', [JSON.stringify({ year: yearValue() })]);
@@ -1671,7 +1708,8 @@ $('write-save').addEventListener('click', async () => {
   setBusy(true);
   try {
     // The time zone of the database's clocks goes into the saved file with everything else.
-    await ask('describe_settings', [JSON.stringify({ timeZone: $<HTMLInputElement>('time-zone').value, daylightSaving: $<HTMLInputElement>('daylight-saving').checked })]);
+    await ask('describe_settings', [JSON.stringify({ timeZone: $<HTMLInputElement>('time-zone').value, daylightSaving: $<HTMLInputElement>('daylight-saving').checked,
+      timeZoneFrom: zoneFrom() })]);
     const reply = await call('describe_schema_zip');
     const zip = reply.zip as Uint8Array<ArrayBuffer>;
     // Each save is a new version, and the core names its file with the version's schema_id.
@@ -1681,8 +1719,6 @@ $('write-save').addEventListener('click', async () => {
     link.download = model?.schema?.file ?? SCHEMA_FILE;
     link.click();
     URL.revokeObjectURL(link.href);
-    written = true;
-    writtenDraft = !!model?.unfinished;
     status('t-write-status', d.saved(model?.unfinished ?? '', model?.readiness?.reached ?? null), 'good');
   } catch {
     status('t-write-status', d.writeFailed, 'problem');

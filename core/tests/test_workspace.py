@@ -279,11 +279,43 @@ def test_the_export_holds_the_mapping_views_and_the_catalogue_and_no_hospital_s_
     assert (out / "core/schemalyser/rolemodel/planted_concepts.json").is_file()
     queries = (out / "QUERIES.md").read_text(encoding="utf-8")
     assert "map_drug_concept" in queries and "-- capability: NAME" in queries and "fifteen further views" in queries
-    # The invented schema in the workspace holds no translation of codes, and nothing exported carries a salt.
+    # The invented schema in the workspace holds no translation of codes.
     import zipfile
     with zipfile.ZipFile(out / "schemas" / workspace.SCHEMA_NAME) as archive:
         assert "concepts" not in json.loads(archive.read("map/map.json"))
-    assert not any(b'"salt"' in p.read_bytes() for p in out.rglob("*.json"))
+    # The invented map holds the translations of the invented world's own codes, under a salt that names the invented
+    # hospital. Both are invented, so they belong to the public class of material and are exported; nothing else
+    # exported carries a salt.
+    salted = sorted(p.relative_to(out).as_posix() for p in out.rglob("*.json") if b'"salt"' in p.read_bytes())
+    assert salted == ["fixtures/map/map.json"]
+    invented = json.loads((out / "fixtures/map/map.json").read_text(encoding="utf-8"))
+    assert invented["world"] == "the invented world" and invented["concepts"]["salt"] == "the invented hospital"
+
+
+def test_a_real_schema_s_translations_never_reach_an_export(planted, tmp_path):
+    """A map with translations and a salt that a hospital would hold is refused wherever it is planted: outside the
+    allowlist by its path, and inside an allowlisted folder as a saved schema, which that folder may not hold."""
+    secret = {"world": "QUARTERMAINE_HOSPITAL", "concepts": {"salt": "QUARTERMAINE_SALT", "views": {"map_drug_concept": {"rows": [
+        {"code": "QUARTERMAINE_CODE", "description": "QUARTERMAINE_DESCRIPTION", "concept_id": 1, "status": "mapped"}]}}}}
+    held = planted / "reference" / "hospital" / "map"
+    held.mkdir(parents=True)
+    (held / "map.json").write_text(json.dumps(secret), encoding="utf-8")
+    with pytest.raises(workspace.WorkspaceError, match="reference/hospital/map/map.json"):
+        workspace.export(tmp_path / "named", "public", repo=planted, include=["reference/hospital/map/map.json"], date=DATE)
+    import io
+    import zipfile
+    schema = io.BytesIO()
+    with zipfile.ZipFile(schema, "w") as archive:
+        archive.writestr("map/map.json", json.dumps(secret))
+    (planted / "fixtures" / "map" / "hospital-schema.schemalyser.zip").write_bytes(schema.getvalue())
+    with pytest.raises(workspace.WorkspaceError, match="fixtures/map/hospital-schema.schemalyser.zip"):
+        workspace.export(tmp_path / "inside", "public", repo=planted, date=DATE)
+    (planted / "fixtures" / "map" / "hospital-schema.schemalyser.zip").unlink()
+    out = tmp_path / "clean"
+    workspace.export(out, "public", repo=planted, date=DATE)
+    for path in out.rglob("*"):
+        if path.is_file():
+            assert b"QUARTERMAINE" not in path.read_bytes(), path
 
 
 
@@ -399,3 +431,69 @@ def test_a_question_that_provokes_an_error_in_the_private_build_returns_only_its
     assert "Schemalyser cannot" not in text and "OBS_" not in text and str(project) not in text
     validation = json.loads((record / "import-validation.json").read_text(encoding="utf-8"))
     assert validation["build_failure"] is not None and validation["public_form"] == ["cohort"]
+
+
+# Carried from the earlier boundary's tests (B8). What they protected now lives in the import: a hostile question puts
+# nothing of its own into what returns to the workspace, and neither the module nor an import opens a network module.
+
+HOSTILE = """-- Zanzibarine note: Quartermaine asked for this, and the result goes to xylophonist@example.com.
+"""
+HOSTILE_WORDS = ("zanzibarine", "xylophonist", "quartermaine")
+
+
+def _returned_words(text):
+    """The words of import-result.json that are not the import's own: its fields, statuses, rules and wording."""
+    own = set(workspace.RESULT_FIELDS) | set(workspace.RESULTS) | set(workspace.FOLDER_RULES)
+    own |= {r["id"] for r in rolepolicy.check("SELECT 1")["rules"]}
+    for sentence in workspace.WORDING.values():
+        own |= set(re.findall(r"[A-Za-z_]+", sentence))
+    return {w for w in re.findall(r"[A-Za-z_]+", text) if w not in own}
+
+
+@pytest.mark.parametrize("hostile", ["comments", "tables", "files"])
+def test_a_hostile_question_puts_nothing_of_its_own_into_what_returns_to_the_workspace(exported, project, tmp_path, hostile):
+    out, _ = exported
+    sql = (out / EXAMPLE / "question.sql").read_text(encoding="utf-8")
+    extra = {}
+    if hostile == "comments":
+        # A question that passes every rule, with hostile words in its comment, its title and its note.
+        sql = HOSTILE + sql
+        extra = {"title.txt": "Zanzibarine Xylophonist\n", "note.md": "Quartermaine wrote this for Xylophonist.\n"}
+    elif hostile == "tables":
+        sql = HOSTILE + ("SELECT 'Zanzibarine' AS Xylophonist, z.Quartermaine FROM Zanzibarine_Table AS z;\n"
+                         "EXEC('SELECT * FROM Zanzibarine_Secret');\n")
+    else:
+        extra = {"Zanzibarine.sql": "SELECT 1 AS Xylophonist\n", "requirements.txt": "quartermaine\n"}
+    folder = _question_folder(exported, tmp_path, sql=sql, extra=extra)
+    before = sorted(p.name for p in folder.iterdir())
+    result, _, _ = workspace.import_question(folder, project, date=DATE)
+    assert result["result"] == ("accepted" if hostile == "comments" else "malformed")
+    text = (folder / workspace.RESULT).read_text(encoding="utf-8")
+    assert not [word for word in HOSTILE_WORDS if word in text.lower()]
+    # The one word that is not the import's own is the folder's name, which the agent chose.
+    assert _returned_words(text) == {"low_pressure"}
+    # Nothing returns to the workspace but import-result.json.
+    assert sorted(p.name for p in folder.iterdir()) == sorted(before + [workspace.RESULT])
+
+
+def test_the_module_and_an_import_open_no_network_module(exported, project, tmp_path):
+    # What the interpreter and the parser import is not the tool's doing: on Linux, sqlglot reads its own version
+    # through a standard module that pulls in the email package, which imports socket without opening a connection.
+    # So only what the import adds beyond its dependency is counted.
+    folder = _question_folder(exported, tmp_path)
+    code = (
+        "import sys\n"
+        "network = ('socket', 'ssl', 'http.client', 'urllib.request', 'urllib3', 'requests', 'httpx')\n"
+        "import sqlglot\n"
+        "at_start = {m for m in network if m in sys.modules}\n"
+        "import schemalyser.workspace as w\n"
+        "assert 'duckdb' not in sys.modules, 'duckdb at import'\n"
+        f"assert w.check_folder({str(folder)!r})['status'] == 'accepted'\n"
+        f"result, _, _ = w.import_question({str(folder)!r}, {str(project)!r}, date={DATE!r})\n"
+        "assert result['result'] == 'accepted', result\n"
+        "print(sorted(m for m in network if m in sys.modules and m not in at_start))\n"
+    )
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=ROOT / "core",
+                          env={**os.environ, "PYTHONPATH": str(ROOT / "core")}, timeout=300)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip().splitlines()[-1] == "[]"

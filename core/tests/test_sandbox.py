@@ -1,11 +1,23 @@
+"""The synthetic sandbox, built from a catalogue and the pack of a world's requests, and run as the page's practice
+database once was and as the testbed's stand-in database still is.
+
+The tests that ran through the earlier pages' bridge now run on the sandbox itself, since the bridge holds only the
+functions of Describe the record.
+"""
 import io
 import json
+import sys
 import zipfile
 from pathlib import Path
 
 import pytest
 
-from schemalyser import Analysis, browser
+from schemalyser import first_ask
+from schemalyser import vocabulary as v
+from schemalyser.catalogue import Catalogue, CatalogueError
+from schemalyser.extract import decode
+from schemalyser.harness import Analysis
+from schemalyser.sandbox import InventoryError, Sandbox
 from schemalyser.translate import Unsupported, Unreadable, to_duckdb
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
@@ -26,9 +38,18 @@ def inventory():
 
 
 @pytest.fixture(scope="module")
-def built(inventory):
-    assert browser.sandbox_start(CATALOGUE, inventory) == "ok"
-    return json.loads(browser.sandbox_build(500))
+def sandbox(inventory):
+    return Sandbox(Catalogue.from_csv(CATALOGUE.decode()), inventory)
+
+
+@pytest.fixture(scope="module")
+def built(sandbox):
+    return json.loads(json.dumps(sandbox.build(500)))
+
+
+def _run(sandbox, sql):
+    """A query's result, as the page's worker once passed it on."""
+    return json.loads(json.dumps(sandbox.run(sql)))
 
 
 def test_the_sandbox_builds_every_table_in_the_inventory(built):
@@ -36,14 +57,14 @@ def test_the_sandbox_builds_every_table_in_the_inventory(built):
                      "sentence": "Schemalyser has built 20 tables containing 10,000 rows.", "rolesNotApplied": []}
 
 
-def test_joined_columns_share_values_so_joins_find_rows(built):
-    result = json.loads(browser.sandbox_run(
+def test_joined_columns_share_values_so_joins_find_rows(built, sandbox):
+    result = _run(sandbox, 
         "SELECT COUNT(*) AS n FROM THEATRE_CASE tc JOIN ANAES_RECORD ar ON ar.CASE_KEY = tc.CASE_KEY "
-        "JOIN PERSON_MASTER pm ON pm.PERSON_KEY = tc.PERSON_KEY"))
+        "JOIN PERSON_MASTER pm ON pm.PERSON_KEY = tc.PERSON_KEY")
     assert result["status"] == "ok" and result["rows"] == [["500"]]
 
 
-def test_tsql_habits_are_translated(built):
+def test_tsql_habits_are_translated(built, sandbox):
     sql = """
     DECLARE @from datetime = '2023-01-01';
     IF OBJECT_ID('tempdb..#c') IS NOT NULL DROP TABLE #c;
@@ -53,74 +74,53 @@ def test_tsql_habits_are_translated(built):
     OUTER APPLY (SELECT TOP 1 r.READ_TS FROM OBS_SHEET s JOIN OBS_READING r ON r.SHEET_KEY = s.SHEET_KEY
                  WHERE s.VISIT_KEY = c.VISIT_KEY ORDER BY r.READ_TS DESC) w;
     """
-    result = json.loads(browser.sandbox_run(sql))
+    result = _run(sandbox, sql)
     assert result["status"] == "ok", result
     assert result["columns"] == ["CASE_KEY", "READ_TS"] and result["count"] == 5
     # A second run starts clean, as a new session would.
-    assert json.loads(browser.sandbox_run(sql))["status"] == "ok"
+    assert _run(sandbox, sql)["status"] == "ok"
 
 
-def test_a_division_of_whole_numbers_gives_a_whole_number_as_sql_server_does(built):
-    # The practice database answers as SQL Server would, so a count rounded down to ten is a whole number ending in 0.
-    result = json.loads(browser.sandbox_run(
+def test_a_division_of_whole_numbers_gives_a_whole_number_as_sql_server_does(built, sandbox):
+    # The sandbox answers as SQL Server would, so a count rounded down to ten is a whole number ending in 0.
+    result = _run(sandbox,
         "SELECT (COUNT(*) / 10) * 10 AS n, CASE WHEN COUNT_BIG(*) >= 10 THEN (COUNT_BIG(*) / 10) * 10 END AS m, "
-        "COUNT(*) / 2.0 AS half FROM (SELECT TOP 156 CASE_KEY FROM THEATRE_CASE) AS t"))
+        "COUNT(*) / 2.0 AS half FROM (SELECT TOP 156 CASE_KEY FROM THEATRE_CASE) AS t")
     assert result["status"] == "ok" and result["rows"] == [["150", "150", "78.0"]], result
-    # The count by year, as the page offers it, comes back in whole numbers that a paste reads as they are.
-    from schemalyser import target
-    from schemalyser.catalogue import Catalogue
-    sql = target.year_count(FIXTURES / "conversion", (FIXTURES / "targets" / "neonatal_low_mean_pressure.sql").read_text(),
-                            Catalogue.from_csv(CATALOGUE.decode()))
-    counted = json.loads(browser.sandbox_run(sql))
-    assert counted["status"] == "ok" and counted["rows"], counted
-    for row in counted["rows"]:
-        assert all(value is None or (value.isdecimal() and int(value) % 10 == 0) for value in row[1:]), row
 
 
-def test_the_table_sizes_query_and_the_first_query_read_sql_servers_own_records(built):
-    # The table sizes query of 4.3 and the first query read sys.tables, sys.partitions and INFORMATION_SCHEMA, of which
-    # the practice database keeps a copy, so that each returns there what SQL Server would.
-    from schemalyser import checks, first_ask
-    from schemalyser.catalogue import Catalogue
+def test_the_first_query_reads_sql_servers_own_records(built, sandbox):
+    # The first query reads INFORMATION_SCHEMA and sys.partitions, of which the sandbox keeps a copy, so that it
+    # returns there what SQL Server would.
     catalogue = Catalogue.from_csv(CATALOGUE.decode())
-    unbuilt = next(t.name for t in catalogue.tables() if t.name not in browser._sandbox.tables)
-    sizes = json.loads(browser.sandbox_run(checks.size_query(catalogue, ["VISIT", "THEATRE_CASE", unbuilt])))
-    assert sizes["status"] == "ok", sizes
-    by_table = {row[1]: row for row in sizes["rows"]}
-    assert by_table["VISIT"][0] == "rows" and by_table["VISIT"][5] == "500"
-    # A table that the practice database does not hold comes back as one of which the server keeps no record.
-    assert by_table[unbuilt][0] == "skipped" and by_table[unbuilt][4] == "unrecorded"
-    listed = json.loads(browser.sandbox_run(first_ask.query(["VISIT"])))
+    listed = _run(sandbox, first_ask.query(["VISIT"]))
     assert listed["status"] == "ok", listed
     assert listed["rows"][0][:3] == ["dbo", "VISIT", catalogue.table("VISIT").first_column().name]
     assert {row[-1] for row in listed["rows"]} == {"500"}
     assert all(row[4] == catalogue.table("VISIT").column(row[2]).data_type.lower() for row in listed["rows"])
 
 
-def test_what_cannot_be_run_is_reported_by_kind(built):
-    assert json.loads(browser.sandbox_run("CREATE PROCEDURE p AS BEGIN SELECT 1 END"))["status"] == "unsupported"
-    assert json.loads(browser.sandbox_run("EXEC sp_executesql N'SELECT 1'"))["status"] == "unsupported"
-    assert json.loads(browser.sandbox_run("SELECT FROM WHERE"))["status"] == "unreadable"
-    result = json.loads(browser.sandbox_run("SELECT NO_SUCH_COLUMN FROM THEATRE_CASE"))
+def test_what_cannot_be_run_is_reported_by_kind(built, sandbox):
+    assert _run(sandbox, "CREATE PROCEDURE p AS BEGIN SELECT 1 END")["status"] == "unsupported"
+    assert _run(sandbox, "EXEC sp_executesql N'SELECT 1'")["status"] == "unsupported"
+    assert _run(sandbox, "SELECT FROM WHERE")["status"] == "unreadable"
+    result = _run(sandbox, "SELECT NO_SUCH_COLUMN FROM THEATRE_CASE")
     assert result["status"] == "database-error" and result["message"]
 
 
-def test_the_past_requests_are_scored(built):
-    browser.sandbox_requests_begin()
-    for path in sorted(REQUESTS.rglob("*.sql")):
-        browser.sandbox_request(path.relative_to(REQUESTS).as_posix(), path.read_bytes())
-    result = json.loads(browser.sandbox_requests_finish())
-    outcomes = [o for _, o in result["outcomes"]]
+def test_the_past_requests_are_scored(built, sandbox):
+    outcomes = [sandbox.outcome(decode(path.read_bytes())) for path in sorted(REQUESTS.rglob("*.sql"))]
     assert len(outcomes) == 15
-    assert outcomes.count("could not be run") <= 5, result
-    assert result["sentence"].startswith("Of 15 requests, ")
-    print(result["sentence"])
-    print([(n, o) for (n, o), (_, name) in zip(result["outcomes"], result["index"])], [name for _, name in result["index"]])
+    assert outcomes.count(v.OUTCOME_NOT_RUN) <= 5, outcomes
+    counts = [outcomes.count(kind) for kind in (v.OUTCOME_ROWS, v.OUTCOME_NO_ROWS, v.OUTCOME_NOT_RUN)]
+    assert v.requests_sentence(len(outcomes), *counts).startswith("Of 15 requests, ")
 
 
 def test_a_file_that_is_not_an_inventory_is_refused():
-    assert browser.sandbox_start(CATALOGUE, b"not a zip") == "inventory"
-    assert browser.sandbox_start(b"a,b\n", b"not a zip") == "catalogue"
+    with pytest.raises(InventoryError):
+        Sandbox(Catalogue.from_csv(CATALOGUE.decode()), b"not a zip")
+    with pytest.raises(CatalogueError):
+        Catalogue.from_csv("a,b\n")
 
 
 def test_not_like_stays_negated_when_like_ignores_case():
@@ -156,8 +156,6 @@ dbo,NARROW,NARROW_CODE,1,varchar,2,,,NO
 
 
 def small_sandbox(rows):
-    from schemalyser.catalogue import Catalogue
-    from schemalyser.sandbox import Sandbox
     analysis = Analysis(SMALL_CATALOGUE)
     analysis.add_request("one.sql", "SELECT EPISODE_ID, FLAG, SHORT_CODE, OTHER_ID FROM EPISODE")
     analysis.add_request("two.sql", "SELECT LOOSE_ID FROM LOOSE")
@@ -172,7 +170,6 @@ def small_sandbox(rows):
 
 
 def test_the_catalogue_keeps_each_column_position_and_whether_it_may_be_empty():
-    from schemalyser.catalogue import Catalogue
     episode = Catalogue.from_csv(SMALL_CATALOGUE).table("EPISODE")
     assert episode.first_column().name == "EPISODE_ID"
     assert episode.column("EPISODE_ID").nullable is False and episode.column("FLAG").nullable is True
@@ -194,14 +191,56 @@ def test_text_filler_fits_its_column_and_a_row_key_is_unique():
 
 
 def test_the_tables_that_the_audits_steps_read_are_built_as_well(inventory):
-    # A table that no SQL file reads, but that the audit's steps read, is built, so that the table sizes query finds it.
-    from schemalyser import checks
-    from schemalyser.catalogue import Catalogue
-    from schemalyser.sandbox import Sandbox
+    # A table that no SQL file reads, but that the audit's steps read, is built, so that the first query finds it.
     catalogue = Catalogue.from_csv(CATALOGUE.decode())
     assert "AIRWAY_DEVICE" not in Sandbox(catalogue, inventory).tables
     sandbox = Sandbox(catalogue, inventory, also={"AIRWAY_DEVICE", "NOT_IN_THE_CATALOGUE"})
     assert "AIRWAY_DEVICE" in sandbox.tables and "NOT_IN_THE_CATALOGUE" not in sandbox.tables
     sandbox.build(50)
-    result = sandbox.run(checks.size_query(catalogue, ["AIRWAY_DEVICE"]))
-    assert result["status"] == "ok" and result["rows"][0][:2] == ["rows", "AIRWAY_DEVICE"], result
+    result = sandbox.run(first_ask.query(["AIRWAY_DEVICE"]))
+    assert result["status"] == "ok" and result["rows"][0][1] == "AIRWAY_DEVICE", result
+
+
+# Carried from the reviews of 4 October 2026: the sandbox keeps nothing of a past request and reaches nothing outside
+# itself.
+
+FIXTURES_FOR_CHECKS = Path(__file__).resolve().parents[2] / "fixtures"
+sys.path.insert(0, str(FIXTURES_FOR_CHECKS))
+import make_checks  # noqa: E402
+
+
+@pytest.fixture()
+def small_world():
+    sandbox = Sandbox(Catalogue.from_csv(CATALOGUE.decode()), make_checks.inventory_zip(make_checks.analysis()))
+    sandbox.build(100)
+    return sandbox
+
+
+def test_a_past_request_leaves_nothing_behind_in_the_sandbox(small_world):
+    sandbox = small_world
+    assert sandbox.outcome("""DECLARE @mrn varchar(20) = '9900112';
+        CREATE TABLE staff_Fenwick (n varchar(50));
+        INSERT INTO PERSON_MASTER (GIVEN_NAME) VALUES ('Wilhelmina');
+        SELECT * INTO #c FROM PERSON_MASTER;
+        SELECT COUNT(*) FROM #c""") == v.OUTCOME_ROWS
+    for probe in ("SELECT name FROM duckdb_variables()", "SELECT table_name FROM duckdb_tables() WHERE table_name ILIKE '%fenwick%'",
+                  "SELECT 1 FROM PERSON_MASTER WHERE GIVEN_NAME = 'Wilhelmina'"):
+        assert _run(sandbox, probe)["rows"] == [], probe
+    assert _run(sandbox, "DECLARE @x int = 3; SELECT @x AS x")["rows"] == [["3"]]
+    assert _run(sandbox, "SELECT getvariable('var_x') AS x")["rows"] == [[None]]
+
+
+def test_the_sandbox_database_cannot_reach_outside_itself(small_world):
+    for sql in ("SELECT * FROM read_csv('http://example.com/x.csv')", "SELECT * FROM read_csv('/etc/passwd')",
+                "COPY PERSON_MASTER TO 'out.csv'", "ATTACH 'other.db' AS o", "INSTALL httpfs", "SET enable_external_access = true"):
+        with pytest.raises(Exception):
+            small_world.con.execute(sql)
+
+
+def test_joined_date_columns_stay_dates_in_the_sandbox():
+    analysis = Analysis(CATALOGUE.decode())
+    analysis.add_request("one.sql", "SELECT 1 FROM THEATRE_CASE tc JOIN VISIT v ON v.ADMIT_TS = tc.CASE_DATE")
+    sandbox = Sandbox(Catalogue.from_csv(CATALOGUE.decode()), make_checks.inventory_zip(analysis))
+    sandbox.build(50)
+    result = _run(sandbox, "SELECT DATEADD(day, 1, tc.CASE_DATE) AS d FROM THEATRE_CASE tc")
+    assert result["status"] == "ok" and result["count"] == 50

@@ -1,5 +1,7 @@
 -- The vocabulary has no visit concept for time in theatre, so without a mapping row the
--- visit detail takes the concept of the visit it sits in.
+-- visit detail takes the concept of the visit it sits in. The mapping row is read as a value, rather than joined on a
+-- constant, so that every join carries an equality between two columns that the policy can see, and a second such
+-- row stops the step, where a join would have repeated every anaesthetic.
 -- VISIT_DETAIL: one row for each anaesthetic, as the part of the hospital visit spent under anaesthesia.
 -- The anaesthetic reaches its hospital visit through its theatre case, as the data team's queries do, so an
 -- anaesthetic without a theatre case is left out, and the run counts it (counts/). The alternative visit_detail.sql
@@ -10,7 +12,10 @@
 -- Each anaesthetic takes one number, so that an anaesthetic listed twice repeats its identifier and the primary key refuses it.
 SELECT DENSE_RANK() OVER (ORDER BY ar.ANAES_KEY) AS visit_detail_id,
        vo.person_id                                AS person_id,
-       COALESCE(kind.target_concept_id, vo.visit_concept_id)         AS visit_detail_concept_id,
+       COALESCE((SELECT kind.target_concept_id
+                 FROM   omop.source_to_concept_map kind
+                 WHERE  kind.source_vocabulary_id = 'SITE_VISIT_DETAIL'
+                   AND  kind.source_code = 'ANAESTHESIA'), vo.visit_concept_id) AS visit_detail_concept_id,
        CAST(ar.ANAES_START_TS AS date)             AS visit_detail_start_date,
        ar.ANAES_START_TS                           AS visit_detail_start_datetime,
        CAST(COALESCE(ar.ANAES_STOP_TS, ar.ANAES_START_TS) AS date)              AS visit_detail_end_date,
@@ -25,8 +30,5 @@ FROM   ANAES_RECORD ar
        LEFT JOIN (SELECT s.ANAES_KEY, s.STAFF_KEY, ROW_NUMBER() OVER (PARTITION BY s.ANAES_KEY ORDER BY s.SEQ) AS position
                   FROM   ANAES_STAFF s) st ON st.ANAES_KEY = ar.ANAES_KEY AND st.position = 1
        LEFT JOIN omop.provider pr ON pr.provider_source_value = st.STAFF_KEY
-       LEFT JOIN omop.source_to_concept_map kind
-              ON kind.source_vocabulary_id = 'SITE_VISIT_DETAIL'
-             AND kind.source_code = 'ANAESTHESIA'
 WHERE  ar.ANAES_START_TS IS NOT NULL
   AND  (ar.ANAES_STOP_TS IS NULL OR ar.ANAES_STOP_TS >= ar.ANAES_START_TS)

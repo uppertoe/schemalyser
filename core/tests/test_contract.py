@@ -60,103 +60,14 @@ KNOWN_DEBTS = [
 # The edges from an active module to a superseded one, as (importer, superseded module, the planned fix). Remove an
 # entry once its fix lands or the superseded module is retired; an edge that is not listed fails the test.
 SUPERSEDED_DEBTS = [
-    ("schemalyser", "schemalyser.analysis",
-     "Stop exporting Analysis from the package marker, so that importing any module of the core no longer runs "
-     "analysis.py; the earlier command line imports it from schemalyser.analysis until it retires."),
-    ("schemalyser.audit", "schemalyser.target",
-     "Move blanking, count_columns and textwrap_lines into a module of the shared tier, which audit.py and "
-     "rolemap.py then import."),
-    ("schemalyser.browser", "schemalyser.analysis",
-     "Retire the bridge's functions for the earlier pages, as A8 of docs/alignment.md sets out, leaving only the "
-     "describe_ functions."),
-    ("schemalyser.browser", "schemalyser.boundary",
-     "Retire the bridge's functions for the earlier pages (A8)."),
-    ("schemalyser.browser", "schemalyser.checks",
-     "Retire the bridge's functions for the earlier pages (A8), and take ChecksError, which the describe_ functions "
-     "still catch, from the module that first_ask.py's fix moves it to."),
-    ("schemalyser.browser", "schemalyser.facts",
-     "Retire the bridge's functions for the earlier pages (A8)."),
-    ("schemalyser.browser", "schemalyser.profile",
-     "Retire the bridge's functions for the earlier pages (A8)."),
-    ("schemalyser.browser", "schemalyser.target",
-     "Retire the bridge's functions for the earlier pages (A8)."),
-    ("schemalyser.convert", "schemalyser.facts",
-     "Move SITE_MAPPINGS and merged_mappings into the layer 3 module that will hold the conversion folder's format "
-     "(C1)."),
-    ("schemalyser.dictionary", "schemalyser.questions",
-     "Retire dictionary.py with target.py, since only target.py imports it."),
-    ("schemalyser.dictionary", "schemalyser.target",
-     "Retire dictionary.py with target.py, since only target.py imports it."),
-    ("schemalyser.extract", "schemalyser.checks",
-     "Split extract.py, so that the safe reading of files stays shared and the finding of facts in a request, which "
-     "needs checks.py, retires with it."),
-    ("schemalyser.extract", "schemalyser.skeleton",
-     "Split extract.py, so that the safe reading of files stays shared and the finding of facts in a request, which "
-     "needs skeleton.py, retires with it."),
-    ("schemalyser.first_ask", "schemalyser.checks",
-     "Move the layout of the check results, their reader and ChecksError, which the first ask's answers use, out of "
-     "checks.py into first_ask.py or the shared tier."),
-    ("schemalyser.harness", "schemalyser.checks",
-     "Move the constants that a world needs (the fan-out labels, the kinds, the layout and the limits) out of "
-     "checks.py into a layer 4 module."),
-    ("schemalyser.realistic", "schemalyser.checks",
-     "Move BANDS into tuning.py, beside the other numbers behind the realistic values."),
-    ("schemalyser.rolemap", "schemalyser.target",
-     "Take the blanking of small counts from the shared module of audit.py's fix, and retire the comparison with "
-     "the OMOP target in hospital_run, or move it to layer 4 with the shadow (C2)."),
-    ("schemalyser.sandbox", "schemalyser.checks",
-     "Stop the sandbox reading the earlier check script's results, and move FANOUT_BANDS into a layer 4 module."),
+    # Empty since the superseded modules were retired on 9 October 2026 (B8 and C4).
 ]
 
 # The paths by which an active module reaches a module of a layer it may not import, through one or more superseded
 # modules, as (importer, (the superseded modules on the way, in order), the module reached, the rule, the planned fix).
 # The path is the shortest one, found by visiting imports in alphabetical order.
 DEBTS_THROUGH_SUPERSEDED = [
-    ("schemalyser", ("schemalyser.analysis",), "schemalyser.roles",
-     "shared infrastructure imports only shared infrastructure",
-     "Paid with the SUPERSEDED_DEBTS entry for schemalyser and schemalyser.analysis."),
-    ("schemalyser", ("schemalyser.analysis",), "schemalyser.rules",
-     "shared infrastructure imports only shared infrastructure",
-     "Paid with the SUPERSEDED_DEBTS entry for schemalyser and schemalyser.analysis."),
-    ("schemalyser", ("schemalyser.analysis",), "schemalyser.tuning",
-     "shared infrastructure imports only shared infrastructure",
-     "Paid with the SUPERSEDED_DEBTS entry for schemalyser and schemalyser.analysis."),
-    ("schemalyser.extract", ("schemalyser.checks",), "schemalyser.roles",
-     "shared infrastructure imports only shared infrastructure",
-     "Paid with the SUPERSEDED_DEBTS entry for schemalyser.extract and schemalyser.checks."),
-    ("schemalyser.first_ask", ("schemalyser.checks",), "schemalyser.roles",
-     "layer 2 may not import from layer 4",
-     "Paid with the SUPERSEDED_DEBTS entry for schemalyser.first_ask and schemalyser.checks."),
-    ("schemalyser.rolemap", ("schemalyser.target",), "schemalyser.concepts",
-     "layer 2 may not import from layer 4",
-     "Paid with the SUPERSEDED_DEBTS entry for schemalyser.rolemap and schemalyser.target."),
-    ("schemalyser.rolemap", ("schemalyser.target",), "schemalyser.convert",
-     "layer 2 may not import from layer 4",
-     "Paid with the SUPERSEDED_DEBTS entry for schemalyser.rolemap and schemalyser.target."),
-    ("schemalyser.rolemap", ("schemalyser.target",), "schemalyser.dictionary",
-     "layer 2 may not import from layer 4",
-     "Paid with the SUPERSEDED_DEBTS entry for schemalyser.rolemap and schemalyser.target."),
-    ("schemalyser.rolemap", ("schemalyser.target",), "schemalyser.harness",
-     "layer 2 may not import from layer 4",
-     "Paid with the SUPERSEDED_DEBTS entry for schemalyser.rolemap and schemalyser.target."),
-    ("schemalyser.rolemap", ("schemalyser.target",), "schemalyser.release",
-     "layer 2 may not import from layer 3",
-     "Paid with the SUPERSEDED_DEBTS entry for schemalyser.rolemap and schemalyser.target."),
-    ("schemalyser.rolemap", ("schemalyser.target",), "schemalyser.routes",
-     "layer 2 may not import from layer 3",
-     "Paid with the SUPERSEDED_DEBTS entry for schemalyser.rolemap and schemalyser.target."),
-    ("schemalyser.rolemap", ("schemalyser.target", "schemalyser.checks"), "schemalyser.roles",
-     "layer 2 may not import from layer 4",
-     "Paid with the SUPERSEDED_DEBTS entry for schemalyser.rolemap and schemalyser.target."),
-    ("schemalyser.rolemap", ("schemalyser.target", "schemalyser.questions"), "schemalyser.realistic",
-     "layer 2 may not import from layer 4",
-     "Paid with the SUPERSEDED_DEBTS entry for schemalyser.rolemap and schemalyser.target."),
-    ("schemalyser.rolemap", ("schemalyser.target", "schemalyser.questions"), "schemalyser.sandbox",
-     "layer 2 may not import from layer 4",
-     "Paid with the SUPERSEDED_DEBTS entry for schemalyser.rolemap and schemalyser.target."),
-    ("schemalyser.rolemap", ("schemalyser.target", "schemalyser.questions"), "schemalyser.tuning",
-     "layer 2 may not import from layer 4",
-     "Paid with the SUPERSEDED_DEBTS entry for schemalyser.rolemap and schemalyser.target."),
+    # Empty since the superseded modules were retired on 9 October 2026 (B8 and C4).
 ]
 
 
@@ -469,43 +380,8 @@ PINNED_KNOWN_DEBTS = {
     ("schemalyser.compare", "schemalyser.datadict"),
     ("schemalyser.transplant", "schemalyser.convert"),
 }
-PINNED_SUPERSEDED_DEBTS = {
-    ("schemalyser", "schemalyser.analysis"),
-    ("schemalyser.audit", "schemalyser.target"),
-    ("schemalyser.browser", "schemalyser.analysis"),
-    ("schemalyser.browser", "schemalyser.boundary"),
-    ("schemalyser.browser", "schemalyser.checks"),
-    ("schemalyser.browser", "schemalyser.facts"),
-    ("schemalyser.browser", "schemalyser.profile"),
-    ("schemalyser.browser", "schemalyser.target"),
-    ("schemalyser.convert", "schemalyser.facts"),
-    ("schemalyser.dictionary", "schemalyser.questions"),
-    ("schemalyser.dictionary", "schemalyser.target"),
-    ("schemalyser.extract", "schemalyser.checks"),
-    ("schemalyser.extract", "schemalyser.skeleton"),
-    ("schemalyser.first_ask", "schemalyser.checks"),
-    ("schemalyser.harness", "schemalyser.checks"),
-    ("schemalyser.realistic", "schemalyser.checks"),
-    ("schemalyser.rolemap", "schemalyser.target"),
-    ("schemalyser.sandbox", "schemalyser.checks"),
-}
-PINNED_DEBTS_THROUGH_SUPERSEDED = {
-    ("schemalyser", ("schemalyser.analysis",), "schemalyser.roles"),
-    ("schemalyser", ("schemalyser.analysis",), "schemalyser.rules"),
-    ("schemalyser", ("schemalyser.analysis",), "schemalyser.tuning"),
-    ("schemalyser.extract", ("schemalyser.checks",), "schemalyser.roles"),
-    ("schemalyser.first_ask", ("schemalyser.checks",), "schemalyser.roles"),
-    ("schemalyser.rolemap", ("schemalyser.target",), "schemalyser.concepts"),
-    ("schemalyser.rolemap", ("schemalyser.target",), "schemalyser.convert"),
-    ("schemalyser.rolemap", ("schemalyser.target",), "schemalyser.dictionary"),
-    ("schemalyser.rolemap", ("schemalyser.target",), "schemalyser.harness"),
-    ("schemalyser.rolemap", ("schemalyser.target",), "schemalyser.release"),
-    ("schemalyser.rolemap", ("schemalyser.target",), "schemalyser.routes"),
-    ("schemalyser.rolemap", ("schemalyser.target", "schemalyser.checks"), "schemalyser.roles"),
-    ("schemalyser.rolemap", ("schemalyser.target", "schemalyser.questions"), "schemalyser.realistic"),
-    ("schemalyser.rolemap", ("schemalyser.target", "schemalyser.questions"), "schemalyser.sandbox"),
-    ("schemalyser.rolemap", ("schemalyser.target", "schemalyser.questions"), "schemalyser.tuning"),
-}
+PINNED_SUPERSEDED_DEBTS = set()
+PINNED_DEBTS_THROUGH_SUPERSEDED = set()
 
 
 def test_the_debt_lists_hold_exactly_their_pinned_entries_so_that_no_list_can_grow():

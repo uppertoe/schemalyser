@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,6 +47,12 @@ function dictionaryResult() {
   return [[...head.split(','), 'TABLE_ROWS', 'IS_PRIMARY_KEY', 'DESCRIPTION'].join('\t'), ...rows, '', '(98 rows affected)'].join('\n');
 }
 
+// The columns and tables of the invented catalogue, which the data dictionary made from the database counts.
+function catalogueSize() {
+  const tables = readFileSync(fixtures + 'invented-catalogue.csv', 'utf8').trim().split('\n').slice(1).map((line) => line.split(',')[1]);
+  return { tables: new Set(tables).size, columns: tables.length };
+}
+
 const charted = [
   'code\tcharted\tanaesthetics\tname',
   '52\t4210\t380\tMean arterial pressure, arterial line',
@@ -82,6 +88,62 @@ async function openStep(page: Page, n: number | string) {
   await expect(page.locator(`#step-${n} .body`)).toBeVisible();
 }
 
+// The calls that the page makes of its bridge, recorded as the page sends them to the worker, so that the command line
+// can be given the same calls and its saved schema compared with the page's.
+async function recordCalls(page: Page) {
+  await page.addInitScript(() => {
+    const calls: { call: string; args: unknown[] }[] = [];
+    (window as unknown as { describeCalls: typeof calls }).describeCalls = calls;
+    const post = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (this: Worker, message: { type?: string; call?: string; args?: unknown[] }, ...rest: unknown[]) {
+      if (message?.type === 'describe') {
+        calls.push({ call: message.call!, args: (message.args ?? []).map((a) => (a instanceof Blob ? { blob: (a as File).name ?? '' } : a)) });
+      }
+      return (post as (...a: unknown[]) => void).call(this, message, ...rest);
+    } as typeof Worker.prototype.postMessage;
+  });
+}
+
+// The calls that change nothing that the saved hospital schema holds, which the command line need not repeat.
+const READS = new Set(['describe_model', 'describe_check', 'describe_compare', 'describe_dictionary_query', 'describe_names',
+  'describe_columns', 'describe_joins', 'describe_schema_files']);
+
+// The recorded calls up to the first save, as the file of calls that python -m schemalyser.describe walk reads.
+function walkOf(recorded: { call: string; args: unknown[] }[], files: Record<string, string>) {
+  let version = '';
+  const calls: { call: string; request: Record<string, unknown> }[] = [];
+  const file = (arg: unknown) => (arg && typeof arg === 'object' && 'blob' in arg ? files[(arg as { blob: string }).blob] : undefined);
+  for (const { call, args } of recorded) {
+    if (call === 'describe_schema_zip') break;
+    if (call === 'describe_begin') version = String(args[0] ?? '');
+    else if (READS.has(call)) continue;
+    else if (call === 'describe_dictionary_upload' || call === 'describe_dictionary') {
+      calls.push({ call, request: { file: file(args[0]), tables: file(args[1]), headings: JSON.parse(String(args[2] || '{}')), step: args[5],
+        invented: call === 'describe_dictionary' ? !!args[6] : undefined } });
+    } else if (call === 'describe_propose' || call === 'describe_model_check') calls.push({ call, request: {} });
+    else if (call === 'describe_tables_query') calls.push({ call, request: { step: args[0] } });
+    else if (call === 'describe_tables_read') calls.push({ call, request: { text: args[0] } });
+    else if (call === 'describe_correction_preview' || call === 'describe_correction_check') {
+      calls.push({ call, request: { correction: JSON.parse(String(args[0])) } });
+    } else calls.push({ call, request: JSON.parse(String(args[0])) });
+  }
+  return { version, calls };
+}
+
+// The files inside a saved hospital schema, with what differs between two saves of the same calls made as text that
+// cannot differ: the identifiers of entries and test runs, the version's identifier and hash, the times, and how many
+// seconds a test took.
+function savedFiles(zip: string): Record<string, string> {
+  const held = JSON.parse(execFileSync('python3', ['-c', [
+    'import json, sys, zipfile',
+    'archive = zipfile.ZipFile(sys.argv[1])',
+    'print(json.dumps({n: archive.read(n).decode("utf-8", "replace") for n in archive.namelist()}))',
+  ].join('\n'), zip], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })) as Record<string, string>;
+  const steady = (text: string) => text.replace(/\b[jr][0-9a-f]{12}\b/g, 'ID').replace(/\b[0-9a-f]{64}\b/g, 'HASH')
+    .replace(/\b[0-9a-f]{16}\b/g, 'SCHEMA').replace(/\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d)?/g, 'TIME').replace(/"seconds": [\d.]+/g, '"seconds": N');
+  return Object.fromEntries(Object.entries(held).map(([name, text]) => [name, steady(text)]));
+}
+
 async function loadAndGoOffline(page: Page, context: import('@playwright/test').BrowserContext, browserName: string) {
   const size = process.env.DESCRIBE_VIEWPORT?.match(/^(\d+)x(\d+)$/);
   if (size) await page.setViewportSize({ width: Number(size[1]), height: Number(size[2]) });
@@ -113,6 +175,7 @@ test('the record is described, saved as a hospital schema and opened again', asy
   });
 
 
+  await recordCalls(page);
   await loadAndGoOffline(page, context, browserName);
   offline = true;
   await stage(page, '1-offline', 'body');
@@ -254,8 +317,10 @@ test('the record is described, saved as a hospital schema and opened again', asy
   await expect(page.locator('#step-8')).not.toHaveAttribute('data-state', 'done');
   await stage(page, '8-counts', '[data-count="coverage_by_year"]');
 
-  // The hospital schema, saved as one file that holds the dictionary as well.
+  // The hospital schema, saved as one file that holds the dictionary as well. Before the save, the time zone in the box
+  // is this computer's, and the page says that it proposed it.
   await openStep(page, 9);
+  await expect(page.locator('#t-time-zone-from')).toHaveText(d.timeZoneProposed);
   const download = page.waitForEvent('download');
   await page.locator('#write-save').click();
   const saved = await download;
@@ -266,6 +331,8 @@ test('the record is described, saved as a hospital schema and opened again', asy
   // Step 9 explains the three states once, asks for the time zone, and says how the proposals fared, naming no column.
   await expect(page.locator('#t-readiness')).toHaveText(d.readiness);
   await expect(page.locator('#time-zone')).not.toHaveValue('');
+  // The zone in the box was this computer's, which the page said it proposed, and the saved file records it so.
+  await expect(page.locator('#t-time-zone-from')).toHaveText(d.timeZoneRecorded['proposed from this computer']);
   await expect(page.locator('#b-scoreboard h3')).toHaveText(d.scoreboardHeading);
   await expect(page.locator('#scoreboard')).toContainText('These figures name no table or column, so they may be shared.');
   await expect(page.locator('#scoreboard')).not.toContainText('PERSON_MASTER');
@@ -294,6 +361,7 @@ test('the record is described, saved as a hospital schema and opened again', asy
   expect(settings.answered).toBe(false);
   expect(settings.complete).toBeUndefined();
   expect(settings.time_zone).toBeTruthy();
+  expect(settings.time_zone_from).toBe('proposed from this computer');
   // The readiness is derived from the evidence and never stored; the README states it, and settings name the version.
   expect(settings.readiness).toBeUndefined();
   expect(settings.schema_id).toMatch(/^[0-9a-f]{16}$/);
@@ -311,6 +379,21 @@ test('the record is described, saved as a hospital schema and opened again', asy
   expect(readme.replace(/`[^`]*`/g, '').replace(/\S*\/\S*/g, '')).not.toMatch(/\brole\b|\bbindings?\b|\bfolders?\b|\bmaps?\b/i);
   expect(readme).toContain('## Queries to run again on production');
   expect(readFileSync(join(unzipped, 'confirmations.csv'), 'utf8')).toMatch(/role_anaesthetic\.patient_key,no,"?THEATRE_CASE\.PERSON_KEY[^\n]*,passed(: broke nothing new; [^,]+)?,/);
+  // The command line, given the calls that the page made of its bridge and the same files, saves the same hospital
+  // schema, file by file.
+  const recorded = await page.evaluate(() => (window as unknown as { describeCalls: { call: string; args: unknown[] }[] }).describeCalls);
+  const walk = walkOf(recorded, { 'invented-dictionary.csv': fixtures + 'dictionary/invented-dictionary.csv',
+    'invented-tables.csv': fixtures + 'dictionary/invented-tables.csv' });
+  const walked = mkdtempSync(join(tmpdir(), 'walked-'));
+  writeFileSync(join(walked, 'calls.json'), JSON.stringify(walk, null, 2));
+  execFileSync('uv', ['run', '--quiet', '--with', 'duckdb==1.5.1', 'python', '-m', 'schemalyser.describe', 'walk', join(walked, 'calls.json'),
+    '--out', walked], { cwd: fileURLToPath(new URL('../../core/', import.meta.url)), encoding: 'utf8', timeout: 600_000,
+    stdio: ['ignore', 'pipe', 'pipe'] });
+  const fromPage = savedFiles(zipPath);
+  const fromCommand = savedFiles(join(walked, readdirSync(walked).find((name) => name.endsWith('.schemalyser.zip'))!));
+  expect(Object.keys(fromCommand).sort()).toEqual(Object.keys(fromPage).sort());
+  for (const name of Object.keys(fromPage)) expect(fromCommand[name], name).toBe(fromPage[name]);
+
   // A change after the hospital schema was saved makes step 9 to be done again.
   await page.locator('#confirm [data-about="role_patient.patient_key"] .answer-yes').click();
   await expect(page.locator('#step-9')).not.toHaveAttribute('data-state', 'done');
@@ -755,7 +838,8 @@ test('the data dictionary is made from the database and answers step 5', async (
   await page.locator('#step-2 #database-options input[value="production"]').check();
   await page.locator('#database-paste').fill(dictionaryResult());
   await page.locator('#database-read').click();
-  const receipt = d.databaseReceipt({ tables: 25, columns: 98, described: 16 });
+  // The receipt counts the columns and tables of the invented catalogue, whatever the invented world now holds.
+  const receipt = d.databaseReceipt({ ...catalogueSize(), described: 16 });
   await expect(page.locator('#t-database-status')).toHaveText(receipt);
   await expect(page.locator('#t-database-status')).toContainText('Few columns have a description');
   await expect(page.locator('#dictionary-load')).toHaveText(d.vendorLoad);
@@ -779,7 +863,7 @@ test('the data dictionary is made from the database and answers step 5', async (
   await page.locator('#dictionary').setInputFiles(fixtures + 'dictionary/invented-dictionary.csv');
   await page.locator('#dictionary-load').click();
   await expect(page.locator('#t-vendor-status')).toHaveText(d.vendorReceipt({ matched: 98, gained: 82 }));
-  await expect(page.locator('#t-database-status')).toHaveText(d.databaseReceipt({ tables: 25, columns: 98, described: 98, vendor: { matched: 98, gained: 82 } }));
+  await expect(page.locator('#t-database-status')).toHaveText(d.databaseReceipt({ ...catalogueSize(), described: 98, vendor: { matched: 98, gained: 82 } }));
   await expect(page.locator('#step-5')).toHaveAttribute('data-state', 'done');
   await expect(value.locator('.answered')).toContainText('Confirmed on');
   await stage(page, 'm6-confirmed', '#confirm [data-about="role_reading.value"]');

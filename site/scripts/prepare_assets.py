@@ -2,7 +2,7 @@
 
     public/pyodide/   the Pyodide runtime, copied from node_modules
     public/py/        the sqlglot wheel and the schemalyser core as a zip
-    public/example/   the invented example, taken from fixtures/, with manifest.json listing its files
+    public/example/   the invented dictionary and the invented hospital, taken from fixtures/
 """
 import hashlib
 import json
@@ -57,10 +57,8 @@ if hashlib.sha256(wheel.read_bytes()).hexdigest() != SQLGLOT_SHA256:
     raise SystemExit("The sqlglot wheel does not match its pinned checksum.")
 
 with zipfile.ZipFile(py_out / "schemalyser.zip", "w", zipfile.ZIP_DEFLATED) as archive:
-    # The whole package, as the boundary's container copies it: the core, the OMOP field list that the
-    # checklists read, and the public reference data that the sandbox uses for realistic values. Taking
-    # the same files means that the page's provenance.json names the same fingerprint of the code as
-    # the container's (boundary.tool_digest).
+    # The whole package: the core, the role model, the OMOP field list and the public reference data that the
+    # synthetic world uses for realistic values.
     for path in sorted(CORE.rglob("*")):
         if not path.is_file() or "__pycache__" in path.parts or path.suffix in (".pyc", ".pyo") \
                 or path.name.startswith("."):
@@ -70,29 +68,12 @@ with zipfile.ZipFile(py_out / "schemalyser.zip", "w", zipfile.ZIP_DEFLATED) as a
 
 print("assets prepared in", SITE / "public")
 
-# The invented example: the invented world's state and requests, exactly as the tests use them, so that a person can
-# see the whole checklist working without bringing any file. Only the files that the page reads are copied.
 FIXTURES = SITE.parent / "fixtures"
 example_out = SITE / "public" / "example"
 shutil.rmtree(example_out, ignore_errors=True)
-copies = {"state/catalogue.csv": FIXTURES / "invented-catalogue.csv",
-          "state/site-rules.json": FIXTURES / "invented-site-rules.json",
-          "state/checks.csv": FIXTURES / "invented-checks.csv",
-          "state/core-profile.csv": FIXTURES / "profile" / "invented-core-profile.csv"}
-for folder, prefix in ((FIXTURES / "conversion", "state/conversion"), (FIXTURES / "targets", "state/targets"),
-                       (FIXTURES / "requests", "requests")):
-    for path in sorted(folder.rglob("*")):
-        if path.is_file() and "__pycache__" not in path.parts and not path.name.startswith("."):
-            copies[f"{prefix}/{path.relative_to(folder).as_posix()}"] = path
-for published, source in copies.items():
-    (example_out / published).parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(source, example_out / published)
-manifest = {"state": sorted(p for p in copies if p.startswith("state/")),
-            "requests": sorted(p for p in copies if p.startswith("requests/"))}
-(example_out / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n")
 
 # The invented data dictionary and its tables file, which the describe page loads at step 2 when a person wants to try
-# the page before using a real dictionary. They sit outside the manifest, since the old page does not read them.
+# the page before using a real dictionary.
 (example_out / "dictionary").mkdir(parents=True, exist_ok=True)
 for name in ("invented-dictionary.csv", "invented-tables.csv"):
     shutil.copyfile(FIXTURES / "dictionary" / name, example_out / "dictionary" / name)

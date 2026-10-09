@@ -19,8 +19,9 @@ Each step also records its route to OMOP in the contract's sense, over the roles
 with what a direct step rests on (convert.route_problems). An alternative given as an entry may record a route of its
 own; one given as a bare file name takes its step's. When an alternative with a route of its own takes its step's
 place, its route record moves with it and the step's own record stays with the file it displaces. An alternative over
-the roles reads the role views, which no catalogue of source tables holds, so the choice here never takes one: whether
-a hospital can take the route over the roles is a question of its hospital schema, not of its catalogue.
+the roles reads the role views, which no catalogue of source tables holds, so the choice here never takes one, and a
+step that is itself over the roles never gives way to one of its alternatives: whether a hospital can take the route
+over the roles is a question of its hospital schema, not of its catalogue.
 """
 import json
 from pathlib import Path
@@ -96,7 +97,9 @@ def choose(folder, catalogue):
     found = []
     for entry in entries:
         offered = entry.get("alternatives") or []
-        if not offered or not isinstance(entry.get("file"), str):
+        # A step over the roles reads the role views, which no catalogue of source tables holds, so the catalogue
+        # cannot say that it lacks anything.
+        if not offered or not isinstance(entry.get("file"), str) or entry.get("route") == "roles":
             continue
         own = folder / entry["file"]
         if not own.is_file():

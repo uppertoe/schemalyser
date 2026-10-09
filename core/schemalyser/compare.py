@@ -22,8 +22,11 @@ intermediate or from another OMOP table is followed to the source column behind 
 omop.visit_occurrence and a join straight to the visit table are written alike.
 
 The report command compares two lineage files, and optionally the proposed bindings of a saved hospital schema, and
-writes report.md and report.json. The summary at the top holds counts alone and may be shared. Everything below it
-names tables and columns and stays where the reference is kept.
+writes report.md and report.json, which name tables and columns and stay where the reference is kept. The counts at
+the top of the report are also written alone to comparison-summary.json and comparison-summary.md by summaries.py, and
+that summary is the only part of the comparison that the owner may show to the developer's model, once they have read it.
+The reference command writes its counts of what it read, could not read and could not parse in the same way, beside
+the lineage.
 
     python -m schemalyser.compare reference FOLDER --out lineage.json
     python -m schemalyser.compare report --ours lineage.json --theirs lineage.json [--schema SCHEMA.zip] --out FOLDER
@@ -50,7 +53,7 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.optimizer.scope import traverse_scope
 
-from . import statements
+from . import statements, summaries
 from .extract import decode
 
 FORMAT = "schemalyser-lineage/1"
@@ -1062,8 +1065,10 @@ def compare(ours, theirs, schema=None):
     }
     return {
         "format": REPORT_FORMAT,
-        "summary": {"shareable": True, "note": "This summary holds counts alone and names nothing, so it may be shared or "
-                                               "shown to a language model.", "counts": summary},
+        "summary": {"file": f"{summaries.FILES['comparison']}.json",
+                    "note": "These counts name nothing. The compare command writes them alone to the summary file, which "
+                            "is the only part of the comparison that the owner may show to the developer's model, once they have read "
+                            "it.", "counts": summary},
         "detail": {"private": True, "note": "The detail names the reference's tables and columns. It stays wherever the "
                                             "reference is kept, and it is not shared or shown to a language model.",
                    "schema_given": schema is not None,
@@ -1072,21 +1077,9 @@ def compare(ours, theirs, schema=None):
     }
 
 
-def _plural(n, one, many):
-    return f"{n} {one if n == 1 else many}"
-
-
 def summary_lines(counts):
-    """The summary, in sentences that name nothing."""
-    c = counts
-    return [
-        f"The comparison covered {_plural(c['targets_compared'], 'OMOP table', 'OMOP tables')}.",
-        f"The two conversions agree on {c['agreeing']} of them and differ on {c['differing']}.",
-        f"Only our conversion writes {_plural(c['only_ours'], 'table', 'tables')}, and only the reference writes {c['only_theirs']}.",
-        f"The reference reads {_plural(c['routes_we_lack'], 'route', 'routes')} that our conversion does not, counting each "
-        f"source table and each pair of joined tables once for each OMOP table.",
-        f"The comparison raised {_plural(c['uncertainty_items'], 'uncertainty item', 'uncertainty items')} for the anaesthesia tables.",
-    ]
+    """The summary, in sentences that name nothing, as the summary file gives them."""
+    return summaries.comparison_lines(summaries.checked("comparison", {"counts": counts})["counts"])
 
 
 def _code(items):
@@ -1096,13 +1089,15 @@ def _code(items):
 
 def markdown(report):
     counts = report["summary"]["counts"]
-    out = ["# Mapping comparison", "", "## Summary, which may be shared", "",
-           "This summary holds counts alone and names no table or column, so it may be shared or shown to a language model.", ""]
+    out = ["# Mapping comparison", "", "This report names the reference's tables and columns, so it stays wherever the "
+           "reference is kept, and no part of it is shared or shown to a language model.", "", "## Summary", "",
+           f"These counts name nothing. They are also written alone to {summaries.FILES['comparison']}.md, which is the "
+           "only part of the comparison that you may show to the developer's model, once you have read its exact text.", ""]
     out += [f"- {line}" for line in summary_lines(counts)]
-    out += ["", "## Detail, which is private", "",
-            "Everything below names the reference's tables and columns. Keep it wherever the reference is kept, and do not "
-            "share it or show it to a language model. Agreement between the two conversions is supporting evidence and not "
-            "proof, because workflows and configuration differ between hospitals and two conversions can share a mistake.", ""]
+    out += ["", "## Detail", "",
+            "Everything below names the reference's tables and columns. Agreement between the two conversions is "
+            "supporting evidence and not proof, because workflows and configuration differ between hospitals and two "
+            "conversions can share a mistake.", ""]
     detail = report["detail"]
     if detail["unparsed"]["ours"] or detail["unparsed"]["theirs"]:
         out += [f"Some files could not be read: {detail['unparsed']['ours']} of ours and {detail['unparsed']['theirs']} of the "
@@ -1166,20 +1161,17 @@ def main(argv=None):
                 raise CompareError(str(problem)) from None
             found = transplant.transplant(_load(args.lineage), dictionary, args.out,
                                           args.targets.split(",") if args.targets else None, args.existing)
-            c = found["counts"]
-            print(f"Schemalyser wrote {_plural(c['written'], 'step', 'steps')}, of which {transplant._are(c['incomplete'])} incomplete. "
-                  f"It could not write {_plural(c['not_written'], 'step', 'steps')}, and it skipped {_plural(c['skipped'], 'table', 'tables')}.")
-            print(f"The steps map {_plural(c['fields_mapped'], 'field', 'fields')} from the lineage, leave "
-                  f"{c['fields_left_empty'] + c['fields_awaiting_a_decision']} empty or at the concept 0, and hold "
-                  f"{_plural(c['placeholders'], 'placeholder', 'placeholders')} that decisions.json lists.")
-            print("The folder names the reference's tables and columns, so it stays wherever the reference is kept.")
+            for line in summaries.transplant_lines(summaries.document("transplant", summaries.transplant_counters(found))):
+                print(line)
+            print(f"The run's counts are written alone to {summaries.FILES['transplant']}.md in the folder. The rest of the "
+                  "folder names the reference's tables and columns, so it stays wherever the reference is kept.")
         elif args.command == "reference":
             data = lineage(args.folder)
             Path(args.out).write_text(json.dumps(data, indent=1) + "\n")
-            files = data["files"]
-            print(f"The lineage covers {_plural(len(data['targets']), 'OMOP table', 'OMOP tables')} from "
-                  f"{_plural(files['parsed'], 'file', 'files')}, and {_plural(len(files['unparsed']), 'file', 'files')} could not be read.")
-            print(PRIVATE_NOTE)
+            written = summaries.write_reference(data, args.out)
+            for line in summaries.reference_lines(json.loads(written[0].read_text(encoding="utf-8"))):
+                print(line)
+            print(f"The run's counts are written alone to {written[1].name}. {PRIVATE_NOTE}")
         else:
             schema = schema_view(args.schema) if args.schema else None
             found = compare(_load(args.ours), _load(args.theirs), schema)
@@ -1187,12 +1179,17 @@ def main(argv=None):
             out.mkdir(parents=True, exist_ok=True)
             (out / "report.json").write_text(json.dumps(found, indent=1) + "\n")
             (out / "report.md").write_text(markdown(found) + "\n")
+            summaries.write_comparison(found, out)
             for line in summary_lines(found["summary"]["counts"]):
                 print(line)
-            print("Only the summary at the top of the report may be shared. The detail names the reference's tables and "
-                  "columns, and it stays wherever the reference is kept.")
-    except (CompareError, OSError) as problem:
-        print(problem if isinstance(problem, CompareError) else "A file could not be read or written.", file=sys.stderr)
+            print(f"The counts are written alone to {summaries.FILES['comparison']}.md, which is the only part of the "
+                  "comparison that you may show to the developer's model, once you have read it. The report names the reference's "
+                  "tables and columns, and it stays wherever the reference is kept.")
+    except (CompareError, summaries.SummaryRefused) as problem:
+        print(problem, file=sys.stderr)
+        return 1
+    except OSError:
+        print("A file could not be read or written.", file=sys.stderr)
         return 1
     return 0
 

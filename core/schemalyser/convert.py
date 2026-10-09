@@ -27,10 +27,12 @@ the route "direct" is written from the hospital's source tables, and records the
 reason it takes that route, and its review, {"by": who accepted it, "on": the date}, without which the release script
 refuses it (route_problems). A derived step reads only the OMOP tables, so it takes neither route and records none.
 An alternative given as {"file": ..., "route": ...} records its own route in the same way, and one given as a bare
-file name takes its step's. The runner over the source tables cannot run a step over the roles, so a direct step may
-name, as "roles_step", a step over the roles that makes the same rows, which waits beside it until the world's map
-binds the parts it reads; it is kept apart from the alternatives, which are routes over the source tables, and its
-role scenarios run on the role shadow instead (run_role_scenarios). draft.json, where the folder holds it, marks the conversion as a draft, such as
+file name takes its step's. A step over the roles runs compiled through the hospital schema, the map folder beside the conversion folder
+(hospital_schema), as the release script compiles it: each role view and mapping view that it reads becomes a common
+table expression over the source tables (compiled_steps). A direct step may name, as "roles_step", a step over the
+roles that makes the same rows, which waits beside it until the world's map binds the parts it reads; it is kept apart
+from the alternatives, and its role scenarios run on the role shadow (run_role_scenarios), as those of every step
+over the roles do. draft.json, where the folder holds it, marks the conversion as a draft, such as
 one that transplant.py wrote from a reference, and the runner and the release script report it as one.
 
 A planted scenario keeps its inputs beside the conversion, in scenarios/<name>/rows.sql with a scenario.json that
@@ -124,6 +126,8 @@ WORDING = {
     "scenario_gate": "{scenario}: this scenario exists to make the gate {gate} fail, so it runs only when it is named.",
     # The conversion's counts, such as the anaesthetics that the layer leaves out.
     "count_not_run": "{name}: the runner could not run this count ({reason}).",
+    # A step over the roles, which runs compiled through the hospital schema.
+    "no_schema": "{name}: the step is written over the roles, and the runner has found no hospital schema through which to compile the role views that it reads. The schema is the map folder beside the conversion folder, or one given to the runner.",
 }
 # The types that a field of a custom table may have, and how each is held in the sandbox.
 CUSTOM_TYPES = re.compile(r"integer|float|date|datetime|varchar\(([1-9][0-9]{0,3})\)")
@@ -135,11 +139,21 @@ COUNT_MARK = "{count}"
 
 
 
+# The mapping rows that a person confirmed for a site, which a conversion folder may hold beside its own.
+SITE_MAPPINGS = "site_mappings.csv"
+
+
+def merged_mappings(own_rows, site_rows):
+    """The conversion's own mapping rows with the site's added, where the site's row wins for the same code and vocabulary."""
+    key = lambda row: (str(row.get("source_vocabulary_id") or "").upper(), str(row.get("source_code") or ""))  # noqa: E731
+    site = {key(row) for row in site_rows}
+    return [row for row in own_rows if key(row) not in site] + list(site_rows)
+
+
 def mapping_dicts(folder):
     """The mapping rows of a conversion folder, as dictionaries: its own source_to_concept_map.csv, with the rows
     of site_mappings.csv, which a person confirmed, added. Where both give a row for the same source code under
     the same vocabulary, the site's row wins."""
-    from .facts import SITE_MAPPINGS, merged_mappings
     found = {}
     for name in ("source_to_concept_map.csv", SITE_MAPPINGS):
         path = Path(folder) / name
@@ -436,6 +450,36 @@ def draft_sentence(draft):
     return ROUTE_WORDING["draft"].format(source=f", transplanted from {source}" if _one_line(source) else "")
 
 
+# The folder of the hospital schema beside a conversion folder, as the invented world keeps fixtures/map beside
+# fixtures/conversion.
+HOSPITAL_SCHEMA = "map"
+
+
+def hospital_schema(folder):
+    """The map folder of the hospital schema through which a conversion's steps over the roles are compiled, or None.
+
+    It is the map folder beside the conversion folder, where there is one. A copy of the invented world's conversion
+    elsewhere, whose steps over the roles are the invented world's own files unchanged, uses the invented world's map,
+    as such a copy reads the invented world's held-out root."""
+    folder = Path(folder).resolve()
+    own = folder.parent / HOSPITAL_SCHEMA
+    if (own / "map.json").is_file():
+        return own
+    invented = INVENTED_CONVERSION.parent / HOSPITAL_SCHEMA
+    try:
+        steps = json.loads((folder / "conversion.json").read_text())
+    except (OSError, ValueError):
+        return None
+    # Only a step or an alternative that runs over the roles is compiled; one that waits beside a direct step is not.
+    names = [entry["file"] for entry in roles_steps(steps) if isinstance(entry.get("file"), str)
+             and not any(step.get(ROLES_STEP) == entry["file"] for step in steps)]
+    if names and (invented / "map.json").is_file() and all(
+            FILE_NAME.fullmatch(name) and (folder / name).is_file() and (INVENTED_CONVERSION / name).is_file()
+            and (folder / name).read_bytes() == (INVENTED_CONVERSION / name).read_bytes() for name in names):
+        return invented
+    return None
+
+
 def held_out_root(folder):
     """The held-out root of a conversion folder: held-out/<the folder's name> beside it. It is only ever read."""
     folder = Path(folder).resolve()
@@ -483,7 +527,9 @@ def with_alternatives(steps, names):
         if picked and route_of(step, picked[0]) == "roles":
             raise ValueError(f"{picked[0]} is written over the roles, which the runner over the source tables cannot run; "
                              f"its role scenarios run on the role shadow instead")
-        chosen.append(dict(step, file=picked[0]) if picked else step)
+        # An alternative runs on its own route, which may differ from its step's, as a direct alternative of a step over
+        # the roles does.
+        chosen.append(dict(step, file=picked[0], route=route_of(step, picked[0])) if picked else step)
     offered = {name for step in steps for name in alternatives(step)}
     unknown = [name for name in names if name not in offered]
     if unknown:
@@ -1417,8 +1463,24 @@ def run_role_scenarios(folder):
     return [run_role_scenario(folder, scenario) for scenario in read_role_scenarios(folder)]
 
 
+def compiled_steps(world, folder, steps, schema=None):
+    """{file: T-SQL} for each step on the route over the roles, compiled through the hospital schema as the release
+    script compiles it (release.compile_roles_step), so that the runner runs the very text that the script carries.
+    schema is a map folder or a map already read, and is by default the folder's own (hospital_schema). Raises
+    ValueError when a step over the roles has no hospital schema to be compiled through, or cannot be compiled."""
+    from . import release
+    over = [step for step in steps if step.get("layer") != "derived" and step.get("route") == "roles"]
+    if not over:
+        return {}
+    roles_map = release.read_schema(folder, schema, world.catalogue_text())
+    if roles_map is None:
+        raise ValueError(WORDING["no_schema"].format(name=over[0]["file"]))
+    return {step["file"]: release.compile_roles_step(decode((Path(folder) / step["file"]).read_bytes()), roles_map, step["file"])
+            for step in over}
+
+
 def run(world, folder, rows=500, vocabulary=None, checks=None, between=None, identifier_offset=None, scenarios=None,
-        alternatives=None):
+        alternatives=None, schema=None):
     """Builds the sandbox for a world with its conversion's SQL included, and runs the conversion.
 
     checks, when given, are check results in the layout of the check script, as text or as a path,
@@ -1433,6 +1495,8 @@ def run(world, folder, rows=500, vocabulary=None, checks=None, between=None, ide
     step's own file, so that an alternative can be tried before a person makes it the step. Without it,
     every step runs its own file and the alternatives are ignored.
     The folder's counts run after the gates, and the report gives each one's number under "counts".
+    A step over the roles runs compiled through the hospital schema (compiled_steps), which schema names and which is
+    by default the map folder beside the conversion folder, and the report gives its text under "compiled".
     """
     folder = Path(folder)
     steps = json.loads((folder / "conversion.json").read_text())
@@ -1446,6 +1510,10 @@ def run(world, folder, rows=500, vocabulary=None, checks=None, between=None, ide
         raise ValueError("; ".join(refused))
     steps = with_alternatives(steps, alternatives)
     read_counts(folder)     # a count that breaks a rule is refused before anything is built
+    compiled = compiled_steps(world, folder, steps, schema)
+
+    def text(step):
+        return compiled.get(step["file"]) or decode((folder / step["file"]).read_bytes())
     planted_scenarios = chosen_scenarios(folder, scenarios)
     if identifier_offset is None:
         settings = json.loads((folder / "release.json").read_text()) if (folder / "release.json").exists() else {}
@@ -1461,8 +1529,7 @@ def run(world, folder, rows=500, vocabulary=None, checks=None, between=None, ide
 
     def analysis(checks_csv=None):
         result = world.analysis(checks_csv)
-        result.add_request("conversion", as_request(
-            [(step["table"], decode((folder / step["file"]).read_bytes())) for step in steps], definitions, unread))
+        result.add_request("conversion", as_request([(step["table"], text(step)) for step in steps], definitions, unread))
         return result
 
     if checks is None:
@@ -1503,7 +1570,7 @@ def run(world, folder, rows=500, vocabulary=None, checks=None, between=None, ide
             if between is not None:
                 between(conversion)
             core = conversion.core_problems(layer_tables)
-        results.append(conversion.step(step["table"], decode((folder / step["file"]).read_bytes()), step.get("layer", "core")))
+        results.append(conversion.step(step["table"], text(step), step.get("layer", "core")))
     problems = list(dict.fromkeys(unread)) + [item["problem"] for item in proposed if item.get("problem")]
     problems += core
     try:
@@ -1519,7 +1586,7 @@ def run(world, folder, rows=500, vocabulary=None, checks=None, between=None, ide
     return conversion, {"built": built["sentence"], "mappings": mapped, "derived": proposed, "steps": results,
                         "gates": gates, "counts": counts, "problems": problems, "unmapped": conversion.unmapped(),
                         "scenarios": [entry for _, entry in planting],
-                        "routes": {"shares": route_shares(steps), "problems": route_problems(steps)},
+                        "routes": {"shares": route_shares(steps), "problems": route_problems(steps)}, "compiled": compiled,
                         "draft": {"sentence": draft_sentence(draft), **draft} if draft is not None else None}
 
 

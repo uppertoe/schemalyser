@@ -139,7 +139,7 @@ def test_the_summary_names_nothing(report, plain, ours):
     summary = json.dumps(report["summary"])
     for name in names:
         assert name not in shared and name not in summary
-    assert report["summary"]["shareable"] is True and report["detail"]["private"] is True
+    assert report["summary"]["file"] == "comparison-summary.json" and report["detail"]["private"] is True
 
 
 def test_a_file_that_does_not_parse_is_recorded_without_its_text(tmp_path):
@@ -171,16 +171,20 @@ def test_the_yaml_reader_takes_sources_and_aliases():
 
 def test_the_commands_write_the_lineage_and_the_report(tmp_path, capsys):
     assert compare.main(["reference", str(PLAIN), "--out", str(tmp_path / "theirs.json")]) == 0
-    assert "private" in capsys.readouterr().out
+    printed = capsys.readouterr().out
+    assert "private" in printed and "theirs-run-summary.md" in printed
+    assert (tmp_path / "theirs-run-summary.json").is_file() and (tmp_path / "theirs-run-summary.md").is_file()
     assert compare.main(["reference", str(CONVERSION), "--out", str(tmp_path / "ours.json")]) == 0
     assert compare.main(["report", "--ours", str(tmp_path / "ours.json"), "--theirs", str(tmp_path / "theirs.json"),
                          "--out", str(tmp_path / "out")]) == 0
     printed = capsys.readouterr().out
     assert "The comparison covered 15 OMOP tables." in printed
     text = (tmp_path / "out" / "report.md").read_text()
-    assert text.index("## Summary, which may be shared") < text.index("## Detail, which is private")
+    assert text.index("## Summary") < text.index("## Detail")
+    assert (tmp_path / "out" / "comparison-summary.json").is_file() and (tmp_path / "out" / "comparison-summary.md").is_file()
     assert json.loads((tmp_path / "out" / "report.json").read_text())["format"] == compare.REPORT_FORMAT
-    for written in ("theirs.json", "ours.json", "out/report.json", "out/report.md"):
+    for written in ("theirs.json", "ours.json", "out/report.json", "out/report.md", "out/comparison-summary.json",
+                    "out/comparison-summary.md", "theirs-run-summary.json", "theirs-run-summary.md"):
         assert str(FIXTURES.parent) not in (tmp_path / written).read_text()
     assert compare.main(["report", "--ours", str(tmp_path / "missing.json"), "--theirs", str(tmp_path / "theirs.json"),
                          "--out", str(tmp_path / "out")]) == 1
@@ -306,10 +310,10 @@ def test_the_transplant_command_writes_the_folder(tmp_path, capsys):
     assert compare.main(["transplant", "--lineage", str(tmp_path / "theirs.json"), "--dictionary", str(DICTIONARY),
                          "--tables", str(DICTIONARY_TABLES), "--out", str(tmp_path / "out"), "--targets", "person,provider"]) == 0
     printed = capsys.readouterr().out
-    assert printed.startswith("Schemalyser wrote 2 steps, of which none is incomplete.")
+    assert "Schemalyser wrote 2 steps, of which none is incomplete." in printed.splitlines()[0]
     assert {p.name for p in (tmp_path / "out").iterdir()} == {
         "conversion.json", "person.sql", "provider.sql", "catalogue.csv", "decisions.json", "transplant-report.json",
-        "transplant-report.md", "draft.json"}
+        "transplant-report.md", "draft.json", "transplant-run-summary.json", "transplant-run-summary.md"}
 
 
 def test_the_transplant_marks_every_step_it_writes_as_direct_and_the_folder_as_a_draft(transplanted):

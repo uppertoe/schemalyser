@@ -46,7 +46,7 @@ nothing was recorded.
     python -m schemalyser.rolemap check MAP --catalogue CATALOGUE.csv
     python -m schemalyser.rolemap compile MAP [--audit AUDIT.sql] [--counts] [--exact]
     python -m schemalyser.rolemap rehearse [--audit AUDIT.sql] [--seed 1] [--no-planted]
-    python -m schemalyser.rolemap shadow WORLD CONVERSION MAP [--audit AUDIT.sql] [--rows 500] [--target TARGET.sql]
+    python -m schemalyser.rolemap shadow WORLD CONVERSION MAP [--audit AUDIT.sql] [--rows 500]
     python -m schemalyser.rolemap open MAP
     python -m schemalyser.rolemap propose DICTIONARY.csv --catalogue CATALOGUE.csv --out FOLDER [--tables TABLES.csv]
                                           [--model contract.json] [--heading FIELD=HEADING] [--base VIEW=TABLE]
@@ -56,7 +56,9 @@ nothing was recorded.
 
 scoreboard reads a saved hospital schema, as the one file that the page saves, its folder or its map.json, and prints
 how the proposals fared, as counts that name no table or column, overall, for each part and for each of five
-categories of column: keys, links, timestamps, codes and descriptive columns.
+categories of column: keys, links, timestamps, codes and descriptive columns. It writes the same counts alone, as
+scoreboard-summary.json and scoreboard-summary.md (summaries.write_scoreboard), beside the file it read, or inside the
+folder where it was given one.
 
 propose and confirm are written in propose.py, and the dictionary is read by datadict.py.
 """
@@ -658,7 +660,7 @@ def _final_select_at(sql):
 def _blanked(body, tree):
     """The audit with its final SELECT read as result by an outer SELECT that leaves blank any count from 1 to 4, using
     the project's own rule for which columns are counts. The audit's common table expressions keep their own text."""
-    from .target import blanking, count_columns
+    from .blanking import blanking, count_columns
     counts = count_columns(tree)
     at = _final_select_at(body)
     if not counts or at is None:
@@ -1331,20 +1333,15 @@ def per_anaesthetic(run, audit_sql=None):
 
 # The hospital-shaped shadow of a world.
 
-def hospital_run(world, conversion, roles_map, audit_sql=None, rows=500, scenarios=None, target_sql=None):
+def hospital_run(world, conversion, roles_map, audit_sql=None, rows=500, scenarios=None):
     """Builds a world's hospital-shaped shadow with its planted scenarios, as convert.run does, and runs the audit and
-    the counts through the map. With target_sql, the existing OMOP target query runs through the conversion on the
-    same rows, so that the two answers can be compared. Returns {"result", "target", "run", "conversion"}."""
-    from . import convert, target
-    if target_sql is not None:
-        answer = target.run(world, conversion, target_sql, rows=rows, scenarios=scenarios)
-        converted, compared = answer["conversion"], {"columns": answer["columns"], "rows": answer["rows"],
-                                                      "failures": answer["failures"]}
-    else:
-        converted, _ = convert.run(world, conversion, rows, scenarios=scenarios)
-        compared = None
+    the counts through the map. The conversion's own report and its OMOP tables come back with the run, so that a
+    caller can set the answer of an OMOP query on the same rows beside the audit's. Returns {"result", "report", "run",
+    "conversion"}."""
+    from . import convert
+    converted, report = convert.run(world, conversion, rows, scenarios=scenarios)
     run = duckdb_runner(converted.con, converted.sandbox.date_columns, roles_map)
-    return {"result": result(run, audit_sql), "target": compared, "run": run, "conversion": converted}
+    return {"result": result(run, audit_sql), "report": report, "run": run, "conversion": converted}
 
 
 # The command line.
@@ -1390,7 +1387,6 @@ def main(argv=None):
     shadow.add_argument("map", type=Path)
     shadow.add_argument("--audit", type=Path, default=AUDIT)
     shadow.add_argument("--rows", type=int, default=500)
-    shadow.add_argument("--target", type=Path, help="an OMOP target query to run through the conversion on the same rows")
     listing = commands.add_parser("open", help="list a map's open items")
     listing.add_argument("map", type=Path)
     scoring = commands.add_parser("scoreboard", help="say how the proposals of a saved hospital schema fared, as counts only")
@@ -1451,14 +1447,16 @@ def main(argv=None):
             from . import harness
             found = read_map(args.map)
             done = hospital_run(harness.World.from_folder(args.world), args.conversion, found, decode(args.audit.read_bytes()),
-                                args.rows, target_sql=decode(args.target.read_bytes()) if args.target else None)
+                                args.rows)
             _show(done["result"])
-            if done["target"] is not None:
-                print("")
-                print("The target query through the conversion, on the same rows:")
-                print(_table(done["target"]["columns"], done["target"]["rows"]))
         elif args.command == "scoreboard":
-            print(scoreboard(read_saved_map(args.file))["text"], end="")
+            from . import summaries
+            board = scoreboard(read_saved_map(args.file))
+            print(board["text"], end="")
+            beside = args.file if args.file.is_dir() else args.file.parent
+            written = summaries.write_scoreboard(board, beside)
+            print(f"Schemalyser has written the counts alone to {written[1].name}, beside the saved schema. Once you have "
+                  "read that file, you may show it to the developer's model.")
         elif args.command == "open":
             for item in open_items(read_map(args.map)):
                 print(f"{item['about']} ({item['status']}): {item['question']}")

@@ -33,9 +33,24 @@ Every step records its route in conversion.json (convert.route_problems). The sc
 does not record the reference it rests on, the reason it takes that route, and the review that accepted it, naming
 the step, and it refuses a folder that draft.json marks as a draft. Its header states how many of the anaesthesia
 steps it carries are written over the roles and how many directly from the source tables, and each step's comment
-names its route. A step over the roles reads the role views, which the script cannot yet compile through the hospital
-schema, so such a step is refused as a step and checked, where it waits beside a direct step as its roles_step or is
-offered as an alternative, for what it reads and what it writes.
+names its route.
+
+A step over the roles reads the role views and the mapping views, which the script compiles through the hospital
+schema as the audit path compiles a question (compile_roles_step): each view that the step reads becomes a common table
+expression ahead of the step's own, written from the schema's SELECT over the hospital's tables or from its translation
+of the local codes, and the script carries the result as the step's text, so that the same artefact runs on the
+testbed and on SQL Server. The hospital schema is given with --schema, or is the map folder beside the conversion
+folder (convert.hospital_schema). Without one, the script refuses a step over the roles by name. A step over the roles
+that waits beside a direct step as its roles_step, or is offered as an alternative, is checked for what it reads and
+what it writes.
+
+Before the script is written, the read side of every step and gate is given to the static policy under the conversion
+purpose (policy.check with purpose "conversion"), and the release records each class: the header states the classes of
+the steps and gates that the script carries and the class of the script as a whole, each step's comment names its
+class, and step_classes gives every report, the core steps' included. A step or gate that the script carries and that
+the policy places in class D is refused. A step that the script does not carry, such as a core step, may be of class D
+where conversion.json records why under "policy_class", as {"class": "D", "reason": one sentence}, and the header
+carries that reason; a recorded class that the policy no longer derives is refused, so that the record cannot go stale.
 """
 import argparse
 import csv
@@ -51,9 +66,10 @@ from sqlglot import exp
 from sqlglot.tokens import TokenType
 
 from .catalogue import Catalogue
+from . import policy
 from .convert import (COUNT_MARK, FIELDS, IDENTIFIER_OFFSET, LAYERS, ROLES_STEP, RolesStepError, TablesError, alternatives, as_request,
-                      check_roles_step, custom_rows, draft_sentence, layer_problems, read_counts, read_draft, read_tables,
-                      route_of, route_problems)
+                      check_roles_step, custom_rows, draft_sentence, hospital_schema, layer_problems, read_counts, read_draft,
+                      read_tables, route_of, route_problems)
 from .extract import analyse_request, decode
 from .translate import OMOP_SCHEMA
 
@@ -112,13 +128,29 @@ WORDING = {
     "route_roles": "This step is written over the roles and the mapping views.",
     # Awaiting approval: the conversion's counts.
     "stage_5_counts": "The script then reports each of the conversion's counts, such as the anaesthetics that the layer has left out, as a sentence that holds a number and never an identifier.",
+    # The steps over the roles, compiled through the hospital schema.
+    "route_roles_compiled": "This step is written over the roles and the mapping views, and the views that it reads are compiled through the hospital schema of {world} as common table expressions ahead of its own.",
+    "roles_compiled": "The steps over the roles are compiled through the hospital schema of {world}, so this script names the hospital's tables and local codes, and it is for use inside the hospital only.",
+    # The classes that the static policy derives, under the conversion purpose.
+    "classes": "The static policy, version {version}, has read the {count} steps and gates that this script carries under the conversion purpose: {c} {c_verb} of class C and none is of class D, so the script as a whole is of class C.",
+    "class_step": "The static policy places this step in class {grade} under the conversion purpose.",
+    "class_justified": "The {layer} step {name}, which this script does not carry, is of class {grade} under the conversion purpose, for the reason that conversion.json records in the line below.",
 }
 # The reasons for which the script is refused, each completing the sentence of not_written, so without a full stop.
 REFUSALS = {
     "draft": "{sentence} The release script is written only once the owner has reviewed every step and removed draft.json",
-    "roles": "{name}: the step is written over the roles, and the release script cannot yet compile the role views that it "
-             "reads through the hospital schema, so it cannot carry the step. Until it can, the step waits beside a direct "
-             "step as its roles_step",
+    "roles": "{name}: the step is written over the roles, and no hospital schema has been given through which to compile "
+             "the role views that it reads, so the release script cannot carry the step. The schema is given with --schema, "
+             "or is the map folder beside the conversion folder",
+    "roles_unsupplied": "{name}: the step reads {views}, which the hospital schema of {world} does not supply",
+    "roles_clash": "{name}: the view {view} of the hospital schema reads a table named {table}, which the step also uses as "
+                   "the name of a common table expression, so the compiled step could not tell the two apart",
+    "class_d": "{name}: the static policy places this {what} in class D under the conversion purpose, because it breaks "
+               "the rule {rules}, so the release script cannot carry it",
+    "class_record": "{name}: conversion.json records the class {recorded} for this step, and the static policy now derives "
+                    "the class {grade}, so the record is out of date",
+    "class_entry": "{name}: policy_class is {{\"class\": the class that the policy derives, \"reason\": one sentence that "
+                   "ends with a full stop}}",
 }
 PLACE = {"omop": "SCHEMALYSER_OMOP", "published": "SCHEMALYSER_PUBLISHED", "source": "SCHEMALYSER_SOURCE", "own": "SCHEMALYSER_OWN"}
 # Each place that a setting holds, and the sqlcmd variable that the operator gives for it.
@@ -267,9 +299,67 @@ def _custom(folder):
         raise Refused(str(error)) from None
 
 
-def _steps(folder, custom=None):
-    """The anaesthesia steps and then the derived steps, each with its SQL."""
+def read_schema(folder, schema=None, catalogue=None):
+    """The hospital schema through which the steps over the roles are compiled, as rolemap.read_map gives it, or None.
+
+    schema is a map folder, or a map already read; without one, the map folder beside the conversion folder is used
+    where there is one (convert.hospital_schema). catalogue, when given, is a Catalogue or its text, and every table and
+    column that a role view names must be in it. Raises Refused when the map breaks a rule of the contract."""
+    from . import rolemap
+    if isinstance(schema, dict):
+        return schema
+    chosen = Path(schema) if schema is not None else hospital_schema(folder)
+    if chosen is None:
+        return None
+    try:
+        return rolemap.read_map(chosen, catalogue)
+    except rolemap.MapError as error:
+        raise Refused(f"the hospital schema: {error}") from None
+
+
+def compile_roles_step(sql, schema, where="step"):
+    """A step over the roles as one SELECT over the hospital's tables, compiled through a hospital schema.
+
+    Each role view and mapping view that the step reads becomes a common table expression placed ahead of the step's
+    own, as the audit path compiles a question: a role view is the schema's SELECT over the hospital's tables, and a
+    mapping view is the schema's translation of its local codes, with every code replaced by its opaque key. The OMOP
+    tables that the step reads stay as they are. schema is a map as read_schema gives it. Returns the T-SQL text.
+    Raises Refused when the step reads anything else, reads a view that the schema does not supply, or uses as the
+    name of its own common table expression the name of a table that a view reads."""
+    from . import rolemap
+    try:
+        tree = check_roles_step(sql, where).copy()
+    except RolesStepError as error:
+        raise Refused(str(error)) from None
+    key = "with_" if "with_" in tree.arg_types else "with"
+    own = tree.args.get(key)
+    named = {cte.alias.lower() for cte in tree.find_all(exp.CTE)}
+    read = {table.name.lower() for table in tree.find_all(exp.Table) if not table.db}
+    public = list(rolemap.all_views()) + list(rolemap.mapping_views())
+    chosen = [view for view in public if view in read and view not in named]
+    world = check_text(str(schema["data"].get("world", "the hospital")), "the hospital schema")
+    missing = [view for view in chosen if view not in schema["views"]]
+    if missing:
+        raise Refused(REFUSALS["roles_unsupplied"].format(name=where, views=", ".join(missing), world=world))
+    ctes = []
+    for view in chosen:
+        body = _single_select(schema["views"][view], f"{view} of the hospital schema")
+        for table in body.find_all(exp.Table):
+            if not table.db and table.name.lower() in named | set(chosen):
+                raise Refused(REFUSALS["roles_clash"].format(name=where, view=view, table=table.name))
+        ctes.append(exp.CTE(this=body, alias=exp.TableAlias(this=exp.to_identifier(view))))
+    if own is not None:
+        ctes += [cte.copy() for cte in own.expressions]
+    if ctes:
+        tree.set(key, exp.With(expressions=ctes))
+    return tree.sql(dialect="tsql", pretty=True)
+
+
+def _steps(folder, custom=None, schema=None):
+    """The anaesthesia steps and then the derived steps, each with its SQL, a step over the roles compiled through the
+    hospital schema as compile_roles_step gives it: the schema given, or else the folder's own (read_schema)."""
     folder = Path(folder)
+    schema = read_schema(folder, schema)
     steps = json.loads((folder / "conversion.json").read_text())
     names = {table["name"] for table in (_custom(folder) if custom is None else custom)}
     problems = layer_problems(steps, names)
@@ -283,21 +373,120 @@ def _steps(folder, custom=None):
     draft = read_draft(folder)
     if draft is not None:
         raise Refused(REFUSALS["draft"].format(sentence=draft_sentence(draft)))
+    found = []
     for step in steps:
-        if step["layer"] == LAYERS[1] and step.get("route") == "roles":
-            raise Refused(REFUSALS["roles"].format(name=step["file"]))
-    return [(step, decode((folder / step["file"]).read_bytes())) for step in steps if step["layer"] in LAYERS[1:]]
+        if step["layer"] not in LAYERS[1:]:
+            continue
+        sql = decode((folder / step["file"]).read_bytes())
+        if step.get("route") == "roles":
+            if schema is None:
+                raise Refused(REFUSALS["roles"].format(name=step["file"]))
+            sql = compile_roles_step(sql, schema, step["file"])
+        found.append((step, sql))
+    return found
 
 
-def _route_line(step):
+def _route_line(step, world=None):
     """The comment that names a step's route, or None for a derived step, which takes neither route."""
     if step.get("route") == "direct":
         review = step["review"]
         return WORDING["route_direct"].format(reference=check_text(step["reference"], step["file"]),
                                               review=check_text(review["by"], step["file"]), on=review["on"])
     if step.get("route") == "roles":
-        return WORDING["route_roles"]
+        return WORDING["route_roles_compiled"].format(world=world) if world else WORDING["route_roles"]
     return None
+
+
+# The classes that the static policy derives for the steps and gates, under the conversion purpose.
+
+def _target_tables(custom):
+    """The OMOP tables that a step may read: every table of CDM 5.4 and every custom table of the folder."""
+    return set(_fields()) | {table["name"] for table in custom}
+
+
+def _source_tables(sql, catalogue):
+    """The source tables that the policy is told the hospital schema names: the catalogue's tables where one is given,
+    and otherwise the tables that the step itself names outside the OMOP schema and its own common table expressions."""
+    if catalogue is not None:
+        return {table.name for table in catalogue.tables()}
+    tree = _single_select(sql, "step")
+    named = {cte.alias.upper() for cte in tree.find_all(exp.CTE)}
+    return {table.name for table in tree.find_all(exp.Table)
+            if (table.db or "").upper() != OMOP_SCHEMA.upper() and table.name.upper() not in named}
+
+
+def classify(sql, custom, catalogue=None):
+    """The static policy's report on the read side of one step or gate, under the conversion purpose."""
+    tables = _source_tables(sql, catalogue) | _target_tables(custom)
+    return policy.check(sql, tables, {}, schemas=("dbo", OMOP_SCHEMA), purpose="conversion")
+
+
+def _policy_record(step):
+    """The class that conversion.json records for a step under policy_class, as (class, reason), or None."""
+    record = step.get("policy_class")
+    if record is None:
+        return None
+    if not isinstance(record, dict) or set(record) != {"class", "reason"} or record["class"] not in policy.CLASSES \
+            or not isinstance(record["reason"], str) or not record["reason"].strip().endswith(".") or "\n" in record["reason"]:
+        raise Refused(REFUSALS["class_entry"].format(name=step.get("file")))
+    return record["class"], check_text(record["reason"], step.get("file"))
+
+
+def _failed_rules(report):
+    return ", ".join(rule["id"] for rule in report["rules"] if rule["passed"] is False)
+
+
+def step_classes(folder, schema=None, catalogue=None):
+    """The static policy's class for every step of a conversion folder, its alternatives and its gates.
+
+    Returns [{"file", "layer", "what", "carried", "execution_class", "policy_version", "failed_rules", "recorded",
+    "report"}], where what is step, alternative, roles step or gate, carried says whether the release script carries
+    it, and recorded is the class and reason that conversion.json records, or None. A step over the roles is classed as
+    compiled through the hospital schema, where one is found, and as written otherwise. The core steps are classed as
+    well, although the release script does not carry them, so that the release records the class of every step."""
+    folder = Path(folder)
+    if isinstance(catalogue, str):
+        catalogue = Catalogue.from_csv(catalogue)
+    steps = json.loads((folder / "conversion.json").read_text())
+    custom = _custom(folder)
+    if schema is None or not isinstance(schema, dict):
+        schema = read_schema(folder, schema)
+    found = []
+
+    def add(name, layer, what, carried, sql, recorded=None):
+        report = classify(sql, custom, catalogue)
+        found.append({"file": name, "layer": layer, "what": what, "carried": carried,
+                      "execution_class": report["execution_class"], "policy_version": report["policy_version"],
+                      "failed_rules": [rule["id"] for rule in report["rules"] if rule["passed"] is False],
+                      "recorded": {"class": recorded[0], "reason": recorded[1]} if recorded else None, "report": report})
+
+    def text(step, name):
+        sql = decode((folder / check_file_name(name)).read_bytes())
+        if route_of(step, name) == "roles" and schema is not None:
+            sql = compile_roles_step(sql, schema, name)
+        return sql
+
+    for step in steps:
+        add(step["file"], step["layer"], "step", step["layer"] in LAYERS[1:], text(step, step["file"]), _policy_record(step))
+        for name in alternatives(step):
+            add(name, step["layer"], "alternative", False, text(step, name))
+        if step.get(ROLES_STEP):
+            add(step[ROLES_STEP], step["layer"], "roles step", False, decode((folder / check_file_name(step[ROLES_STEP])).read_bytes()))
+    for name, sql in _gates(folder):
+        add(f"gates/{name}", None, "gate", True, sql)
+    return found
+
+
+def _check_classes(classes):
+    """Refuses a carried step or gate of class D, and a class recorded in conversion.json that the policy no longer derives."""
+    for entry in classes:
+        recorded = entry["recorded"]
+        if recorded and recorded["class"] != entry["execution_class"]:
+            raise Refused(REFUSALS["class_record"].format(name=entry["file"], recorded=recorded["class"],
+                                                         grade=entry["execution_class"]))
+        if entry["carried"] and entry["execution_class"] == "D":
+            raise Refused(REFUSALS["class_d"].format(name=entry["file"], what="gate" if entry["what"] == "gate" else "step",
+                                                    rules=", ".join(entry["failed_rules"])))
 
 
 def _gates(folder):
@@ -502,17 +691,22 @@ def route_summary(folder):
     return route_shares(steps, layers=(LAYERS[1],))
 
 
-def script(folder, settings=None, mappings=None):
+def script(folder, settings=None, mappings=None, schema=None, catalogue=None):
     """The whole release script for the anaesthesia steps of a conversion folder.
 
     mappings, when given, are the mapping rows the script carries in place of the folder's
     source_to_concept_map.csv: dictionaries keyed by field, or lists in the order of the table's fields.
-    Raises Refused when a step, a gate, a mapping row or a setting breaks a rule.
+    schema is the hospital schema through which a step over the roles is compiled, as read_schema takes it, and
+    catalogue, when given, is the catalogue whose tables the policy is told the hospital schema names.
+    Raises Refused when a step, a gate, a mapping row, a setting or a class breaks a rule.
     """
     folder = Path(folder)
     chosen = settings_for(folder, settings)
+    if isinstance(catalogue, str):
+        catalogue = Catalogue.from_csv(catalogue)
     custom = _custom(folder)
-    steps = _steps(folder, custom)
+    schema = read_schema(folder, schema, catalogue)
+    steps = _steps(folder, custom, schema)
     gates = _gates(folder)
     written = list(dict.fromkeys(step["table"].lower() for step, _ in steps))
     cdm = _fields()
@@ -537,13 +731,17 @@ def script(folder, settings=None, mappings=None):
             path = folder / name
             if not path.is_file():
                 raise Refused(f"{name}: the alternative of {step['file']} is not in the conversion folder")
+            text = decode(path.read_bytes())
             if route_of(step, name) == "roles":
-                # An alternative over the roles reads the role views, the mapping views and the OMOP tables, and nothing else.
+                # An alternative over the roles reads the role views, the mapping views and the OMOP tables, and nothing
+                # else, and is compiled through the hospital schema where there is one.
                 try:
-                    check_roles_step(decode(path.read_bytes()), name)
+                    check_roles_step(text, name)
                 except RolesStepError as error:
                     raise Refused(str(error)) from None
-            _insert(dict(step, file=name), decode(path.read_bytes()), written, fields, own, offset)
+                if schema is not None:
+                    text = compile_roles_step(text, schema, name)
+            _insert(dict(step, file=name), text, written, fields, own, offset)
         # A step over the roles that waits beside a direct step is checked in the same way, and is not carried.
         if step.get(ROLES_STEP):
             name = check_file_name(step[ROLES_STEP])
@@ -556,6 +754,10 @@ def script(folder, settings=None, mappings=None):
                 raise Refused(str(error)) from None
             _insert(dict(step, file=name), decode(path.read_bytes()), written, fields, own, offset)
     checked_gates = [(name, _variables(rewrite(sql, written, where=name)[0])) for name, sql in gates]
+    # The read side of every step and gate goes to the static policy before the script is written.
+    classes = step_classes(folder, schema, catalogue)
+    _check_classes(classes)
+    by_file = {entry["file"]: entry for entry in classes if entry["what"] == "step"}
     counts = _counts(folder, written)
     mapping_rows = _mapping_rows(_folder_mappings(folder) if mappings is None else mappings, fields[MAPPING_TABLE], own)
 
@@ -565,6 +767,17 @@ def script(folder, settings=None, mappings=None):
     direct = sum(1 for step in carried if step.get("route") == "direct")
     header.append(WORDING["routes"].format(count=len(carried), roles=roles, direct=direct,
                                            roles_verb="is" if roles == 1 else "are", direct_verb="is" if direct == 1 else "are"))
+    world = check_text(str(schema["data"].get("world", "the hospital")), "the hospital schema") if schema and roles else None
+    if world:
+        header.append(WORDING["roles_compiled"].format(world=world))
+    read = [entry for entry in classes if entry["carried"]]
+    grades = sum(1 for entry in read if entry["execution_class"] == "C")
+    header.append(WORDING["classes"].format(version=policy.POLICY_VERSION, count=len(read), c=grades,
+                                            c_verb="is" if grades == 1 else "are"))
+    for entry in classes:
+        if entry["recorded"] and not entry["carried"]:
+            header += [WORDING["class_justified"].format(layer=entry["layer"], name=entry["file"], grade=entry["execution_class"]),
+                       entry["recorded"]["reason"]]
     lines = [f"-- {line}" for line in header] + ["--", f"-- {WORDING['run']}", f"--   {run_command(chosen)}",
                                                  f"-- {WORDING['run_variables']}"]
     for key, name in VARIABLES:
@@ -612,9 +825,10 @@ def script(folder, settings=None, mappings=None):
     for (step, _), insert in zip(steps, inserts):
         if step["layer"] == "derived" and step is next(s for s, _ in steps if s["layer"] == "derived"):
             lines += ["", f"-- {WORDING['stage_3_derived']}"]
-        route = _route_line(step)
-        # The step's own comment line, -- FILE, comes first, and the line that names its route follows it.
-        lines += insert[:2] + ([f"-- {route}"] if route else []) + insert[2:]
+        route = _route_line(step, world)
+        grade = WORDING["class_step"].format(grade=by_file[step["file"]]["execution_class"])
+        # The step's own comment line, -- FILE, comes first, and the lines that name its route and its class follow it.
+        lines += insert[:2] + ([f"-- {route}"] if route else []) + [f"-- {grade}"] + insert[2:]
 
     lines += ["", f"-- {WORDING['stage_4']}"]
     failed = WORDING["gate_failed_empty" if empty else "gate_failed"]
@@ -642,9 +856,9 @@ def script(folder, settings=None, mappings=None):
     return text
 
 
-def source_manifest(folder, catalogue):
-    """The source tables and columns that the anaesthesia steps read, as CSV text."""
-    request = as_request([(step["table"], sql) for step, sql in _steps(folder)])
+def source_manifest(folder, catalogue, schema=None):
+    """The source tables and columns that the anaesthesia steps read, a step over the roles as compiled, as CSV text."""
+    request = as_request([(step["table"], sql) for step, sql in _steps(folder, schema=schema)])
     findings = analyse_request(request, catalogue, []).findings
     columns = sorted({(f[1], f[2]) for f in findings if f[0] == "column"})
     out = io.StringIO()
@@ -659,17 +873,24 @@ def main():
     parser.add_argument("conversion", type=Path)
     parser.add_argument("--catalogue", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--schema", type=Path, help="the hospital schema's map folder, through which a step over the roles "
+                                                     "is compiled; by default the map folder beside the conversion folder")
     args = parser.parse_args()
     try:
-        text = script(args.conversion)
-        manifest = source_manifest(args.conversion, Catalogue.from_csv(decode(args.catalogue.read_bytes())))
+        catalogue = Catalogue.from_csv(decode(args.catalogue.read_bytes()))
+        schema = read_schema(args.conversion, args.schema, catalogue)
+        text = script(args.conversion, schema=schema, catalogue=catalogue)
+        manifest = source_manifest(args.conversion, catalogue, schema)
+        classes = step_classes(args.conversion, schema, catalogue)
     except Refused as error:
         print(WORDING["not_written"].format(reason=error), file=sys.stderr)
         return 1
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "release.sql").write_text(text, encoding="utf-8")
     (args.out / "source_manifest.csv").write_text(manifest, encoding="utf-8")
-    print(f"release.sql holds the {LAYERS[1]} and {LAYERS[2]} steps, and source_manifest.csv lists {manifest.count(chr(10)) - 1} source columns")
+    (args.out / "step_classes.json").write_text(json.dumps(classes, indent=1) + "\n", encoding="utf-8")
+    print(f"release.sql holds the {LAYERS[1]} and {LAYERS[2]} steps, source_manifest.csv lists {manifest.count(chr(10)) - 1} "
+          f"source columns, and step_classes.json holds the static policy's report on each step and gate")
     shares = route_summary(args.conversion)
     print(WORDING["routes"].format(count=shares["steps"], roles=shares["roles"], direct=shares["direct"],
                                    roles_verb="is" if shares["roles"] == 1 else "are",

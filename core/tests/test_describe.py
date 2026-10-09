@@ -420,7 +420,7 @@ def database_result(delimiter="\t", sizes=None):
         cells = [row[k] or "NULL" for k in first_ask.QUERY_ORDER]
         key = "YES" if table is not None and entry is not None and entry.name in table.primary_key() else "NO"
         lines.append(delimiter.join(cells + [str(sizes.get(row["TABLE_NAME"], 1200)), key, words or "NULL"]))
-    return "\n".join(lines) + "\n\n(98 rows affected)\n\nCompletion time: 2026-10-08T10:00:00\n"
+    return "\n".join(lines) + "\n\n(109 rows affected)\n\nCompletion time: 2026-10-08T10:00:00\n"
 
 
 def test_the_data_dictionary_query_reads_every_table_from_the_database_s_own_records():
@@ -450,10 +450,12 @@ def test_the_result_pasted_or_saved_makes_the_dictionary_and_answers_step_5(deli
     s.version = "test"
     text = database_result(delimiter)
     receipt = s.load_from_database(("﻿" + text).encode("utf-8"), "result.csv", "2. Load the data dictionary")
-    assert receipt["source"] == "database" and receipt["columns"] == 98 and receipt["tables"] == 25
+    # The invented catalogue holds 26 tables and 109 columns since the drug part gained its order table, DRUG_ORDER,
+    # and three columns of DRUG_GIVEN (the order's key, the time of documentation and the row that a correction amends).
+    assert receipt["source"] == "database" and receipt["columns"] == 109 and receipt["tables"] == 26
     described = sum(1 for row in csv.DictReader(CATALOGUE.open()) if row["TABLE_NAME"] in DESCRIBED)
-    assert receipt["described"] == described and 0 < described < 98
-    assert receipt["sized"] == 25 and receipt["keyed"] >= 20
+    assert receipt["described"] == described and 0 < described < 109
+    assert receipt["sized"] == 26 and receipt["keyed"] >= 20
     # A description that holds a comma, which the saved file does not quote, is read whole.
     assert s.dictionary.description("PERSON_MASTER", "PERSON_KEY") == \
         "The unique ID of the patient record for this row. Other tables use this column to link to PERSON_MASTER."
@@ -491,8 +493,10 @@ def test_the_vendor_s_descriptions_are_added_by_name_without_regard_to_case_and_
     vendor = "\n".join([vendor[0]] + [line.lower() if i % 2 else line for i, line in enumerate(vendor[1:], 1)]
                        + ["NO_SUCH_TABLE,NO_SUCH_COLUMN,VARCHAR,NO,A table that this database does not hold."])
     receipt = s.add_descriptions(vendor.encode(), None, {}, "vendor.csv")
+    # The invented dictionary describes the 98 columns that the catalogue held before the drug part gained its order
+    # table and three columns, so 98 of the database's 109 columns are matched and described.
     assert receipt["described"] == 98 and receipt["vendor"] == {"file": "vendor.csv", "matched": 98, "gained": 98 - before}
-    assert s.dictionary.table("NO_SUCH_TABLE") is None and receipt["tables"] == 25
+    assert s.dictionary.table("NO_SUCH_TABLE") is None and receipt["tables"] == 26
     assert s.dictionary.description("VISIT_DIAGNOSIS", "VISIT_KEY")
     assert s.view()["catalogue_source"] == "database"
     s.propose(date=DATE)
@@ -890,7 +894,12 @@ def test_the_scoreboard_says_how_the_proposals_fared_and_names_no_table_or_colum
     from contextlib import redirect_stdout
     with redirect_stdout(out):
         rolemap.main(["scoreboard", str(saved)])
-    assert out.getvalue() == text
+    assert out.getvalue() == text + ("Schemalyser has written the counts alone to scoreboard-summary.md, beside the saved "
+                                     "schema. Once you have read that file, you may show it to the developer's model.\n")
+    # The command writes the scoreboard's summary beside the saved schema, with the same counts.
+    written = json.loads((tmp_path / "scoreboard-summary.json").read_text(encoding="utf-8"))
+    assert written["format"] == "schemalyser-scoreboard-summary" and written["overall"] == board["overall"]
+    assert (tmp_path / "scoreboard-summary.md").is_file()
 
 
 # A16: a person's assessment of the recording pathways, which the evidence import records on the part.
@@ -947,3 +956,98 @@ def test_an_assessment_of_the_recording_pathways_is_recorded_on_each_part_with_i
     stale = [e for e in s.stale_evidence() if e["kind"] == "parts"]
     assert stale == [{"kind": "parts", "subject": "role_patient", "dimension": describe.COVERAGE_ASSESSED,
                       "reasons": ["the pathways changed"]}]
+
+
+# The page renders what the view says and decides nothing (invariant 9): the steps, the forms offered, the cells shown
+# as under ten, and where the time zone came from are the core's, and the command line makes the same schema.
+
+def test_the_view_gives_each_step_its_state_and_the_step_that_comes_next():
+    empty = describe.Describe().view()
+    assert empty["steps"]["4"]["state"] == "waiting" and empty["steps"]["4"]["waits_for"] == "dictionary"
+    assert empty["steps"]["6"]["waits_for"] == "map" and empty["current_step"] == "2"
+    assert empty["steps"]["3"]["optional"]
+    s = fresh()
+    view = s.view()
+    assert view["steps"]["4"]["state"] == "done" and view["current_step"] == "5"
+    assert view["steps"]["7"]["progress"] == {"done": 0, "of": sum(1 for v in view["vocabularies"] if not v["reason"])}
+    # A count judged wrong leaves step 8 needing attention.
+    for query in s.count_queries(2024):
+        if query["name"] == "repeated_keys":
+            s.read_count("repeated_keys", "role_view\tkeys_repeated\trows_held\nrole_patient\t0\t0\n", DATE)
+            s.judge_count("repeated_keys", "no", "", DATE)
+    assert s.view()["steps"]["8"]["state"] == "attention" and s.view()["steps"]["8"]["progress"]["wrong"] == 1
+    # The invented dictionary without the invented hospital leaves step 5 waiting for it.
+    invented = describe.Describe()
+    invented.load_dictionary(DICTIONARY.read_bytes(), TABLES.read_bytes(), {}, "invented-dictionary.csv", "invented-tables.csv",
+                             invented=True)
+    invented.propose(date=DATE)
+    assert invented.view()["steps"]["5"]["waits_for"] == "invented_hospital"
+    assert invented.view(invented_hospital=True)["steps"]["5"]["state"] == "available"
+
+
+def test_step_9_is_done_once_saved_complete_and_stale_once_anything_changes_after():
+    s = fresh()
+    assert s.view()["steps"]["9"]["saved"] is None
+    s.save(DATE)
+    held = s.view()["steps"]["9"]
+    assert held["saved"] == "current" and held["draft"] and held["state"] == "available"
+    s.confirm("role_patient.birth_date", "yes", date=DATE)
+    assert s.view()["steps"]["9"]["saved"] == "stale"
+
+
+def test_each_row_says_how_the_tally_counts_it_and_which_forms_it_offers():
+    s = fresh()
+    s.confirm("role_patient.is_test", "yes", date=DATE)
+    s.confirm("role_patient.birth_date", "yes", date=DATE)
+    items = {i["about"]: i for r in s.view()["roles"] for i in r["items"]}
+    assert items["role_patient.is_test"]["answered_as"] == "untranslated"
+    assert items["role_patient.birth_date"]["answered_as"] == "confirmed"
+    assert items["role_patient.birth_date"]["forms"] == ["column", "date"]
+    assert items["role_patient.is_test"]["forms"] == ["column", "flag"]
+    assert items["role_anaesthetic.patient_key"]["forms"] == ["column", "path", "pair"]
+    assert items["role_patient rows"]["forms"] == ["rows", "filter"]
+    patients = next(r for r in s.view()["roles"] if r["name"] == "role_patient")
+    assert patients["answered"] == 1
+    view = s.view()
+    assert view["answered_any"] and view["answered_share"] == round(100 * view["tally"]["confirmed"] / view["tally"]["total"])
+
+
+def test_only_a_count_that_its_query_leaves_empty_under_ten_is_marked_as_under_ten():
+    s = fresh()
+    s.count_queries(2024)
+    s.read_count("coverage_by_year", "start_year\tanaesthetics\twith_patient\twith_birth_date\twith_death_date\ttest_patients\twith_stop\tstop_before_start\n"
+                 "2024\t20\tNULL\t20\tNULL\tNULL\t20\tNULL\n", DATE)
+    s.read_count("repeated_keys", "role_view\tkeys_repeated\trows_held\nrole_patient\tNULL\t0\n", DATE)
+    counts = s.view()["counts"]
+    assert counts["coverage_by_year"]["cells"]["suppressed"] == [[None, None, "under_ten", None, "under_ten", "under_ten", None, "under_ten"]]
+    assert counts["coverage_by_year"]["cells"]["counted"] == [1, 2, 3, 4, 5, 6, 7]
+    # The keys repeated are never left empty by their query, so an empty cell there is shown as empty.
+    assert counts["repeated_keys"]["cells"]["suppressed"] == [[None, None, None]]
+
+
+def test_the_time_zone_records_whether_a_person_gave_it_or_the_page_proposed_it():
+    s = fresh()
+    s.set_settings(time_zone="Australia/Sydney", daylight_saving=True, time_zone_from="proposed from this computer")
+    assert s.view()["settings"]["time_zone_from"] == "proposed from this computer"
+    again = describe.Describe()
+    again.restore(s.save(DATE))
+    assert again.settings["time_zone_from"] == "proposed from this computer"
+    s.set_settings(time_zone="UTC")
+    assert s.view()["settings"]["time_zone_from"] == "a person"
+
+
+def test_the_command_line_walks_the_page_s_calls_and_goes_on_past_a_refused_one(tmp_path):
+    calls = {"version": "test", "calls": [
+        {"call": "describe_dictionary_upload", "request": {"file": str(DICTIONARY), "tables": str(TABLES)}},
+        {"call": "describe_propose", "request": {}},
+        {"call": "describe_confirm", "request": {"about": "role_patient.birth_date", "answer": "no", "replacement": "PERSON_MASTER.NO_SUCH"}},
+        {"call": "describe_confirm", "request": {"about": "role_patient.birth_date", "answer": "yes"}},
+    ]}
+    (tmp_path / "calls.json").write_text(json.dumps(calls))
+    assert describe.main(["walk", str(tmp_path / "calls.json"), "--out", str(tmp_path / "out")]) == 0
+    (saved,) = (tmp_path / "out").glob("hospital-schema-*.schemalyser.zip")
+    restored = describe.Describe()
+    restored.restore(describe._read_saved(saved))
+    assert [c["answer"] for c in restored.confirmations if c["attribute"] == "role_patient.birth_date"] == ["yes"]
+    (tmp_path / "bad.json").write_text(json.dumps({"calls": [{"call": "describe_nothing"}]}))
+    assert describe.main(["walk", str(tmp_path / "bad.json")]) == 1

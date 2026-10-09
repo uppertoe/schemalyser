@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from schemalyser import convert
+from schemalyser import convert, release
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 sys.path.insert(0, str(FIXTURES))
@@ -245,8 +245,10 @@ def test_only_doses_that_were_given_become_drug_exposures(ran):
     assert one("""SELECT COUNT(*) FROM omop.drug_exposure d WHERE NOT EXISTS (
                     SELECT 1 FROM omop.visit_detail vd WHERE vd.person_id = d.person_id
                     AND d.drug_exposure_start_datetime BETWEEN vd.visit_detail_start_datetime AND vd.visit_detail_end_datetime)""") == 0
-    # Without a vocabulary no medicine can be matched by name, so each is written as not mapped.
-    assert one("SELECT COUNT(*) FROM omop.drug_exposure WHERE drug_concept_id <> 0") == 0
+    # Without a vocabulary no medicine can be matched by name, so each dose is written as not mapped. An infusion takes
+    # its concept from the hospital schema's translation instead, which maps one planted drug.
+    assert one("SELECT COUNT(*) FROM omop.drug_exposure WHERE sig IS NULL AND drug_concept_id <> 0") == 0
+    assert one("SELECT COUNT(*) FROM omop.drug_exposure WHERE drug_concept_id <> 0 AND drug_source_value NOT LIKE 'mapped:%'") == 0
 
 
 def _small_vocabulary(folder):
@@ -297,8 +299,9 @@ def test_with_a_vocabulary_the_medicines_are_mapped_by_name(tmp_path):
     assert diagnoses["K42.9"] == 4245842 and diagnoses["J35.3"] == 0
     # The list of vocabularies is read for the version only, and is never exported.
     assert "vocabulary.csv" not in conversion.export()
+    # The doses are matched by name; the infusions take their concepts from the hospital schema, and not from these rows.
     mapped = dict(conversion.con.execute(
-        "SELECT drug_source_value, MIN(drug_concept_id) FROM omop.drug_exposure GROUP BY 1").fetchall())
+        "SELECT drug_source_value, MIN(drug_concept_id) FROM omop.drug_exposure WHERE sig IS NULL GROUP BY 1").fetchall())
     expected = {"PROPOFOL": 753626, "PARACETAMOL": 1125315}
     assert set(expected) & set(mapped)
     for name, concept in mapped.items():
@@ -920,12 +923,16 @@ DEFAULT_SCENARIOS = {"age_by_calendar_date", "airway_still_in_place", "anaesthet
                      "infant_systolic_cases", "infusion_never_stopped", "infusion_rate_changes_twice", "long_anaesthetic",
                      "malformed_blood_pressure", "neonatal_mean_pressure_minutes", "neonatal_mean_pressure_who_counts",
                      "reading_entered_twice", "stop_before_start", "test_patient",
-                     "two_anaesthetics_one_stay", "weight_after_anaesthetic"}
+                     "two_anaesthetics_one_stay", "weight_after_anaesthetic", "infusion_boundary"}
 PRIVATE = FIXTURES.parent / "etl" / "clarity"
 HELD_OUT = FIXTURES / "held-out" / "conversion"
 # The scenarios whose expectations the public conversion has changed since the private twin last copied them, each
 # awaiting the owner's matching change to the private twin, which this project does not edit. The list only shrinks.
 PRIVATE_TWIN_BEHIND = {}
+# The scenarios that the public world plants and the private twin cannot yet, each with the reason. The boundary history
+# needs an order key, a pause and restart, and a correction that names the row it amends, which the twin's source does
+# not yet hold in any table that this project may name. The list only shrinks.
+PUBLIC_ONLY = {"infusion_boundary": "the twin's source has no order key, pause, restart or correction for drugs yet"}
 
 
 def test_every_planted_scenario_meets_its_expectations_and_the_gates_still_pass(planted):
@@ -1104,13 +1111,16 @@ def test_an_expectation_reads_only_the_omop_tables():
 
 @pytest.mark.skipif(not (PRIVATE / "scenarios").is_dir(), reason="the private conversion is not present")
 def test_the_private_twin_holds_the_same_scenarios_with_the_same_expectations():
-    ours = sorted(p.name for p in (FIXTURES / "conversion" / "scenarios").iterdir())
+    ours = sorted(p.name for p in (FIXTURES / "conversion" / "scenarios").iterdir() if p.name not in PUBLIC_ONLY)
     assert ours == sorted(p.name for p in (PRIVATE / "scenarios").iterdir())
+    assert not set(PUBLIC_ONLY) & {p.name for p in (PRIVATE / "scenarios").iterdir()}
     # The twin keeps its expectations beside its rows, and the invented world holds its own out; the two are compared
     # as the runner reads them.
     theirs = {s["name"]: s for s in convert.read_scenarios(PRIVATE)}
     for scenario in convert.read_scenarios(FIXTURES / "conversion"):
         name = scenario["name"]
+        if name in PUBLIC_ONLY:
+            continue
         same = all(scenario[key] == theirs[name][key] for key in ("description", "expectations", "fails_gate", "cases"))
         assert same != (name in PRIVATE_TWIN_BEHIND), name
 
@@ -1183,18 +1193,20 @@ def test_every_step_of_the_invented_conversion_records_its_route():
     steps = json.loads((FIXTURES / "conversion" / "conversion.json").read_text())
     assert convert.route_problems(steps) == []
     shares = convert.route_shares(steps)
-    assert (shares["steps"], shares["direct"], shares["roles"]) == (20, 20, 0)
-    assert shares["sentence"] == ("Of the 20 steps that read the hospital's record, 0 are written over the roles and 20 are "
+    assert (shares["steps"], shares["direct"], shares["roles"]) == (20, 19, 1)
+    assert shares["sentence"] == ("Of the 20 steps that read the hospital's record, 1 is written over the roles and 19 are "
                                   "written directly from the source tables.")
     # A derived step reads only the OMOP tables, so it takes neither route.
     assert all(convert.route_of(s) is None for s in steps if s["layer"] == "derived")
-    # The step over the roles waits beside the direct infusion step, which stands until the map binds role_drug, and it
-    # is kept apart from the alternatives over the source tables.
-    infusion = next(s for s in steps if s["file"] == "drug_exposure_infusion.sql")
-    assert convert.route_of(infusion) == "direct" and "role_drug" in infusion["reason"]
-    assert convert.route_of(infusion, "drug_exposure_infusion_roles.sql") == "roles"
-    assert infusion["roles_step"] == "drug_exposure_infusion_roles.sql" and "alternatives" not in infusion
-    assert [e["file"] for e in convert.roles_steps(steps)] == ["drug_exposure_infusion_roles.sql"]
+    # The infusions are written over the roles, and the direct step that they replaced is kept as a recorded alternative
+    # on the direct route, with the reference it rests on, the reason it is kept and its review.
+    infusion = next(s for s in steps if s["table"] == "drug_exposure" and s["layer"] == "anaesthesia")
+    assert infusion["file"] == "drug_exposure_infusion_roles.sql" and convert.route_of(infusion) == "roles"
+    assert "roles_step" not in infusion and convert.alternatives(infusion) == ["drug_exposure_infusion.sql"]
+    (direct,) = infusion["alternatives"]
+    assert convert.route_of(infusion, "drug_exposure_infusion.sql") == "direct"
+    assert direct["reference"] and "role_drug" in direct["reason"] and direct["review"]["by"]
+    assert [(e["file"], e["alternative_of"]) for e in convert.roles_steps(steps)] == [("drug_exposure_infusion_roles.sql", None)]
 
 
 @pytest.mark.parametrize("change, says", [
@@ -1226,19 +1238,46 @@ def test_the_runner_reports_a_draft_and_the_routes(tmp_path):
     _, report = convert.run(make_checks.WORLD, folder, rows=40, scenarios=[])
     assert report["draft"]["sentence"] == ("This conversion is a draft, transplanted from an invented reference, so no step of "
                                            "it has been accepted for a release.")
-    assert report["routes"]["problems"] == [] and report["routes"]["shares"]["direct"] == 20
+    assert report["routes"]["problems"] == [] and report["routes"]["shares"]["direct"] == 19
     _, plain = convert.run(make_checks.WORLD, FIXTURES / "conversion", rows=40, scenarios=[])
     assert plain["draft"] is None
 
 
-def test_a_step_over_the_roles_is_never_run_over_the_source_tables():
+def test_the_direct_step_that_the_roles_step_replaced_cannot_take_the_boundary_history():
+    # Run as the recorded alternative, the direct step reads no order and no correction, so the sandbox built for it holds
+    # no order table and the boundary history cannot be planted; the step over the roles reads both, and passes.
+    _, report = convert.run(make_checks.WORLD, FIXTURES / "conversion", rows=40, scenarios=["infusion_boundary"],
+                            alternatives=["drug_exposure_infusion.sql"])
+    (boundary,) = report["scenarios"]
+    assert "DRUG_ORDER" in boundary["error"] and not boundary["expectations"]
+    _, report = convert.run(make_checks.WORLD, FIXTURES / "conversion", rows=40, scenarios=["infusion_boundary"])
+    assert all(item["met"] for item in report["scenarios"][0]["expectations"]) and convert.failures(report) == []
+
+
+def test_a_step_over_the_roles_runs_only_compiled_through_the_hospital_schema(tmp_path):
     steps = json.loads((FIXTURES / "conversion" / "conversion.json").read_text())
-    with pytest.raises(ValueError, match="written over the roles"):
+    # The runner runs the text that the release script carries: the step with the map's views ahead of its own.
+    compiled = convert.compiled_steps(make_checks.WORLD, FIXTURES / "conversion", steps)
+    assert list(compiled) == ["drug_exposure_infusion_roles.sql"]
+    assert compiled["drug_exposure_infusion_roles.sql"] == release.compile_roles_step(
+        (FIXTURES / "conversion" / "drug_exposure_infusion_roles.sql").read_text(), release.read_schema(FIXTURES / "conversion"),
+        "drug_exposure_infusion_roles.sql")
+    assert convert.hospital_schema(FIXTURES / "conversion") == FIXTURES / "map"
+    # Without a hospital schema the runner refuses the step by name and runs nothing.
+    folder = tmp_path / "copy" / "conversion"
+    shutil.copytree(FIXTURES / "conversion", folder)
+    assert convert.hospital_schema(folder) == FIXTURES / "map"      # a copy whose step is the invented world's own file
+    (folder / "drug_exposure_infusion_roles.sql").write_text(
+        (FIXTURES / "conversion" / "drug_exposure_infusion_roles.sql").read_text() + "\n-- A changed copy.\n")
+    assert convert.hospital_schema(folder) is None
+    with pytest.raises(ValueError, match="drug_exposure_infusion_roles.sql: the step is written over the roles, and the runner "
+                                         "has found no hospital schema"):
+        convert.run(make_checks.WORLD, folder, rows=40, scenarios=[])
+    # A step over the roles is never run over the source tables as an alternative of a direct step.
+    with pytest.raises(ValueError):
         convert.with_alternatives(steps, ["drug_exposure_infusion_roles.sql"])
-    # Nor may it be offered as the step's own file or as one of its alternatives.
-    infusion = next(s for s in steps if s["file"] == "drug_exposure_infusion.sql")
-    infusion["alternatives"] = ["drug_exposure_infusion_roles.sql"]
-    assert any("step over the roles is a file of its own" in p for p in convert.layer_problems(steps))
+    waiting = [{"table": "drug_exposure", "file": "a.sql", "layer": "anaesthesia", "roles_step": "b.sql", "alternatives": ["b.sql"]}]
+    assert any("step over the roles is a file of its own" in p for p in convert.layer_problems(waiting))
 
 
 # The held-out root.
@@ -1322,3 +1361,20 @@ def test_each_step_reports_the_rewrites_that_its_translation_applied(ran):
     from schemalyser.translate import REWRITES
     assert all(set(step["rewrites"]) <= set(REWRITES) for step in report["steps"])
     assert any(step["rewrites"] for step in report["steps"])
+
+
+def test_a_site_s_mapping_row_takes_the_place_of_the_conversion_s_own_for_the_same_code(tmp_path):
+    # Moved here from the earlier design's facts with SITE_MAPPINGS and merged_mappings (B8).
+    folder = tmp_path / "conversion"
+    shutil.copytree(FIXTURES / "conversion", folder)
+    own = convert.mapping_dicts(folder)
+    first = own[0]
+    site = dict(first, source_vocabulary_id=first["source_vocabulary_id"].lower(), target_concept_id="0")
+    with (folder / convert.SITE_MAPPINGS).open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(first))
+        writer.writeheader()
+        writer.writerow(site)
+    merged = convert.mapping_dicts(folder)
+    assert len(merged) == len(own) and merged[-1] == site
+    assert not [row for row in merged[:-1] if (row["source_vocabulary_id"].upper(), row["source_code"]) ==
+                (first["source_vocabulary_id"].upper(), first["source_code"])]

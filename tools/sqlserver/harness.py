@@ -23,9 +23,8 @@ layout that schemalyser.harness reads. The harness then:
     a missing variable or two equal schemas stop it before any change, a core identifier at the
     offset stops it, a change of identifier type reaches the existing tables, and a failed gate
     leaves the previous rows (on_failure keep) or empty tables (on_failure empty);
- 8. runs each target query against the published schema, and the source-side draft that
-    schemalyser.target composes for it against clarity_shadow, with any hand-written source query
-    given with --source-query, and compares every answer with DuckDB's;
+ 8. runs each target query against the published schema, with any hand-written source query given
+    with --source-query against clarity_shadow, and compares every answer with DuckDB's;
  9. runs the check script against clarity_shadow and compares its rows with DuckDB's answers;
 10. prints a short report, writes summary.json with the same findings for a machine, and exits with 1
     if anything differs.
@@ -65,9 +64,9 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "core"))
 sys.path.insert(0, str(ROOT / "fixtures"))
 
-from schemalyser import convert, harness, release, sample_vocabulary, target  # noqa: E402
+from schemalyser import convert, harness, release, sample_vocabulary  # noqa: E402
 from schemalyser.catalogue import QUERY_ORDER  # noqa: E402
-from schemalyser.checks import LAYOUT, Checks, ChecksError  # noqa: E402
+from schemalyser.sandbox import LAYOUT, Checks, ChecksError  # noqa: E402
 from schemalyser.extract import decode  # noqa: E402
 
 CONTAINER = "schemalyser-mssql"
@@ -819,35 +818,29 @@ def duck_answer(con, conversion, sql):
     return [tuple(_plain_value(v) for v in row) for row in con.execute(to_duckdb(sql, conversion.sandbox.date_columns)[0]).fetchall()]
 
 
-def compare_targets(server, conversion, folder, targets, sources):
-    """Runs each target query on the published schema and its draft on the source database, each beside DuckDB.
+def published(sql, folder):
+    """A target query with every OMOP table read from the release's published schema, for SQL Server, as the release
+    rewrites a step. A custom table of the conversion is read from its published view, as a table of CDM 5.4 is."""
+    custom = {row["table"] for row in convert.custom_rows(convert.read_tables(folder))}
+    text, _ = release.rewrite(sql, set(convert.cdm_fields()) | custom, where="target query")
+    return text.replace(f"[{release.PLACE['published']}].", f"[{SETTINGS['published_schema']}].")
 
-    Returns [(label, DuckDB's answer, SQL Server's answer, error)]. A hand-written source query given
-    in sources runs on the source database in the same way.
+
+def compare_targets(server, conversion, folder, targets, sources):
+    """Runs each target query on the published schema beside DuckDB, and any hand-written source query given in
+    sources on the source database in the same way.
+
+    Returns [(label, DuckDB's answer, SQL Server's answer, error)].
     """
     con = conversion.con
-    mappings = [dict(zip([r["field"] for r in release._fields()["source_to_concept_map"]], row)) for row in duck_mappings(con)]
     found = []
     for path in targets:
         sql = decode(path.read_bytes())
-        published = target.published(sql, folder).replace("[$(AnaesPubSchemaName)].", f"[{SETTINGS['published_schema']}].")
-        draft = target.source_draft(folder, sql, conversion.sandbox.catalogue, mappings, target_name=path.name)
-        # The restructured query is compared before its small counts are blanked, so that it can match the OMOP answer.
-        restructured = target.source_query(folder, sql, conversion.sandbox.catalogue, mappings, target_name=path.name, blank=False)
-        cases = [(f"{path.name} on the OMOP tables", published, sql, OMOP_DATABASE),
-                 (f"{path.name} as a source-side draft", draft, draft, SOURCE_DATABASE)]
-        if restructured["restructured"]:
-            cases.append((f"{path.name} as a source query that starts from the cohort", restructured["sql"],
-                          restructured["sql"], SOURCE_DATABASE))
-        else:
-            found.append((f"{path.name} could not be restructured", None, None, restructured["reason"]))
-        for label, text, run_duck, database in cases:
-            try:
-                duck = duck_answer(con, conversion, run_duck)
-                theirs = server_answer(server, text, database)
-                found.append((label, duck, theirs, None))
-            except (SqlError, Exception) as error:  # noqa: BLE001 - any failure is a finding to report
-                found.append((label, None, None, str(error).splitlines()[0]))
+        label = f"{path.name} on the OMOP tables"
+        try:
+            found.append((label, duck_answer(con, conversion, sql), server_answer(server, published(sql, folder), OMOP_DATABASE), None))
+        except (SqlError, Exception) as error:  # noqa: BLE001 - any failure is a finding to report
+            found.append((label, None, None, str(error).splitlines()[0]))
     for path in sources:
         sql = decode(path.read_bytes())
         try:
@@ -886,7 +879,7 @@ def evaluate_scenarios(server, folder, scenarios, report, planted):
             if planted.get(scenario["name"]):
                 found.append((scenario["name"], item["says"], duck_met, False, f"not planted: {planted[scenario['name']]}"))
                 continue
-            text = target.published(item["query"], folder).replace("[$(AnaesPubSchemaName)].", f"[{SETTINGS['published_schema']}].")
+            text = published(item["query"], folder)
             try:
                 rows = server_answer(server, text, OMOP_DATABASE)
                 found.append((scenario["name"], item["says"], duck_met, convert.expectation_met(rows, item["result"]),
@@ -945,7 +938,7 @@ def main():
     parser.add_argument("--fresh-load", action="store_true",
                         help="load clarity_shadow again, even where an earlier run kept a copy of the same rows")
     parser.add_argument("--target", type=Path, action="append",
-                        help="a target query to run on both engines with its source-side draft; fixtures/targets/*.sql when left out")
+                        help="a target query to run on both engines; fixtures/targets/*.sql when left out")
     parser.add_argument("--source-query", type=Path, action="append", default=[],
                         help="a hand-written query against the source tables, to run on both engines")
     parser.add_argument("--scenarios", help="the planted scenarios to plant on both engines, separated by commas; "
@@ -1103,7 +1096,7 @@ def main():
             print(f"{'as it should' if ok else 'NOT AS IT SHOULD'}: {label}" + ("" if ok or not detail else f" ({detail})"))
     unsafe = sum(1 for _, ok, _ in safeguards if not ok)
 
-    # 8. The target queries, their drafts and any hand-written source query.
+    # 8. The target queries and any hand-written source query.
     print("")
     print("TARGET QUERIES")
     targets = args.target or sorted((ROOT / "fixtures" / "targets").glob("*.sql"))
@@ -1118,15 +1111,6 @@ def main():
         target_problems += not same
         shown = lambda rows: "; ".join(", ".join("" if v is None else v for v in row) for row in rows[:6]) + (" ..." if len(rows) > 6 else "")  # noqa: E731
         print(f"{label}: {'the same on both engines' if same else 'DIFFERENT'}: DuckDB {shown(duck)}; SQL Server {shown(theirs)}")
-    # Each restructured query against the OMOP answer of the same target, on SQL Server.
-    by_label = {label: theirs for label, _, theirs, error in answers if not error}
-    for label, theirs in list(by_label.items()):
-        if label.endswith(" as a source query that starts from the cohort"):
-            name = label[:-len(" as a source query that starts from the cohort")]
-            omop = by_label.get(f"{name} on the OMOP tables")
-            same = omop is not None and Counter(omop) == Counter(theirs)
-            target_problems += not same
-            print(f"{name}: the restructured source query on SQL Server {'gives the OMOP answer' if same else 'DOES NOT give the OMOP answer'}")
 
     # 9. The check script.
     analysis = world.analysis()
@@ -1183,7 +1167,7 @@ def main():
     print(f"Source columns whose sandbox values do not fit the catalogue's type: {len(findings)}.")
     print(f"Reasons that the DuckDB run itself was not clean: {len(duck_failures)}.")
     print(f"Safeguards that behaved as they should: {len(safeguards) - unsafe} of {len(safeguards)}.")
-    print(f"Target queries, drafts and source queries whose answers differ or could not be compared: {target_problems} of {len(answers)}.")
+    print(f"Target queries and source queries whose answers differ or could not be compared: {target_problems} of {len(answers)}.")
     print(f"Expectations of the planted scenarios not met on both engines: {scenario_problems} of {len(expectations)}.")
     exit_code = 1 if different or step_problems or gate_problems or check_problems or findings or duck_failures or unsafe \
         or target_problems or scenario_problems or count_problems else 0

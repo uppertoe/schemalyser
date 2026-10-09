@@ -372,14 +372,15 @@ def test_the_report_states_the_route_of_every_step_and_the_share_on_each(ran):
     routes = report["routes"]
     assert routes["problems"] == [] and routes["draft"] is None
     shares = routes["shares"]
-    assert shares["steps"] == 20 and shares["roles"] + shares["direct"] == 20 and shares["unrecorded"] == 0
-    assert routes["release_shares"]["steps"] == 10
+    assert shares["steps"] == 20 and (shares["roles"], shares["direct"]) == (1, 19) and shares["unrecorded"] == 0
+    assert (routes["release_shares"]["steps"], routes["release_shares"]["roles"]) == (10, 1)
     assert shares["sentence"] in report["summary"]["sentences"] and shares["sentence"] in (ran[0] / "report.md").read_text()
     assert {s["file"]: s["route"] for s in report["steps"]}["anaesthetic.sql"] is None
     assert all(s["route"] in ("roles", "direct") for s in report["steps"] if s["layer"] != "derived")
-    # The step over the roles is offered beside the direct infusion step, and the report says so.
-    assert [(e["file"], e["alternative_of"]) for e in routes["over_the_roles"]] == [
-        ("drug_exposure_infusion_roles.sql", "drug_exposure_infusion.sql")]
+    # The step over the roles has replaced the direct infusion step, which stays as a recorded alternative on the direct route.
+    assert [(e["file"], e["alternative_of"]) for e in routes["over_the_roles"]] == [("drug_exposure_infusion_roles.sql", None)]
+    infusion = next(s for s in routes["steps"] if s["file"] == "drug_exposure_infusion_roles.sql")
+    assert infusion["route"] == "roles" and infusion["alternatives"] == [{"file": "drug_exposure_infusion.sql", "route": "direct"}]
     check = next(c for c in report["checks"] if c["check"].startswith("every step records its route"))
     assert check["passed"] is True
 
@@ -392,6 +393,31 @@ def test_the_boundary_scenario_runs_the_step_over_the_roles_against_its_held_out
     check = next(c for c in report["checks"] if c["check"].startswith("every scenario over the roles"))
     assert check["passed"] is True
     assert "## Scenarios over the roles" in (ran[0] / "report.md").read_text()
+
+
+def test_the_boundary_scenario_runs_end_to_end_from_the_invented_hospital_s_source(ran):
+    out, report = ran
+    # The step over the roles ran in the conversion itself, compiled through the invented map, and wrote rows.
+    step = next(s for s in report["steps"] if s["file"] == "drug_exposure_infusion_roles.sql")
+    assert step["status"] == "ok" and step["rows"] > 0 and step["route"] == "roles"
+    # The boundary history, planted in the invented hospital's own tables, meets every held-out expectation.
+    boundary = next(s for s in report["scenarios"] if s["name"] == "infusion_boundary")
+    assert boundary["outcome"] == "passed" and len(boundary["expectations"]) == 9
+    assert "drug_exposure_infusion_roles.sql" in boundary["steps"]
+    # The release script carries the same compiled step, and the reconciliation traces it as it ran.
+    assert report["release"]["roles_compiled"] == ["drug_exposure_infusion_roles.sql"]
+    assert "WITH [role_drug] AS (" in (out / "release" / "release.sql").read_text()
+    traced = next(e for e in report["reconciliation"]["steps"] if e["step"] == "drug_exposure_infusion_roles.sql")
+    assert traced["written"] == step["rows"]
+
+
+def test_the_report_records_the_class_of_every_step_and_gate(ran):
+    out, report = ran
+    classes = report["release"]["classes"]
+    assert {e["file"] for e in classes if e["what"] == "step"} == {s["file"] for s in report["steps"]}
+    assert report["release"]["worst_carried_class"] == "C"
+    assert [e["file"] for e in classes if e["execution_class"] == "D"] == ["cdm_source.sql"]
+    assert "cdm_source.sql, which the script does not carry, is of class D." in (out / "report.md").read_text()
 
 
 def test_the_report_carries_the_rewrites_that_the_translation_applied(ran):

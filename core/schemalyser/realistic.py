@@ -20,9 +20,8 @@ from pathlib import Path
 
 import duckdb
 
-from .checks import BANDS
 from .roles import ADDED_ROWS
-from .tuning import PUBLIC, Tuning
+from .tuning import BANDS, PUBLIC, Tuning
 
 DATA = Path(__file__).parent / "realism"
 OUNCES_PER_KG, POUNDS_PER_KG, CM_PER_INCH = 35.274, 2.20462, 2.54

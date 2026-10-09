@@ -81,7 +81,7 @@
      "TIMESTAMP"
     ]
    ],
-   "rows": 238
+   "rows": 240
   },
   {
    "name": "ANAES_STAFF",
@@ -161,7 +161,7 @@
      "VARCHAR"
     ]
    ],
-   "rows": 203
+   "rows": 207
   },
   {
    "name": "DRUG_GIVEN",
@@ -201,9 +201,59 @@
     [
      "ACTION_CAT",
      "BIGINT"
+    ],
+    [
+     "ORDER_KEY",
+     "BIGINT"
+    ],
+    [
+     "DOC_TS",
+     "TIMESTAMP"
+    ],
+    [
+     "AMENDS_KEY",
+     "BIGINT"
     ]
    ],
-   "rows": 206
+   "rows": 220
+  },
+  {
+   "name": "DRUG_ORDER",
+   "columns": [
+    [
+     "ORDER_KEY",
+     "BIGINT"
+    ],
+    [
+     "VISIT_KEY",
+     "BIGINT"
+    ],
+    [
+     "ANAES_KEY",
+     "VARCHAR"
+    ],
+    [
+     "DRUG_KEY",
+     "VARCHAR"
+    ],
+    [
+     "ORDER_TS",
+     "TIMESTAMP"
+    ],
+    [
+     "DOSE_AMT",
+     "DECIMAL(18,4)"
+    ],
+    [
+     "DOSE_UNIT_CAT",
+     "BIGINT"
+    ],
+    [
+     "ROUTE_CAT",
+     "BIGINT"
+    ]
+   ],
+   "rows": 202
   },
   {
    "name": "EVENT_TYPE_DEF",
@@ -259,7 +309,7 @@
      "VARCHAR"
     ]
    ],
-   "rows": 3
+   "rows": 6
   },
   {
    "name": "LK_SERVICE",
@@ -387,7 +437,7 @@
      "VARCHAR"
     ]
    ],
-   "rows": 236
+   "rows": 237
   },
   {
    "name": "PERSON_MASTER_2",
@@ -475,7 +525,7 @@
      "VARCHAR"
     ]
    ],
-   "rows": 237
+   "rows": 239
   },
   {
    "name": "VISIT",
@@ -505,7 +555,7 @@
      "BIGINT"
     ]
    ],
-   "rows": 237
+   "rows": 238
   },
   {
    "name": "VISIT_DIAGNOSIS",
@@ -552,9 +602,11 @@
   "CASE_DATE",
   "DEATH_TS",
   "DISCH_TS",
+  "DOC_TS",
   "END_TS",
   "EVENT_TS",
   "GIVEN_TS",
+  "ORDER_TS",
   "PLACED_TS",
   "READ_TS",
   "REMOVED_TS",

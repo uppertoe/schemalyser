@@ -9,9 +9,9 @@ This is the one place where a string from a request reaches an output, so it is 
 used only if it is a plain name by the catalogue's own rule; temporary tables, table variables, common table
 expressions, aliases, and anything in a comment or a string are never names of tables to the parser and are
 left out; at most MAXIMUM_NAMES names are used; and the query exists only on the page, for the person who
-already holds the SQL. It is never written into the inventory pack, the boundary's outputs, the provenance
-or any file, other than by the user's own copy. Once its result is pasted, every later output takes its
-names from that result, which is read as a catalogue and as check results under their own rules.
+already holds the SQL. It is never written into any file, other than by the user's own copy. Once its result
+is pasted, every later output takes its names from that result, which is read as a catalogue under the
+catalogue's own rules.
 """
 import csv
 import io
@@ -22,8 +22,7 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel, SqlglotError
 
-from .catalogue import NAME, QUERY_ORDER, Catalogue, CatalogueError
-from .checks import LAYOUT as CHECKS_LAYOUT, Checks, ChecksError
+from .catalogue import NAME, QUERY_ORDER
 from .extract import _is_base_table, _names_something_else
 from .statements import drop_old_hints
 from .translate import OMOP_SCHEMA
@@ -250,46 +249,3 @@ def _rows(text):
     if not kept:
         raise FirstAskError("no rows")
     return kept
-
-
-def read(text, rules, earlier_checks=None):
-    """Reads the pasted result of the first query, as (catalogue text, check results text, facts).
-
-    The first nine values of each row are read as the catalogue, under the catalogue's own rules, and the
-    sizes as rows results, under the rules of the check results; earlier check results, where given as text,
-    are kept, with these sizes in place of theirs. Raises FirstAskError when the text is not the result.
-    """
-    rows = _rows(text)
-    out = io.StringIO()
-    writer = csv.writer(out, lineterminator="\n")
-    writer.writerow(QUERY_ORDER)
-    writer.writerows(row[:len(QUERY_ORDER)] for row in rows)
-    catalogue_text = out.getvalue()
-    try:
-        catalogue = Catalogue.from_csv(catalogue_text)
-    except CatalogueError as error:
-        raise FirstAskError("the catalogue fields could not be read") from error
-    if not list(catalogue.tables()):
-        raise FirstAskError("no table could be accepted")
-    sizes = {}
-    for row in rows:
-        table, count = row[1], row[-1]
-        if catalogue.table(table) is not None and count.isdecimal():
-            sizes[catalogue.table(table).name] = int(count)
-    checks_out = io.StringIO()
-    writer = csv.writer(checks_out, lineterminator="\n")
-    writer.writerow(CHECKS_LAYOUT)
-    writer.writerows(["rows", table, "", "", "", count, "", "", ""] for table, count in sorted(sizes.items()))
-    # A table whose size came back empty has no record of its size that this account can read, as for a view, so
-    # the table sizes query would add nothing: it is recorded as unrecorded at once, and counted only up to a limit.
-    unsized = sorted({entry.name for entry in catalogue.tables()} - set(sizes))
-    writer.writerows(["skipped", table, "", "rows", "unrecorded", "", "", "", ""] for table in unsized)
-    try:
-        checks = Checks.from_csv(checks_out.getvalue(), catalogue, rules)
-        if earlier_checks:
-            checks = Checks.from_csv(earlier_checks, catalogue, rules).merged(checks)
-    except ChecksError as error:
-        raise FirstAskError("the sizes could not be read") from error
-    facts = {"tables": len(list(catalogue.tables())), "columns": sum(len(t.columns) for t in catalogue.tables()),
-             "sized": len(checks.rows), "rows": len(rows)}
-    return catalogue_text, checks.to_csv(), facts

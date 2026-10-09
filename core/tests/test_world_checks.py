@@ -1,16 +1,24 @@
+"""The checks that the synthetic world answers: planned from the findings and written as one script in harness.py, and
+read back under the reader's rules in sandbox.py, whose values the sandbox then builds from.
+
+Carried from the earlier design's tests of the check script (B8): the check script no longer goes to a hospital, but
+the stand-in world still answers its checks, the SQL Server harness still runs the script, and the sandbox reads the
+answers.
+"""
 import csv
 import io
-import json
 import sys
 from pathlib import Path
 
 import pytest
 
-from schemalyser import browser
+from schemalyser import harness
 from schemalyser.catalogue import Catalogue
-from schemalyser.checks import (LARGE_TABLE_ROWS, LAYOUT, MINUTES_ALLOWED, RUN_ORDER, SAMPLE_PERCENT, SAMPLED_KINDS,
-                                Checks, ChecksError)
+from schemalyser.extract import decode
+from schemalyser.harness import LARGE_TABLE_ROWS, MINUTES_ALLOWED, SAMPLE_PERCENT, Analysis, _bracket, _text, plan
 from schemalyser.rules import SiteRules
+from schemalyser.sandbox import LAYOUT, RUN_ORDER, SAMPLED_KINDS, Checks, ChecksError, Sandbox
+from schemalyser.tuning import BAND_LABELS
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 REQUESTS = FIXTURES / "requests"
@@ -109,24 +117,18 @@ def test_a_file_in_the_wrong_layout_is_refused(without):
 
 
 def test_the_sandbox_uses_the_check_results_and_more_requests_return_rows(without, with_checks):
-    catalogue = (FIXTURES / "invented-catalogue.csv").read_bytes()
+    catalogue = Catalogue.from_csv((FIXTURES / "invented-catalogue.csv").read_text())
     counts = {}
     for label, analysis in (("without", without), ("with", with_checks)):
-        assert browser.sandbox_start(catalogue, make_checks.inventory_zip(analysis)) == "ok"
-        built = json.loads(browser.sandbox_build(500))
+        sandbox = Sandbox(catalogue, make_checks.inventory_zip(analysis))
+        built = sandbox.build(500)
         assert built["hasValues"] == (label == "with")
-        browser.sandbox_requests_begin()
-        for path in sorted(REQUESTS.rglob("*.sql")):
-            browser.sandbox_request(path.relative_to(REQUESTS).as_posix(), path.read_bytes())
-        result = json.loads(browser.sandbox_requests_finish())
-        counts[label] = [o for _, o in result["outcomes"]].count("returned rows")
-        print(label, result["sentence"])
+        outcomes = [sandbox.outcome(decode(path.read_bytes())) for path in sorted(REQUESTS.rglob("*.sql"))]
+        counts[label] = outcomes.count("returned rows")
     assert counts["with"] > counts["without"]
 
 
 # The spans checks: how long from one date column to another in the same table.
-
-from schemalyser import Analysis, checks as checking  # noqa: E402
 
 CATALOGUE_TEXT = (FIXTURES / "invented-catalogue.csv").read_text()
 RULES_TEXT = (FIXTURES / "invented-site-rules.json").read_text()
@@ -166,7 +168,7 @@ def test_the_script_counts_the_spans_in_fixed_bands(without):
     assert "DATEDIFF_BIG(minute, [ANAES_START_TS], [ANAES_STOP_TS]) AS m FROM [dbo].[ANAES_RECORD] " in statement
     assert "WHEN d.m < 0 THEN ''less than zero minutes''" in statement and "ELSE ''a week or more'' END" in statement
     assert statement.endswith("HAVING COUNT_BIG(*) >= @minimum_count) AS g',")
-    for label in checking.BAND_LABELS:
+    for label in BAND_LABELS:
         assert f"''{label}''" in statement
     # The header gains the wording about spans before its last line, and the script without them is unchanged.
     from schemalyser.vocabulary import CHECK_SCRIPT
@@ -202,8 +204,6 @@ def test_spans_results_are_read_and_hostile_rows_are_left_out(without):
 
 
 def test_spans_in_the_check_results_set_the_durations_of_the_anaesthetics():
-    from schemalyser.catalogue import Catalogue
-    from schemalyser.sandbox import Sandbox
     spans = ("spans,ANAES_RECORD,ANAES_START_TS,240 to 479 minutes,ANAES_STOP_TS,300,,,\n"
              "spans,ANAES_RECORD,ANAES_START_TS,less than zero minutes,ANAES_STOP_TS,20,,,\n")
     analysis = Analysis(CATALOGUE_TEXT, RULES_TEXT, checks_csv=CHECKS + spans)
@@ -322,14 +322,11 @@ def test_a_message_from_sql_server_among_the_results_is_passed_over(without):
 
 
 def test_a_definition_table_that_a_check_reads_is_built_in_the_sandbox():
-    from schemalyser import harness
     # The request compares the definition key with a value but never reads the definition table itself.
     analysis = Analysis(CATALOGUE_TEXT, RULES_TEXT)
     analysis.add_request("one.sql", "SELECT r.READ_VALUE FROM OBS_READING r WHERE r.OBS_TYPE_KEY = '14'")
     assert "OBS_TYPE_DEF" not in analysis.pack()["elements.csv"]
     assert analysis.pack()["checked.csv"] == "table\nOBS_TYPE_DEF\n"
-    from schemalyser.catalogue import Catalogue
-    from schemalyser.sandbox import Sandbox
     sandbox = Sandbox(Catalogue.from_csv(CATALOGUE_TEXT), make_checks.inventory_zip(analysis))
     assert sandbox.tables == ["OBS_READING", "OBS_TYPE_DEF"]
     sandbox.build(800)
@@ -415,3 +412,44 @@ def test_skipped_and_sampled_rows_are_read_and_kept():
     sentence = vocabulary.checks_skipped_sentence(2, 1)
     assert "left out 2 checks because its time had run out" in sentence and "left out 1 check because" in sentence
     assert vocabulary.checks_skipped_sentence(0, 0) == ""
+
+
+# Carried from the reviews of 4 October 2026.
+
+def analyse(sql, checks_csv=None):
+    analysis = Analysis(CATALOGUE_TEXT, checks_csv=checks_csv)
+    analysis.add_request("one.sql", sql)
+    return analysis
+
+
+def test_names_cannot_carry_sql_into_the_check_script():
+    assert _bracket("a]b") == "[a]]b]" and _text("a'b") == "'a''b'"
+    script = make_checks.analysis().check_script()
+    for line in script.splitlines():
+        if line.strip().startswith("EXEC sys.sp_executesql"):
+            assert line.count("'") % 2 == 0
+
+def test_the_checks_never_list_keys_to_people():
+    rules = SiteRules(person_tables=["STAFF_MASTER"], person_key_columns=["PERSON_KEY"])
+    analysis = analyse("""SELECT 1 FROM ANAES_STAFF st JOIN STAFF_MASTER sm ON sm.STAFF_KEY = st.STAFF_KEY
+        CROSS JOIN VISIT v WHERE st.STAFF_KEY = 'S1' AND v.PERSON_KEY = 'P1' AND st.ROLE_CAT = 1""")
+    findings = set().union(*(r.findings for r in analysis._requests.values()))
+    listed = {(c.table, c.column) for c in plan(analysis.catalogue, rules, findings) if c.kind == "values"}
+    assert listed == {("ANAES_STAFF", "ROLE_CAT")}
+
+def test_check_results_are_held_to_the_rules_of_the_script():
+    catalogue = Catalogue.from_csv(CATALOGUE_TEXT)
+    lines = [
+        "values,THEATRE_CASE,EMERGENCY_FLAG,Y,,20,,,",                    # accepted
+        "values,PROC_DEF,PROC_LABEL,Dr Quartermaine,MRN 9900112,20,,,",   # a long text column named like a label
+        "values,THEATRE_CASE,EMERGENCY_FLAG,N,,7,,,",                     # a count under ten
+        "values,THEATRE_CASE,EMERGENCY_FLAG,Q,,25,,,",                    # a count that was not rounded
+        "values,THEATRE_CASE,ROOM_KEY,=HYPERLINK(1),,20,,,",              # a spreadsheet formula
+        "values,STAFF_MASTER,STAFF_KEY,S1,,20,,,",                        # a table of people
+    ]
+    checks = Checks.from_csv(",".join(LAYOUT) + "\n" + "\n".join(lines) + "\n", catalogue, SiteRules(person_tables=["STAFF_MASTER"]))
+    assert checks.values == {("THEATRE_CASE", "EMERGENCY_FLAG"): [("Y", "", 20)]}
+    too_many = "\n".join(f"values,THEATRE_CASE,ROOM_KEY,R{i},,20,,," for i in range(201))
+    assert not Checks.from_csv(",".join(LAYOUT) + "\n" + too_many + "\n", catalogue, SiteRules()).values
+    with pytest.raises(ChecksError):
+        Checks.from_csv(",".join(LAYOUT) + "\nrows,THEATRE_CASE,,,,²,,,\n", catalogue, SiteRules())

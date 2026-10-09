@@ -40,8 +40,9 @@ whole conversion as a draft, so that the runner reports it as one and the releas
 has reviewed every step and removed the file.
 
 Beside the steps the folder receives conversion.json, catalogue.csv with the tables and columns that the steps read in
-the layout of a world's catalogue, so that the sandbox can build rows for them, decisions.json, and
-transplant-report.json with transplant-report.md. With --existing, the existing conversion is copied into the folder,
+the layout of a world's catalogue, so that the sandbox can build rows for them, decisions.json,
+transplant-report.json with transplant-report.md, and the run's counts alone in transplant-run-summary.json and
+transplant-run-summary.md, written by summaries.py, which are the only part of the folder that names nothing. With --existing, the existing conversion is copied into the folder,
 an existing step for a target is kept, and the transplanted step is written beside it as TARGET_from_reference.sql and
 offered as that step's alternative, so that the owner chooses.
 
@@ -60,7 +61,7 @@ from pathlib import Path
 import sqlglot
 from sqlglot import exp
 
-from . import convert
+from . import convert, summaries
 
 REPORT_FORMAT = "schemalyser-transplant/1"
 DECISIONS_FILE = "decisions.json"
@@ -810,6 +811,7 @@ def transplant(lineage, dictionary, out, targets=None, existing=None, date=None,
     }
     (out / f"{REPORT_FILE}.json").write_text(json.dumps(report, indent=1) + "\n", encoding="utf-8")
     (out / f"{REPORT_FILE}.md").write_text(markdown(report) + "\n", encoding="utf-8")
+    summaries.write_transplant(report, out)
     return report
 
 

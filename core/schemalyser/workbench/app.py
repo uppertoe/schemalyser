@@ -100,8 +100,8 @@ def create_app(project_folder, hosts=None, describe_folder=None):
                 board = rolemap.scoreboard(rolemap.read_saved_map(project.schema_path(name)))
                 parts = [{"title": v["title"], "state": (schema.readiness.get("parts") or {}).get(v["name"], {}).get("reached")}
                          for v in rolemap.contract()["views"] if v.get("required")]
-                schemas.append({"name": name, "updated": schema.updated(), "parts": parts, "overall": board["lines"][2]
-                                if len(board["lines"]) > 2 else "", "problem": None})
+                schemas.append({"name": name, "updated": schema.updated(), "parts": parts, "overall": scoreboard_line(board, "overall"),
+                                "problem": None})
             except (feasibility.FeasibilityError, rolemap.MapError, KeyError, ValueError) as error:
                 schemas.append({"name": name, "problem": str(error), "parts": []})
         return page(request, "overview.html", schemas=schemas, questions=project.questions(),
@@ -133,6 +133,9 @@ def create_app(project_folder, hosts=None, describe_folder=None):
         parts = [dict(held, title=titles.get(view, view), contract=held.get("status") == "contract")
                  for view, held in (schema.readiness.get("parts") or {}).items()]
         return page(request, "schema.html", name=name, schema=schema, parts=parts, board=board,
+                    overall=scoreboard_line(board, "overall"),
+                    rest=[line for line in board["lines"] if line and line not in (rolemap.SCORE_WORDING["heading"],
+                                                                                   scoreboard_line(board, "overall"))],
                     states=schema.readiness.get("states") or {}, measured=schema.readiness.get("measured") or {},
                     questions=project.questions())
 
@@ -203,18 +206,22 @@ def create_app(project_folder, hosts=None, describe_folder=None):
         folder = project.folder("audits") / name
         folder.mkdir()
         decisions = [line.strip() for line in (form.get("decisions") or "").splitlines() if line.strip()]
+        # The decisions are recorded with the name of the person who made them, as the form gives it, and otherwise
+        # as not recorded; the workbench never supplies a name of its own.
+        by = (form.get("by") or "").strip()[:100] or audit.NOT_RECORDED
         command = jobs.module("audit", "build", schema, question, "--out", folder / "package")
         if start:
             command += ["--period", start, end]
         if decisions or form.get("exact"):
             (folder / "decisions.json").write_text(json.dumps(
-                {"decisions": [{"about": "", "decision": d, "by": "the clinician", "date": dt.date.today().isoformat()}
+                {"decisions": [{"about": "", "decision": d, "by": by, "date": dt.date.today().isoformat()}
                                for d in decisions], "exact_small_numbers": bool(form.get("exact"))}, indent=2) + "\n",
                 encoding="utf-8")
             command += ["--decisions", folder / "decisions.json"]
         (folder / "request.json").write_text(json.dumps(
             {"schema": schema.name, "question": question.name, "period": [start, end] if start else None,
-             "decisions": decisions, "exact_small_numbers": bool(form.get("exact"))}, indent=2) + "\n", encoding="utf-8")
+             "decisions": decisions, "decided_by": by if decisions else None, "exact_small_numbers": bool(form.get("exact"))},
+            indent=2) + "\n", encoding="utf-8")
         jobs.start(project, folder, "request.json", command)
         return go(f"/audits/{name}")
 
@@ -233,6 +240,7 @@ def create_app(project_folder, hosts=None, describe_folder=None):
                 specification=(package / "specification.md").read_text(encoding="utf-8"),
                 script=(package / "query.sql").read_text(encoding="utf-8"),
                 needs=audit.README_WORDING.get(read_json(package / "manifest.json")["execution_class"], ""))
+            found["planted_said"] = PLANTED_WORDS.get((found["expected"] or {}).get("planted_match"), "")
         elif (package / "feasibility.json").is_file() and found["state"] != "running":
             found["feasibility"] = read_json(package / "feasibility.json")
         return found
@@ -311,7 +319,13 @@ def create_app(project_folder, hosts=None, describe_folder=None):
                               "--profile", profile, "--engine", engine)
         if vocabulary:
             command += ["--vocabulary", vocabulary]
-        jobs.start(project, folder, "run.json", command)
+        # The testbed keeps its working copy of an Athena download beside the folder it reads. A download outside the
+        # project is therefore read through a folder of links inside it, so that the copy is made in the project too.
+        env = {}
+        download = testbed.athena_folder()
+        if testbed.athena_release(download) is not None and not download.resolve().is_relative_to(project.root.resolve()):
+            env["SCHEMALYSER_ATHENA"] = str(jobs.athena_inside(project, download))
+        jobs.start(project, folder, "run.json", command, env=env)
         return go(f"/runs/{name}")
 
     def _run(name):
@@ -382,6 +396,24 @@ def create_app(project_folder, hosts=None, describe_folder=None):
     app = Starlette(routes=routes, middleware=[Middleware(TrustedHostMiddleware, allowed_hosts=hosts or HOSTS)])
     app.state.project = project
     return app
+
+
+# What the workbench says of the planted cases, by the verdict that the core's correctness report gives them by name.
+PLANTED_WORDS = {True: audit.README_WORDING["planted_ok"],
+                 False: "At least one planted case did not give its expected answer. Each case is marked below, and the "
+                        "clinician resolves that before the script is run.",
+                 None: "No planted case applies to this question."}
+
+
+def scoreboard_line(board, name):
+    """The line of the core's scoreboard that its wording names, such as "overall", found by the fixed words with which
+    that wording opens rather than by its place in the list, or the line that says there is nothing to report yet."""
+    for key in (name, "none"):
+        opening = rolemap.SCORE_WORDING[key].split("{", 1)[0]
+        found = next((line for line in board["lines"] if line.startswith(opening)), None)
+        if found:
+            return found
+    return ""
 
 
 def safe_ok(name):

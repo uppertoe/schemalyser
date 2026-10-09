@@ -2,3 +2,6 @@ ROUTE_CAT,LABEL
 1,Intravenous
 2,Oral
 3,Inhaled
+4,Subcutaneous
+5,Intramuscular
+6,Topical

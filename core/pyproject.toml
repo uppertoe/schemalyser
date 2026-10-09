@@ -1,7 +1,7 @@
 [project]
 name = "schemalyser"
 version = "0.1.0"
-description = "Builds an inventory of how a repo of SQL requests uses a database, by allowlist."
+description = "The reusable anaesthesia record export: a hospital schema with its evidence, a role model, and the compilation of questions and conversions over it."
 requires-python = ">=3.11"
 dependencies = ["sqlglot==30.21.0"]
 

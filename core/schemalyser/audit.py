@@ -47,13 +47,14 @@ import hashlib
 import json
 import re
 import sys
+import textwrap
 from pathlib import Path
 
 import sqlglot
 from sqlglot import exp
 
 from . import describe, feasibility, policy, rolemap
-from .target import blanking, count_columns, textwrap_lines
+from .blanking import blanking, count_columns
 
 TOOL = "schemalyser"
 CAP = policy.CAP
@@ -182,7 +183,7 @@ def tool_version():
 
 
 def _wrapped(sentence):
-    return "\n".join(f"-- {line}" for line in textwrap_lines(sentence))
+    return "\n".join(f"-- {line}" for line in textwrap.wrap(sentence, 110))
 
 
 def _and(items):

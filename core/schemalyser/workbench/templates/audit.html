@@ -74,7 +74,7 @@
       <thead><tr>{% for c in a.expected.columns %}<th>{{ c | replace("_", " ") }}</th>{% endfor %}</tr></thead>
       <tbody>{% for row in a.expected.rows %}<tr>{% for v in row %}<td>{{ v | number }}</td>{% endfor %}</tr>{% endfor %}</tbody>
     </table>
-    <details x-data><summary>The planted cases, {{ a.expected.planted | selectattr("matches") | list | length }} of {{ a.expected.planted | length }} of which gave their expected answer</summary>
+    <details x-data><summary>The planted cases. {{ a.planted_said }}</summary>
       <ul>{% for p in a.expected.planted %}<li><span class="outcome {{ 'good' if p.matches else 'bad' }}">{{ "as expected" if p.matches else "not as expected" }}</span> {{ p.says }}</li>{% endfor %}</ul>
     </details>
   </section>

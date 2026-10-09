@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 import sqlglot
 
-from schemalyser import harness, rolemap
+from schemalyser import convert, harness, rolemap
 from schemalyser.translate import to_duckdb
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -45,6 +45,13 @@ def _key(value):
     return str(int(value)) if isinstance(value, (int, float)) or type(value).__name__ == "Decimal" else str(value)
 
 
+def _target(done):
+    """The OMOP target's answer through the conversion, on the same rows as the run through the map."""
+    converted = done["conversion"]
+    rows = converted.con.execute(to_duckdb(TARGET, converted.sandbox.date_columns)[0]).fetchall()
+    return {"rows": rows, "failures": convert.failures(done["report"])}
+
+
 def _target_detail(con, date_columns):
     tree = sqlglot.parse_one(TARGET, dialect="tsql")
     final = sqlglot.parse_one(TARGET_DETAIL, dialect="tsql")
@@ -70,7 +77,7 @@ def role_runs():
 @pytest.fixture(scope="module")
 def invented():
     roles_map = rolemap.read_map(MAP, CATALOGUE)
-    return rolemap.hospital_run(make_checks.WORLD, CONVERSION, roles_map, rows=500, target_sql=TARGET)
+    return rolemap.hospital_run(make_checks.WORLD, CONVERSION, roles_map, rows=500)
 
 
 @pytest.fixture(scope="module")
@@ -78,7 +85,7 @@ def realistic():
     if not (REALISTIC / "map" / "map.json").exists():
         pytest.skip("the realistic world is private and is not present here")
     roles_map = rolemap.read_map(REALISTIC / "map", (REALISTIC / "catalogue.csv").read_text())
-    return rolemap.hospital_run(harness.World.from_folder(REALISTIC), REALISTIC_CONVERSION, roles_map, rows=50, target_sql=TARGET)
+    return rolemap.hospital_run(harness.World.from_folder(REALISTIC), REALISTIC_CONVERSION, roles_map, rows=50)
 
 
 # The contract and the maps.
@@ -132,8 +139,10 @@ def test_the_invented_map_is_checked_against_the_catalogue_and_lists_its_open_it
     # Nothing in the invented map is confirmed yet, so every binding is open, and so is the map's own question. The map
     # supplies the staff and the diagnoses as well, and leaves the fluids and the laboratory results unsupplied, because
     # the invented world records neither. The diagnoses carry their own key, their source kind, the time each was
-    # entered and the row it amends, in place of the hospital's code, classification and name, so they have ten.
-    assert len(items) == 3 + 13 + 2 + 1 + 9 + 10
+    # entered and the row it amends, in place of the hospital's code, classification and name, so they have ten. The
+    # drugs come by three pathways, the administrations, the corrections and the orders, each with its rows and its
+    # thirteen columns.
+    assert len(items) == 3 + 13 + 2 + 1 + 9 + 10 + 3 * 14
     assert {"role_staff", "role_diagnosis"} <= set(roles_map["views"]) and not {"role_fluid", "role_lab"} & set(roles_map["views"])
     assert {"kind map_arterial", "role_anaesthetic.patient_key"} <= {item["about"] for item in items}
 
@@ -210,7 +219,7 @@ def test_the_planted_neonates_move_each_band_by_exactly_what_they_imply(role_run
 # B. Each world, through its map, against the existing target through the conversion.
 
 def test_the_invented_map_gives_the_target_s_answer_anaesthetic_by_anaesthetic(invented):
-    found, target = invented["result"], invented["target"]
+    found, target = invented["result"], _target(invented)
     assert target["failures"] == []
     assert found["rows"] == target["rows"]
     converted = invented["conversion"]
@@ -219,7 +228,7 @@ def test_the_invented_map_gives_the_target_s_answer_anaesthetic_by_anaesthetic(i
 
 
 def test_the_realistic_map_gives_the_target_s_answer_anaesthetic_by_anaesthetic(realistic):
-    found, target = realistic["result"], realistic["target"]
+    found, target = realistic["result"], _target(realistic)
     assert target["failures"] == []
     assert found["rows"] == target["rows"]
     converted = realistic["conversion"]
@@ -315,7 +324,7 @@ def test_the_command_line_checks_a_map_lists_its_open_items_and_compiles_the_aud
         rolemap.main(["open", str(MAP)])
         rolemap.main(["compile", str(MAP)])
     text = out.getvalue()
-    assert "role_reading: one SELECT over OBS_READING, OBS_SHEET" in text and "The map has 38 open items." in text
+    assert "role_reading: one SELECT over OBS_READING, OBS_SHEET" in text and "The map has 80 open items." in text
     assert "kind map_cuff (proposed): Please confirm whether" in text and "WITH (NOLOCK)" in text
 
 
@@ -384,7 +393,11 @@ def test_the_scoreboard_counts_each_category_of_column_apart(tmp_path):
     out = io.StringIO()
     with redirect_stdout(out):
         rolemap.main(["scoreboard", str(saved)])
-    assert out.getvalue() == rolemap.scoreboard(data)["text"]
+    # The command line also writes the counts alone beside the map, and says where.
+    assert out.getvalue().startswith(rolemap.scoreboard(data)["text"])
+    assert out.getvalue().endswith("Schemalyser has written the counts alone to scoreboard-summary.md, beside the saved "
+                                   "schema. Once you have read that file, you may show it to the developer's model.\n")
+    assert (tmp_path / "scoreboard-summary.json").is_file() and (tmp_path / "scoreboard-summary.md").is_file()
 
 
 # Version 1.1: the mapping views, the source kinds, the shapes of the event parts, and the capability catalogue.
@@ -539,3 +552,34 @@ def test_a_map_s_concepts_and_pathways_are_checked_when_it_is_read(tmp_path):
     compiled = rolemap.compile_query("SELECT m.concept_id, COUNT(*) AS n FROM role_anaesthetic a JOIN map_diagnosis_concept m "
                                      "ON m.local_key = a.anaesthetic_key GROUP BY m.concept_id", found)
     assert "map_diagnosis_concept AS (" in compiled and "map_drug_concept AS (" not in compiled
+
+
+# The drug part of the invented map, through which a conversion step over the roles is compiled.
+
+def test_the_invented_map_normalises_the_boundary_history_into_the_role_rows_that_the_role_scenario_plants():
+    # The invented hospital charts the boundary history in its own tables; through the map it gives the same events of
+    # the drug part, with their source kinds, as the role scenario plants by hand at the role level, apart from the
+    # opaque keys, which the hospital schema makes from its own codes, and the filing times, which the hospital records
+    # on every administration and the role scenario gives only on the correction.
+    from schemalyser import convert
+    roles_map = rolemap.read_map(MAP, CATALOGUE)
+    converted, _ = convert.run(make_checks.WORLD, CONVERSION, rows=40, scenarios=["infusion_boundary"])
+    run = rolemap.duckdb_runner(converted.con, converted.sandbox.date_columns, roles_map)
+    _, rows = run("SELECT d.anaesthetic_key, d.order_key, d.action, d.amount, d.given_time, d.source_kind, "
+                  "CASE WHEN d.amends_key IS NULL THEN 0 ELSE 1 END AS amends, COALESCE(m.status, 'unlisted') AS status, "
+                  "d.documented_time FROM role_drug d "
+                  "LEFT JOIN (SELECT DISTINCT c.local_key, c.status FROM map_drug_concept c) m ON m.local_key = d.drug "
+                  "WHERE d.anaesthetic_key IN ('990005300', '990005301')")
+    planted = json.loads((CONVERSION / "role_scenarios" / "infusion_boundary" / "rows.json").read_text())["roles"]
+    status = {row[0]: row[2] for row in planted["map_drug_concept"]}
+
+    def shown(anaesthetic, order, action, amount, given, kind, amends, mapping):
+        return (anaesthetic, str(order), action, None if amount is None else round(float(amount), 6), str(given)[:19], kind,
+                amends, mapping)
+    found = sorted((shown(*row[:8]) for row in rows), key=str)
+    wanted = sorted((shown(r[1], r[3], r[5], r[6], r[9], r[10], int(r[12] is not None), status.get(r[4], "unlisted"))
+                     for r in planted["role_drug"]), key=str)
+    assert found == wanted
+    # The correction was filed that afternoon, apart from the time of the change of rate that it corrects.
+    (correction,) = [row for row in rows if row[5] == "correction"]
+    assert str(correction[4])[:16] == "2024-08-06 09:45" and str(correction[8])[:16] == "2024-08-06 16:00"

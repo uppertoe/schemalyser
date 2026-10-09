@@ -1,5 +1,5 @@
-// The analysis worker. It loads Pyodide, DuckDB, sqlglot and the schemalyser core from this
-// site, and it is the only place where the contents of a request ever exist.
+// The worker of the page Describe the record. It loads Pyodide, DuckDB, sqlglot and the schemalyser core from this
+// site, and it is the only place where the dictionary and the hospital schema exist while the page is open.
 //
 // The page starts this file from a blob, so that the worker inherits the page's content
 // security policy. For that reason the file imports nothing statically.
@@ -10,7 +10,7 @@ let browser = null;
 async function load(base) {
   const { loadPyodide } = await import(base + 'pyodide/pyodide.mjs');
   pyodide = await loadPyodide({ indexURL: base + 'pyodide/' });
-  // DuckDB is loaded now, while the network is still on, so that the sandbox step works offline.
+  // DuckDB is loaded now, while the network is still on, so that the test on made-up rows works offline.
   await pyodide.loadPackage('duckdb', { messageCallback: () => {}, errorCallback: () => {} });
   const sitePackages = pyodide.runPython('import site; site.getsitepackages()[0]');
   for (const [file, format] of [['py/sqlglot.whl', 'wheel'], ['py/schemalyser.zip', 'zip']]) {
@@ -66,63 +66,6 @@ async function bytes(file) {
   return new Uint8Array(await file.arrayBuffer());
 }
 
-// The boundary: the state and the requests are written into Pyodide's own file system, in the layout
-// of the state folder, and boundary.produce runs over them, as the boundary command does. The files
-// stay inside this worker.
-async function runBoundary(state, requests, commits) {
-  browser.boundary_begin();
-  try {
-    // A path that cannot be written is refused and counted by boundary_put, and never stops the run.
-    for (const { path, file } of state) browser.boundary_put('state', path, await bytes(file));
-    for (const { path, file } of requests) browser.boundary_put('requests', path, await bytes(file));
-    return JSON.parse(browser.boundary_run(commits?.state ?? null, commits?.requests ?? null));
-  } catch {
-    // As elsewhere, the error itself is never passed on. The inventory is still shown.
-    browser.boundary_begin();
-    return { ok: false, problem: 'other' };
-  }
-}
-
-async function analyse({ catalogue, rules, checks, requests, state, commits }) {
-  const started = browser.start(
-    await bytes(catalogue),
-    rules ? await bytes(rules) : undefined,
-    checks ? await bytes(checks) : undefined,
-  );
-  if (started === 'catalogue' || started === 'checks') {
-    self.postMessage({ type: `${started}-error` });
-    return;
-  }
-  let done = 0;
-  for (const { path, file } of requests) {
-    browser.add(path, await bytes(file));
-    done += 1;
-    self.postMessage({ type: 'progress', done, total: requests.length });
-  }
-  const result = JSON.parse(browser.finish());
-  self.postMessage({ type: 'boundary-progress' });
-  const began = performance.now();
-  const boundary = await runBoundary(state ?? [], requests, commits);
-  const seconds = (performance.now() - began) / 1000;
-  const zip = browser.pack_zip().toJs();
-  const checkScript = browser.check_script();
-  self.postMessage(
-    { type: 'result', ...result, boundary, seconds, checkScript, noHeaders: started === 'ok-no-headers', zip },
-    [zip.buffer],
-  );
-}
-
-async function runRequests({ requests }) {
-  browser.sandbox_requests_begin();
-  let done = 0;
-  for (const { path, file } of requests) {
-    browser.sandbox_request(path, await bytes(file));
-    done += 1;
-    self.postMessage({ type: 'requests-progress', done, total: requests.length });
-  }
-  self.postMessage({ type: 'requests-result', ...JSON.parse(browser.sandbox_requests_finish()) });
-}
-
 self.onmessage = async (event) => {
   const message = event.data;
   try {
@@ -134,61 +77,6 @@ self.onmessage = async (event) => {
       }
       sealNetwork();
       self.postMessage({ type: 'ready' });
-    } else if (message.type === 'analyse') {
-      await analyse(message);
-    } else if (message.type === 'clear') {
-      browser.clear();
-      self.postMessage({ type: 'cleared' });
-    } else if (message.type === 'build') {
-      browser.sandbox_from_analysis();
-      self.postMessage({ type: 'built', ...JSON.parse(browser.sandbox_build(message.rows)) });
-    } else if (message.type === 'run') {
-      self.postMessage({ type: 'ran', result: JSON.parse(browser.sandbox_run(message.sql)) });
-    } else if (message.type === 'requests') {
-      await runRequests(message);
-    } else if (message.type === 'first-ask') {
-      // The names of the tables that the requests and the conversion read, for the first query. The text of
-      // the files is read here and let go of; only the names stay, in the query.
-      browser.first_ask_begin();
-      for (const file of [...message.requests.map((entry) => entry.file), ...message.steps]) browser.first_ask_add(await bytes(file));
-      self.postMessage({ type: 'first-query', ...JSON.parse(browser.first_ask_query()) });
-    } else if (message.type === 'first-read') {
-      const reply = browser.first_ask_read(
-        message.text,
-        message.rules ? await bytes(message.rules) : undefined,
-        message.checks ? await bytes(message.checks) : undefined,
-      );
-      self.postMessage({ type: 'first-read', ...JSON.parse(reply) });
-    } else if (message.type === 'fact') {
-      // A fact that a person confirmed: the core checks it against the catalogue and works the checklists out again.
-      const reply = JSON.parse(browser.fact_add(message.fact));
-      if (reply.ok) {
-        const zip = browser.pack_zip().toJs();
-        self.postMessage({ type: 'fact-added', ...reply, zip, checkScript: browser.check_script() }, [zip.buffer]);
-      } else self.postMessage({ type: 'fact-added', ...reply });
-    } else if (message.type === 'facts' || message.type === 'settings' || message.type === 'fact-withdraw') {
-      // Several answers at once, the audit's settings, or an answer withdrawn: the core works the checklists out again.
-      const reply = JSON.parse(message.type === 'facts' ? browser.facts_add(message.facts)
-        : message.type === 'settings' ? browser.settings_set(message.settings) : browser.fact_withdraw(message.withdraw));
-      if (reply.ok) {
-        const zip = browser.pack_zip().toJs();
-        self.postMessage({ type: 'fact-added', ...reply, zip, checkScript: browser.check_script() }, [zip.buffer]);
-      } else self.postMessage({ type: 'fact-added', ...reply });
-    } else if (message.type === 'search-sql') {
-      self.postMessage({ type: 'search-sql', group: message.group, ...JSON.parse(browser.codes_search_sql(message.request)) });
-    } else if (message.type === 'listed') {
-      // The names that the list returns are shown on the page and written into no file.
-      self.postMessage({ type: 'listed', ...JSON.parse(browser.listed_read(message.text)) });
-    } else if (message.type === 'charted') {
-      self.postMessage({ type: 'charted', ...JSON.parse(browser.charted_read(message.text)) });
-    } else if (message.type === 'year-count') {
-      self.postMessage({ type: 'year-counted', ...JSON.parse(browser.year_count_read(message.text)) });
-    } else if (message.type === 'codes-search') {
-      // The names that the search returns are shown on the page and written into no file.
-      self.postMessage({ type: 'codes-found', group: message.group, ...JSON.parse(browser.codes_search_read(message.text)) });
-    } else if (message.type === 'state-zip') {
-      const zip = browser.state_zip().toJs();
-      self.postMessage({ type: 'state-zip', zip }, [zip.buffer]);
     } else if (message.type === 'describe') {
       // Screen 1 (index.html, the front page): one call of a describe_ function of the bridge. Files are read here into bytes, and
       // the dictionary and the hospital schema stay in this worker's memory.
@@ -206,21 +94,10 @@ self.onmessage = async (event) => {
         reply = browser[message.call](...args);
       }
       self.postMessage({ type: 'describe-reply', id: message.id, reply });
-    } else if (message.type === 'paste' || message.type === 'profile-paste') {
-      // The pasted results are read, and the checklists worked out again, by the core, as the boundary does.
-      const reply = JSON.parse(
-        message.type === 'paste' ? browser.checks_paste(message.text) : browser.profile_paste(message.text),
-      );
-      const type = message.type === 'paste' ? 'pasted' : 'profile-pasted';
-      if (reply.boundary) {
-        // The download and the check script follow the merged check results.
-        const zip = browser.pack_zip().toJs();
-        self.postMessage({ type, ...reply, zip, checkScript: browser.check_script() }, [zip.buffer]);
-      } else self.postMessage({ type, ...reply });
     }
   } catch (error) {
     // The error itself is never passed on: its text can quote a request.
-    const failed = { load: 'load-failed', analyse: 'analysis-failed' }[message.type] ?? `${message.type}-failed`;
+    const failed = message.type === 'load' ? 'load-failed' : `${message.type}-failed`;
     self.postMessage({ type: failed, id: message.id });
   }
 };

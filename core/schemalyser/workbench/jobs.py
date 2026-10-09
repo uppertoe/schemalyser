@@ -21,9 +21,11 @@ def now():
     return dt.datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-def environment(project):
-    """The environment of a command: the core importable, and every temporary file inside the project folder."""
+def environment(project, extra=None):
+    """The environment of a command: the core importable, every temporary file inside the project folder, and any
+    setting that extra gives, such as the folder from which the testbed reads the Athena vocabulary."""
     env = dict(os.environ)
+    env.update(extra or {})
     env["PYTHONPATH"] = os.pathsep.join(p for p in (str(PACKAGE_PARENT), env.get("PYTHONPATH")) if p)
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONDONTWRITEBYTECODE"] = "1"
@@ -43,8 +45,26 @@ def run_now(project, command):
     return done.returncode, (done.stdout + done.stderr).strip()
 
 
-def start(project, folder, record_name, command):
-    """Starts a command in the background. Its output goes to folder/log.txt, and its record to folder/record_name."""
+def athena_inside(project, download):
+    """A folder inside the project that holds a link to each file of the Athena download, which the testbed then reads.
+    The testbed keeps its working copy of the vocabulary beside the folder it reads, so the copy is made in
+    .cache/athena-working-copy inside the project folder rather than beside the download. The download itself is only
+    read, and stays where it is."""
+    links = Path(project.root) / ".cache" / "athena"
+    links.mkdir(parents=True, exist_ok=True)
+    wanted = {path.name: path.resolve() for path in Path(download).iterdir() if path.is_file()}
+    for link in links.iterdir():
+        if link.name not in wanted or not link.is_symlink() or link.resolve() != wanted[link.name]:
+            link.unlink()
+    for name, path in wanted.items():
+        if not (links / name).is_symlink():
+            (links / name).symlink_to(path)
+    return links
+
+
+def start(project, folder, record_name, command, env=None):
+    """Starts a command in the background. Its output goes to folder/log.txt, and its record to folder/record_name.
+    env holds any setting of the command's environment beyond those that environment() gives."""
     folder = Path(folder)
     record_path = folder / record_name
     record = json.loads(record_path.read_text(encoding="utf-8"))
@@ -53,7 +73,7 @@ def start(project, folder, record_name, command):
     record.update(started=now(), command=shown)
     record_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     log = (folder / "log.txt").open("w", encoding="utf-8")
-    process = subprocess.Popen(command, cwd=PACKAGE_PARENT, env=environment(project), stdout=log,
+    process = subprocess.Popen(command, cwd=PACKAGE_PARENT, env=environment(project, env), stdout=log,
                                stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
     with _lock:
         _running[str(folder)] = process

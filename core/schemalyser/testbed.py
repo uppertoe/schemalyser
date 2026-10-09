@@ -23,7 +23,10 @@ What the testbed adds is the account of the run:
 - the route of each step, over the roles or directly from the source tables, with the share of the steps on each and
   every step whose route record the release would refuse, and whether the conversion is a draft;
 - the role scenarios: each step over the roles is run on the role-level shadow with a scenario's planted rows of the
-  role views, and what it writes is compared with the expected rows held out for it;
+  role views, and what it writes is compared with the expected rows held out for it; the same step also runs in the
+  conversion itself, compiled through the hospital schema (the map folder beside the conversion folder), so that a
+  planted scenario such as the infusion boundary judges it end to end from the invented hospital's source;
+- the static policy's class of every step and gate under the conversion purpose, as the release script records it;
 - the translation: the rewrites by name that turned each step's T-SQL into the form that DuckDB ran;
 - report.json for a machine and report.md for a person.
 
@@ -406,14 +409,15 @@ def _tables_read(sql):
     return list(dict.fromkeys(found))
 
 
-def reconcile(conversion, folder, steps, results, expectations):
-    """Source to target, for each step and for each source table that the conversion reads."""
+def reconcile(conversion, folder, steps, results, expectations, compiled=None):
+    """Source to target, for each step and for each source table that the conversion reads. compiled holds the text of
+    each step over the roles as the runner ran it, compiled through the hospital schema, which is traced in its place."""
     several_allowed = (expectations or {}).get("several_rows_for_one_source_row", {})
     con, sandbox = conversion.con, conversion.sandbox
     held = {name.upper(): name for name in sandbox.tables}
     traced_steps, by_source = [], {}
     for step, result in zip(steps, results):
-        sql = decode((folder / step["file"]).read_bytes())
+        sql = (compiled or {}).get(step["file"]) or decode((folder / step["file"]).read_bytes())
         entry = {"step": step["file"], "layer": step["layer"], "target": step["table"].lower(), "written": result["rows"]}
         entry.update(trace(con, sandbox.date_columns, sql, result["rows"]))
         if entry["traced"]:
@@ -592,10 +596,15 @@ def translation_section(steps, results):
 # The release script.
 
 def release_check(folder, world, steps, report):
-    """Writes the release script from the same files, and confirms that it carries every anaesthesia and derived step that ran."""
+    """Writes the release script from the same files, and confirms that it carries every anaesthesia and derived step that
+    ran, a step over the roles compiled through the hospital schema as the runner ran it. It records the static policy's
+    class of every step and gate under the conversion purpose, as the release records it."""
     try:
-        text = release.script(folder)
-        manifest = release.source_manifest(folder, Catalogue.from_csv(world.catalogue_text()))
+        catalogue = Catalogue.from_csv(world.catalogue_text())
+        schema = release.read_schema(folder, None, catalogue)
+        text = release.script(folder, schema=schema, catalogue=catalogue)
+        manifest = release.source_manifest(folder, catalogue, schema)
+        classes = release.step_classes(folder, schema, catalogue)
     except release.Refused as error:
         return {"written": False, "reason": str(error)}, None, None
     carried = [step["file"] for step in steps if step["layer"] != "core" and f"-- {step['file']}\n" in text]
@@ -608,6 +617,10 @@ def release_check(folder, world, steps, report):
             "steps_expected": len(expected), "carries_every_step": carried == expected,
             "gates_carried": text.count("SET @broken = "), "counts_carried": sum(1 for c in report["counts"] if f"-- counts/{c['name']}" in text),
             "source_columns": manifest.count("\n") - 1, "gates": gates, "counts": counts,
+            "roles_compiled": sorted(name for name in report.get("compiled", {}) if f"-- {name}\n" in text),
+            "classes": [{k: entry[k] for k in ("file", "layer", "what", "carried", "execution_class", "policy_version",
+                                                "failed_rules", "recorded")} for entry in classes],
+            "worst_carried_class": max((entry["execution_class"] for entry in classes if entry["carried"]), default=None),
             "run_with": release.run_command(release.settings_for(folder))}, text, manifest
 
 
@@ -1113,7 +1126,7 @@ def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, prof
         athena["seconds_to_load_into_the_cdm"] = round(time.monotonic() - loading, 1)
 
     # 5: the reconciliation. 6: the release script with its gates and counts. 7: the dashboard's inputs.
-    reconciliation = reconcile(conversion, folder, steps, report["steps"], expectations)
+    reconciliation = reconcile(conversion, folder, steps, report["steps"], expectations, report.get("compiled"))
     # The steps over the roles, each run on the role shadow with its role scenarios' planted rows.
     roles = convert.run_role_scenarios(folder)
     routes = routes_section(folder, steps, report)
@@ -1268,7 +1281,8 @@ def markdown(report):
     lines += [f"- {problem}" for problem in routes["problems"]]
     for entry in routes["over_the_roles"]:
         lines.append(f"- {entry['file']} is written over the roles"
-                     + (f", and waits beside {entry['alternative_of']}." if entry["alternative_of"] else "."))
+                     + (f", and waits beside {entry['alternative_of']}." if entry["alternative_of"] else
+                        ", and the run compiled it through the hospital schema and ran it from the source tables."))
     lines += ["", "## Scenarios", ""]
     for scenario in report["scenarios"]:
         lines.append(f"- {scenario['name']}: {scenario['outcome']}.")
@@ -1317,6 +1331,15 @@ def markdown(report):
                  else f"The release script was not written: {rel['reason']}.")
     for count in rel.get("counts", []):
         lines.append(f"- {count['says'] or count['count'] + ': the count could not be run.'}")
+    if rel.get("classes"):
+        carried = [e for e in rel["classes"] if e["carried"]]
+        lines += ["", f"The static policy read the {len(carried)} steps and gates that the script carries under the conversion "
+                      f"purpose, and the worst of their classes is {rel['worst_carried_class']}."]
+        for entry in rel["classes"]:
+            if entry["execution_class"] == "D" or entry["recorded"]:
+                reason = entry["recorded"]["reason"] if entry["recorded"] else "conversion.json records no reason."
+                lines.append(f"- {entry['file']}, which the script {'carries' if entry['carried'] else 'does not carry'}, is of "
+                             f"class {entry['execution_class']}. {reason}")
     t = report["translation"]
     lines += ["", "## Translation", "", t["note"], ""]
     lines += [f"- {item['name']}: {item['what']} It applied to {len(item['steps'])} "

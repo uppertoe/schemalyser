@@ -1,8 +1,0 @@
-# BuildKit reads this file in place of a .dockerignore when the image is built with -f tools/container/Dockerfile.
-# Everything is left out of the build context except the package and the pinned requirements.
-*
-!core/schemalyser/
-!tools/container/requirements.txt
-**/__pycache__
-**/*.pyc
-**/.*
