@@ -1,0 +1,17 @@
+{% if runs %}
+<table>
+  <thead><tr><th>Run</th><th>World and rows</th><th>Profile and engine</th><th>Outcome</th></tr></thead>
+  <tbody>
+  {% for r in runs %}
+  <tr>
+    <td><a href="/runs/{{ r.name }}">{{ r.name }}</a></td>
+    <td>{{ "the invented hospital" if r.world == "fixtures" else r.world }}, {{ r.rows | number }} rows</td>
+    <td>{{ r.profile }}, {{ r.engine }}</td>
+    <td>{% if r.outcome %}<span class="outcome {{ 'good' if r.outcome == 'passed' else 'bad' }}">{{ r.outcome }}</span>{% if r.scenarios %}, {{ r.scenarios_passed }} of {{ r.scenarios }} scenarios passed{% endif %}{% else %}<span class="state">{{ r.state }}</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>The test on made-up rows has not been run in this project yet.</p>
+{% endif %}

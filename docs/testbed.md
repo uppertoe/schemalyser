@@ -37,7 +37,7 @@ It then runs the gates and counts, and confirms that the release script carries 
 
 ## What it reports
 
-`report.json` holds the versions of the tool, CDM, vocabulary and DuckDB; the world's checksums; the engine for each stage; each step; each scenario with its expected and found rows; the reconciliation by step, source table and target table, with its coverage; the release script; the dashboard's inputs, and its results in the full profile; every check, release equivalence among them, with its outcome; and a plain summary. `report.md` sets out the same for a person.
+`report.json` holds the versions of the tool, CDM, vocabulary and DuckDB; the world's checksums; the engine for each stage; each step; each scenario with its expected and found rows; the reconciliation by step, source table and target table, with its coverage; the release script; the dashboard's inputs, and its results in the full profile; every check, release equivalence among them, with its outcome; and a plain summary. Each scenario names the steps that write the OMOP tables its expectations read, and each table with an unexplained discrepancy names the steps that write it, so that a failure leads to the SQL behind it. `report.md` sets out the same for a person.
 
 ## The Data Quality Dashboard
 

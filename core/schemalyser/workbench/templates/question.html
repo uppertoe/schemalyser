@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}{{ name }}{% endblock %}
+{% block main %}
+<h1>{{ title or name }}</h1>
+<p class="lede">This page shows the question's SQL, written over the parts of the record, as the project keeps it in questions/{{ name }}.</p>
+<div x-data class="code">
+  <button type="button" class="copy" @click="navigator.clipboard.writeText($refs.sql.innerText)">Copy the SQL</button>
+  <pre x-ref="sql">{{ sql }}</pre>
+</div>
+<section>
+  <h2>What to do with it</h2>
+  {% if schemas %}
+  <ul>
+    {% for s in schemas %}
+    <li><a href="/answerable?schema={{ s }}&amp;question={{ name }}">Whether {{ s }} can answer it</a></li>
+    <li><a href="/audits?schema={{ s }}&amp;question={{ name }}">Build its audit package from {{ s }}</a></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p>The project holds no saved hospital schema yet, so the question cannot be checked against one.</p>
+  {% endif %}
+</section>
+{% endblock %}

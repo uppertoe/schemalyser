@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Overview{% endblock %}
+{% block main %}
+<h1>{{ project.name }}</h1>
+<p class="lede">This page lists what the project folder holds: the saved hospital schemas, the questions, the audits and the runs of the test on made-up rows. Each name opens its own page.</p>
+
+<section>
+  <h2>The saved hospital schemas</h2>
+  {% if schemas %}
+  <table>
+    <thead><tr><th>File</th><th>Last updated</th><th>The three parts the audits read</th><th>How the proposals fared</th></tr></thead>
+    <tbody>
+    {% for s in schemas %}
+    <tr>
+      <td><a href="/schemas/{{ s.name }}">{{ s.name }}</a></td>
+      {% if s.problem %}
+      <td colspan="3">{{ s.problem }}</td>
+      {% else %}
+      <td>{{ s.updated }}</td>
+      <td><ul class="plain">{% for p in s.parts %}<li>{{ p.title }}: <span class="state">{{ "runs on made-up rows" if p.state == "runs" else (p.state or "not yet running on made-up rows") }}</span></li>{% endfor %}</ul></td>
+      <td>{{ s.overall }}</td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>The project holds no saved hospital schema yet. The clinician and the database analyst make one with Describe the record, and the clinician adds it here.</p>
+  {% endif %}
+  <form class="inline" method="post" action="/schemas" enctype="multipart/form-data">
+    <label>Add a saved hospital schema, which the workbench copies into schemas/:
+      <input type="file" name="file" accept=".zip" required></label>
+    <button type="submit">Add the saved hospital schema</button>
+  </form>
+</section>
+
+<section>
+  <h2>The questions</h2>
+  {% if questions %}
+  <ul>
+    {% for q in questions %}<li><a href="/questions/{{ q.name }}">{{ q.title }}</a> <span class="muted">({{ q.name }})</span></li>{% endfor %}
+  </ul>
+  {% else %}
+  <p>The project holds no question yet.</p>
+  {% endif %}
+  <details x-data>
+    <summary>Add a question</summary>
+    <form method="post" action="/questions">
+      <label>The question, in one sentence, which becomes the leading comment of its file:
+        <input type="text" name="title" required placeholder="Among neonates who had an anaesthetic, how many minutes did each spend with a mean pressure below 40?"></label>
+      <label>Its SQL, written over the parts of the record:
+        <textarea name="sql" rows="10" required spellcheck="false"></textarea></label>
+      <button type="submit">Add the question</button>
+    </form>
+  </details>
+</section>
+
+<section>
+  <h2>The audits</h2>
+  {% if audits %}
+  <ul>
+    {% for a in audits %}<li><a href="/audits/{{ a.name }}">{{ a.name }}</a>: {{ a.question }} over {{ a.schema }} <span class="state">{{ a.state }}</span></li>{% endfor %}
+  </ul>
+  {% else %}
+  <p>No audit package has been built yet.</p>
+  {% endif %}
+  <p><a href="/audits">Build an audit package</a></p>
+</section>
+
+<section>
+  <h2>The runs of the test on made-up rows</h2>
+  {% include "runs_list.html" %}
+  {% include "run_form.html" %}
+</section>
+{% endblock %}

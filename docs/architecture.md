@@ -123,6 +123,7 @@ Every module in `core/schemalyser` falls into one of four classes. A module of t
 | `audit.py` | Active workflow | The audit's execution package: the feasibility report, the two-part script over the hospital's tables, its specification, the answer on made-up rows, the manifest and the README. `docs/audit.md` describes it. |
 | `policy.py` | Active workflow | The static policy on the final text of an audit's script, and the execution class derived from it. |
 | `plan.py` | Active workflow | The review of an estimated plan of part 2 in SQL Server's SHOWPLAN XML. |
+| `workbench/` | Active workflow | The local workbench: server-rendered pages over a project folder that start the core's commands for the audit's package, the plan review and the test on made-up rows, and render their reports. It has no logic of its own. `docs/workbench.md` describes it. |
 | `__init__.py` | Shared infrastructure | Marks the package. It still exports the earlier analyser, which keeps that module in place. |
 | `catalogue.py` | Shared infrastructure | The tables and columns that exist, and the allowlist for names. |
 | `extract.py` | Shared infrastructure | Reads files safely for every module. Its finding of facts in a request belongs to the earlier design. |

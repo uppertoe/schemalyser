@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}{{ r.name }}{% endblock %}
+{% block main %}
+<h1>The test on made-up rows, {{ r.name }}</h1>
+<p class="lede">This page shows one run of the conversion to OMOP on {{ "the invented hospital" if r.record.world == "fixtures" else r.record.world }} at {{ r.record.rows | number }} rows, in the {{ r.record.profile }} profile on {{ r.record.engine }}, from the report that the testbed wrote to runs/{{ r.name }}/out/report.json.</p>
+
+{% if r.state == "running" %}
+  {% with job = r, url = "/runs/" ~ r.name ~ "/progress" %}{% include "progress.html" %}{% endwith %}
+{% elif not report %}
+  <section>
+    <h2>The run wrote no report</h2>
+    <p>{{ state_words[r.state] }}</p>
+    <pre class="log">{{ r.log }}</pre>
+  </section>
+{% else %}
+  {% set s = report.summary %}
+  {% set cov = report.reconciliation.coverage %}
+  <section>
+    <h2>Summary</h2>
+    <p class="verdict {{ 'answered' if s.outcome == 'passed' else 'not_yet' }}">The {{ s.profile }} profile {{ s.outcome if s.outcome in ("passed", "failed") else "ended as: " ~ s.outcome }}, in {{ s.seconds }} seconds.</p>
+    <ul>{% for line in s.sentences %}<li>{{ line }}</li>{% endfor %}</ul>
+  </section>
+
+  <section>
+    <h2>The checks</h2>
+    <table>
+      <thead><tr><th>Check</th><th>Outcome</th></tr></thead>
+      <tbody>
+      {% for c in report.checks %}
+      <tr><td>{{ c.check[:1] | upper }}{{ c.check[1:] }}{% if c.detail and c.detail is string and c.detail != "ran" %}<div class="muted">{{ c.detail }}</div>{% endif %}</td>
+          <td>{% if c.passed is none %}<span class="state">not judged in this profile</span>{% else %}<span class="outcome {{ 'good' if c.passed else 'bad' }}">{{ "passed" if c.passed else "failed" }}</span>{% endif %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>The planted scenarios</h2>
+    <p>Each scenario plants rows in the source, and its expectations, written by hand, state what the conversion should produce from them.</p>
+    <table>
+      <thead><tr><th>Scenario</th><th>Outcome</th><th>The steps that write what it reads</th></tr></thead>
+      <tbody>
+      {% for sc in report.scenarios %}
+      <tr class="{{ 'failed' if sc.outcome != 'passed' }}">
+        <td x-data="{ open: {{ 'true' if sc.outcome != 'passed' else 'false' }} }">
+          <button type="button" class="fold" @click="open = !open">{{ sc.name | replace("_", " ") }}</button>
+          <div x-show="open" x-cloak>
+            <p>{{ sc.description }}</p>
+            <ul>{% for e in sc.expectations %}<li><span class="outcome {{ 'good' if e.met else 'bad' }}">{{ "met" if e.met else "not met" }}</span> {{ e.says }}{% if not e.met %} The rows expected were {{ e.expected }}, and the run found {{ e.found or e.error }}.{% endif %}</li>{% endfor %}</ul>
+            {% if sc.reason %}<p>{{ sc.reason }}</p>{% endif %}
+          </div>
+        </td>
+        <td><span class="outcome {{ 'good' if sc.outcome == 'passed' else 'bad' }}">{{ sc.outcome }}</span></td>
+        <td>{% for f in sc.steps or [] %}<a href="/runs/{{ r.name }}/steps/{{ f }}">{{ f }}</a>{{ ", " if not loop.last }}{% endfor %}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>The reconciliation</h2>
+    <p>The reconciliation traced {{ cov.traced }} of {{ cov.steps }} steps. The run can pass only when the group of unexplained discrepancies is empty.</p>
+    <div class="groups">
+      <div class="group"><h3>Every excluded row accounted for: {{ cov.accounted.count }}</h3>
+        <ul>{% for f in cov.accounted.steps %}<li><a href="/runs/{{ r.name }}/steps/{{ f }}">{{ f }}</a></li>{% endfor %}</ul></div>
+      <div class="group"><h3>Several rows from one source row, as allowed: {{ cov.fan_out_confirmed.count }}</h3>
+        <ul>{% for f in cov.fan_out_confirmed.steps %}<li><a href="/runs/{{ r.name }}/steps/{{ f.step }}">{{ f.step }}</a>: {{ f.expected }}</li>{% endfor %}</ul></div>
+      <div class="group"><h3>Could not be traced: {{ cov.not_traced.count }}</h3>
+        <ul>{% for f in cov.not_traced.steps %}<li><a href="/runs/{{ r.name }}/steps/{{ f.step }}">{{ f.step }}</a>: {{ f.reason }}</li>{% endfor %}</ul></div>
+      <div class="group {{ 'bad' if cov.unexplained.count }}"><h3>Unexplained discrepancies: {{ cov.unexplained.count }}</h3>
+        <ul>{% for u in cov.unexplained["items"] %}<li>
+          {% if u.step %}<a href="/runs/{{ r.name }}/steps/{{ u.step }}">{{ u.step }}</a>{% else %}The table {{ u.table }}{% for f in u.steps or [] %}, written by <a href="/runs/{{ r.name }}/steps/{{ f }}">{{ f }}</a>{% endfor %}{% endif %}: {{ u.reason }}</li>{% endfor %}</ul></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>The gates and counts</h2>
+    <table>
+      <thead><tr><th>Gate</th><th>Rows that fail it</th><th>Outcome</th></tr></thead>
+      <tbody>{% for g in report.release.gates %}<tr><td>{{ g.gate }}</td><td>{{ g.rows }}</td><td><span class="outcome {{ 'good' if g.outcome == 'passed' else 'bad' }}">{{ g.outcome }}</span></td></tr>{% endfor %}</tbody>
+    </table>
+    <ul>{% for c in report.release.counts %}<li>{{ c.says or c.count }}</li>{% endfor %}</ul>
+  </section>
+
+  <section>
+    <h2>The Data Quality Dashboard</h2>
+    {% set d = report.dqd %}
+    {% if d.status != "ran" %}
+    <p>The dashboard did not run in this run, because {{ d.reason }}. Its inputs are in runs/{{ r.name }}/out/csv.</p>
+    {% else %}
+    <p>The dashboard ran {{ d.checks | number }} checks: {{ d.passed | number }} passed, {{ d.failed | number }} failed, {{ d.could_not_run | number }} could not run, {{ d.did_not_finish | number }} did not finish and {{ d.not_applicable | number }} did not apply. Of those that failed or could not run, {{ d.expected_failures | number }} are expected and {{ d.unexpected_failures | number }} are not.</p>
+    {% set unexpected = d.failures | rejectattr("expected") | list %}
+    {% if unexpected %}
+    <h3>The failures that the expectations do not permit</h3>
+    <ul>{% for f in unexpected %}<li>{{ f.check }} on {{ f.table }}{% if f.field %}.{{ f.field }}{% endif %} ({{ f.outcome }})</li>{% endfor %}</ul>
+    {% endif %}
+    <details x-data><summary>The expected failures, by reason</summary>
+      {% for reason, items in d.failures | selectattr("expected") | groupby("reason") %}
+      <p>{{ reason }}</p><ul>{% for f in items %}<li>{{ f.check }} on {{ f.table }}{% if f.field %}.{{ f.field }}{% endif %}</li>{% endfor %}</ul>
+      {% endfor %}
+    </details>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Release equivalence</h2>
+    {% set eq = checks.get("release equivalence") %}
+    {% if eq %}
+    <p><span class="outcome {{ 'good' if eq.passed else ('bad' if eq.passed is false else '') }}">{{ eq.state or ("passed" if eq.passed else "not passed") }}</span> {{ eq.detail if eq.detail is string else "" }}</p>
+    {% endif %}
+    {% if report.engines.sqlserver and report.engines.sqlserver.summary %}
+    <ul>{% for line in report.engines.sqlserver.summary %}<li>{{ line }}</li>{% endfor %}</ul>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>The log of the run</h2>
+    <details x-data><summary>What the testbed printed</summary><pre class="log">{{ r.log }}</pre></details>
+  </section>
+{% endif %}
+{% endblock %}

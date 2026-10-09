@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}{{ step.file }}{% endblock %}
+{% block main %}
+<h1>{{ step.file }}</h1>
+<p class="lede">This page shows one step of the conversion as the run <a href="/runs/{{ r.name }}">{{ r.name }}</a> recorded it: what it wrote, how the reconciliation accounted for its rows, the scenarios that read what it writes, and its SQL.</p>
+
+<section>
+  <h2>What the step wrote</h2>
+  <p>The step, in the {{ step.layer }} layer, wrote {{ step.rows | number }} rows to {{ step.table }}, and its status is {{ step.status }}.{% if step.error %} {{ step.error }}{% endif %}</p>
+</section>
+
+{% if unexplained %}
+<section>
+  <h2>The unexplained discrepancies</h2>
+  <ul class="notice bad">{% for u in unexplained %}<li>{{ u.reason }}</li>{% endfor %}</ul>
+</section>
+{% endif %}
+
+<section>
+  <h2>The reconciliation</h2>
+  {% if not traced %}
+  <p>The reconciliation did not consider this step.</p>
+  {% elif not traced.traced %}
+  <p>The reconciliation could not trace this step, because {{ traced.reason }}.</p>
+  {% else %}
+  <p>The step starts from {{ traced.source_table }}, which held {{ traced.source_rows | number }} rows. Of these, {{ traced.reached | number }} reached {{ traced.target }}, and the trace gives {{ traced.target_rows | number }} target rows where the run wrote {{ traced.written | number }}. The reconciliation expects {{ traced.expected }}.</p>
+  {% if traced.dropped %}
+  <table>
+    <thead><tr><th>Left out by</th><th>Rows</th></tr></thead>
+    <tbody>{% for d in traced.dropped %}<tr><td><code>{{ d.by }}</code></td><td>{{ d.rows | number }}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% endif %}
+  {% endif %}
+</section>
+
+{% if scenarios %}
+<section>
+  <h2>The scenarios that read what it writes</h2>
+  <ul>{% for sc in scenarios %}<li><span class="outcome {{ 'good' if sc.outcome == 'passed' else 'bad' }}">{{ sc.outcome }}</span> {{ sc.name | replace("_", " ") }}: {{ sc.description }}</li>{% endfor %}</ul>
+</section>
+{% endif %}
+
+<section>
+  <h2>Its SQL</h2>
+  {% if sql %}
+  <div x-data class="code">
+    <button type="button" class="copy" @click="navigator.clipboard.writeText($refs.sql.innerText)">Copy the SQL</button>
+    <pre x-ref="sql">{{ sql }}</pre>
+  </div>
+  {% else %}
+  <p>The world's conversion folder no longer holds this step's file.</p>
+  {% endif %}
+</section>
+{% endblock %}

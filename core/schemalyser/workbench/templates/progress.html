@@ -1,0 +1,5 @@
+<section id="progress" class="progress" hx-get="{{ url }}" hx-trigger="every 2s" hx-swap="outerHTML">
+  <p>{{ state_words[job.state] }} The page follows its output below and shows the result once the command has finished.</p>
+  <pre class="log">{{ job.log or "The command has printed nothing yet." }}</pre>
+  <noscript><p><a href="">Reload the page</a> to see the latest output.</p></noscript>
+</section>

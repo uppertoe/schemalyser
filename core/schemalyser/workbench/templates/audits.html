@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Audits{% endblock %}
+{% block main %}
+<h1>Audits</h1>
+<p class="lede">This page builds the execution package of an audit from a question and a saved hospital schema. The package holds the script that the database analyst runs once on production, under the hospital's own controls; the workbench itself never runs anything against a hospital database.</p>
+
+<section>
+  <h2>Build a package</h2>
+  {% if schemas and questions %}
+  <form class="grid" method="post" action="/audits">
+    <label>The saved hospital schema:
+      <select name="schema">{% for s in schemas %}<option value="{{ s }}" {{ "selected" if s == chosen_schema }}>{{ s }}</option>{% endfor %}</select></label>
+    <label>The question:
+      <select name="question">{% for q in questions %}<option value="{{ q.name }}" {{ "selected" if q.name == chosen_question }}>{{ q.title }}</option>{% endfor %}</select></label>
+    <label>The first day of the period, if not the year that the schema records:
+      <input type="date" name="from"></label>
+    <label>The last day of the period:
+      <input type="date" name="to"></label>
+    <label class="wide">The clinicians' decisions, one on each line, which the package records:
+      <textarea name="decisions" rows="3"></textarea></label>
+    <label class="wide check"><input type="checkbox" name="exact" value="1"> The audit's approval allows exact small numbers, so the result keeps counts from 1 to 4.</label>
+    <button type="submit">Build the package</button>
+  </form>
+  {% else %}
+  <p>A package needs a saved hospital schema and a question. Add both on the <a href="/">overview</a> first.</p>
+  {% endif %}
+</section>
+
+<section>
+  <h2>The packages built so far</h2>
+  {% if audits %}
+  <table>
+    <thead><tr><th>Package</th><th>Question</th><th>Saved hospital schema</th><th>State</th></tr></thead>
+    <tbody>{% for a in audits %}<tr><td><a href="/audits/{{ a.name }}">{{ a.name }}</a></td><td>{{ a.question }}</td><td>{{ a.schema }}</td><td><span class="state">{{ a.state }}</span></td></tr>{% endfor %}</tbody>
+  </table>
+  {% else %}
+  <p>No package has been built in this project yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

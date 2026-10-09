@@ -48,6 +48,8 @@ The offline page stays as the tool for work that faces the hospital. Once the on
 
 Done means that a written decision exists for each, with its reasons. Where the service is built, done also means that the two exchange only files and that the page still runs offline without it.
 
+The local service exists as the workbench (`core/schemalyser/workbench/`, described in `docs/workbench.md`), which serves pages over a project folder on the clinician's computer and in a container. It starts the core's commands for the audit's package, the plan review and the test on made-up rows, and shows their reports, and it adds no logic of its own. The offline page still runs without it, and the two exchange only the saved hospital schema. The decision on dbt is still to be written, and the workbench has been tried only on the invented world.
+
 ## Where the tracks meet
 
 The tracks meet once the three contract views are clinically validated and the one-command test run is in place. The conversion to OMOP is then re-pointed from the source tables onto the roles, so that it reads the same validated hospital schema that the audit reads, and screen 3, the OMOP layer, is built on the test run.

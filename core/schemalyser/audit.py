@@ -19,6 +19,10 @@ with the script itself and what describes it:
 
     python -m schemalyser.audit build SCHEMA.zip QUERY.sql --out FOLDER [--period FROM TO] [--decisions decisions.json]
     python -m schemalyser.audit plan FOLDER plan.sqlplan
+    python -m schemalyser.audit status FOLDER
+
+status prints, as JSON, whether the package still stands as it was built, and says when a change to query.sql has
+voided its class and its plan review.
 
 decisions.json is {"decisions": [{"about": "...", "decision": "...", "by": "...", "date": "..."}],
 "exact_small_numbers": false}; with exact_small_numbers true, the audit's result keeps counts from 1 to 4, which only
@@ -559,6 +563,22 @@ def review_plan(folder, plan_path, date=None):
     return review
 
 
+def status(folder):
+    """Whether a package still stands as it was built: its class and the state of its plan review, with both voided
+    when query.sql no longer has the hash that the manifest records, or when the plan review was made for another text.
+    Returns {"sql_changed", "execution_class", "plan_review", "voided", "says"}."""
+    folder = Path(folder)
+    manifest = json.loads((folder / MANIFEST).read_text(encoding="utf-8"))
+    query = folder / "query.sql"
+    current = sha256(query.read_text(encoding="utf-8")) if query.is_file() else None
+    changed = current != manifest["sql_sha256"]
+    review = manifest.get("plan_review") or {"state": NOT_REVIEWED}
+    stale = review.get("sql_sha256") not in (None, current)
+    voided = changed or stale
+    return {"sql_changed": changed, "execution_class": manifest["execution_class"], "plan_review": review["state"],
+            "voided": voided, "says": WORDING["changed"] if voided else None}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="python -m schemalyser.audit",
                                      description="The execution package of an audit over the parts of the record.")
@@ -573,12 +593,16 @@ def main(argv=None):
     two = commands.add_parser("plan", help="Review an estimated plan of part 2.")
     two.add_argument("folder")
     two.add_argument("plan")
+    three = commands.add_parser("status", help="Say, as JSON, whether the package still stands as it was built.")
+    three.add_argument("folder")
     args = parser.parse_args(argv)
     try:
         if args.command == "build":
             manifest = build(args.schema, args.query, args.out, args.period, args.decisions, args.large)
             print(WORDING["built"].format(folder=Path(args.out).name, grade=manifest["execution_class"],
                                           outcome="passed" if manifest["policy_outcome"] == "passed" else "failed"))
+        elif args.command == "status":
+            print(_json(status(args.folder)), end="")
         else:
             review = review_plan(args.folder, args.plan)
             print(WORDING["reviewed"].format(state=review["state"]))

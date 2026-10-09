@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{{ name }}{% endblock %}
+{% block main %}
+<h1>{{ name }}</h1>
+<p class="lede">This page shows how far each part of the saved hospital schema has come, as the file records it, and how the page's proposals fared at the sitting. The file was last updated on {{ schema.updated() }} and covers {{ schema.year }}.</p>
+
+<section>
+  <h2>The readiness of each part</h2>
+  <table>
+    <thead><tr><th>Part</th><th>The contract or a draft</th><th>Reached</th><th>Runs on made-up rows</th><th>Checked against the database</th></tr></thead>
+    <tbody>
+    {% for p in parts %}
+    <tr class="{{ 'contract' if p.contract else 'draft' }}">
+      <td>{{ p.title }}</td><td>{{ "The contract" if p.contract else "A draft" }}</td>
+      <td><span class="state">{{ "runs on made-up rows" if p.reached == "runs" else (p.reached or "not yet running on made-up rows") }}</span></td>
+      <td>{{ p["runs"] | day }}</td><td>{{ p["checked against the database"] | day }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if measured.says %}<p>{{ measured.says }}</p>{% endif %}
+  <details x-data><summary>What each state means</summary>
+    <dl>{% for state, says in states.items() %}<dt>{{ state[:1] | upper }}{{ state[1:] }}</dt><dd>{{ says }}</dd>{% endfor %}</dl>
+  </details>
+</section>
+
+<section>
+  <h2>How the proposals fared</h2>
+  <p>{{ board.lines[2] }}</p>
+  <details x-data><summary>The figures for each part and each category of column</summary>
+    {% for line in board.lines[3:] %}{% if line %}<p>{{ line }}</p>{% endif %}{% endfor %}
+  </details>
+</section>
+
+<section>
+  <h2>What to do with it</h2>
+  <ul>
+    <li><a href="/answerable?schema={{ name }}">See every question of the project against this saved hospital schema</a></li>
+    {% for q in questions %}<li><a href="/answerable?schema={{ name }}&amp;question={{ q.name }}">Whether it can answer {{ q.title }}</a></li>{% endfor %}
+    <li><a href="/audits?schema={{ name }}">Build an audit package from it</a></li>
+  </ul>
+</section>
+{% endblock %}

@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Can this be answered{% endblock %}
+{% block main %}
+<h1>Can this be answered</h1>
+<p class="lede">This page reads a question against a saved hospital schema and shows whether the schema can answer it, the state of each thing the question needs, and the smallest piece of work that would move each one. With no question chosen, it shows every question of the project together.</p>
+
+<form class="grid" method="get" action="/answerable" hx-get="/answerable" hx-target="#report" hx-select="#report" hx-swap="outerHTML" hx-push-url="true">
+  <label>The saved hospital schema:
+    <select name="schema">{% for s in schemas %}<option value="{{ s }}" {{ "selected" if s == chosen_schema }}>{{ s }}</option>{% endfor %}</select></label>
+  <label>The question:
+    <select name="question">
+      <option value="" {{ "selected" if not chosen_question }}>Every question of the project together</option>
+      {% for q in questions %}<option value="{{ q.name }}" {{ "selected" if q.name == chosen_question }}>{{ q.title }}</option>{% endfor %}
+    </select></label>
+  <button type="submit">Read the question</button>
+</form>
+
+<div id="report">
+{% if error %}
+  <p class="notice bad">{{ error }}</p>
+{% elif not schemas %}
+  <p>The project holds no saved hospital schema yet. Add one on the <a href="/">overview</a> first.</p>
+{% elif report %}
+  <section>
+    <h2>{{ report.heading }}</h2>
+    <p class="verdict {{ report.verdict }}">{{ report.verdict_text }}</p>
+    {% if report.question %}<p>The question reads as follows: {{ report.question }}</p>{% endif %}
+    <p>Schemalyser read this question against the saved hospital schema {{ chosen_schema }}, last updated on {{ report.updated | day }}.</p>
+  </section>
+  <section>
+    <h2>What the question needs</h2>
+    <table>
+      <thead><tr><th>What the question needs</th><th>State</th><th>What the hospital schema records</th></tr></thead>
+      <tbody>
+      {% for row in report.states %}
+      <tr><td>{{ row.title }}</td><td><span class="state s-{{ row.state | replace(' ', '-') | replace(',', '') }}">{{ row.state }}</span></td><td>{{ row.recorded }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  <section>
+    <h2>Evidence requests</h2>
+    {% if not report.requests %}
+    <p>No evidence request is needed before the question is run.</p>
+    {% else %}
+    <p>Each request below is the smallest piece of work that would move what it concerns, and it names who acts. The requests name the tables of the hospital's database, so the copied text stays on the hospital's own computers.</p>
+    <ol class="requests">
+      {% for r in report.requests %}
+      <li>
+        <p><strong>For the {{ r.role }}{% if r.step %}, at {{ r.step }}{% endif %}.</strong> {{ r.says }}</p>
+        {% if r.question %}<blockquote>{{ r.question }}</blockquote>{% endif %}
+        {% if r.sql %}
+        <div x-data class="code">
+          <button type="button" class="copy" @click="navigator.clipboard.writeText($refs.sql.innerText)">Copy the SQL</button>
+          <pre x-ref="sql">{{ r.sql }}</pre>
+        </div>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ol>
+    {% endif %}
+  </section>
+  <details x-data><summary>What this report can and cannot say</summary>
+    <p>Where this report says that something is not currently mapped, the hospital schema does not yet say where the hospital's database keeps it; that is not evidence that the database lacks it. Where a part has been checked against the database, its route runs and its counts looked right; that is not evidence that the route captures every record. Only a reconciliation of a sample of anaesthetics against the clinical record can show that.</p>
+  </details>
+  <p><a href="/audits?schema={{ chosen_schema }}&amp;question={{ chosen_question }}">Build the audit package for this question</a></p>
+{% elif programme %}
+  <section>
+    <h2>The programme of questions</h2>
+    <p>{{ programme.question_coverage.answered }} of the {{ programme.question_coverage.total }} questions have every requirement checked against the database. This is the figure that matters.</p>
+    <p>The saved hospital schema gives a place for {{ programme.structural_coverage.parts }} of the {{ programme.structural_coverage.all_parts }} parts that the role model describes, and for {{ programme.structural_coverage.columns }} of their {{ programme.structural_coverage.all_columns }} columns.</p>
+  </section>
+  <section>
+    <h2>What holds back the most questions</h2>
+    {% if programme.blocking %}
+    <table>
+      <thead><tr><th>Requirement</th><th>State</th><th>Questions that need it</th></tr></thead>
+      <tbody>{% for b in programme.blocking %}<tr><td>{{ b.title }}</td><td><span class="state">{{ b.state }}</span></td><td>{{ b.count }}</td></tr>{% endfor %}</tbody>
+    </table>
+    {% else %}
+    <p>Nothing holds back any question of the project.</p>
+    {% endif %}
+  </section>
+  <section>
+    <h2>Each question</h2>
+    <table>
+      <thead><tr><th>Question</th><th>Verdict</th></tr></thead>
+      <tbody>{% for q in programme.questions %}<tr><td><a href="/answerable?schema={{ chosen_schema }}&amp;question={{ q.name }}">{{ q.heading }}</a></td><td>{{ q.verdict_text }}</td></tr>{% endfor %}</tbody>
+    </table>
+  </section>
+{% else %}
+  <p>The project holds no question yet. Add one on the <a href="/">overview</a>.</p>
+{% endif %}
+</div>
+{% endblock %}

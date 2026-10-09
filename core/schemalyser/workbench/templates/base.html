@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="htmx-config" content='{"includeIndicatorStyles": false, "allowEval": false}'>
+<title>{% block title %}Workbench{% endblock %} · Schemalyser</title>
+<link rel="stylesheet" href="/static/workbench.css">
+<script src="/static/htmx.min.js" defer></script>
+<script src="/static/alpine.min.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/">Schemalyser workbench</a>
+  <span class="project">{{ project.name }}</span>
+  <nav>
+    <a href="/">Overview</a>
+    <a href="/answerable">Can this be answered</a>
+    <a href="/audits">Audits</a>
+    <a href="/runs">The test on made-up rows</a>
+    {% if has_describe %}<a href="/describe/">Describe the record</a>{% endif %}
+  </nav>
+</header>
+<main>
+{% block main %}{% endblock %}
+</main>
+<footer>
+  <p>The workbench works only on this computer. It makes no connection to any other site and never connects to a hospital database; everything it writes stays in the project folder.</p>
+</footer>
+</body>
+</html>

@@ -1,0 +1,13 @@
+<form class="grid" method="post" action="/runs">
+  <label>The world:
+    <select name="world">{% for value, label in worlds %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></label>
+  <label>Rows for each source table:
+    <input type="number" name="rows" value="200" min="10" max="100000"></label>
+  <label>The profile:
+    <select name="profile"><option value="fast">Fast, on DuckDB alone</option><option value="full">Full, with the Data Quality Dashboard</option></select></label>
+  <label>The engine:
+    <select name="engine"><option value="duckdb">DuckDB</option><option value="sqlserver">DuckDB and SQL Server</option></select></label>
+  <label>The vocabulary:
+    <select name="vocabulary"><option value="">As the profile chooses</option><option value="sample">The sample of five public concepts</option><option value="athena">The pinned Athena release</option></select></label>
+  <button type="submit">Start the run</button>
+</form>

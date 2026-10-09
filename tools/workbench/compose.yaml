@@ -1,0 +1,72 @@
+# The local workbench, with SQL Server as an optional profile. README.md in this folder says how to use it.
+#
+#     PROJECT=/path/to/project docker compose -f tools/workbench/compose.yaml up workbench
+#     PROJECT=/path/to/project MSSQL_SA_PASSWORD="$(cat reference/mssql-password.txt)" \
+#         docker compose -f tools/workbench/compose.yaml --profile sqlserver up mssql workbench-sqlserver
+name: schemalyser-workbench
+
+x-workbench: &workbench
+  # The port is published on this computer's own address only.
+  ports: ["127.0.0.1:8765:8765"]
+  volumes:
+    - "${PROJECT:?Set PROJECT to the project folder}:/project"
+  user: "${WORKBENCH_UID:-10001}:${WORKBENCH_GID:-10001}"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  workbench:
+    <<: *workbench
+    image: schemalyser-workbench:dev
+    build:
+      context: ../..
+      dockerfile: tools/workbench/Dockerfile
+      target: workbench
+
+  # The same workbench with the Docker command line and the Docker socket, so that a run with the engine SQL Server
+  # can reach the container schemalyser-mssql as tools/sqlserver/harness.py does, with docker exec and docker cp.
+  # The socket gives this container control of Docker on this computer, so it is for a developer's machine only.
+  workbench-sqlserver:
+    <<: *workbench
+    profiles: [sqlserver]
+    image: schemalyser-workbench:sqlserver
+    build:
+      context: ../..
+      dockerfile: tools/workbench/Dockerfile
+      target: sqlserver
+    ports: ["127.0.0.1:8766:8765"]
+    # Docker Desktop gives the socket to root alone.
+    user: "0:0"
+    cap_drop: []
+    volumes:
+      - "${PROJECT:?Set PROJECT to the project folder}:/project"
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      SCHEMALYSER_MSSQL_PASSWORD_FILE: /run/secrets/mssql-password
+    secrets: [mssql-password]
+
+  # The SQL Server of tools/sqlserver/README.md, under the same container name and volume, so that the harness finds it.
+  # If that container already runs from the README's docker run command, leave this service out of the up command.
+  mssql:
+    profiles: [sqlserver]
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    platform: linux/amd64
+    container_name: schemalyser-mssql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      # Set MSSQL_SA_PASSWORD from reference/mssql-password.txt; SQL Server does not start without it.
+      MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD:-}"
+    ports: ["127.0.0.1:14330:1433"]
+    mem_limit: 4g
+    volumes:
+      - schemalyser-mssql-data:/var/opt/mssql
+
+volumes:
+  schemalyser-mssql-data:
+    name: schemalyser-mssql-data
+
+secrets:
+  mssql-password:
+    file: "${MSSQL_PASSWORD_FILE:-../../reference/mssql-password.txt}"

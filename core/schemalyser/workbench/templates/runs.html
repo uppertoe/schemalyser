@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}The test on made-up rows{% endblock %}
+{% block main %}
+<h1>The test on made-up rows</h1>
+<p class="lede">This page starts the conversion to OMOP on an invented world and lists the runs so far. Each run builds, converts, checks and reconciles the world, and its page shows the report that the testbed wrote.</p>
+<section>
+  <h2>Start a run</h2>
+  <p>The fast profile takes about half a minute at 200 rows. The full profile also runs the Data Quality Dashboard, which needs Docker, PostgreSQL and the Athena download on this computer, and it can pass only with SQL Server.</p>
+  {% include "run_form.html" %}
+</section>
+<section>
+  <h2>The runs so far</h2>
+  {% include "runs_list.html" %}
+</section>
+{% endblock %}

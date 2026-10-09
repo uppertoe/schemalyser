@@ -489,7 +489,8 @@ def coverage(steps, targets):
     for table in targets:
         if not table["agree"]:
             unexplained.append({"table": table["table"], "reason": f"the steps wrote {table['rows_from_steps']} rows to the table, "
-                                                                  f"and it holds {table['rows_held']}"})
+                                                                  f"and it holds {table['rows_held']}",
+                                "steps": [entry["step"] for entry in steps if entry["target"] == table["table"]]})
     return {"steps": len(steps), "traced": len(steps) - len(not_traced),
             "accounted": {"count": len(accounted), "steps": accounted},
             "fan_out_confirmed": {"count": len(fan_out), "steps": fan_out},
@@ -1063,6 +1064,10 @@ def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, prof
         # A scenario that exists to make a gate fail runs alone, so that its failure does not stop the main run.
         _, alone = convert.run(world, folder, rows, vocabulary, scenarios=[scenario["name"]])
         scenarios.append(_scenario(alone["scenarios"][0], alone["gates"]))
+    # Each scenario names the steps that write the OMOP tables its expectations read, so that a failure leads to them.
+    reads = {s["name"]: set(s["reads"]) for s in every}
+    for scenario in scenarios:
+        scenario["steps"] = [step["file"] for step in steps if step["table"].lower() in reads.get(scenario["name"], ())]
     loading = time.monotonic()
     vocabulary_rows = _load_vocabulary(conversion.con, vocabulary, conversion.tables)
     concepts = conversion.concept_problems(vocabulary / ("vocabulary.duckdb" if athena else "CONCEPT.csv"))

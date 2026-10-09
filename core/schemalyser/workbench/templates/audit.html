@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}{{ a.name }}{% endblock %}
+{% block main %}
+<h1>{{ a.record.question }}</h1>
+<p class="lede">This page shows the execution package that Schemalyser built from {{ a.record.question }} and the saved hospital schema {{ a.record.schema }}. The database analyst runs its script once on production, under the hospital's own controls; the workbench never runs it.</p>
+<p class="muted">The package is in audits/{{ a.name }}/package in the project folder{% if a.record.period %}, and covers {{ a.record.period[0] | day }} to {{ a.record.period[1] | day }}{% endif %}.</p>
+
+{% if a.state == "running" %}
+  {% with job = a, url = "/audits/" ~ a.name ~ "/progress" %}{% include "progress.html" %}{% endwith %}
+{% elif not a.manifest %}
+  <section>
+    <h2>The package was not written</h2>
+    <p>{{ state_words[a.state] }}</p>
+    <pre class="log">{{ a.log }}</pre>
+    {% if a.feasibility %}<p>The feasibility report was written before Schemalyser stopped. Its verdict is: {{ a.feasibility.verdict_text }}</p>{% endif %}
+    <p><a href="/audits?schema={{ a.record.schema }}">Build a package again</a></p>
+  </section>
+{% else %}
+  {% set m = a.manifest %}
+  {% if a.status.voided %}
+  <p class="notice bad"><strong>The review is voided.</strong> {{ a.status.says }}</p>
+  {% endif %}
+
+  <section>
+    <h2>The class and what it needs</h2>
+    <p class="class class-{{ m.execution_class }}">{{ a.safety.class_says }}{% if a.status.voided %} The class no longer applies, because the script has changed.{% endif %}</p>
+    <p>{{ a.needs }}</p>
+    <p>The policy {{ m.policy_outcome }}. The feasibility report's verdict is: {{ a.feasibility.verdict_text }}</p>
+  </section>
+
+  <section>
+    <h2>The package's README</h2>
+    <details x-data open><summary>What the clinician and the database analyst each do</summary>
+      <div class="doc">{{ a.readme | md }}</div>
+    </details>
+  </section>
+
+  <section>
+    <h2>The specification</h2>
+    <details x-data><summary>The script in the terms of the hospital's database</summary>
+      <div class="doc">{{ a.specification | md }}</div>
+    </details>
+  </section>
+
+  <section>
+    <h2>The script</h2>
+    <p>The script names the tables and local codes of the hospital's database, so it stays on the hospital's own computers. A change to any line of it voids its class and its plan review.</p>
+    <div x-data class="code">
+      <button type="button" class="copy" @click="navigator.clipboard.writeText($refs.sql.innerText)">Copy the script</button>
+      <details><summary>Show the script, {{ a.script.splitlines() | length }} lines</summary>
+        <pre x-ref="sql">{{ a.script }}</pre>
+      </details>
+    </div>
+  </section>
+
+  <section>
+    <h2>The safety report</h2>
+    <p>Schemalyser read every statement of the script and checked each rule below against its final text. It read {{ a.safety.tables_read | join(", ") }}, and treats {{ a.safety.large_tables | join(", ") or "no table" }} as large.</p>
+    <table>
+      <thead><tr><th>Rule</th><th>Outcome</th></tr></thead>
+      <tbody>
+      {% for rule in a.safety.rules %}
+      <tr><td>{{ rule.rule }}{% for f in rule.fragments %}<pre class="fragment">{{ f }}</pre>{% endfor %}</td>
+          <td><span class="outcome {{ 'good' if rule.passed else 'bad' }}">{{ "passed" if rule.passed else "failed" }}</span></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>The answer on made-up rows</h2>
+    <p>{{ a.expected.says }}</p>
+    <table>
+      <thead><tr>{% for c in a.expected.columns %}<th>{{ c | replace("_", " ") }}</th>{% endfor %}</tr></thead>
+      <tbody>{% for row in a.expected.rows %}<tr>{% for v in row %}<td>{{ v | number }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+    </table>
+    <details x-data><summary>The planted cases, {{ a.expected.planted | selectattr("matches") | list | length }} of {{ a.expected.planted | length }} of which gave their expected answer</summary>
+      <ul>{% for p in a.expected.planted %}<li><span class="outcome {{ 'good' if p.matches else 'bad' }}">{{ "as expected" if p.matches else "not as expected" }}</span> {{ p.says }}</li>{% endfor %}</ul>
+    </details>
+  </section>
+
+  <section id="plan">
+    <h2>The plan review</h2>
+    <p>The plan review is <span class="state">{{ "voided" if a.status.voided else a.status.plan_review }}</span>.{% if a.review and not a.status.voided %} {{ a.review.paragraph }}{% endif %}</p>
+    <p>The database analyst runs part 1, obtains the estimated plan of part 2 in Management Studio and saves it as a .sqlplan file, as the README describes. The clinician then adds it here, and Schemalyser reviews it.</p>
+    <form method="post" action="/audits/{{ a.name }}/plan" enctype="multipart/form-data" class="grid">
+      <label>The estimated plan, as a .sqlplan file:
+        <input type="file" name="file" accept=".sqlplan,.xml"></label>
+      <label class="wide">Or paste the plan's XML:
+        <textarea name="plan" rows="4" spellcheck="false"></textarea></label>
+      <button type="submit">Review the plan</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>The manifest</h2>
+    <details x-data><summary>The versions and hashes that the package records</summary>
+      <dl class="hashes">
+        <dt>Built</dt><dd>{{ m.date | day }} by {{ m.tool }} {{ m.tool_version }}, with role model {{ m.role_model_version }}</dd>
+        <dt>Saved hospital schema</dt><dd>{{ m.schema_file.name }}<code>{{ m.schema_file.sha256 }}</code></dd>
+        <dt>Question</dt><dd>{{ m.query.name }}<code>{{ m.query.sha256 }}</code></dd>
+        <dt>Script, as built</dt><dd><code>{{ m.sql_sha256 }}</code></dd>
+        <dt>Script, as it is now</dt><dd>{{ "It has changed since the package was built." if a.status.sql_changed else "It is unchanged." }}</dd>
+        {% if m.plan_review.plan_sha256 %}<dt>Plan reviewed</dt><dd>{{ m.plan_review.date | day }}<code>{{ m.plan_review.plan_sha256 }}</code></dd>{% endif %}
+        <dt>Period</dt><dd>{{ m.period["from"] | day }} to {{ m.period["to"] | day }}, with at most {{ m.cohort_cap | number }} anaesthetics</dd>
+      </dl>
+    </details>
+  </section>
+{% endif %}
+{% endblock %}

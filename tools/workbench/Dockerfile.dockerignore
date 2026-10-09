@@ -1,0 +1,12 @@
+# BuildKit reads this file in place of a .dockerignore when the image is built with -f tools/workbench/Dockerfile.
+# Everything is left out of the build context except what the image needs. Nothing under reference/ or etl/ is sent.
+*
+!core/pyproject.toml
+!core/schemalyser/
+!fixtures/
+!tools/sqlserver/harness.py
+!tools/workbench/requirements.txt
+!site/dist/
+**/__pycache__
+**/*.pyc
+**/.*
