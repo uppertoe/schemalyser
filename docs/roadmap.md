@@ -18,6 +18,8 @@ Screen 2 is built for one audit only, the neonatal low mean pressure audit, rath
 
 The first half of screen 2 is the report on whether a question can be answered (`feasibility.py`, described in `docs/feasibility.md`). It reads the audit and the saved hospital schema, gives each requirement of the audit its state, from not currently mapped to checked against the database, and asks for the smallest investigation that would move each one that falls short, so that the clinician and the database analyst know what remains before the script is run. It runs from the command line today; the page's screen follows, and it adds nothing to the hospital schema itself.
 
+The second half is the execution package (`audit.py`, described in `docs/audit.md`). The clinician builds it from the audit and the saved hospital schema, and it holds the two-part script over the hospital's tables with its specification, the answer on made-up rows, and a safety report kept apart from both. The safety report applies a static policy to the final text of the script and derives its execution class from that text, and the plan review then reads the estimated plan that the database analyst obtains for part 2. Like the feasibility report, it runs from the command line today and has been tested only on the invented world.
+
 Done means that the neonatal audit has run once on production through the hospital schema, that every planted case gave its expected answer on the shadow beforehand, and that the result carries its coverage by year, so that a year in which the schema reaches too few readings is visible beside the answer.
 
 ### 3. A sample of anaesthetics is reconciled against the clinical record

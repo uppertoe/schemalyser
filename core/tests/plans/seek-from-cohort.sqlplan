@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Written by hand for the tests, in the form that SQL Server 2022 gives: part 2 of an audit, whose readings are
+     sought from #cohort by key through nested loops. PART_2 is replaced by the text of part 2 when the test runs. The
+     figures are invented. -->
+<ShowPlanXML xmlns="http://schemas.microsoft.com/sqlserver/2004/07/showplan" Version="1.564" Build="16.0.4295.3">
+  <BatchSequence>
+    <Batch>
+      <Statements>
+        <StmtSimple StatementText="PART_2" StatementId="1" StatementCompId="1" StatementType="SELECT" StatementSubTreeCost="12.5" StatementEstRows="5">
+          <QueryPlan CachedPlanSize="120" CompileTime="9" CompileCPU="9" CompileMemory="900">
+            <MemoryGrantInfo SerialRequiredMemory="4096" SerialDesiredMemory="65536" GrantedMemory="0" MaxUsedMemory="0"/>
+            <RelOp NodeId="0" PhysicalOp="Hash Match" LogicalOp="Aggregate" EstimateRows="5" EstimateRebinds="0" EstimateRewinds="0" EstimatedTotalSubtreeCost="12.5">
+              <OutputList/>
+              <Hash>
+                <RelOp NodeId="1" PhysicalOp="Nested Loops" LogicalOp="Inner Join" EstimateRows="250000" EstimateRebinds="0" EstimateRewinds="0" EstimatedTotalSubtreeCost="12.1">
+                  <OutputList/>
+                  <NestedLoops Optimized="0">
+                    <OuterReferences>
+                      <ColumnReference Database="[invented_world]" Schema="[dbo]" Table="[OBS_SHEET]" Alias="[t1]" Column="SHEET_KEY"/>
+                    </OuterReferences>
+                    <RelOp NodeId="2" PhysicalOp="Nested Loops" LogicalOp="Inner Join" EstimateRows="5000" EstimateRebinds="0" EstimateRewinds="0" EstimatedTotalSubtreeCost="0.9">
+                      <OutputList/>
+                      <NestedLoops Optimized="0">
+                        <OuterReferences>
+                          <ColumnReference Database="[tempdb]" Schema="[dbo]" Table="[#cohort]" Alias="[c]" Column="anaesthetic_key"/>
+                        </OuterReferences>
+                        <RelOp NodeId="3" PhysicalOp="Clustered Index Scan" LogicalOp="Clustered Index Scan" EstimateRows="5000" EstimateRebinds="0" EstimateRewinds="0" EstimatedTotalSubtreeCost="0.05">
+                          <OutputList/>
+                          <IndexScan Ordered="1" ScanDirection="FORWARD">
+                            <Object Database="[tempdb]" Schema="[dbo]" Table="[#cohort___________________________________________________________________________________________________________000000000012]" Index="[PK__#cohort]" Alias="[c]" IndexKind="Clustered"/>
+                          </IndexScan>
+                        </RelOp>
+                        <RelOp NodeId="4" PhysicalOp="Index Seek" LogicalOp="Index Seek" EstimateRows="1" EstimateRebinds="4999" EstimateRewinds="0" EstimatedTotalSubtreeCost="0.8">
+                          <OutputList/>
+                          <IndexScan Ordered="1" ScanDirection="FORWARD">
+                            <Object Database="[invented_world]" Schema="[dbo]" Table="[OBS_SHEET]" Index="[IX_OBS_SHEET_ANAES_KEY]" Alias="[t1]" IndexKind="NonClustered"/>
+                            <SeekPredicates/>
+                          </IndexScan>
+                        </RelOp>
+                      </NestedLoops>
+                    </RelOp>
+                    <RelOp NodeId="5" PhysicalOp="Index Seek" LogicalOp="Index Seek" EstimateRows="50" EstimateRebinds="4999" EstimateRewinds="0" EstimatedTotalSubtreeCost="11.0">
+                      <OutputList/>
+                      <IndexScan Ordered="1" ScanDirection="FORWARD">
+                        <Object Database="[invented_world]" Schema="[dbo]" Table="[OBS_READING]" Index="[IX_OBS_READING_SHEET_KEY]" Alias="[t0]" IndexKind="NonClustered"/>
+                        <SeekPredicates/>
+                      </IndexScan>
+                    </RelOp>
+                  </NestedLoops>
+                </RelOp>
+              </Hash>
+            </RelOp>
+          </QueryPlan>
+        </StmtSimple>
+      </Statements>
+    </Batch>
+  </BatchSequence>
+</ShowPlanXML>
