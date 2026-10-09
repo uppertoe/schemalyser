@@ -56,3 +56,6 @@ etl/
 
 # macOS folder settings.
 .DS_Store
+
+# The workbench vendors htmx and Alpine at build time; a local copy is not committed.
+core/schemalyser/workbench/static/*.min.js

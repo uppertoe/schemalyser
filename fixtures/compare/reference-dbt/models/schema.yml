@@ -1,0 +1,9 @@
+version: 2
+
+models:
+  - name: airway_devices
+    description: One row for each airway device with a recorded removal.
+    config:
+      alias: device_exposure
+  - name: encounters
+    description: One row for each hospital visit with an admission time.

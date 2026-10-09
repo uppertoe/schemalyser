@@ -1,0 +1,19 @@
+version: 2
+
+sources:
+  - name: site
+    schema: dbo
+    tables:
+      - name: person_master
+        identifier: PERSON_MASTER
+      - name: VISIT
+      - name: WARD_DEF
+      - name: ANAES_RECORD
+      - name: ANAES_STAFF
+      - name: STAFF_MASTER
+      - name: AIRWAY_DEVICE
+      - name: VISIT_DIAGNOSIS
+  - name: vocab
+    schema: cdm
+    tables:
+      - name: source_to_concept_map

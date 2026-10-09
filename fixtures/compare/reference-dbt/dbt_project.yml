@@ -1,0 +1,5 @@
+# The dbt-style variant of the invented reference conversion. Its lineage is the same as reference-plain's.
+name: invented_reference
+version: "1.0.0"
+profile: invented
+model-paths: ["models"]
