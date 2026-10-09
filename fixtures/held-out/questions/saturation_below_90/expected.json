@@ -1,0 +1,28 @@
+{
+ "question": "saturation_below_90",
+ "says": "Written by hand from the description of fixtures/questions/saturation_below_90/rows.json. A reading stands until the next, or until the stop for the last, and for at most five minutes. The four steady children and the fifth child's two anaesthetics spend no time below 90, because 90 is not below 90. The five who fall to 85 at 08:10 spend the 3 minutes to 08:13 below it, since the reading not accepted and the one before the start do not count. The child reading 88 twice spends 10 minutes below 90. The child reading 85 four times spends 20 minutes, and the 85 at 08:40 stands for 5 more, to 25. The child with only cuff pressures has no saturation, so no minutes. The test patient is left out. The anaesthetic of 2023 spends 3 minutes, and falls outside the period of 2024.",
+ "per_anaesthetic": {
+  "columns": ["anaesthetic_key", "minutes_below_90"],
+  "rows": [
+   ["990007301", 0.0], ["990007302", 0.0], ["990007303", 0.0], ["990007304", 0.0], ["990007305", 0.0], ["990007306", 0.0],
+   ["990007307", 3.0], ["990007308", 3.0], ["990007309", 3.0], ["990007310", 3.0], ["990007311", 3.0],
+   ["990007312", 10.0], ["990007313", 25.0], ["990007314", null], ["990007316", 3.0]
+  ]
+ },
+ "answer": {
+  "says": "Over every planted anaesthetic, with no period: one with no saturation recorded; six with none below 90, of five children; six under 5 minutes, of six children; one from 5 to 14 minutes; one of 15 minutes or more.",
+  "columns": ["minutes_below_90", "anaesthetics", "children"],
+  "rows": [
+   ["no saturation recorded", 1, 1], ["none", 6, 5], ["under 5 minutes", 6, 6], ["5 to 14 minutes", 1, 1],
+   ["15 minutes or more", 1, 1]
+  ]
+ },
+ "answer_in_2024_as_released": {
+  "says": "Over the anaesthetics of 2024 alone, as the script releases the answer, with every count from 1 to 4 left blank: the anaesthetic of 2023 leaves the band under 5 minutes, which then holds five anaesthetics of five children.",
+  "columns": ["minutes_below_90", "anaesthetics", "children"],
+  "rows": [
+   ["no saturation recorded", null, null], ["none", 6, 5], ["under 5 minutes", 5, 5], ["5 to 14 minutes", null, null],
+   ["15 minutes or more", null, null]
+  ]
+ }
+}

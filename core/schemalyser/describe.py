@@ -167,6 +167,7 @@ WORDING = {
     "grid_columns": "The pasted text does not have the columns that the query returns ({wanted}). Please copy the whole results grid with Copy with Headers, and paste it again.",
     "grid_empty": "The pasted text holds no rows. If the query returned no rows, the grid is empty; otherwise please copy the whole results grid with Copy with Headers, and paste it again.",
     "folder_unreadable": "Schemalyser could not read the hospital schema in this file, so it has started a new hospital schema instead.",
+    "folder_refused": "Schemalyser has not opened the hospital schema in this file, because the file breaks a rule of the hospital schema. {rule} Schemalyser has started a new hospital schema instead.",
     "journal_unreadable": "Schemalyser could not read the journal in this file, because an earlier version of Schemalyser saved it. The hospital schema has been opened without its record of queries, results and answers.",
     "cliff": "In {year}, {count} of {total} anaesthetics {what}, against {best_count} of {best_total} in {best_year}. A fall as sharp as this usually means that the data is held differently in that year.",
     "no_patient": "In {years}, most anaesthetics have no patient whom the hospital schema finds, so the link from each anaesthetic to its patient may be wrong. The database analyst looks again at the patient's identifier in Anaesthetics at step 6.",
@@ -2734,7 +2735,7 @@ ORDER  BY g.kind;"""
         each binding are read as they were recorded, and the sitting carries on from the version the file is."""
         files = dict(files)
         found = {"map": False, "tables": False, "codes": 0, "counts": 0, "dictionary": False, "reference": False, "confirmations": 0,
-                 "queries": 0, "problem": "", "needs_dictionary": False, "schema_id": None, "contract_changed": []}
+                 "queries": 0, "problem": "", "refused": "", "needs_dictionary": False, "schema_id": None, "contract_changed": []}
         info = _json_of(files.get(f"{DICTIONARY_FOLDER}/dictionary.json"))
         has_dictionary = bool(info.get("file") and f"{DICTIONARY_FOLDER}/{info['file']}" in files)
         if files and not has_dictionary and self.dictionary is None:
@@ -2796,8 +2797,17 @@ ORDER  BY g.kind;"""
             try:
                 self.data = rolemap.read_map_json(folder)
                 found["map"] = True
-            except rolemap.MapError:
-                found["problem"] = WORDING["folder_unreadable"]
+            except rolemap.MapError as error:
+                # The rule that the file breaks is named, so that a binding which holds a decision of a question, such
+                # as a time window or a filter by clinical meaning, is refused with its reason (invariant 10). Nothing
+                # of a refused file stays in the sitting: it starts afresh, as the problem says, with its version.
+                version = self.version
+                self.__init__()
+                self.version = version
+                found.update(map=False, dictionary=False, reference=False, schema_id=None, contract_changed=[],
+                             problem=WORDING["folder_refused"].format(rule=str(error)), refused=str(error))
+                self.restored = found
+                return found
         dimensions = _json_of(files.get("dimensions.json"))
         for kind in self.dimensions:
             if isinstance(dimensions.get(kind), dict):
@@ -3684,10 +3694,10 @@ def _read_saved(path):
 def walk(calls, base=".", version="", sitting=None):
     """Makes the hospital schema from the calls that the page makes of its bridge, in order, so that the command line can
     do whatever the page does with the same files. Each call is {"call": the bridge function's name without describe_,
-    "request": what the page sends}. A file the page reads is named by "file" (and "tables" beside a dictionary), and a
-    pasted result by "text" or by "file", each relative to base. A call whose input the core refuses changes nothing
-    and the walk goes on, as the page does when it shows the refusal. Returns (the sitting, which the caller saves, and
-    [(the number of each call refused, why)])."""
+    "request": what the page sends}. A file the page reads is named by "file" (and "tables" beside a dictionary), a
+    pasted result by "text" or by "file", and the invented hospital by "folder" and "catalogue", each relative to base.
+    A call whose input the core refuses changes nothing and the walk goes on, as the page does when it shows the
+    refusal. Returns (the sitting, which the caller saves, and [(the number of each call refused, why)])."""
     base = Path(base)
     s = sitting or Describe()
     s.version = s.version or str(version or "")
@@ -3701,6 +3711,17 @@ def walk(calls, base=".", version="", sitting=None):
     def name(r, key, fallback):
         return Path(r[key]).name if r.get(key) else fallback
 
+    held = {"hospital": None}
+
+    def hospital(r):
+        # The invented hospital from the folder of its tables and the invented catalogue, as the page publishes them
+        # beside the invented dictionary.
+        from .hospital import HospitalError, InventedHospital, files_from
+        try:
+            held["hospital"] = InventedHospital(files_from(base / r["folder"], base / r["catalogue"]))
+        except (HospitalError, OSError, ValueError, KeyError):
+            raise DescribeError(WORDING["invented_failed"]) from None
+
     actions = {
         "dictionary_upload": lambda r: s.upload(data(r), data(r, "tables"), r.get("headings") or {},
                                                 name(r, "file", "dictionary.csv"), name(r, "tables", "tables.csv"),
@@ -3710,7 +3731,13 @@ def walk(calls, base=".", version="", sitting=None):
                                                   r.get("step") or "", invented=bool(r.get("invented"))),
         "dictionary_database": lambda r: s.load_from_database(data(r) if r.get("file") else r["text"],
                                                               name(r, "file", "data-dictionary.csv"), r.get("step") or ""),
+        "dictionary_vendor": lambda r: s.add_descriptions(data(r), data(r, "tables"), r.get("headings") or {},
+                                                          name(r, "file", "vendor-dictionary.csv"),
+                                                          name(r, "tables", "vendor-tables.csv")),
         "schema_open": lambda r: s.restore(_read_saved(base / r["file"])),
+        "hospital_build": hospital,
+        "hospital_run": lambda r: s.run_invented(held["hospital"], r["query"], r["read"],
+                                                 **{k: r[k] for k in ("key", "year", "name", "about") if k in r}),
         "propose": lambda r: s.propose(),
         "settings": lambda r: s.set_settings(r.get("database"), r.get("year"), r.get("timeZone"), r.get("daylightSaving"),
                                              r.get("timeZoneFrom")),

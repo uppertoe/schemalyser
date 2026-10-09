@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
-import { setOnline } from './network';
+import { setOnline, watchRequests } from './network';
 import { describeStrings as d } from '../src/describe-strings';
 
 // The page Describe the record, walked through with the invented dictionary and the invented world: loaded, taken
@@ -170,14 +170,15 @@ test('the record is described, saved as a hospital schema and opened again', asy
   test.setTimeout(240_000);
   const requestsWhileOffline: string[] = [];
   let offline = false;
-  page.on('request', (request) => {
-    if (offline && !request.url().startsWith('blob:') && !request.url().startsWith('data:')) requestsWhileOffline.push(request.url());
-  });
+  // The context's route handler sees the worker's requests as well as the page's (network.ts).
+  const online = await watchRequests(context, () => offline, requestsWhileOffline);
 
 
   await recordCalls(page);
   await loadAndGoOffline(page, context, browserName);
   offline = true;
+  // The watch saw the worker's own requests while the tab was online, so its silence offline means something.
+  expect(online.some((url) => url.endsWith('py/schemalyser.zip'))).toBe(true);
   await stage(page, '1-offline', 'body');
 
   // The dictionary, with its receipt.
@@ -452,11 +453,12 @@ test('each kind of correction is tested on made-up rows before it is kept', asyn
   const c = d.corrections;
   const requestsWhileOffline: string[] = [];
   let offline = false;
-  page.on('request', (request) => {
-    if (offline && !request.url().startsWith('blob:') && !request.url().startsWith('data:')) requestsWhileOffline.push(request.url());
-  });
+  // The context's route handler sees the worker's requests as well as the page's (network.ts).
+  const online = await watchRequests(context, () => offline, requestsWhileOffline);
   await loadAndGoOffline(page, context, browserName);
   offline = true;
+  // The watch saw the worker's own requests while the tab was online, so its silence offline means something.
+  expect(online.some((url) => url.endsWith('py/schemalyser.zip'))).toBe(true);
   await loadDictionary(page);
   await page.locator('#propose').click();
   await expect(page.locator('#t-propose-status')).toContainText('The page has proposed', { timeout: 60_000 });
@@ -914,9 +916,8 @@ test('the invented hospital answers every query, and the walk reaches a complete
   const c = d.corrections;
   const requestsWhileOffline: string[] = [];
   let offline = false;
-  page.on('request', (request) => {
-    if (offline && !request.url().startsWith('blob:') && !request.url().startsWith('data:')) requestsWhileOffline.push(request.url());
-  });
+  // The context's route handler sees the worker's requests as well as the page's (network.ts).
+  const online = await watchRequests(context, () => offline, requestsWhileOffline);
   await page.goto('./');
   // While the page loads, no step says that it waits for the tab to go offline.
   await expect(page.locator('#rail')).not.toContainText(d.waitingFor.offline);
@@ -934,6 +935,8 @@ test('the invented hospital answers every query, and the walk reaches a complete
   await expect(page.locator('#step-1')).toHaveAttribute('data-state', 'current');
   await setOnline(page, context, browserName, false);
   offline = true;
+  // The watch saw the worker's own requests while the tab was online, so its silence offline means something.
+  expect(online.some((url) => url.endsWith('py/schemalyser.zip'))).toBe(true);
   await page.locator('#propose').click();
   await expect(page.locator('#step-4')).toHaveAttribute('data-state', 'done', { timeout: 60_000 });
   await expect(page.locator('#receipt-4')).toContainText('The page has proposed a table for');
@@ -1134,5 +1137,80 @@ test('the invented hospital answers every query, and the walk reaches a complete
   expect(answers.filter((line) => line.startsWith('role_patient.is_test,'))).toHaveLength(1);
   expect(answers.some((line) => line.startsWith('role_drug.route,no,'))).toBe(true);
   expect(read('map/role_patient.sql')).not.toMatch(/^--.*(\bviews?\b|\bbindings?\b|map\.json)/m);
+  expect(requestsWhileOffline).toEqual([]);
+});
+
+// The policy's refusals: a pasted result and a saved file that the core refuses, each shown with the core's own reason,
+// leave nothing in the hospital schema saved afterwards. The saved file is the invented one with a binding that
+// attributes readings to an anaesthetic by a time window, which invariant 10 of docs/contract.md forbids. Every
+// request is watched at the browser context, the worker's included, and nothing may leave while the tab is offline.
+test('a result or a file that the core refuses leaves nothing in the saved schema and shows the core’s reason', async ({ page, context, browserName }) => {
+  test.setTimeout(240_000);
+  const requestsWhileOffline: string[] = [];
+  let offline = false;
+  const online = await watchRequests(context, () => offline, requestsWhileOffline);
+  const folder = mkdtempSync(join(tmpdir(), 'refused-'));
+  const refusedFile = join(folder, 'hospital-schema-refused.schemalyser.zip');
+  const refusedId = execFileSync('uv', ['run', '--quiet', '--with', 'duckdb==1.5.1', 'python', '-c', [
+    'import io, json, sys, zipfile',
+    'from schemalyser import workspace',
+    'source = zipfile.ZipFile(io.BytesIO(workspace.invented_schema(workspace.ROOT, "2026-10-07")))',
+    'with zipfile.ZipFile(sys.argv[1], "w") as out:',
+    '    for name in source.namelist():',
+    '        data = source.read(name)',
+    '        if name == "map/map.json":',
+    '            held = json.loads(data)',
+    '            held["roles"]["role_reading"]["columns"]["anaesthetic_key"]["binding"]["window"] = {"start": "PLANTED_WINDOW_START", "stop": "PLANTED_WINDOW_STOP"}',
+    '            data = json.dumps(held).encode("utf-8")',
+    '        out.writestr(name, data)',
+    'print(json.loads(source.read("settings.json"))["schema_id"])',
+  ].join('\n'), refusedFile], { cwd: fileURLToPath(new URL('../../core/', import.meta.url)), encoding: 'utf8', timeout: 300_000 }).trim();
+  expect(refusedId).toMatch(/^[0-9a-f]{16}$/);
+
+  await loadAndGoOffline(page, context, browserName);
+  offline = true;
+  expect(online.some((url) => url.endsWith('py/schemalyser.zip'))).toBe(true);
+
+  // A result of the data dictionary query pasted without its headers is refused with the core's reason.
+  const headless = dictionaryResult().split('\n').slice(1).join('\n').replace('NULL', 'PLANTED_REFUSED_PASTE');
+  expect(headless).toContain('PLANTED_REFUSED_PASTE');
+  await page.locator('#step-2 #database-options input[value="production"]').check();
+  await page.locator('#database-paste').fill(headless);
+  await page.locator('#database-read').click();
+  await expect(page.locator('#t-database-status')).toContainText('Include column headers');
+  await expect(page.locator('#t-database-status')).not.toHaveText(d.databaseUnreadable);
+
+  // A saved file whose binding holds a time window is refused, and the page names the rule it breaks.
+  await openStep(page, 3);
+  await page.locator('#schema-file').setInputFiles(refusedFile);
+  await expect(page.locator('#t-folder-status')).toContainText('never attributes a row to an anaesthetic by a time window');
+  await expect(page.locator('#t-folder-status')).toContainText('Schemalyser has started a new hospital schema instead.');
+  await expect(page.locator('#step-2')).not.toHaveAttribute('data-state', 'done');
+
+  // The hospital schema made and saved afterwards holds nothing of either.
+  await loadDictionary(page);
+  await page.locator('#propose').click();
+  await expect(page.locator('#t-propose-status')).toContainText('The page has proposed', { timeout: 60_000 });
+  await expect(page.locator('#step-9')).not.toHaveAttribute('data-state', 'waiting');
+  await openStep(page, 9);
+  const download = page.waitForEvent('download');
+  await page.locator('#write-save').click();
+  const zipPath = join(folder, 'saved.schemalyser.zip');
+  await (await download).saveAs(zipPath);
+  // The files as they were saved, with nothing set aside, so that the refused file's identifier would show.
+  const files = JSON.parse(execFileSync('python3', ['-c', [
+    'import json, sys, zipfile',
+    'archive = zipfile.ZipFile(sys.argv[1])',
+    'print(json.dumps({n: archive.read(n).decode("utf-8", "replace") for n in archive.namelist()}))',
+  ].join('\n'), zipPath], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })) as Record<string, string>;
+  expect(Object.keys(files)).toContain('journal.json');
+  for (const [name, text] of Object.entries(files)) {
+    expect(text, name).not.toContain('PLANTED_REFUSED_PASTE');
+    expect(text, name).not.toContain(refusedId);
+    expect(text, name).not.toContain("PLANTED_WINDOW");
+  }
+  const settings = JSON.parse(files['settings.json']);
+  expect(settings.parent_id ?? null).toBeNull();
+  expect(settings.lineage ?? []).toEqual([]);
   expect(requestsWhileOffline).toEqual([]);
 });

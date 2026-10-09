@@ -207,14 +207,19 @@ def check(sql):
     """The role-level policy on the text of a question. Returns {"rules": [{"id", "rule", "passed", "fragments"}],
     "outcome": "passed" or "failed", "failed": [rule ids]}."""
     checker = _Checker()
-    tree = checker.tree(sql)
-    if tree is not None:
-        ctes = {cte.alias.lower() for cte in tree.find_all(exp.CTE)}
-        checker.tables(tree, ctes)
-        checker.functions(tree)
-        checker.columns(tree, ctes)
-        if not any(checker.failures[r] for r in ("parse", "statements", "dynamic")):
-            checker.kinds(sql)
+    try:
+        tree = checker.tree(sql)
+        if tree is not None:
+            ctes = {cte.alias.lower() for cte in tree.find_all(exp.CTE)}
+            checker.tables(tree, ctes)
+            checker.functions(tree)
+            checker.columns(tree, ctes)
+            if not any(checker.failures[r] for r in ("parse", "statements", "dynamic")):
+                checker.kinds(sql)
+    except (RecursionError, sqlglot.errors.SqlglotError):
+        # A question built to exhaust the parser, such as one nested thousands of brackets deep, is refused as one the
+        # policy cannot read, and the error itself goes nowhere.
+        checker.fail("parse", "the policy cannot read the question, which may be nested more deeply than it reads")
     for name in feasibility.named_capabilities(sql):
         if name not in rolemap.capabilities():
             checker.fail("capabilities", f"{name} is not a capability of the catalogue")

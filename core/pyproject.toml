@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 dependencies = ["sqlglot==30.21.0"]
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "duckdb==1.5.1", "hypothesis>=6.100"]
 
 [build-system]
 requires = ["hatchling"]
@@ -14,3 +14,7 @@ build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The fast suite is python -m pytest -m "not slow"; docs/testing.md gives both invocations and how long each takes.
+markers = [
+    "slow: takes more than thirty seconds, or runs the testbed's full profile or SQL Server; the fast suite deselects it",
+]
