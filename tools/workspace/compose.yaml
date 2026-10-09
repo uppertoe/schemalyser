@@ -1,0 +1,30 @@
+# The public workspace in a container, for a coding agent. README.md in this folder says how to use it.
+#
+#     WORKSPACE=/path/to/exported/workspace docker compose -f tools/workspace/compose.yaml run --rm workspace
+#
+# The exported folder is the one volume. The service publishes no port, runs as a user who is not root, drops every
+# capability and keeps its own file system read-only, so the exported folder is the only place it can write.
+name: schemalyser-workspace
+
+services:
+  workspace:
+    # The workbench's image supplies Python with the pinned packages. WORKSPACE_IMAGE may name an image built from it
+    # that adds a coding agent's command line, as README.md describes.
+    image: "${WORKSPACE_IMAGE:-schemalyser-workbench:dev}"
+    volumes:
+      - "${WORKSPACE:?Set WORKSPACE to the exported workspace}:/workspace"
+    working_dir: /workspace
+    user: "${WORKSPACE_UID:-10001}:${WORKSPACE_GID:-10001}"
+    environment:
+      PYTHONPATH: /workspace/core
+      PYTHONDONTWRITEBYTECODE: "1"
+      HOME: /tmp
+      TMPDIR: /tmp
+    read_only: true
+    # Memory for temporary files, which goes when the container stops; it is not a folder of this computer.
+    tmpfs: ["/tmp:size=512m"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    entrypoint: ["/bin/sh"]
+    stdin_open: true
+    tty: true
