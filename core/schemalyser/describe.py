@@ -5,15 +5,25 @@ proposer draft a map from it and the role model, check with one query which of t
 and how large they are, confirm each binding, settle the local codes of each vocabulary, and run a few counts. What
 they settle is written to the hospital folder:
 
-    map/map.json                    every binding, its evidence quoting the dictionary, its confirmation and its date
+    map/map.json                    every binding, its evidence quoting the dictionary, its confirmation, its date and
+                                    where it came from, with a section of the named normalisations (normalise.py)
     map/role_*.sql                  one SQL view for each role, written from the bindings and the codes
-    map/tables-and-columns.tsv      the result of the tables and columns query, which says what exists and how large
+    journal.json                    the append-only journal of every query offered, every result returned, every
+                                    answer, choice of codes, judgement, test run and import of evidence (evidence.py)
+    dimensions.json                 the five dimensions of evidence of every binding, link and code translation
+    queries/, results/              the text of each query offered and each result returned, named in the journal
     codes/VIEW.COLUMN.json          the codes chosen for each kind of a vocabulary, with the list they were chosen from
-    counts/NAME.tsv                 the result of each count, as pasted
-    counts/judgements.json          whether each count looked right, with a note and its date
-    dictionary/                     the dictionary's own files, only where a person ticked the box to keep them
-    settings.json                   the tool's version, the dates, the database, the year of the lists, the time zone
-                                    of the database's clocks, and the state of readiness that each part has reached
+    counts/judgements.json          whether each count looked right, with a note, its date and the measured figure
+    confirmations.csv               every answer still standing, in order, as the journal records it
+    dictionary/                     the dictionary's own files, and any reference conversion's lineage as
+                                    reference-lineage.json
+    settings.json                   the version's identity (schema_id, a hash of the other files' contents, and the
+                                    parent_id of the version it was made from), the time of the save, the contract's
+                                    version and the hash of each of its parts, the dates, the database, the year of the
+                                    lists and the time zone of the database's clocks
+
+Each save is a new immutable version. The readiness of each part (runs, checked against the database, clinically
+validated) is never stored: readiness() derives it from the dimensions whenever it is asked for.
 
 The dictionary is licensed. It is read here, in the browser's worker or on the hospital's own machine, and nothing
 from it leaves except into the hospital folder: map.json quotes it as evidence, and the dictionary's own files are
@@ -37,8 +47,9 @@ import time
 import zipfile
 from pathlib import Path
 
-from . import corrections, datadict, first_ask, propose, rolemap
+from . import corrections, datadict, evidence, first_ask, normalise, propose, rolemap
 from .catalogue import NAME, QUERY_ORDER, Catalogue, CatalogueError
+from .evidence import COMPLETE, INFERENCE, METADATA, NOT_RECORDED, PERSON, SAMPLE, TOOL
 
 # A table of at least this many rows is marked as large, and no count on this screen reads it in full.
 LARGE = 10_000_000
@@ -47,15 +58,19 @@ COHORT_LIMIT = 5000
 # The fewest rows that a count shows; a smaller group is left out, a smaller figure within a group is left empty, and
 # every count is rounded down to tens.
 LEAST = 10
-FOLDER_FORMAT = 1
+FOLDER_FORMAT = 2
 DICTIONARY_FOLDER = "dictionary"
 SAFE_COUNTS = ("coverage_by_year", "repeated_keys")
-CONFIRMATION_FIELDS = ("attribute", "answer", "replacement", "date", "note", "version", "correction", "test", "reason",
-                       "provenance")
-# Where each fact of the saved hospital schema came from: the whole of a table, a sample of it (the anaesthetics of one
-# year in #cohort), the database's own records of its tables or the data dictionary, a person's answer or judgement,
-# or the page's own proposal.
-COMPLETE, SAMPLE, METADATA, PERSON, INFERENCE = "complete data", "a sample", "metadata", "a person", "an inference"
+CONFIRMATION_FIELDS = ("attribute", "answer", "replacement", "date", "note", "by", "version", "correction", "test", "reason",
+                       "provenance", "proposed_from", "entry")
+# Where each fact of the saved hospital schema came from is one of evidence.PROVENANCES: the whole of a table, a sample
+# of it (the anaesthetics of one year in #cohort), the database's own records of its tables or the data dictionary, a
+# person's answer or judgement, the page's own proposal, or a reference conversion's lineage.
+REFERENCE = propose.REFERENCE
+# The name of the saved file of each version, which carries its schema_id.
+SCHEMA_FILE = "hospital-schema-{id}.schemalyser.zip"
+# The name under which the saved hospital schema keeps a reference conversion's lineage.
+REFERENCE_FILE = "reference-lineage.json"
 # The three states of readiness, in order. The page can reach the first two, and never the third.
 RUNS, CHECKED, VALIDATED = "runs", "checked against the database", "clinically validated"
 READINESS = (RUNS, CHECKED, VALIDATED)
@@ -134,6 +149,8 @@ WORDING = {
     "not_found": "The dictionary holds no column {name}.",
     "not_found_catalogue": "The result of the tables and columns query holds no column {name}.",
     "not_a_name": "Please write the replacement as TABLE.COLUMN, such as the name of a table, a full stop and the name of one of its columns.",
+    "reference_unreadable": "The page could not read this file as a reference conversion's lineage. Make sure that it is the "
+                            "lineage.json that the compare tool's reference command wrote, then choose it again.",
     "no_dictionary": "Please load the dictionary in step 2 first, because Schemalyser needs it to find how this part reaches that table.",
     "no_table": "The dictionary holds no table {name}.",
     "unreachable": "This part's own table does not reach {table} by any link that the dictionary shows, so Schemalyser cannot use that column here.",
@@ -141,6 +158,7 @@ WORDING = {
     "grid_columns": "The pasted text does not have the columns that the query returns ({wanted}). Please copy the whole results grid with Copy with Headers, and paste it again.",
     "grid_empty": "The pasted text holds no rows. If the query returned no rows, the grid is empty; otherwise please copy the whole results grid with Copy with Headers, and paste it again.",
     "folder_unreadable": "Schemalyser could not read the hospital schema in this file, so it has started a new hospital schema instead.",
+    "journal_unreadable": "Schemalyser could not read the journal in this file, because an earlier version of Schemalyser saved it. The hospital schema has been opened without its record of queries, results and answers.",
     "cliff": "In {year}, {count} of {total} anaesthetics {what}, against {best_count} of {best_total} in {best_year}. A fall as sharp as this usually means that the data is held differently in that year.",
     "no_patient": "In {years}, most anaesthetics have no patient whom the hospital schema finds, so the link from each anaesthetic to its patient may be wrong. The database analyst looks again at the patient's identifier in Anaesthetics at step 6.",
     "repeated": "In {view}, {count} values of the column that identifies a row are held by more than one row.",
@@ -194,7 +212,7 @@ WORDING = {
     "measured_both": "The counts measured that {patient} per cent of anaesthetics have a patient, and that {reading} per cent of the anaesthetics of {year} in #cohort have a reading of a kind that the audit needs.",
     "measured_patient": "The counts measured that {patient} per cent of anaesthetics have a patient. The readings count has not yet been read, so the share with a reading of a kind that the audit needs is not yet known.",
     "measured_reading": "The counts measured that {reading} per cent of the anaesthetics of {year} in #cohort have a reading of a kind that the audit needs. The coverage by year has not yet been read, so the share with a patient is not yet known.",
-    "state_validated": "A sample of anaesthetics has been reconciled against the clinical record. The page cannot do this, so it never records this state; the hospital's own reconciliation does.",
+    "state_validated": "A sample of anaesthetics has been reconciled against the clinical record, and the clinician entered the reconciliation through the evidence import. The page cannot reconcile a sample itself.",
     "sample_stamp": " The figures are from a sample: the anaesthetics of one year in #cohort, at most {limit}.",
     "probe_few": "Fewer than ten anaesthetics came back, so the test query says too little to judge the link.",
     "probe_link": "Of {total} anaesthetics of the year, {linked} have at least one row through this link and {none} have none.",
@@ -207,6 +225,16 @@ WORDING = {
     "invented_not_offered": "The page has not written this query yet. Write it first, then choose Run on the invented hospital.",
     "invented_failed": "The invented hospital could not run this query. Write it again and run it once more; if it still fails, answer this item by hand.",
     "invented_missing": "The invented hospital holds no table {table}, so it cannot run this query. The database analyst chooses another table or column at step 6, or answers this item by hand.",
+    # The evidence import.
+    "not_a_request": "Schemalyser cannot read this as an evidence request. Use one request from the feasibility report's file in JSON, exactly as the report wrote it.",
+    "other_schema": "This request was made from a hospital schema that is neither this version nor one that this version was made from, so Schemalyser has not imported its result.",
+    "not_importable": "This request is answered on the page Describe the record rather than by a result from the database, so there is nothing to import.",
+    "missing_result": "The result of {name} is not among the results given. Give one result for each query of the request, in the order in which the request lists them.",
+    "result_columns": "The result of {name} does not have the columns that the request expects ({wanted}), so Schemalyser has not imported it.",
+    "result_type": "In the result of {name}, the column {column} holds {value}, which is not {type}, so Schemalyser has not imported it.",
+    "plan_empty": "The plan is empty, so Schemalyser has not imported it.",
+    "provenance_unknown": "The provenance of the result is one of {known}.",
+    "imported": "Schemalyser imported the result of the request {request} and saved the new version {schema_id} as {file}.",
 }
 # Where a result came from when it was not pasted: the journal records it beside the result.
 INVENTED_HOSPITAL = "invented hospital"
@@ -223,6 +251,16 @@ COUNT_OPTIONAL = {"readings_by_kind": ("cohort_anaesthetics", "with_needed_kind"
 # The kinds of reading that the audit needs, whose share of anaesthetics the readings count measures.
 NEEDED_KINDS = rolemap.MEAN_KINDS
 CHARTED_COLUMNS = ("code", "charted", "anaesthetics", "name")
+# The evidence requests of the feasibility report, which the evidence import takes back. The format is the request's,
+# and each form of request that a result answers names the shape of the result it expects; a request of any other form
+# is answered on the page.
+REQUEST_FORMAT = 1
+WHOLE, NUMBER, TEXT = "a whole number", "a number", "text"
+TEXT_COLUMNS = {"role_view", "kind", "code", "name", "value", "outcome"}
+RECONCILIATION_COLUMNS = (("anaesthetics_sampled", WHOLE), ("agreed", WHOLE), ("disagreed", WHOLE))
+PRODUCTION_COLUMNS = (("rows_returned", WHOLE), ("seconds", NUMBER), ("outcome", TEXT))
+IMPORTS = {"counts": "count", "test query": "probe", "code list": "list", "values": "values", "counting query": "values",
+           "plan": "plan", "production outcome": "production outcome", "reconciliation": "clinical reconciliation"}
 
 
 class DescribeError(ValueError):
@@ -382,24 +420,36 @@ class Describe:
         self.counts = {}
         self.settings = {"format": FOLDER_FORMAT, "made": None, "updated": None, "database": None, "year": None,
                          "time_zone": None, "daylight_saving": None}
-        # The readiness that the last save recorded, which the page names in its receipt.
-        self._readiness = None
         self.restored = None
         self._scratch = None
         self._lookups = {}
         self.version = ""
-        self.journal = {}
+        # The append-only journal, and the text of each query and result file that its entries name, by path.
+        self.log = evidence.Journal()
+        self.texts = {}
+        self._journal_cache = None
+        # The current text of each query and result, by the query's name, as the journal's latest entries give them.
         self.queries = {}
         self.results = {}
-        self.confirmations = []
-        self.dictionary_entry = None
+        # The five dimensions of evidence of every binding, link and code translation (evidence.py).
+        self.dimensions = {"bindings": {}, "links": {}, "translations": {}}
+        # The identity of the version this sitting was restored from or last saved as, its ancestors, and the contract
+        # that a restored file was made against.
+        self.identity = {"schema_id": None, "parent_id": None, "lineage": []}
+        self.contract_saved = None
+        self.parts = rolemap.part_hashes(self.model)
+        self._tested = None
+        # A reference conversion's lineage, which the proposer reads beside the dictionary: the lineage as data, and
+        # the bytes and name of its file, which the saved hospital schema keeps.
+        self.reference = None
+        self.reference_files = None
         self.folder = None
-        # The corrections that a person kept, each with the outcome of its check, and the probes pasted for them.
-        self.corrections = []
+        # The probes pasted for kept corrections.
         self.probes = {}
         self.values = {}
         self._baseline = None
         self._checked = {}
+        self._after = {}
         self._graph = None
         # Where the result being read came from, while the invented hospital answers a query; None for a paste.
         self.origin = None
@@ -407,7 +457,7 @@ class Describe:
     # The dictionary.
 
     def load_dictionary(self, data, tables=None, headings=None, name="dictionary.csv", tables_name="tables.csv", step="",
-                        invented=False, source=None):
+                        invented=False, source=None, record=True, actor=None):
         own = {k: v for k, v in (headings or {}).items() if v}
         dictionary = _read_dictionary(data, tables, own)
         self.dictionary = dictionary
@@ -423,19 +473,32 @@ class Describe:
                                  "tables_name": _safe_file(tables_name, "tables.csv") if tables is not None else None,
                                  "tables_data": bytes(tables) if tables is not None else None, "headings": own}
         receipt = self.dictionary_receipt()
-        self.dictionary_entry = {"name": "dictionary", "step": step, "file": self.dictionary_files["name"],
-                                 "bytes": len(self.dictionary_files["data"]),
-                                 "sha256": hashlib.sha256(self.dictionary_files["data"]).hexdigest(),
-                                 "tables_file": self.dictionary_files["tables_name"],
-                                 "tables_bytes": len(tables) if tables is not None else None,
-                                 "tables_sha256": hashlib.sha256(bytes(tables)).hexdigest() if tables is not None else None,
-                                 "tables": receipt["tables"], "columns": receipt["columns"], "loaded": _now(),
-                                 "version": self.version}
         if self.invented:
-            self.dictionary_entry["invented"] = True
             # With the invented dictionary, the invented hospital is the only database that the queries can run on.
             self.settings["database"] = "invented"
+        if record:
+            payload = {"name": "dictionary", "step": step, "file": self.dictionary_files["name"],
+                       "bytes": len(self.dictionary_files["data"]),
+                       "sha256": hashlib.sha256(self.dictionary_files["data"]).hexdigest(),
+                       "tables_file": self.dictionary_files["tables_name"],
+                       "tables_bytes": len(tables) if tables is not None else None,
+                       "tables_sha256": hashlib.sha256(bytes(tables)).hexdigest() if tables is not None else None,
+                       "tables": receipt["tables"], "columns": receipt["columns"], "version": self.version,
+                       **({"invented": True} if self.invented else {}), **({"source": "database"} if source == "database" else {})}
+            self._append("dictionary loaded", payload, actor, METADATA)
         return receipt
+
+    @property
+    def dictionary_entry(self):
+        """What the journal records of the dictionary now loaded: the latest dictionary loaded, with any vendor's
+        descriptions and reference lineage loaded after it, as one record. None before a dictionary is loaded."""
+        found = None
+        for entry in self.log.entries():
+            if entry["kind"] == "dictionary loaded":
+                found = {**entry["payload"], "loaded": entry["time"], "entry": entry["id"]}
+            elif found is not None and entry["kind"] in ("vendor descriptions added", "reference lineage loaded"):
+                found.update(entry["payload"])
+        return found
 
     def dictionary_receipt(self):
         if self.dictionary is None:
@@ -448,7 +511,9 @@ class Describe:
                 "file": self.dictionary_files["name"] if self.dictionary_files else "",
                 "tablesFile": (self.dictionary_files or {}).get("tables_name"),
                 "invented": self.invented, "source": self.dictionary_source, "saved": self.dictionary_saved,
-                "vendor": dict(self.vendor) if self.vendor else None}
+                "vendor": dict(self.vendor) if self.vendor else None,
+                "reference": {"file": self.reference_files["name"], "targets": len(self.reference.get("targets") or {})}
+                if self.reference is not None else None}
 
     # The data dictionary made from the database.
 
@@ -476,7 +541,8 @@ class Describe:
         writer.writerows(rows)
         canonical = out.getvalue().encode("utf-8")
         try:
-            self.load_dictionary(canonical, name=_safe_file(name, "data-dictionary.csv"), step=step, source="database")
+            self.load_dictionary(canonical, name=_safe_file(name, "data-dictionary.csv"), step=step, source="database",
+                                 record=record)
         except DescribeError:
             raise DescribeError(WORDING["database_unreadable"]) from None
         self.dictionary_saved = not record
@@ -488,22 +554,51 @@ class Describe:
         if record:
             if "data-dictionary" not in self.journal:
                 self.dictionary_query(step)
-            self.journal["data-dictionary"].update({"pasted": _now(), "database": self.settings.get("database"),
-                                                   "version": self.version,
-                                                   "dictionary": f"{DICTIONARY_FOLDER}/{self.dictionary_files['name']}"})
+            # The result is the dictionary's own file, so the journal names that file rather than keeping a copy.
+            entry = self.pasted("data-dictionary", None, dictionary=f"{DICTIONARY_FOLDER}/{self.dictionary_files['name']}")
+            self._refresh_present(entry)
         return {**self.dictionary_receipt(), "sized": len(self.sizes)}
 
-    def upload(self, data, tables=None, headings=None, name="dictionary.csv", tables_name="tables.csv", step=""):
+    def upload(self, data, tables=None, headings=None, name="dictionary.csv", tables_name="tables.csv", step="",
+               reference=None, reference_name="lineage.json"):
         """Reads a dictionary file that a person already has, as (kind, receipt): a result of the data dictionary query
         saved earlier makes the dictionary from the database ("database"); a vendor's export adds its descriptions to a
-        dictionary made from the database ("vendor"), and is otherwise read as the dictionary itself ("dictionary")."""
+        dictionary made from the database ("vendor"), and is otherwise read as the dictionary itself ("dictionary").
+        reference, when given, is the file of a reference conversion's lineage, which is read beside it."""
+        if reference is not None:
+            lineage = self._read_reference(reference)
         first = _text(bytes(data)[:20000]).lstrip("\ufeff").split("\n", 1)[0].replace("\r", "")
         cells = {c.strip().strip('"').upper() for c in first.split("\t" if "\t" in first else ",")}
         if set(first_ask.DATABASE_LAYOUT) <= cells:
-            return "database", self.load_from_database(data, name, step)
-        if self.dictionary is not None and self.dictionary_source == "database":
-            return "vendor", self.add_descriptions(data, tables, headings, name, tables_name)
-        return "dictionary", self.load_dictionary(data, tables, headings, name, tables_name, step)
+            kind, receipt = "database", self.load_from_database(data, name, step)
+        elif self.dictionary is not None and self.dictionary_source == "database":
+            kind, receipt = "vendor", self.add_descriptions(data, tables, headings, name, tables_name)
+        else:
+            kind, receipt = "dictionary", self.load_dictionary(data, tables, headings, name, tables_name, step)
+        if reference is not None:
+            self.load_reference(reference, reference_name, lineage=lineage)
+            receipt = {**receipt, "reference": self.dictionary_receipt()["reference"]}
+        return kind, receipt
+
+    @staticmethod
+    def _read_reference(data):
+        try:
+            return propose.read_reference(bytes(data))
+        except propose.ProposeError:
+            raise DescribeError(WORDING["reference_unreadable"]) from None
+
+    def load_reference(self, data, name="lineage.json", record=True, lineage=None):
+        """Reads a reference conversion's lineage, which the proposer then reads beside the dictionary. Its content stays
+        in this tab and in the saved hospital schema; the journal records only its file's name, size and hash."""
+        lineage = lineage if lineage is not None else self._read_reference(data)
+        self.reference = lineage
+        self.reference_files = {"name": _safe_file(name, "lineage.json", "json"), "data": bytes(data)}
+        self.proposer = None
+        if record:
+            self._append("reference lineage loaded", {"reference_file": self.reference_files["name"], "reference_bytes": len(bytes(data)),
+                                                      "reference_sha256": hashlib.sha256(bytes(data)).hexdigest()},
+                         None, evidence.REFERENCE)
+        return {"file": self.reference_files["name"], "targets": len(lineage.get("targets") or {})}
 
     def add_descriptions(self, data, tables=None, headings=None, name="vendor-dictionary.csv", tables_name="vendor-tables.csv",
                          record=True):
@@ -540,10 +635,10 @@ class Describe:
                                       "vendor_tables_name": _safe_file(tables_name, "vendor-tables.csv") if tables is not None else None,
                                       "vendor_tables_data": bytes(tables) if tables is not None else None,
                                       "vendor_headings": own})
-        if record and self.dictionary_entry is not None:
-            self.dictionary_entry.update({"vendor_file": self.vendor["file"], "vendor_bytes": len(bytes(data)),
-                                          "vendor_sha256": hashlib.sha256(bytes(data)).hexdigest(),
-                                          "vendor_matched": matched, "vendor_gained": gained})
+        if record:
+            self._append("vendor descriptions added", {"vendor_file": self.vendor["file"], "vendor_bytes": len(bytes(data)),
+                                                       "vendor_sha256": hashlib.sha256(bytes(data)).hexdigest(),
+                                                       "vendor_matched": matched, "vendor_gained": gained}, None, METADATA)
         return self.dictionary_receipt()
 
     # The proposal.
@@ -556,7 +651,7 @@ class Describe:
         if progress:
             progress(0, total)
         if self.proposer is None:
-            self.proposer = propose.Proposer(self.dictionary, self.model)
+            self.proposer = propose.Proposer(self.dictionary, self.model, self.reference)
         proposer = self.proposer
         done = [0]
         plain_base = propose.Proposer.base
@@ -574,6 +669,10 @@ class Describe:
             del proposer.base
         data = propose.draft(proposal, self.dictionary, self.model, date, "the hospital")
         self.data = data
+        # Every binding is new, so no evidence of an earlier proposal is carried over to it; the result of the tables
+        # and columns query, where one has been read, shows which of the new bindings are present.
+        self.dimensions = {"bindings": {}, "links": {}, "translations": dict(self.dimensions["translations"])}
+        self._refresh_present(self._catalogue_entry(), date)
         self.settings["made"] = self.settings["made"] or date
         self.settings["updated"] = date
         return self.view()
@@ -585,7 +684,7 @@ class Describe:
         if not NAME.match(table or "") or self.dictionary.table(table) is None:
             raise DescribeError(WORDING["no_table"].format(name=table))
         if self.proposer is None:
-            self.proposer = propose.Proposer(self.dictionary, self.model)
+            self.proposer = propose.Proposer(self.dictionary, self.model, self.reference)
         bases = {name: role["rows"]["binding"]["table"] for name, role in self.data["roles"].items()
                  if role["rows"].get("binding")}
         bases[view_name] = self.dictionary.table(table).name
@@ -595,8 +694,10 @@ class Describe:
         role["rows"]["status"] = "person"
         role["rows"].pop("question", None)
         role["rows"]["confirmation"] = {"answer": "no", "date": date or _today(), "replacement": bases[view_name]}
+        role["rows"]["provenance"] = PERSON
         self.data["roles"][view_name] = role
         self.codes = {k: v for k, v in self.codes.items() if not k.startswith(view_name + ".")}
+        self._refresh_present(self._catalogue_entry(), date)
 
     # The tables and columns query.
 
@@ -640,7 +741,7 @@ class Describe:
         self.catalogue_source = "query"
         self.catalogue_text = _tsv(list(first_ask.LAYOUT), rows)
         if record:
-            self.pasted("tables-and-columns", text)
+            self._refresh_present(self.pasted("tables-and-columns", text))
         asked = set(n.upper() for n in self.tables_named())
         held = {t.name.upper() for t in catalogue.tables()}
         return {"tables": len(held), "columns": sum(len(t.columns) for t in catalogue.tables()), "sized": len(sizes),
@@ -669,23 +770,26 @@ class Describe:
 
     # Confirmations.
 
-    def confirm(self, about, answer, replacement="", note="", date=None):
-        """Records a person's answer for one binding: yes, no with a replacement, or not sure."""
+    def confirm(self, about, answer, replacement="", note="", date=None, actor=None):
+        """Records a person's answer for one binding: yes, no with a replacement, or not sure. actor is the name of the
+        person who answered, which the journal records, or "not recorded" where none was given."""
         date = date or _today()
         replacement = (replacement or "").strip()
         rows_of = re.fullmatch(r"(role_\w+) rows", about)
         if answer == "no" and rows_of:
             self.repropose(rows_of.group(1), replacement.split(".")[0], date)
             self.settings["updated"] = date
-            self._log_confirmation(about, answer, self.data["roles"][rows_of.group(1)]["rows"]["binding"]["table"], note, date)
+            entry = self._log_confirmation(about, answer, self.data["roles"][rows_of.group(1)]["rows"]["binding"]["table"], note,
+                                           date, actor)
+            self._settled(about, entry, date)
             return
         if answer == "no":
             replacement = self._checked_replacement(about, replacement)
         folder = self._work_folder()
         line = io.StringIO()
         writer = csv.writer(line, lineterminator="\n")
-        writer.writerow(["attribute", "answer", "replacement", "date", "note"])
-        writer.writerow([about, answer, replacement, date, note])
+        writer.writerow(["attribute", "answer", "replacement", "by", "date", "note"])
+        writer.writerow([about, answer, replacement, actor or NOT_RECORDED, date, note])
         try:
             propose.confirm(folder, line.getvalue(), None, self._restricted() if answer == "no" else None, date, self.model)
         except propose.ProposeError as error:
@@ -693,7 +797,8 @@ class Describe:
             raise DescribeError(message[0].upper() + message[1:]) from None
         self.data = rolemap.read_map_json(folder)
         self.settings["updated"] = date
-        self._log_confirmation(about, answer, replacement, note, date)
+        entry = self._log_confirmation(about, answer, replacement, note, date, actor)
+        self._settled(about, entry, date)
 
     def _restricted(self):
         if self.dictionary is None:
@@ -865,6 +970,13 @@ class Describe:
         other.codes = copy.deepcopy(self.codes)
         other.settings = dict(self.settings)
         other._lookups = dict(self._lookups)
+        # The trial keeps a journal and evidence of its own, so that nothing it does reaches the sitting's.
+        other.log = self.log.copy()
+        other.texts = dict(self.texts)
+        other.queries, other.results = dict(self.queries), dict(self.results)
+        other.dimensions = copy.deepcopy(self.dimensions)
+        other.counts = copy.deepcopy(self.counts)
+        other._journal_cache = None
         return other
 
     def _built(self, correction):
@@ -921,11 +1033,49 @@ class Describe:
             self._baseline = (mark, corrections.run_check(self))
         return self._baseline[1]
 
-    def check_model(self):
-        """The check of the map as it stands, with no change."""
+    def check_model(self, date=None):
+        """The check of the map as it stands, with no change, which the journal records as a test run."""
         if self.data is None:
             raise DescribeError(WORDING["no_dictionary"])
-        return corrections.report(self._baseline_check(), self._baseline_check(), change=False)
+        found = self._baseline_check()
+        self.test(date, found)
+        return corrections.report(found, found, change=False)
+
+    def _test_mark(self):
+        """What the test on made-up rows reads: every binding, the kinds' codes and the codes chosen."""
+        roles = {name: {"rows": role["rows"].get("binding"), "columns": {c: e.get("binding") for c, e in role["columns"].items()}}
+                 for name, role in (self.data or {}).get("roles", {}).items()}
+        kinds = {k: v.get("codes") for k, v in (self.data or {}).get("kinds", {}).items()}
+        return evidence.digest([roles, kinds, {k: v.get("chosen") for k, v in self.codes.items()}])
+
+    def test(self, date=None, found=None):
+        """Runs the test on made-up rows of the map as it stands, or records found, a test of the map as it stands
+        that has just been run, and sets the tested dimension of every binding, link and code translation from it.
+        Returns the journal entry of the run."""
+        date = date or _today()
+        found = found or self._baseline_check()
+        contract = [v for v, status in rolemap.statuses().items() if status == "contract"]
+        failing = set()
+        for problem in found["problems"]:
+            about = (found.get("about") or {}).get(problem)
+            # A problem that names no part, such as the test audit's answer, falls on the parts that every audit reads.
+            failing |= {about.split(" ")[0].split(".")[0]} if about else set(contract)
+        mark = self._test_mark()
+        outcome = {view: "failed" if view in failing else "passed" for view in self.data["roles"]}
+        run = "r" + evidence.digest([mark, evidence.now(), len(self.log)], 12)
+        entry = self._append("test run", {"run": run, "map": mark, "passed": not found["problems"],
+                                          "problems": len(found["problems"]), "parts": outcome,
+                                          "seconds": found.get("seconds")}, TOOL, INFERENCE)
+        for kind, subject, view in self._subjects():
+            if kind == "links":
+                source, target = view
+                result = "passed" if outcome.get(source) == outcome.get(target) == "passed" else "failed"
+            else:
+                result = outcome.get(view, "failed")
+            self._set(kind, subject, "tested", evidence.record(date, self._current(kind, subject), entry=entry["id"],
+                                                                run=run, outcome=result))
+        self._tested = mark
+        return entry
 
     def correction_check(self, correction):
         """Tests a correction on invented rows: the whole map with the change, against the map as it stands."""
@@ -939,36 +1089,48 @@ class Describe:
         found["sentence_of_change"] = built["sentence"]
         found["seconds"] = round(time.perf_counter() - began, 1)
         self._checked[json.dumps(correction, sort_keys=True)] = found
+        self._after[json.dumps(correction, sort_keys=True)] = after
         return found
 
-    def correction_keep(self, correction, although=False, reason="", date=None):
+    def correction_keep(self, correction, although=False, reason="", date=None, actor=None):
         """Keeps a correction that has been checked. One that fails its check is kept only with although and a reason,
-        and both are recorded with it."""
+        and both are recorded with it. The journal records the check as a test run of the map with the change, and the
+        correction with the person who kept it, or "not recorded"."""
         date = date or _today()
         built = self._built(correction)
         key = json.dumps(correction, sort_keys=True)
         found = self._checked.get(key) or self.correction_check(correction)
+        after = self._after.get(key)
         reason = " ".join((reason or "").split())[:400]
         if not found["passed"] and not (although and reason):
             raise DescribeError(WORDING["keep_failing"])
         result = corrections.outcome(found)
         answer = self._answer_of(built)
-        record = {"answer": answer, "date": date, "replacement": built["source"], "correction": correction, "check": result}
+        record = {"answer": answer, "date": date, "replacement": built["source"], "correction": correction, "check": result,
+                  "by": actor or NOT_RECORDED}
         if not found["passed"]:
             record["reason"] = reason
+        # A Yes that the correction turns into a Yes with a translation is withdrawn by it, and the journal says so.
+        withdrawn = None
+        if answer == "yes":
+            mine = [c for c in self.confirmations if c["attribute"] == built["about"]]
+            if mine and mine[-1]["answer"] == "yes" and not mine[-1].get("correction"):
+                withdrawn = mine[-1]["entry"]
         corrections.apply(self, built, record)
         self.settings["updated"] = date
-        if answer == "yes":
-            mine = [i for i, c in enumerate(self.confirmations) if c["attribute"] == built["about"]]
-            if mine and self.confirmations[mine[-1]]["answer"] == "yes" and not self.confirmations[mine[-1]].get("correction"):
-                del self.confirmations[mine[-1]]
-        self.confirmations.append({"attribute": built["about"], "answer": answer, "replacement": built["source"], "date": date,
-                                   "note": "", "version": self.version, "correction": json.dumps(correction, sort_keys=True),
-                                   "test": result, "reason": reason if not found["passed"] else ""})
-        self.corrections.append({"name": "correction", "about": built["about"], "form": built["form"], "says": built["sentence"],
-                                 "test": result, "passed": found["passed"], "reason": reason if not found["passed"] else "",
-                                 "date": date, "version": self.version})
+        run = None
+        if after is not None:
+            # The map now is the map that the check tried, so the check is a test of it.
+            self._baseline = (corrections.fingerprint(self), after)
+            run = self.test(date, after)["payload"]["run"]
+        entry = self._append("correction kept", {
+            "about": built["about"], "form": built["form"], "says": built["sentence"], "answer": answer,
+            "replacement": built["source"], "correction": correction, "test": result, "passed": found["passed"],
+            "run": run, "reason": reason if not found["passed"] else "", "date": date, "note": "", "version": self.version,
+            "proposed_from": self._proposed_from(built["about"])}, actor, PERSON, supersedes=withdrawn)
+        self._settled(built["about"], entry, date)
         self._checked.pop(key, None)
+        self._after.pop(key, None)
         return {"kept": built["about"], "probe": self.probe_kind(built["about"])}
 
     def _answer_of(self, built):
@@ -1077,11 +1239,11 @@ class Describe:
         return {"sql": self.offer(name, step, text, about=about, table=table, column=column, year=year if script else None),
                 "name": name, "script": script}
 
-    def read_values(self, name, text):
+    def read_values(self, name, text, actor=None):
         if name not in self.journal:
             raise DescribeError(WORDING["unknown_count"].format(name=name))
         columns, rows = read_grid(text, ("value", "rows"))
-        self.pasted(name, text)
+        self.pasted(name, text, actor)
         parsed = [{"value": r[0], "rows": _number(r[1])} for r in rows]
         self.values[name] = parsed
         return {"values": parsed}
@@ -1229,16 +1391,30 @@ class Describe:
                 return ("ones", "zeros")
         return PROBE_COLUMNS[kind]
 
-    def read_probe(self, about, text, record=True):
+    def read_probe(self, about, text, record=True, actor=None):
         kind = self.probe_kind(about)
         if kind is None:
             raise DescribeError(WORDING["no_probe"])
         name = "probe-" + re.sub(r"[^\w]+", "-", about).strip("-")
         columns, rows = read_grid(text, self._probe_columns(about, kind))
-        if record:
-            self.pasted(name, text)
+        entry = self.pasted(name, text, actor) if record else None
         self.probes[about] = {"kind": kind, "columns": columns, "rows": rows, "date": _today()}
+        self._probe_reconciled(about, entry)
         return {"rows": len(rows), "findings": self.probe_findings(about)}
+
+    def _probe_reconciled(self, about, entry):
+        """A test query run on the hospital's database measures the link or the binding it was written for, and sets
+        its reconciled dimension with the figures. The page collects no judgement of a test query, so the record says
+        that none is recorded."""
+        held = self.probes.get(about) or {}
+        if entry is None or not self._real(entry) or not held.get("rows"):
+            return
+        link = self._link_of(about) if held["kind"] == "link" else None
+        subject, of = (link, "links") if link else (about, "bindings")
+        if self._offer_holds(entry, subject, of):
+            figure = dict(zip(held["columns"], [_number(v) for v in held["rows"][0]]))
+            self._set(of, subject, "reconciled", evidence.record(_today(), self._current(of, subject), entry=entry["id"],
+                                                                 figure=figure, judgement=NOT_RECORDED))
 
     def probe_findings(self, about):
         held = self.probes.get(about)
@@ -1485,18 +1661,20 @@ class Describe:
         sql = self.offer(f"charted-{key.replace('.', '-')}", step, self._script(year, _wrap(comment), second), key=key, year=year)
         return {"sql": sql, "year": year, "tables": self._sized(order)}
 
-    def read_charted(self, key, text, year, record=True):
+    def read_charted(self, key, text, year, record=True, actor=None):
         entry = self._vocabulary(key)
         columns, rows = read_grid(text, CHARTED_COLUMNS)
         if record:
-            self.pasted(f"charted-{key.replace('.', '-')}", text)
+            self.pasted(f"charted-{key.replace('.', '-')}", text, actor)
         parsed = [{"code": r[0], "charted": _number(r[1]), "anaesthetics": _number(r[2]), "name": r[3]} for r in rows if r[0]]
         held = self.codes.setdefault(key, {})
         held.update({"rows": parsed, "year": int(year), "lookup": entry["lookup"]})
         return {"rows": len(parsed)}
 
-    def choose_codes(self, key, chosen, date=None):
-        """Records the codes that a person chose for each kind of a vocabulary: chosen is {code: kind}."""
+    def choose_codes(self, key, chosen, date=None, actor=None, record=True):
+        """Records the codes that a person chose for each kind of a vocabulary: chosen is {code: kind}. The journal
+        records the choice with the person who made it, or "not recorded", and the translation is confirmed by it and
+        present where the list of what is charted, which the journal holds, shows every code chosen."""
         entry = self._vocabulary(key)
         date = date or _today()
         # A code chosen as other is kept as chosen, so that the page shows it as chosen, and is translated as any code
@@ -1514,13 +1692,28 @@ class Describe:
                 if codes:
                     kinds[kind] = {"codes": codes, "status": "person", "from": source,
                                    "says": WORDING["codes_says"].format(count=len(codes), codes="code" if len(codes) == 1 else "codes", date=_day(date)),
-                                   "confirmation": {"answer": "yes", "date": date}}
+                                   "confirmation": {"answer": "yes", "date": date, "by": actor or NOT_RECORDED}, "provenance": PERSON}
                 elif kind in rolemap.MEAN_KINDS:
                     kinds[kind] = {"codes": [], "status": "proposed", "from": source, "says": WORDING["codes_none"],
-                                   "question": WORDING["codes_question"]}
+                                   "question": WORDING["codes_question"], "provenance": INFERENCE}
                 else:
                     kinds.pop(kind, None)
         self.settings["updated"] = date
+        if not record:
+            return
+        listed = self.log.latest("result returned", name=f"charted-{key.replace('.', '-')}")
+        latest = self.log.latest("codes chosen", key=key)
+        made = self._append("codes chosen", {"key": key, "chosen": chosen, "names": held["names"], "date": date,
+                                             "lookup": entry["lookup"], "list": listed["id"] if listed else None},
+                            actor, PERSON, supersedes=latest["id"] if latest else None, codes=key,
+                            period={"year": held["year"]} if held.get("year") else None)
+        self._set("translations", key, "confirmed", evidence.record(date, self._current("translations", key), by=made["actor"],
+                                                                    entry=made["id"]) if chosen else None)
+        listed_codes = {r["code"] for r in held.get("rows") or []}
+        shown = bool(chosen) and listed is not None and set(chosen) <= listed_codes
+        self._set("translations", key, "present", evidence.record(date, self._current("translations", key), entry=listed["id"],
+                                                                  figure={"chosen": len(chosen), "listed": len(listed_codes)})
+                  if shown else None)
 
     def _vocabulary_codes(self, view_name):
         found = {}
@@ -1638,22 +1831,71 @@ ORDER  BY g.kind;"""
             item["sql"] = self.offer(f"count-{item['name']}", step, item["sql"], year=item.get("year"))
         return found
 
-    def read_count(self, name, text, date=None, record=True):
+    def read_count(self, name, text, date=None, record=True, actor=None):
         if name not in COUNT_COLUMNS:
             raise DescribeError(WORDING["unknown_count"].format(name=name))
         columns, rows = read_grid(text, COUNT_COLUMNS[name], COUNT_OPTIONAL.get(name, ()))
         if record:
-            self.pasted(f"count-{name}", text)
+            self.pasted(f"count-{name}", text, actor)
         held = self.counts.setdefault(name, {})
         held.update({"columns": columns, "rows": rows, "date": date or _today()})
         return {"rows": len(rows), "findings": self.findings(name)}
 
-    def judge_count(self, name, looks_right, note="", date=None):
+    def judge_count(self, name, looks_right, note="", date=None, actor=None):
+        """Records the clinician's judgement of a count, with the figure that the count measured, and reconciles
+        against the database each part whose every count has a current result from the hospital's database that the
+        clinician judged to look right."""
         if name not in COUNT_COLUMNS:
             raise DescribeError(WORDING["unknown_count"].format(name=name))
+        date = date or _today()
         held = self.counts.setdefault(name, {})
-        held.update({"looks_right": looks_right, "note": " ".join((note or "").split())[:400], "judged": date or _today(),
+        held.update({"looks_right": looks_right, "note": " ".join((note or "").split())[:400], "judged": date,
                      "database": self.settings.get("database") or "unsure"})
+        result = self.log.latest("result returned", name=f"count-{name}")
+        latest = self.log.latest("judgement", count=name)
+        measured = self.measured(name)
+        entry = self._append("judgement", {"count": name, "looks_right": looks_right, "note": held["note"], "date": date,
+                                           "database": held["database"], "result": result["id"] if result else None,
+                                           "figure": measured["figures"] if measured else None}, actor, PERSON,
+                             supersedes=latest["id"] if latest else None,
+                             period=result["scope"].get("period") if result else None)
+        self._reconcile(name, entry, date)
+
+    def _real(self, result):
+        """Whether a result came from the hospital's own database, rather than a training database or the invented
+        hospital, so that its figures say something about the real record."""
+        p = (result or {}).get("payload") or {}
+        return bool(result) and p.get("from") != INVENTED_HOSPITAL and p.get("database") in REAL_DATABASES
+
+    def _offer_holds(self, result, subject, kind):
+        """Whether the query that gave a result was written from what a subject is now."""
+        offer = self.log.get(result["payload"]["offer"]) if result else None
+        return bool(offer) and (offer["payload"].get("rests_on") or {}).get(subject) == self._current(kind, subject)
+
+    def _reconcile(self, name, judged, date):
+        """The reconciled dimension of each binding, link and translation of the parts that a count reads, once each
+        count that reads a part has a current result from a real database, written from those bindings as they are
+        now, that the clinician judged. A count judged not to look right reconciles nothing, and records that."""
+        for view in COUNT_PARTS[name]:
+            names = [n for n, parts in COUNT_PARTS.items() if view in parts]
+            results = {n: self.log.latest("result returned", name=f"count-{n}") for n in names}
+            judgements = {n: self.log.latest("judgement", count=n) for n in names}
+            subjects = [(kind, subject) for kind, subject, part in self._subjects()
+                        if (part == view if kind != "links" else part[0] == view)]
+            usable = all(self._real(results[n]) and judgements[n] and judgements[n]["payload"]["result"] == results[n]["id"]
+                         for n in names)
+            if not usable:
+                continue
+            verdicts = {judgements[n]["payload"]["looks_right"] for n in names}
+            figure = {n: judgements[n]["payload"].get("figure") for n in names}
+            entries = [judgements[n]["id"] for n in names]
+            for kind, subject in subjects:
+                if not all(self._offer_holds(results[n], subject, kind) for n in names):
+                    continue
+                verdict = "looks right" if verdicts == {"yes"} else "does not look right"
+                self._set(kind, subject, "reconciled", evidence.record(
+                    max(judgements[n]["payload"]["date"] for n in names), self._current(kind, subject), entry=judged["id"],
+                    figure=figure, judgement=verdict, by=judged["actor"], counts=entries))
 
     def measured(self, name):
         """The measured coverage that a count gives, which the page shows beside the clinician's judgement and the saved
@@ -1759,37 +2001,141 @@ ORDER  BY g.kind;"""
                     found.append(WORDING["repeated"].format(view=rolemap.view_title(str(r["role_view"]), False), count=f"{r['keys_repeated']:,}"))
         return found
 
-    # The record of how the folder was made: every query offered, every result pasted, every answer.
+    # The record of how the folder was made: every query offered, every result returned, every answer.
+
+    def _hospital(self):
+        return "the invented hospital" if self.invented else (self.settings.get("hospital") or NOT_RECORDED)
+
+    def _append(self, kind, payload, actor, provenance, supersedes=None, period=None, codes=None, workflow=None):
+        """Appends one entry to the journal, with its scope: the hospital, the version it was made from, and the
+        period, the codes and the workflow where they apply."""
+        scope = {"hospital": self._hospital(), "schema_id": self.identity["schema_id"]}
+        for key, value in (("period", period), ("codes", codes), ("workflow", workflow)):
+            if value is not None:
+                scope[key] = value
+        self._journal_cache = None
+        return self.log.append(kind, payload, actor=actor or NOT_RECORDED, provenance=provenance, scope=scope,
+                               supersedes=supersedes)
+
+    @property
+    def journal(self):
+        """Each query by its name, as the journal's latest entries leave it: {"number" (the sequence of its first
+        offer), "name", "step", "offered", "version", "query" (its file), any year, about, key, table, column or probe
+        it was written for, and, once a result has been returned, "pasted", "database", "from" where the invented
+        hospital gave it, "result" (its file) and the ids of the entries}. It is read from the journal and never
+        written to."""
+        if self._journal_cache is not None and self._journal_cache[0] is self.log and self._journal_cache[1] == len(self.log):
+            return self._journal_cache[2]
+        found = {}
+        for entry in self.log.entries():
+            payload = entry["payload"]
+            name = payload.get("name")
+            if entry["kind"] == "query offered":
+                held = found.get(name)
+                state = {"number": held["number"] if held else entry["sequence"], "name": name, "step": payload.get("step"),
+                         "offered": entry["time"], "version": payload.get("version"), "query": payload["query"],
+                         "offer_id": entry["id"],
+                         **{k: payload[k] for k in ("year", "about", "key", "table", "column", "probe") if k in payload}}
+                if held:
+                    state.update({k: held[k] for k in ("pasted", "database", "from", "result", "result_id") if k in held})
+                found[name] = state
+            elif entry["kind"] == "result returned" and name in found:
+                state = found[name]
+                state.pop("from", None)
+                state.update({"pasted": entry["time"], "database": payload.get("database"), "result": payload.get("result"),
+                              "result_id": entry["id"]})
+                if payload.get("from") and payload["from"] != "pasted":
+                    state["from"] = payload["from"]
+        self._journal_cache = (self.log, len(self.log), found)
+        return found
+
+    @property
+    def confirmations(self):
+        """Every answer and kept correction that no later entry withdraws, in order, as the journal records them."""
+        gone = self.log.superseded()
+        found = []
+        for entry in self.log.entries():
+            if entry["kind"] not in ("answer", "correction kept") or entry["id"] in gone:
+                continue
+            p = entry["payload"]
+            found.append({"attribute": p["about"], "answer": p["answer"], "replacement": p.get("replacement") or "",
+                          "date": p.get("date") or "", "note": p.get("note") or "", "by": entry["actor"],
+                          "version": p.get("version") or "",
+                          "correction": json.dumps(p["correction"], sort_keys=True) if p.get("correction") else "",
+                          "test": p.get("test") or "", "reason": p.get("reason") or "", "provenance": entry["provenance"],
+                          "proposed_from": p.get("proposed_from") or "", "entry": entry["id"]})
+        return found
+
+    @property
+    def corrections(self):
+        """Every correction kept, in order, with the outcome of its test on made-up rows and any reason for keeping it."""
+        return [{"name": "correction", "about": e["payload"]["about"], "form": e["payload"]["form"], "says": e["payload"]["says"],
+                 "test": e["payload"]["test"], "passed": e["payload"]["passed"], "reason": e["payload"]["reason"],
+                 "date": e["payload"]["date"], "version": e["payload"]["version"], "run": e["payload"].get("run"),
+                 "by": e["actor"], "entry": e["id"]}
+                for e in self.log.entries() if e["kind"] == "correction kept"]
 
     def offer(self, name, step, sql, **extra):
-        """Records a query as the page offers it, numbered in the order of first offer, and returns its text with a
-        first line that names the tool's version and the date, which is the text that the database analyst copies."""
-        entry = self.journal.get(name)
-        if entry is None:
-            entry = self.journal[name] = {"number": len(self.journal) + 1, "name": name}
+        """Records a query as the page offers it and returns its text with a first line that names the tool's version
+        and the date, which is the text that the database analyst copies. A query offered again with the same text
+        and settings is the same offer; one whose text or settings differ is a new entry that supersedes the last."""
         stamp = f"-- {WORDING['stamp_query'].format(version=self.version or 'unknown', date=_day(_today()))}"
+        extras = {k: v for k, v in extra.items() if v is not None}
+        rests = self._query_rests(name, extras)
+        body = hashlib.sha256(sql.encode("utf-8")).hexdigest()
+        latest = self.log.latest("query offered", name=name)
+        if latest is not None:
+            held = latest["payload"]
+            same = held.get("body_sha256") == body and (held.get("rests_on") or {}) == rests and \
+                all(held.get(k) == extras.get(k) for k in ("year", "about", "key", "table", "column", "probe"))
+            if same and held["query"] in self.texts:
+                self.queries[name] = self.texts[held["query"]]
+                return self.queries[name]
         text = stamp + "\n" + sql
-        entry.update({"step": step, "offered": _now(), "version": self.version,
-                      **{k: v for k, v in extra.items() if v is not None}})
-        if name.startswith("count-") and self.data is not None:
-            # The schema as it stood when the count was written, so that a count written before a later change is
-            # not taken as having checked the part.
-            entry["schema"] = self._schema_mark()
-        for key in [k for k, v in extra.items() if v is None]:
-            entry.pop(key, None)
+        path = f"queries/{len(self.log) + 1:03d}-{name}.sql"
+        self.texts[path] = text
+        payload = {"name": name, "step": step, "query": path, "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                   "body_sha256": body, "version": self.version, **extras}
+        if rests:
+            # What the query was written from, so that a result of it is not taken as evidence about a binding,
+            # link or translation that has changed since.
+            payload["rests_on"] = rests
+        self._append("query offered", payload, TOOL, INFERENCE, supersedes=latest["id"] if latest else None,
+                     period={"year": extras["year"]} if extras.get("year") else None,
+                     codes=extras.get("key"))
         self.queries[name] = text
         return text
 
-    def pasted(self, name, text):
-        entry = self.journal.get(name)
-        if entry is None:
-            return
-        self.results[name] = (text or "").replace("\r\n", "\n").replace("\r", "\n")
-        entry.update({"pasted": _now(), "database": self.settings.get("database"), "version": self.version})
-        if self.origin:
-            entry["from"] = self.origin
-        else:
-            entry.pop("from", None)
+    def pasted(self, name, text, actor=None, provenance=None, **extra):
+        """Records the result of a query that the page offered, as a new entry that supersedes any earlier result of
+        the same query. Returns the entry, or None where the query was never offered."""
+        offer = self.log.latest("query offered", name=name)
+        if offer is None:
+            return None
+        payload = {"name": name, "offer": offer["id"], "database": self.settings.get("database"),
+                   "from": self.origin or "pasted", "version": self.version, **extra}
+        if text is not None:
+            text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+            path = f"results/{len(self.log) + 1:03d}-{name}.tsv"
+            self.texts[path] = text
+            self.results[name] = text
+            payload.update({"result": path, "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()})
+        latest = self.log.latest("result returned", name=name)
+        year = offer["payload"].get("year")
+        period = {"year": year} if year else self._period_of(name, text)
+        return self._append("result returned", payload, TOOL if self.origin else actor, provenance or self.provenance(name),
+                            supersedes=latest["id"] if latest else None, period=period, codes=offer["payload"].get("key"))
+
+    def _period_of(self, name, text):
+        """The years that a result covers, where it gives them by year, as the coverage by year does."""
+        if name != "count-coverage_by_year" or not text:
+            return None
+        try:
+            columns, rows = read_grid(text)
+        except DescribeError:
+            return None
+        years = sorted(int(r[0]) for r in rows if r and str(r[0]).isdigit())
+        return {"from": years[0], "to": years[-1]} if years else None
 
     def run_invented(self, hospital, query, read, **given):
         """Runs a query that the page has offered on the invented hospital, and reads its result exactly as a paste of
@@ -1821,23 +2167,17 @@ ORDER  BY g.kind;"""
         finally:
             self.origin = None
 
-    def _file(self, name, folder, suffix):
-        return f"{folder}/{self.journal[name]['number']:02d}-{name}.{suffix}"
+    def _proposed_from(self, about):
+        """Where the proposal that a person answers came from, where it rested on a reference conversion, or the empty text."""
+        view, _, column = about.partition(".")
+        role = ((self.data or {}).get("roles") or {}).get(view.split(" ")[0]) or {}
+        item = (role.get("columns") or {}).get(column) if column else role.get("rows")
+        return (item or {}).get("proposed_from") or ""
 
-    def _log_confirmation(self, about, answer, replacement, note, date):
-        self.confirmations.append({"attribute": about, "answer": answer, "replacement": replacement, "date": date,
-                                   "note": " ".join((note or "").split())[:400], "version": self.version,
-                                   "correction": "", "test": "", "reason": ""})
-
-    # Where each fact came from, and how far each part has been checked.
-
-    def _schema_mark(self):
-        """A fingerprint of what the views are written from: the bindings, the kinds' codes and the codes chosen."""
-        roles = {name: {"rows": role["rows"].get("binding"), "columns": {c: e.get("binding") for c, e in role["columns"].items()}}
-                 for name, role in (self.data or {}).get("roles", {}).items()}
-        kinds = {k: v.get("codes") for k, v in (self.data or {}).get("kinds", {}).items()}
-        chosen = {k: v.get("chosen") for k, v in self.codes.items()}
-        return hashlib.sha256(json.dumps([roles, kinds, chosen], sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
+    def _log_confirmation(self, about, answer, replacement, note, date, actor=None):
+        return self._append("answer", {"about": about, "answer": answer, "replacement": replacement, "date": date,
+                                       "note": " ".join((note or "").split())[:400], "version": self.version,
+                                       "proposed_from": self._proposed_from(about)}, actor, PERSON)
 
     def provenance(self, name):
         """Where the result of a query came from: the database's own records of its tables (metadata), a sample of
@@ -1846,61 +2186,185 @@ ORDER  BY g.kind;"""
             return METADATA
         return SAMPLE if "#cohort" in (self.queries.get(name) or "") else COMPLETE
 
-    @staticmethod
-    def _binding_provenance(item):
-        """Where a binding came from: a person's answer, or the page's own proposal."""
-        return PERSON if item.get("status") == "person" or (item.get("confirmation") or {}).get("answer") else \
-            COMPLETE if item.get("status") == "count" else INFERENCE
+    # The evidence of each binding, link and code translation, in its five dimensions, and how far each part has been
+    # checked, which is derived from them and never stored.
 
-    def _checked_parts(self):
-        """{part: date} for each part whose every count has been run on a real database, on the schema as it now
-        stands, and judged to look right."""
-        mark = self._schema_mark() if self.data is not None else None
-        found = {}
-        for view in {v for parts in COUNT_PARTS.values() for v in parts}:
-            dates = []
-            for name, parts in COUNT_PARTS.items():
-                if view not in parts:
-                    continue
-                held, entry = self.counts.get(name) or {}, self.journal.get(f"count-{name}") or {}
-                if not (held.get("rows") and held.get("looks_right") == "yes" and entry.get("pasted")
-                        and entry.get("from") != INVENTED_HOSPITAL and entry.get("database") in REAL_DATABASES
-                        and entry.get("schema") == mark):
-                    dates = None
-                    break
-                dates.append(str(held.get("judged") or held.get("date") or "")[:10])
-            if dates:
-                found[view] = max(dates)
+    def _binding_of(self, about):
+        view, _, column = about.partition(".")
+        role = ((self.data or {}).get("roles") or {}).get(view.split(" ")[0])
+        if role is None:
+            return None
+        return (role["rows"] if about.endswith(" rows") else role["columns"].get(column) or {}).get("binding")
+
+    def _links(self):
+        """Each link between two parts that the hospital schema binds at both ends, as (id, source, target)."""
+        found = []
+        for view in (self.data or {}).get("roles", {}):
+            for link in self.views[view].get("links", []):
+                source, target = f"{view}.{link['column']}", link["to"]
+                if target.split(".")[0] in self.data["roles"] and self._binding_of(source) and self._binding_of(target):
+                    found.append((f"{source} -> {target}", source, target))
         return found
 
+    def _subjects(self):
+        """Everything that carries a dimensions record, as (kind, subject, part): each binding of a part's rows or
+        columns, each code translation, and each link, whose part is the pair of parts it joins."""
+        for view, role in (self.data or {}).get("roles", {}).items():
+            if role["rows"].get("binding"):
+                yield "bindings", f"{view} rows", view
+            for column, item in role["columns"].items():
+                if item.get("binding"):
+                    yield "bindings", f"{view}.{column}", view
+        for key, held in sorted(self.codes.items()):
+            if held.get("chosen") and key.split(".")[0] in (self.data or {}).get("roles", {}):
+                yield "translations", key, key.split(".")[0]
+        for link, source, target in self._links():
+            yield "links", link, (source.split(".")[0], target.split(".")[0])
+
+    def _part_codes(self, view):
+        found = {key: held.get("chosen") for key, held in sorted(self.codes.items())
+                 if key.startswith(view + ".") and held.get("chosen")}
+        if view == "role_reading":
+            found["kinds"] = {k: v.get("codes") for k, v in sorted(((self.data or {}).get("kinds") or {}).items())}
+        return found
+
+    def _current(self, kind, subject):
+        """The hashes of what a subject's evidence rests on now: its binding (or both ends of a link), the codes of
+        its part, and the contract's definition of its part."""
+        if kind == "links":
+            source, target = subject.split(" -> ")
+            return {"link": evidence.digest([self._binding_of(source), self._binding_of(target)]),
+                    "contract": evidence.digest([self.parts.get(source.split(".")[0]), self.parts.get(target.split(".")[0])])}
+        view = subject.split(" ")[0].split(".")[0]
+        if kind == "translations":
+            return {"codes": evidence.digest((self.codes.get(subject) or {}).get("chosen")),
+                    "binding": evidence.digest(self._binding_of(subject)), "contract": self.parts.get(view)}
+        return {"binding": evidence.digest(self._binding_of(subject)), "codes": evidence.digest(self._part_codes(view)),
+                "contract": self.parts.get(view)}
+
+    def _set(self, kind, subject, dimension, record):
+        """Sets one dimension of a subject. Whether a binding is confirmed or present rests on the binding and the
+        contract alone, and not on the codes of its part."""
+        if record is not None and kind == "bindings" and dimension in ("confirmed", "present"):
+            record["rests_on"].pop("codes", None)
+        self.dimensions[kind].setdefault(subject, evidence.empty())[dimension] = record
+
+    def dimensions_of(self, kind, subject):
+        """A subject's dimensions record as the page shows it: each dimension that is held, with the reasons it is
+        stale, where it is."""
+        held = self.dimensions[kind].get(subject) or evidence.empty()
+        current = self._current(kind, subject)
+        return {dimension: None if not record else {**record, "stale": evidence.stale(record, current)}
+                for dimension, record in held.items()}
+
+    def stale_evidence(self):
+        """Every dimension whose binding, link, codes or contract part has changed since it was established, with the
+        reasons, as [{"kind", "subject", "dimension", "reasons"}]."""
+        found = []
+        for kind, held in self.dimensions.items():
+            for subject, record in sorted(held.items()):
+                current = self._current(kind, subject)
+                for dimension in evidence.DIMENSIONS:
+                    reasons = evidence.stale(record.get(dimension), current)
+                    if reasons:
+                        found.append({"kind": kind, "subject": subject, "dimension": dimension, "reasons": reasons})
+        return found
+
+    def _settled(self, about, entry, date):
+        """The dimensions that a person's answer or kept correction moves: confirmed for the binding and any link it
+        is the source of, and present again for a binding that changed."""
+        answer = entry["payload"]["answer"]
+        binding = self._binding_of(about)
+        confirmed = (evidence.record(date, self._current("bindings", about), by=entry["actor"], entry=entry["id"])
+                     if answer in ("yes", "no") and binding else None)
+        self._set("bindings", about, "confirmed", confirmed)
+        for link, source, _ in self._links():
+            if source == about:
+                self._set("links", link, "confirmed", evidence.record(date, self._current("links", link), by=entry["actor"],
+                                                                      entry=entry["id"]) if confirmed else None)
+        self._refresh_present(self._catalogue_entry(), date)
+
+    def _catalogue_entry(self):
+        """The latest result of the tables and columns query, or of the data dictionary query that answers it."""
+        found = [e for e in self.log.current("result returned") if e["payload"]["name"] in ("tables-and-columns", "data-dictionary")]
+        return found[-1] if found else None
+
+    def _refresh_present(self, entry, date=None):
+        """Sets the present dimension of every binding and link from a result of the tables and columns query: a
+        binding is present where the result shows each of its tables and columns, and a link where both its ends are."""
+        if entry is None or self.catalogue is None or self.data is None:
+            return
+        date = date or entry["time"]
+        shown = {}
+        for kind, subject, _ in list(self._subjects()):
+            if kind == "bindings":
+                presence = self.presence(self._binding_of(subject))
+                shown[subject] = bool(presence and presence["state"] in ("present", "large"))
+                held = (self.dimensions["bindings"].get(subject) or {}).get("present")
+                if shown[subject] and held and held.get("entry") == entry["id"] and not evidence.stale(held, self._current(kind, subject)):
+                    continue
+                self._set(kind, subject, "present", evidence.record(date, self._current(kind, subject), entry=entry["id"],
+                                                                    figure={"rows": presence["rows"]}) if shown[subject] else None)
+        for link, source, target in self._links():
+            both = shown.get(source) and shown.get(target)
+            self._set("links", link, "present", evidence.record(date, self._current("links", link), entry=entry["id"]) if both else None)
+
+    def _link_of(self, about):
+        return next((link for link, source, _ in self._links() if source == about), None)
+
+    def _query_rests(self, name, extras):
+        """What a count or a test query is written from, as {subject: hashes}, so that its result is evidence only
+        about what has not changed since."""
+        if self.data is None:
+            return {}
+        if name.startswith("count-") and name[6:] in COUNT_PARTS:
+            views = COUNT_PARTS[name[6:]]
+            return {subject: self._current(kind, subject) for kind, subject, view in self._subjects()
+                    if (view in views if kind != "links" else view[0] in views and view[1] in views)}
+        if name.startswith("probe-") and extras.get("about"):
+            about = extras["about"]
+            link = self._link_of(about) if extras.get("probe") == "link" else None
+            return {link: self._current("links", link)} if link else {about: self._current("bindings", about)}
+        return {}
+
     def readiness(self, date=None):
-        """How far each part of the hospital schema has been checked, in the three states: runs, checked against the
-        database, and clinically validated, which the page never records. Each part gives the date on which it reached
-        each state, or None. The whole schema has reached the state that every part of the version 1 contract has."""
-        date = date or _today()
+        """How far each part of the hospital schema has been checked, in the three states, derived from the
+        dimensions of its bindings and never stored: a part runs once every binding of it has a current test on
+        made-up rows that passed; it is checked against the database once every binding is also reconciled, by
+        counts run on the hospital's database that the clinician judged to look right; and it is clinically
+        validated once every binding is also validated through the evidence import. Each part gives the date on which
+        it reached each state, or None. The whole schema has reached the state that every part of the version 1
+        contract has."""
         if self.data is None:
             return None
-        report = self._baseline_check()
         contract = [v for v, status in rolemap.statuses().items() if status == "contract"]
-        failing = set()
-        for problem in report["problems"]:
-            about = (report.get("about") or {}).get(problem)
-            # A problem that names no part, such as the test audit's answer, falls on the parts that every audit reads.
-            failing |= {about.split(" ")[0].split(".")[0]} if about else set(contract)
-        checked = self._checked_parts()
+        subjects = {}
+        for kind, subject, view in self._subjects():
+            if kind == "bindings":
+                subjects.setdefault(view, []).append(subject)
+
+        def reached(view, dimension, holds):
+            dates = []
+            for subject in subjects.get(view, []):
+                record = (self.dimensions["bindings"].get(subject) or {}).get(dimension)
+                if not record or evidence.stale(record, self._current("bindings", subject)) or not holds(record):
+                    return None
+                dates.append(record["date"])
+            return max(dates) if dates else None
         parts = {}
         for view in [v for v in rolemap.all_views() if v in self.data["roles"]]:
-            runs = date if view not in failing else None
-            reached_checked = checked.get(view) if runs else None
-            parts[view] = {"status": rolemap.statuses()[view], "reached": CHECKED if reached_checked else RUNS if runs else None,
-                           RUNS: runs, CHECKED: reached_checked, VALIDATED: None}
-        order = {None: 0, RUNS: 1, CHECKED: 2}
+            runs = reached(view, "tested", lambda r: r.get("outcome") == "passed")
+            checked = reached(view, "reconciled", lambda r: r.get("judgement") == "looks right") if runs else None
+            validated = reached(view, "validated", lambda r: True) if checked else None
+            parts[view] = {"status": rolemap.statuses()[view],
+                           "reached": VALIDATED if validated else CHECKED if checked else RUNS if runs else None,
+                           RUNS: runs, CHECKED: checked, VALIDATED: validated}
+        order = {None: 0, RUNS: 1, CHECKED: 2, VALIDATED: 3}
         held = [parts[v]["reached"] for v in contract if v in parts]
-        reached = min(held, key=lambda state: order[state]) if len(held) == len(contract) else None
-        self._readiness = {"reached": reached, "states": {RUNS: WORDING["state_runs"], CHECKED: WORDING["state_checked"],
-                                                         VALIDATED: WORDING["state_validated"]},
-                           "parts": parts, "date": date, "measured": self.measured_coverage()}
-        return self._readiness
+        whole = min(held, key=lambda state: order[state]) if len(held) == len(contract) else None
+        return {"reached": whole, "states": {RUNS: WORDING["state_runs"], CHECKED: WORDING["state_checked"],
+                                             VALIDATED: WORDING["state_validated"]},
+                "parts": parts, "measured": self.measured_coverage()}
 
     # The hospital folder.
 
@@ -1939,17 +2403,17 @@ ORDER  BY g.kind;"""
             text += WORDING["described_codes"].format(count=f"{n:,} {'column' if n == 1 else 'columns'}", hold="holds" if n == 1 else "hold")
         return text
 
-    def _map_files(self, stamp="", provenance=False):
+    def _map_files(self, stamp=""):
+        """map.json, with each binding that is more than naming a column written as a reference to a named
+        normalisation (normalise.py), and one SQL file for each part, written from the normalisations it reads."""
         self.data["description"] = self._described()
-        data = self.data
-        if provenance:
-            # Each binding and each kind says where it came from: a person's answer, or the page's own proposal.
-            data = copy.deepcopy(self.data)
-            for role in data["roles"].values():
-                for item in [role["rows"], *role["columns"].values()]:
-                    item["provenance"] = self._binding_provenance(item)
-            for item in data["kinds"].values():
-                item["provenance"] = self._binding_provenance(item)
+        tests = {}
+        for subject, held in self.dimensions["bindings"].items():
+            record = held.get("tested")
+            if record:
+                tests[subject] = [{"run": record.get("run"), "entry": record.get("entry"), "outcome": record.get("outcome"),
+                                   "date": record.get("date")}]
+        data = normalise.lift(self.data, self.model, tests)
         files = {rolemap.MAP_FILE: json.dumps(data, indent=2, ensure_ascii=False) + "\n"}
         for name in self.data["roles"]:
             files[f"{name}.sql"] = (stamp + "\n" if stamp else "") + self.view_sql(name)
@@ -1959,41 +2423,68 @@ ORDER  BY g.kind;"""
         return (json.dumps({"tool": "Schemalyser", "version": self.version, "written": date, **value}, indent=2,
                            ensure_ascii=False) + "\n").encode("utf-8")
 
+    def file_name(self, schema_id=None):
+        """The name of the saved file of a version, which carries its schema_id, so that no save reuses the name of
+        another version."""
+        schema_id = schema_id or self.identity["schema_id"]
+        return SCHEMA_FILE.format(id=schema_id) if schema_id else "hospital-schema.schemalyser.zip"
+
+    def contract_record(self):
+        return {"version": self.model.get("version"), "parts": dict(self.parts)}
+
+    def contract_changes(self):
+        """The parts whose definition in the contract differs from the one a restored file was made against."""
+        if not self.contract_saved:
+            return []
+        held = self.contract_saved.get("parts") or {}
+        return sorted(view for view in set(held) | set(self.parts) if held.get(view) != self.parts.get(view))
+
     def folder_files(self, date=None):
-        """The saved hospital schema, as {path: bytes} inside the one file that the page saves. The dictionary is
-        always inside it, so that opening the file needs nothing else. Every file names the tool's version and the date it was written,
-        except map.json, whose format the map checker fixes and whose description gives the date of the proposal,
-        the pasted results, whose first line does, and the dictionary's own files, which are kept exactly as given."""
+        """The saved hospital schema as it would be saved now, as {path: bytes} inside the one file that the page
+        saves, without making it a version: save() does that. The dictionary is always inside it, so that opening the
+        file needs nothing else. Every file names the tool's version and the date it was written, except map.json,
+        whose description gives the date of the proposal, the queries and results, whose first line does, and the
+        dictionary's own files, which are kept exactly as given. Nothing here is worked out afresh and written as if
+        it had been recorded: each file is written from the journal and the dimensions as they stand."""
         date = date or _today()
         files = {}
         stamp = f"-- {WORDING['stamp_file'].format(version=self.version or 'unknown', date=_day(date))}"
         if self.data is not None:
-            for name, text in self._map_files(stamp, provenance=True).items():
+            for name, text in self._map_files(stamp).items():
                 files[f"map/{name}"] = text.encode("utf-8")
-        for name, text in self.queries.items():
-            files[self._file(name, "queries", "sql")] = text.encode("utf-8")
-        for name, text in self.results.items():
-            entry = self.journal[name]
-            stamp = "stamp_invented" if entry.get("from") == INVENTED_HOSPITAL else "stamp_result"
-            first = "# " + WORDING[stamp].format(version=entry.get("version") or self.version or "unknown",
-                                                 date=_day((entry.get("pasted") or date)[:10]))
-            if self.provenance(name) == SAMPLE:
-                first += WORDING["sample_stamp"].format(limit=f"{COHORT_LIMIT:,}")
-            files[self._file(name, "results", "tsv")] = (first + "\n" + text.rstrip("\n") + "\n").encode("utf-8")
+        entries = self.log.entries()
+        for entry in entries:
+            payload = entry["payload"]
+            if entry["kind"] == "query offered" and payload["query"] in self.texts:
+                files[payload["query"]] = self.texts[payload["query"]].encode("utf-8")
+            elif entry["kind"] in ("result returned", "evidence imported") and payload.get("result") in self.texts:
+                invented = payload.get("from") == INVENTED_HOSPITAL
+                first = "# " + WORDING["stamp_invented" if invented else "stamp_result"].format(
+                    version=payload.get("version") or self.version or "unknown", date=_day(entry["time"][:10]))
+                if entry["provenance"] == SAMPLE:
+                    first += WORDING["sample_stamp"].format(limit=f"{COHORT_LIMIT:,}")
+                text = self.texts[payload["result"]]
+                files[payload["result"]] = (first + "\n" + text.rstrip("\n") + "\n").encode("utf-8")
         for key, held in sorted(self.codes.items()):
             files[f"codes/{key}.json"] = self._json({"view": key.split(".")[0], "column": key.split(".")[1], **held,
                                                      "provenance": {"rows": SAMPLE, "chosen": PERSON}}, date)
-        judgements = {name: {**{k: held.get(k) for k in ("date", "looks_right", "note", "judged", "database") if held.get(k) is not None},
-                             **({"measured": self.measured(name)} if self.measured(name) else {}),
-                             "provenance": {"figures": self.provenance(f"count-{name}"),
-                                            **({"judgement": PERSON} if held.get("looks_right") else {})}}
-                      for name, held in sorted(self.counts.items())}
+        judged = {e["payload"]["count"]: e for e in self.log.current("judgement")}
+        judgements = {}
+        for name, held in sorted(self.counts.items()):
+            entry = judged.get(name)
+            found = {k: held.get(k) for k in ("date", "looks_right", "note", "judged", "database") if held.get(k) is not None}
+            if entry and entry["payload"].get("figure"):
+                found["measured"] = {"figures": entry["payload"]["figure"]}
+            if entry:
+                found.update({"by": entry["actor"], "entry": entry["id"]})
+            found["provenance"] = {"figures": self.provenance(f"count-{name}"), **({"judgement": PERSON} if held.get("looks_right") else {})}
+            judgements[name] = found
         if judgements:
             files["counts/judgements.json"] = self._json({"counts": judgements}, date)
         out = io.StringIO()
         writer = csv.writer(out, lineterminator="\n")
         writer.writerow(list(CONFIRMATION_FIELDS))
-        writer.writerows([c.get(k) or (PERSON if k == "provenance" else "") for k in CONFIRMATION_FIELDS] for c in self.confirmations)
+        writer.writerows([c.get(k) or "" for k in CONFIRMATION_FIELDS] for c in self.confirmations)
         files["confirmations.csv"] = out.getvalue().encode("utf-8")
         kept = bool(self.dictionary_files)
         if kept:
@@ -2008,60 +2499,75 @@ ORDER  BY g.kind;"""
                 if meta.get("vendor_tables_data") is not None:
                     files[f"{DICTIONARY_FOLDER}/{meta['vendor_tables_name']}"] = meta["vendor_tables_data"]
                     vendor["vendor_tables"] = meta["vendor_tables_name"]
+            reference = {}
+            if self.reference_files is not None:
+                files[f"{DICTIONARY_FOLDER}/{REFERENCE_FILE}"] = self.reference_files["data"]
+                reference = {"reference": REFERENCE_FILE, "reference_name": self.reference_files["name"]}
             files[f"{DICTIONARY_FOLDER}/dictionary.json"] = self._json(
-                {"file": meta["name"], "tables": meta.get("tables_name"), "headings": meta.get("headings") or {},
+                {"file": meta["name"], "tables": meta.get("tables_name"), "headings": meta.get("headings") or {}, **reference,
                  **({"source": "database"} if self.dictionary_source == "database" else {}), **vendor,
                  **({"invented": True} if self.invented else {}), "provenance": METADATA}, date)
-        entries = sorted(self.journal.values(), key=lambda e: e["number"])
-        journal = []
-        if self.dictionary_entry:
-            journal.append({**self.dictionary_entry, "provenance": METADATA})
-        journal += [{**entry, "provenance": PERSON} for entry in self.corrections]
-        for entry in entries:
-            item = {k: v for k, v in entry.items() if k != "number"}
-            item["query"] = self._file(entry["name"], "queries", "sql")
-            item["result"] = self._file(entry["name"], "results", "tsv") if entry["name"] in self.results else None
-            item["provenance"] = self.provenance(entry["name"])
-            journal.append({"number": entry["number"], **item})
-        files["journal.json"] = self._json({"entries": journal}, date)
+        files["journal.json"] = self._json({"format": evidence.JOURNAL_FORMAT, "entries": entries}, date)
+        files["dimensions.json"] = self._json({"format": evidence.JOURNAL_FORMAT, **self.dimensions}, date)
         settings = dict(self.settings)
         unfinished = self.unfinished()
-        # Every column answered is not the same as complete: how far the schema has been checked is its readiness.
+        # Every column answered is not the same as complete: how far the schema has been checked is its readiness,
+        # which is derived from the dimensions and never stored.
         settings["answered"] = self.data is not None and not unfinished
         if unfinished:
             settings["draft"] = WORDING["draft"].format(parts=unfinished)
-        readiness = self.readiness(date)
-        if readiness is not None:
-            settings["readiness"] = readiness
         settings.update({"dictionary": {"kept": kept, **({k: v for k, v in (self.dictionary_receipt() or {}).items()
                                                           if k in ("tables", "columns", "file", "tablesFile")})}})
         if self.invented:
             settings["invented"] = True
             settings["dictionary"]["invented"] = True
             settings["database"] = "invented"
+        training = [self.journal[e["payload"]["name"]]["query"] for e in self.log.current("result returned")
+                    if e["payload"].get("database") == "training" and e["payload"]["name"] in self.journal]
+        readiness = self.readiness()
+        # The version's identity: the hash of every other file's contents, and the version it was made from.
+        content = evidence.content_id(files)
+        schema_id = content[:16]
+        parent = self.identity["schema_id"] if self.identity["schema_id"] != schema_id else self.identity["parent_id"]
+        lineage = list(self.identity["lineage"])
+        if parent and parent not in lineage:
+            lineage.append(parent)
+        settings.update({"schema_id": schema_id, "content_sha256": content, "parent_id": parent, "lineage": lineage,
+                         "saved": evidence.now(), "contract": self.contract_record()})
         files["settings.json"] = self._json(settings, date)
-        training = [self._file(e["name"], "queries", "sql") for e in entries if e.get("database") == "training"]
         files["README.md"] = readme(sorted(files), self.version, date, kept, training, unfinished,
                                     self.untranslated() if self.data is not None else [], self.invented,
-                                    readiness).encode("utf-8")
+                                    readiness, schema_id).encode("utf-8")
         return files
 
     def folder_zip(self, date=None):
-        """The saved hospital schema as the bytes of the one file that the page saves."""
-        out = io.BytesIO()
-        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
-            for name, data in sorted(self.folder_files(date).items()):
-                archive.writestr(zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0)), data)
-        return out.getvalue()
+        """The saved hospital schema as the bytes of the one file that the page saves, without making it a version."""
+        return _zipped(self.folder_files(date))
+
+    def save(self, date=None):
+        """Saves a new version: the test on made-up rows is run first where the hospital schema has changed since the
+        last test, which the journal records as a test run of its own, and the files are then written and become the
+        version that the sitting carries on from. Returns {path: bytes}."""
+        if self.data is not None and self._tested != self._test_mark():
+            self.test(date)
+        files = self.folder_files(date)
+        settings = json.loads(files["settings.json"])
+        self.identity = {"schema_id": settings["schema_id"], "parent_id": settings["parent_id"], "lineage": settings["lineage"]}
+        return files
+
+    def save_zip(self, date=None):
+        """save() as the bytes of the one file, whose name file_name() then gives."""
+        return _zipped(self.save(date))
 
     def restore(self, files):
         """Reads a hospital folder that this screen wrote, as {path: bytes} relative to the folder, and returns what
         it held. A folder without map/map.json starts a new hospital folder. A folder that holds no copy of the
         dictionary is restored only once a dictionary is loaded; until then nothing of it is taken, and the answer says
-        that the dictionary is needed."""
+        that the dictionary is needed. Nothing is worked out again: the journal, the dimensions and the provenance of
+        each binding are read as they were recorded, and the sitting carries on from the version the file is."""
         files = dict(files)
-        found = {"map": False, "tables": False, "codes": 0, "counts": 0, "dictionary": False, "confirmations": 0,
-                 "queries": 0, "problem": "", "needs_dictionary": False}
+        found = {"map": False, "tables": False, "codes": 0, "counts": 0, "dictionary": False, "reference": False, "confirmations": 0,
+                 "queries": 0, "problem": "", "needs_dictionary": False, "schema_id": None, "contract_changed": []}
         info = _json_of(files.get(f"{DICTIONARY_FOLDER}/dictionary.json"))
         has_dictionary = bool(info.get("file") and f"{DICTIONARY_FOLDER}/{info['file']}" in files)
         if files and not has_dictionary and self.dictionary is None:
@@ -2069,14 +2575,30 @@ ORDER  BY g.kind;"""
             return found
         self.folder = files
         # What the sitting held before is replaced by what the file holds, so that nothing is counted twice.
-        self.confirmations, self.corrections, self.codes, self.counts = [], [], {}, {}
-        self.journal, self.queries, self.results, self.values, self.probes = {}, {}, {}, {}, {}
-        self._checked, self._baseline = {}, None
+        self.codes, self.counts = {}, {}
+        self.queries, self.results, self.values, self.probes = {}, {}, {}, {}
+        self.log, self.texts, self._journal_cache = evidence.Journal(), {}, None
+        self.dimensions = {"bindings": {}, "links": {}, "translations": {}}
+        self._checked, self._after, self._baseline, self._tested = {}, {}, None, None
         held = _json_of(files.get("settings.json"))
-        for key in ("made", "updated", "database", "year", "time_zone", "daylight_saving"):
+        for key in ("made", "updated", "database", "year", "time_zone", "daylight_saving", "hospital"):
             if key in held:
                 self.settings[key] = held[key]
+        self.identity = {"schema_id": held.get("schema_id"), "parent_id": held.get("parent_id"),
+                         "lineage": list(held.get("lineage") or [])}
+        self.contract_saved = held.get("contract")
+        found["schema_id"] = held.get("schema_id")
+        found["contract_changed"] = self.contract_changes()
+        journal = _json_of(files.get("journal.json"))
+        if journal:
+            try:
+                if journal.get("format") != evidence.JOURNAL_FORMAT:
+                    raise evidence.EvidenceError("format")
+                self.log = evidence.Journal(journal.get("entries") or [])
+            except evidence.EvidenceError:
+                found["problem"] = WORDING["journal_unreadable"]
         if has_dictionary:
+            self.reference = self.reference_files = None
             tables = files.get(f"{DICTIONARY_FOLDER}/{info['tables']}") if info.get("tables") else None
             try:
                 if info.get("source") == "database":
@@ -2089,78 +2611,75 @@ ORDER  BY g.kind;"""
                 else:
                     self.load_dictionary(files[f"{DICTIONARY_FOLDER}/{info['file']}"], tables, info.get("headings") or {},
                                          info["file"], info.get("tables") or "tables.csv",
-                                         invented=bool(info.get("invented") or held.get("invented")), source="saved")
+                                         invented=bool(info.get("invented") or held.get("invented")), source="saved",
+                                         record=False)
                 found["dictionary"] = True
+                held_reference = files.get(f"{DICTIONARY_FOLDER}/{REFERENCE_FILE}") if info.get("reference") else None
+                if held_reference is not None:
+                    self.load_reference(held_reference, info.get("reference_name") or "lineage.json", record=False)
+                    found["reference"] = True
             except DescribeError:
                 pass
         # A folder made with the invented dictionary stays marked as such, whatever dictionary is loaded beside it.
         if held.get("invented"):
             self.invented = True
-            if self.dictionary_entry:
-                self.dictionary_entry["invented"] = True
         if "map/map.json" in files:
             folder = self._work_folder("restore")
             (folder / rolemap.MAP_FILE).write_bytes(bytes(files["map/map.json"]))
             try:
                 self.data = rolemap.read_map_json(folder)
-                # Where each binding came from is written at each save, and is not part of the schema itself.
-                for item in [i for role in self.data["roles"].values() for i in [role["rows"], *role["columns"].values()]] \
-                        + list(self.data["kinds"].values()):
-                    item.pop("provenance", None)
                 found["map"] = True
             except rolemap.MapError:
                 found["problem"] = WORDING["folder_unreadable"]
-        if "confirmations.csv" in files:
-            for row in csv.DictReader(io.StringIO(_text(files["confirmations.csv"]))):
-                if row.get("attribute") and row.get("answer"):
-                    self.confirmations.append({k: row.get(k) or "" for k in CONFIRMATION_FIELDS})
-            found["confirmations"] = len(self.confirmations)
-        for path, data in sorted(files.items()):
-            match = re.fullmatch(r"codes/(role_\w+\.\w+)\.json", path)
-            if match:
-                held = _json_of(data)
-                if held:
-                    self.codes[match.group(1)] = {k: v for k, v in held.items() if k not in ("view", "column", "tool", "version", "written", "provenance")}
-                    found["codes"] += 1
-        judgements = _json_of(files.get("counts/judgements.json")).get("counts") or {}
-        for name, held in judgements.items():
-            if name in COUNT_COLUMNS:
-                self.counts[name] = {k: v for k, v in held.items() if k not in ("provenance", "measured")}
-        for entry in (_json_of(files.get("journal.json")).get("entries") or []):
-            if entry.get("name") == "correction":
-                self.corrections.append({k: v for k, v in entry.items() if k != "provenance"})
-                continue
-            if entry.get("name") == "dictionary" and self.dictionary_entry is not None:
-                self.dictionary_entry.update({k: v for k, v in entry.items() if k.startswith("vendor_")})
-            if entry.get("name") == "dictionary" or "number" not in entry:
-                continue
-            name = entry["name"]
-            self.journal[name] = {k: v for k, v in entry.items() if k not in ("query", "result", "provenance")}
-            query = files.get(entry.get("query") or "")
-            if query is not None:
-                self.queries[name] = _text(query)
+        dimensions = _json_of(files.get("dimensions.json"))
+        for kind in self.dimensions:
+            if isinstance(dimensions.get(kind), dict):
+                self.dimensions[kind] = dimensions[kind]
+        # The text of every query and result that the journal names.
+        for entry in self.log.entries():
+            for key in ("query", "result"):
+                path = entry["payload"].get(key) if entry["kind"] in ("query offered", "result returned", "evidence imported") else None
+                if path and path in files:
+                    text = _text(files[path])
+                    self.texts[path] = _strip_stamp(text) if key == "result" else text
+        judgements = {e["payload"]["count"]: e["payload"] for e in self.log.current("judgement")}
+        for name, state in self.journal.items():
+            if state.get("query") in self.texts:
+                self.queries[name] = self.texts[state["query"]]
                 found["queries"] += 1
-            result = files.get(entry.get("result") or "")
-            if result is None:
+            text = self.texts.get(state.get("result") or "")
+            if text is None:
                 continue
-            text = _strip_stamp(_text(result))
             self.results[name] = text
             try:
                 if name == "tables-and-columns":
                     self.read_tables(text, record=False)
                     found["tables"] = True
-                elif name.startswith("charted-") and entry.get("key"):
-                    self.read_charted(entry["key"], text, entry.get("year") or self.settings.get("year") or 2000, record=False)
-                elif name.startswith("probe-") and entry.get("about"):
-                    self.read_probe(entry["about"], text, record=False)
+                elif name.startswith("charted-") and state.get("key"):
+                    self.read_charted(state["key"], text, state.get("year") or self.settings.get("year") or 2000, record=False)
+                elif name.startswith("probe-") and state.get("about"):
+                    self.read_probe(state["about"], text, record=False)
                 elif name.startswith("values-"):
                     self.values[name] = [{"value": r[0], "rows": _number(r[1])} for r in read_grid(text, ("value", "rows"))[1]]
                 elif name.startswith("count-") and name[6:] in COUNT_COLUMNS:
-                    self.read_count(name[6:], text, (entry.get("pasted") or "")[:10] or None, record=False)
-                    self.counts[name[6:]].update({k: v for k, v in (judgements.get(name[6:]) or {}).items() if k not in ("provenance", "measured")})
+                    self.read_count(name[6:], text, (state.get("pasted") or "")[:10] or None, record=False)
                     found["counts"] += 1
             except DescribeError:
                 pass
+        for name, payload in judgements.items():
+            if name in COUNT_COLUMNS:
+                self.counts.setdefault(name, {}).update({"looks_right": payload["looks_right"], "note": payload.get("note") or "",
+                                                         "judged": payload.get("date"), "database": payload.get("database")})
+        for entry in self.log.current("codes chosen"):
+            p = entry["payload"]
+            self.codes.setdefault(p["key"], {}).update({"chosen": p["chosen"], "names": p.get("names") or {}, "date": p.get("date"),
+                                                        "lookup": p.get("lookup")})
+        found["codes"] = len(self.codes)
+        found["confirmations"] = len(self.confirmations)
+        # A file whose last test run tested the hospital schema exactly as it was saved needs no test before its next save.
+        runs = self.log.current("test run")
+        if runs and self.data is not None and runs[-1]["payload"].get("map") == self._test_mark():
+            self._tested = runs[-1]["payload"]["map"]
         self.restored = found
         return found
 
@@ -2174,6 +2693,7 @@ ORDER  BY g.kind;"""
             fresh = Describe()
             fresh.version = self.version
             fresh.dictionary, fresh.dictionary_files = self.dictionary, self.dictionary_files
+            fresh.reference, fresh.reference_files = self.reference, self.reference_files
             fresh.proposer = self.proposer
             fresh.propose(date=propose._proposed_on(self.data) or self.settings.get("made"))
             problems = []
@@ -2210,7 +2730,7 @@ ORDER  BY g.kind;"""
                 except DescribeError:
                     pass
             queries.append({"name": name, "number": entry["number"], "step": entry.get("step"), "sql": self.queries.get(name, ""),
-                            "file": self._file(name, "queries", "sql"), "pasted": entry.get("pasted"),
+                            "file": entry.get("query"), "pasted": entry.get("pasted"),
                             "database": entry.get("database"), "columns": columns, "rows": rows[:200], "more": max(0, len(rows) - 200)})
         failing = [{"about": row["attribute"], "check": row.get("test") or "", "reason": row.get("reason") or "", "date": row.get("date") or ""}
                    for row in self.confirmations if (row.get("test") or "").startswith("failed")]
@@ -2248,6 +2768,161 @@ ORDER  BY g.kind;"""
         if daylight_saving is not None:
             self.settings["daylight_saving"] = bool(daylight_saving)
 
+    # The evidence import: a result that the database analyst returns for one of the feasibility report's requests.
+
+    def expected(self, name):
+        """The shape of the result that a query offered under name returns, as [{"name", "type", "optional"}]."""
+        if name.startswith("count-") and name[6:] in COUNT_COLUMNS:
+            columns, optional = COUNT_COLUMNS[name[6:]], COUNT_OPTIONAL.get(name[6:], ())
+        elif name.startswith("probe-"):
+            state = self.journal.get(name) or {}
+            columns, optional = self._probe_columns(state.get("about", ""), state.get("probe") or "link"), ()
+        elif name.startswith("charted-"):
+            columns, optional = CHARTED_COLUMNS, ()
+        elif name.startswith("values-"):
+            columns, optional = ("value", "rows"), ()
+        else:
+            return None
+        return [{"name": c, "type": TEXT if c in TEXT_COLUMNS else WHOLE, **({"optional": True} if c in optional else {})}
+                for c in columns]
+
+    def request_query(self, name):
+        """A query as an evidence request carries it, so that its result can be imported into a later version: its
+        name, its exact text, what it was written from and what it was written for."""
+        state = self.journal.get(name)
+        if state is None or state.get("query") not in self.texts:
+            return None
+        offer = self.log.get(state["offer_id"])
+        return {"name": name, "sql": self.texts[state["query"]], "expects": self.expected(name),
+                "rests_on": offer["payload"].get("rests_on") or {},
+                **{k: state[k] for k in ("year", "about", "key", "probe", "table", "column") if k in state}}
+
+    def covered(self, parts):
+        """What a clinical reconciliation or a production outcome of the given parts would validate, as {subject:
+        hashes}, which a request carries so that the import validates nothing that has changed since."""
+        return {subject: self._current(kind, subject) for kind, subject, view in self._subjects()
+                if (view in parts if kind != "links" else view[0] in parts and view[1] in parts)}
+
+    def _checked_result(self, name, text, shape):
+        """The rows of a result, refused with a reason where it lacks a column the request expects or holds a value
+        of the wrong type in one."""
+        wanted = [c["name"] for c in shape]
+        try:
+            columns, rows = read_grid(text, wanted, [c["name"] for c in shape if c.get("optional")])
+        except DescribeError:
+            raise DescribeError(WORDING["result_columns"].format(name=name, wanted=", ".join(wanted))) from None
+        for column in shape:
+            if column["type"] == TEXT:
+                continue
+            at = columns.index(column["name"])
+            for row in rows:
+                value = row[at]
+                parsed = _number(value)
+                if value and (parsed is None or (column["type"] == WHOLE and not isinstance(parsed, int))):
+                    raise DescribeError(WORDING["result_type"].format(name=name, column=column["name"], value=_clean_cell(value),
+                                                                      type=column["type"]))
+        return columns, rows
+
+    def import_evidence(self, request, result, actor=None, provenance=None, date=None):
+        """Takes back the result of one of the feasibility report's evidence requests: it checks that the request was
+        made from this version or one it was made from and that the result has the shape the request expects,
+        refusing anything else with a reason; appends to the journal an entry that names the request; sets the
+        dimension the request moves; and saves and returns the new version, as {"schema_id", "file", "files",
+        "entry"}. result is the text of the one result, or {query: text}, one for each query of the request.
+
+        A count or a test query sets reconciled, with its figure, for each binding and link that has not changed since
+        the query was written; the clinician's judgement of a count is recorded as before, at step 8. A plan is kept
+        as a journal entry for the execution package. A production outcome and a clinical reconciliation set
+        validated for the parts they cover."""
+        date = date or _today()
+        if not isinstance(request, dict) or request.get("format") != REQUEST_FORMAT or not request.get("request_id") \
+                or not isinstance(request.get("queries", []), list):
+            raise DescribeError(WORDING["not_a_request"])
+        made_from = request.get("schema_id")
+        if not made_from or (made_from != self.identity["schema_id"] and made_from not in self.identity["lineage"]):
+            raise DescribeError(WORDING["other_schema"])
+        form = IMPORTS.get(request.get("form"))
+        if form is None:
+            raise DescribeError(WORDING["not_importable"])
+        if provenance is not None and provenance not in evidence.PROVENANCES:
+            raise DescribeError(WORDING["provenance_unknown"].format(known=_and(evidence.PROVENANCES).replace(" and ", " or ")))
+        queries = request.get("queries") or []
+        if form in ("count", "probe", "list", "values"):
+            if not queries or not all(isinstance(q, dict) and q.get("name") and q.get("sql") and q.get("expects") for q in queries):
+                raise DescribeError(WORDING["not_a_request"])
+            texts = result if isinstance(result, dict) else {queries[0]["name"]: result} if len(queries) == 1 else {}
+            checked = {}
+            for query in queries:
+                if query["name"] not in texts:
+                    raise DescribeError(WORDING["missing_result"].format(name=query["name"]))
+                checked[query["name"]] = self._checked_result(query["name"], _text(texts[query["name"]]), query["expects"])
+            returned = []
+            for query in queries:
+                returned.append(self._import_query(query, _text(texts[query["name"]]), actor, provenance, request["request_id"], date))
+            entry = self._append("evidence imported", {"request_id": request["request_id"], "request": _request_summary(request),
+                                                       "form": form, "results": [e["id"] for e in returned], "date": date},
+                                 actor, provenance or returned[0]["provenance"],
+                                 period={"year": queries[0]["year"]} if queries[0].get("year") else None)
+        else:
+            text = _text(result if not isinstance(result, dict) else next(iter(result.values()), ""))
+            figure = None
+            if form == "plan":
+                if not (text or "").strip():
+                    raise DescribeError(WORDING["plan_empty"])
+            else:
+                shape = [{"name": n, "type": t} for n, t in (RECONCILIATION_COLUMNS if form == "clinical reconciliation" else PRODUCTION_COLUMNS)]
+                columns, rows = self._checked_result(form, text, shape)
+                figure = [dict(zip(columns, [_number(v) if v and _number(v) is not None else v for v in row])) for row in rows]
+            safe = re.sub(r"[^\w]+", "-", request["request_id"])
+            path = f"results/{len(self.log) + 1:03d}-evidence-{safe}.tsv"
+            self.texts[path] = (text or "").replace("\r\n", "\n")
+            entry = self._append("evidence imported", {"request_id": request["request_id"], "request": _request_summary(request),
+                                                       "form": form, "result": path, "figure": figure, "date": date},
+                                 actor, provenance or (METADATA if form == "plan" else PERSON))
+            if form != "plan":
+                held = request.get("covers") or {}
+                for kind, subject, _ in list(self._subjects()):
+                    if held.get(subject) == self._current(kind, subject):
+                        self._set(kind, subject, "validated", evidence.record(date, self._current(kind, subject), by=entry["actor"],
+                                                                              entry=entry["id"], figure=figure, form=form))
+        files = self.save(date)
+        return {"schema_id": self.identity["schema_id"], "file": self.file_name(), "files": files, "entry": entry}
+
+    def _import_query(self, query, text, actor, provenance, request_id, date):
+        """Offers the request's own query, as it was written, and reads its result as a paste of it would be read."""
+        name = query["name"]
+        latest = self.log.latest("query offered", name=name)
+        sql = query["sql"]
+        if latest is None or latest["payload"]["sha256"] != hashlib.sha256(sql.encode("utf-8")).hexdigest():
+            path = f"queries/{len(self.log) + 1:03d}-{name}.sql"
+            self.texts[path] = sql
+            extras = {k: query[k] for k in ("year", "about", "key", "probe", "table", "column") if query.get(k) is not None}
+            self._append("query offered", {"name": name, "step": "evidence import", "query": path,
+                                           "sha256": hashlib.sha256(sql.encode("utf-8")).hexdigest(),
+                                           "body_sha256": hashlib.sha256(sql.split("\n", 1)[-1].encode("utf-8")).hexdigest(),
+                                           "version": self.version, "request_id": request_id, **extras,
+                                           **({"rests_on": query["rests_on"]} if query.get("rests_on") else {})},
+                         TOOL, INFERENCE, supersedes=latest["id"] if latest else None,
+                         period={"year": extras["year"]} if extras.get("year") else None, codes=extras.get("key"))
+            self.queries[name] = sql
+        entry = self.pasted(name, text, actor, request=request_id, provenance=provenance)
+        if name.startswith("count-"):
+            self.read_count(name[6:], text, date, record=False)
+            measured = self.measured(name[6:])
+            for kind, subject, _ in list(self._subjects()):
+                if self._real(entry) and self._offer_holds(entry, subject, kind):
+                    self._set(kind, subject, "reconciled", evidence.record(date, self._current(kind, subject), entry=entry["id"],
+                                                                           figure=measured["figures"] if measured else None,
+                                                                           judgement=NOT_RECORDED))
+        elif name.startswith("probe-") and query.get("about"):
+            self.read_probe(query["about"], text, record=False)
+            self._probe_reconciled(query["about"], entry)
+        elif name.startswith("charted-") and query.get("key"):
+            self.read_charted(query["key"], text, query.get("year") or self.settings.get("year") or 2000, record=False)
+        elif name.startswith("values-"):
+            self.values[name] = [{"value": r[0], "rows": _number(r[1])} for r in read_grid(text, ("value", "rows"))[1]]
+        return entry
+
     # The model that the page shows.
 
     def view(self):
@@ -2281,7 +2956,10 @@ ORDER  BY g.kind;"""
                                                                    "measured": (self.measured(k) or {}).get("says"),
                                                                    "finding_codes": self.finding_codes(k)} for k, v in self.counts.items()},
                 "settings": {k: self.settings.get(k) for k in ("made", "updated", "database", "year", "time_zone", "daylight_saving")},
-                "readiness": self._readiness,
+                "readiness": self.readiness(),
+                "schema": {"schema_id": self.identity["schema_id"], "parent_id": self.identity["parent_id"],
+                           "file": self.file_name(), "contract": {**self.contract_record(), "changed": self.contract_changes()}},
+                "stale": self.stale_evidence(),
                 "scoreboard": rolemap.scoreboard(self.data)["lines"] if self.data is not None else [],
                 "provenance": {name: self.provenance(name) for name in self.journal},
                 "anaesthetic_table": ((self.data or {}).get("roles", {}).get("role_anaesthetic") or {}).get("rows", {}).get("binding", {}).get("table"),
@@ -2295,7 +2973,8 @@ ORDER  BY g.kind;"""
     def _item(self, about, attribute, item, meaning, table, column, role_type=None):
         binding = item.get("binding")
         definition = None
-        if self.dictionary is not None and table:
+        if self.dictionary is not None and table and not (item.get("proposed_from") == REFERENCE and item.get("status") == "proposed"):
+            # A proposal that rests on a reference conversion shows the reference's reason rather than the dictionary's words.
             definition = self.dictionary.description(table, column) if column else self.dictionary.description(table)
         candidates = []
         offers = self.offers_identifying(about)
@@ -2311,7 +2990,7 @@ ORDER  BY g.kind;"""
             elif self.dictionary is not None:
                 words = self.dictionary.description(head) or None
             candidates.append({"from": candidate["from"], "replacement": _parse_from(candidate["from"]) if "." in head else head,
-                               "definition": words or candidate.get("words")})
+                               "definition": words or candidate.get("words") or candidate.get("reference")})
         confirmation = item.get("confirmation") or {}
         correction = confirmation.get("correction") if isinstance(confirmation.get("correction"), dict) else None
         return {"correction": {"form": correction["form"], "says": rolemap.plain(item["says"] if attribute != "rows" or correction["form"] == "rows"
@@ -2327,7 +3006,8 @@ ORDER  BY g.kind;"""
                 "candidates": candidates, "offers_identifying": offers, "withheld": withheld, "status": item["status"], "question": rolemap.plain(item.get("question") or ""),
                 "answer": confirmation.get("answer"), "date": confirmation.get("date"),
                 "replacement": confirmation.get("replacement"), "note": confirmation.get("note"),
-                "presence": self.presence(binding if attribute != "rows" else ({"table": table} if table else None))}
+                "presence": self.presence(binding if attribute != "rows" else ({"table": table} if table else None)),
+                "dimensions": self.dimensions_of("bindings", about) if binding or attribute == "rows" else None}
 
 
 def _kind_words(meaning, kind):
@@ -2343,6 +3023,8 @@ def _basis(says):
     """What a proposal rests on, from the sentence that gives its reason, so that the page's confidence agrees with it:
     "key" for the column that identifies the part's rows, "link" for a link by the same name, "name" where only the
     names match, and "words" where the dictionary's words match."""
+    if says.startswith("A conversion at another hospital"):
+        return "reference"
     if "is the column that identifies a row of the table that holds this part" in says:
         return "key"
     if "has the same name as" in says or "is the column that identifies a row of" in says:
@@ -2387,9 +3069,27 @@ def _filter_says(item, about=""):
         for f in filters)
 
 
-def _safe_file(name, fallback):
+def _clean_cell(value):
+    return " ".join(str(value).split())[:40]
+
+
+def _request_summary(request):
+    """What the journal keeps of a request: its ids, its form, the version it was made from, who it was for and what
+    it moves, and never its SQL, which the query files hold."""
+    return {k: request.get(k) for k in ("request_id", "id", "form", "schema_id", "role", "moves") if k in request}
+
+
+def _zipped(files):
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, data in sorted(files.items()):
+            archive.writestr(zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0)), data)
+    return out.getvalue()
+
+
+def _safe_file(name, fallback, suffixes="csv|tsv|txt"):
     name = Path(str(name or "")).name
-    return name if re.fullmatch(r"[\w .()-]{1,100}\.(csv|tsv|txt)", name, re.I) else fallback
+    return name if re.fullmatch(rf"[\w .()-]{{1,100}}\.({suffixes})", name, re.I) else fallback
 
 
 def _json_of(data):
@@ -2484,6 +3184,7 @@ README = {
     "invented": "This file was made with the invented dictionary, for practice, and describes no hospital.",
     "title": "# The saved hospital schema",
     "stamp": "Schemalyser {version} saved this file on {date}.",
+    "identity": "This version of the hospital schema is {schema_id}. settings.json names the version it was made from, and a later save makes a new version rather than changing this one.",
     "intro": "This file holds the hospital schema: where the hospital's database keeps each part of the anaesthetic "
              "record. The clinician, who led the audit, and the database analyst, who ran the queries, made it together with "
              "Schemalyser's page Describe the record. The page proposed the schema from the data dictionary, the "
@@ -2497,13 +3198,18 @@ README = {
     "draft_text": "Some of the hospital schema is not yet answered ({parts}). To finish it, the clinician opens the page Describe "
                   "the record, opens this file at step 3 and carries on from step 6.",
     "readiness": "## How far the hospital schema has been checked",
-    "readiness_text": "Schemalyser records how far each part of the hospital schema has been checked, in three states. A "
-                      "part runs once it compiles and runs on made-up rows. It is checked against the database once the "
-                      "counts that read it have been run on the hospital's database and the clinician has judged them "
-                      "to look right. The coverage that the counts measured is recorded beside that judgement and kept "
-                      "apart from it, because a count can look right to the clinician and still reach too few "
-                      "anaesthetics. A part is clinically validated only once a sample of anaesthetics has been reconciled against the clinical "
-                      "record, which the page cannot do, so this file never records that state.",
+    "readiness_text": "Schemalyser keeps five kinds of evidence about each column, link and translation of codes apart, in "
+                      "dimensions.json: whether a person confirmed it, whether the tables and columns query found it, "
+                      "whether it passed the test on made-up rows, whether it was reconciled against the hospital's database, and "
+                      "whether it was clinically validated. How far each part has been checked is worked out from that "
+                      "evidence whenever it is read, and is never stored. A part runs once each of its columns passed "
+                      "the test on made-up rows. It is checked against the database once the counts that read it have "
+                      "been run on the hospital's database and the clinician has judged them to look right. The coverage "
+                      "that the counts measured is recorded beside that judgement and kept apart from it, because a count "
+                      "can look right to the clinician and still reach too few anaesthetics. A part is clinically "
+                      "validated only once a sample of anaesthetics has been reconciled against the clinical record and "
+                      "the reconciliation entered through the evidence import. Evidence about a column whose source has since "
+                      "changed, or about a part whose definition in the contract has changed, no longer counts.",
     "readiness_reached": "The parts that every audit reads have reached the state {state}, on the dates below.",
     "readiness_none": "The parts that every audit reads have not yet reached the first state, because the test on made-up "
                       "rows finds a problem in at least one of them.",
@@ -2511,13 +3217,17 @@ README = {
     "readiness_part_none": "- {title} ({status}): no state reached yet.",
     "readiness_measured": "{says} The page records these figures apart from the clinician's judgement.",
     "provenance": "## Where each fact came from",
-    "provenance_text": "Every fact in this file says where it came from. In journal.json, map/map.json, codes/, "
-                       "counts/judgements.json and confirmations.csv, the field headed provenance gives one of five "
-                       "sources: complete data, for a count over the whole of the tables it reads; a sample, for a count "
-                       "over the anaesthetics of one year in #cohort, whose figures show what is charted but not how "
-                       "much; metadata, for the data dictionary and the database's own records of its tables; a person, "
-                       "for an answer, a choice of codes or a judgement; and an inference, for the page's own proposal "
-                       "that no person has yet answered. The first line of each result taken from a sample says so.",
+    "provenance_text": "Every fact in this file says where it came from, as it was recorded when the fact was written. In "
+                       "journal.json, map/map.json, codes/, counts/judgements.json and confirmations.csv, the field headed "
+                       "provenance gives one of six sources: complete data, for a count over the whole of the tables it "
+                       "reads; a sample, for a count over the anaesthetics of one year in #cohort, whose figures show what "
+                       "is charted but not how much; metadata, for the data dictionary and the database's own records of "
+                       "its tables; a person, for an answer, a choice of codes or a judgement; an inference, for the "
+                       "page's own proposal that no person has yet answered and for a test on made-up rows; and a "
+                       "reference conversion, for a proposal that rests on another hospital's conversion. Each entry of "
+                       "the journal also names who acted, or says that no name was recorded, and its scope: the "
+                       "hospital, the version it was made from, and the period or codes it covers where they apply. The "
+                       "first line of each result taken from a sample says so.",
     "draft_codes": "These columns are answered, but the codes that they hold are not yet translated, so their views give "
                    "nothing useful until a person translates them:",
     "remake": "## How to check or remake the hospital schema",
@@ -2526,14 +3236,17 @@ README = {
         "reads the data dictionary and everything below from the file, and the work carries on from where it was left.",
         "To check that the hospital schema is still right, for example after a change to the database or a new release "
         "of the vendor's system, the clinician chooses Check against the database under Check a saved schema against the database. "
-        "Schemalyser proposes the schema again from the dictionary, applies the answers in confirmations.csv in their "
+        "Schemalyser proposes the schema again from the dictionary, applies the answers that the journal records in their "
         "order, and says whether the result is the same as map/map.json. It then lists every query in queries/ with its "
         "earlier result from results/. The database analyst runs each query again and pastes the new result, and the page "
         "lists what has changed: a table or column that has gone, a row that has gone or come, or a count that has "
         "changed by more than a tenth.",
         "Without the page, the hospital schema can still be checked by hand. Each file in queries/ is the exact text "
-        "that the database analyst ran, and the file of the same number in results/ is what came back. journal.json says "
-        "which step offered each query, which database it was run on and when the result was pasted.",
+        "that the database analyst ran, and journal.json names the file in results/ that came back from it. The journal "
+        "says which step offered each query, which database it was run on and when the result was pasted.",
+        "A result that the database analyst returns for one of the feasibility report's evidence requests enters the "
+        "hospital schema through the evidence import, python -m schemalyser.describe import-evidence, which checks the "
+        "result against the request and saves a new version.",
     ],
     "licence": "The data dictionary is licensed. This file holds a copy of it in dictionary/, so that the page can open "
                "the hospital schema without anything else, and map/map.json quotes it as the evidence for each column.",
@@ -2541,29 +3254,41 @@ README = {
                   "at step 2 before the file is opened.",
 }
 README_FILES = [
-    ("settings.json", "The tool's version, the dates on which the hospital schema was made and last changed, the database that "
-                      "the queries were run on (production, training, or invented where the invented hospital ran them), "
-                      "the year of the lists, the time zone that the database's clocks follow and whether they change "
-                      "with daylight saving, whether every column has an answer, and the state of readiness that each "
-                      "part has reached, with its date."),
-    ("journal.json", "One entry for each step that took something in: the step's heading, the query file, the result "
-                     "file, the database, when the result was pasted or run, whether it came from the invented hospital "
-                     "rather than a paste, and the tool's version. For the dictionary, it "
-                     "gives the file's name, its size, its numbers of tables and columns and a fingerprint of its "
-                     "contents (a SHA-256 hash), and never its contents. Each correction kept has an entry of its own, "
-                     "with the sentence that it means, the outcome of its test on made-up rows and any reason for keeping it."),
-    ("confirmations.csv", "Every answer that the database analyst gave, in order, one row for each answer: the part and column, "
+    ("settings.json", "The version's identity (schema_id, a hash of the contents of every other file but this one, the "
+                      "parent_id of the version it was made from, and every earlier version), the time of the save, the "
+                      "version of the contract and a hash of each of its parts, the tool's version, the dates on which "
+                      "the hospital schema was made and last changed, the database that the queries were run on "
+                      "(production, training, or invented where the invented hospital ran them), the year of the lists, "
+                      "the time zone that the database's clocks follow and whether they change with daylight saving, and "
+                      "whether every column has an answer."),
+    ("journal.json", "The journal: one entry for everything that happened, in order, and never changed afterwards. Each "
+                     "entry gives its id, its number, its time, what happened, who did it, where it came from and its "
+                     "scope. A query offered names its file in queries/, a result names its file in results/ and the "
+                     "database it came from, and a query offered again, a result pasted again or an answer withdrawn "
+                     "is a new entry that names the entry it replaces. For the dictionary, it gives the file's name, its "
+                     "size, its numbers of tables and columns and a fingerprint of its contents (a SHA-256 hash), and "
+                     "never its contents. Each correction kept, each test on made-up rows, each choice of codes, each "
+                     "judgement of a count and each piece of evidence imported has an entry of its own."),
+    ("dimensions.json", "For each column, link and translation of codes, the five kinds of evidence kept apart: "
+                        "confirmed, present, tested on made-up rows, reconciled against the database and clinically "
+                        "validated. Each gives its date, the person or the journal entry that established it, any figure "
+                        "it measured, and a hash of what it rested on, so that a later change shows which evidence it "
+                        "leaves out of date."),
+    ("confirmations.csv", "Every answer that the database analyst gave that still stands, in order, one row for each answer: the part and column, "
                           "the answer (yes, no or not sure), the replacement where the answer was no or where a Yes carried "
                           "a translation of the column's codes, the date and any note. For a correction "
                           "made in one of the page's forms, it also gives the correction as data, the outcome of the test on "
                           "made-up rows that Schemalyser ran before it was kept (the column headed test), and, where it "
                           "was kept although the test failed, the reason that was given."),
     ("map/map.json", "Every column of every part of the record: the table and column that hold it, the links "
-                     "that reach them, the dictionary's description that supports it, the answer and its date. Its "
-                     "description gives the date of the proposal and how many columns a person has answered for."),
+                     "that reach them, the dictionary's description that supports it, the answer and its date, and "
+                     "where it came from. A column reached through several tables, or made by joining several rows into "
+                     "one text, names a normalisation in the section normalisations, which gives the tables and "
+                     "columns it reads, its grain, its SQL, its assumptions and the tests on made-up rows that covered "
+                     "it. Its description gives the date of the proposal and how many columns a person has answered for."),
     ("map/role_*.sql", "One SQL file for each part of the record, written from its columns, its links and the chosen "
                        "codes. An audit reads these parts of the record and nothing else."),
-    ("queries/", "The exact text of every query that the page offered, numbered in the order offered."),
+    ("queries/", "The exact text of every query that the page offered, numbered by its entry in the journal."),
     ("results/", "Each result, exactly as the database analyst pasted it or as the invented hospital gave it, with the same number "
                  "and name as its query. journal.json records which of the two each came from, and the first line of each "
                  "file says so, with the tool's version and the date."),
@@ -2574,16 +3299,21 @@ README_FILES = [
                                "and, kept apart from the judgement, the coverage that the count measured."),
     ("dictionary/", "The dictionary's own files. Where the data dictionary was made from the database, it is the "
                     "result of the data dictionary query as a CSV, and any file of the vendor's descriptions is kept "
-                    "exactly as it was loaded. Otherwise the files are exactly as they were loaded."),
+                    "exactly as it was loaded. Otherwise the files are exactly as they were loaded. Where a reference "
+                    "conversion's lineage was loaded beside the dictionary, it is kept here as reference-lineage.json, "
+                    "and the journal records its file's name and hash."),
 ]
 
 
-def readme(paths, version, date, kept, training=(), unfinished="", untranslated=(), invented=False, readiness=None):
+def readme(paths, version, date, kept, training=(), unfinished="", untranslated=(), invented=False, readiness=None,
+           schema_id=None):
     """README.md of the hospital folder, which says what each file is, how it was made and how to remake it. training
     lists the queries whose results came from a training database, which are to be run again on production."""
     lines = [README["invented"], ""] if invented else []
-    lines += [README["title"], "", README["stamp"].format(version=version or "unknown", date=_day(date)), "", README["intro"], "",
-              README["storage"], ""]
+    lines += [README["title"], "", README["stamp"].format(version=version or "unknown", date=_day(date)), ""]
+    if schema_id:
+        lines += [README["identity"].format(schema_id=schema_id), ""]
+    lines += [README["intro"], "", README["storage"], ""]
     if unfinished:
         lines += [README["draft"], "", README["draft_text"].format(parts=unfinished), ""]
         if untranslated:
@@ -2612,3 +3342,81 @@ def readme(paths, version, date, kept, training=(), unfinished="", untranslated=
     for paragraph in README["remake_text"]:
         lines += [paragraph, ""]
     return "\n".join(lines)
+
+
+# The command line: the evidence import, so that the database analyst's result can enter the hospital schema without
+# the page.
+#
+#     python -m schemalyser.describe import-evidence SCHEMA.zip REQUEST.json RESULT [RESULT ...] [--id REQUEST_ID]
+#                                    [--actor NAME] [--provenance SOURCE] [--out FOLDER]
+#
+# REQUEST.json is one request of the feasibility report, or the report itself with --id naming the request. Each RESULT
+# is the result of one of the request's queries, in the order the request lists them, as the results grid copies it.
+# The new version is written beside SCHEMA.zip, or into FOLDER, under the name that carries its schema_id.
+
+def _read_saved(path):
+    path = Path(path)
+    if path.is_dir():
+        return {item.relative_to(path).as_posix(): item.read_bytes() for item in path.rglob("*") if item.is_file()}
+    with zipfile.ZipFile(path) as archive:
+        return {name: archive.read(name) for name in archive.namelist() if not name.endswith("/")}
+
+
+def main(argv=None):
+    import argparse
+    import sys
+    parser = argparse.ArgumentParser(prog="python -m schemalyser.describe")
+    commands = parser.add_subparsers(dest="command", required=True)
+    one = commands.add_parser("import-evidence", help="import the result of an evidence request into a saved hospital schema")
+    one.add_argument("schema")
+    one.add_argument("request")
+    one.add_argument("results", nargs="+")
+    one.add_argument("--id", default=None, help="the request's request_id or id, where REQUEST.json is a whole report")
+    one.add_argument("--actor", default=None, help="the name of the person who ran the query and returned its result")
+    one.add_argument("--provenance", default=None, help=f"one of: {', '.join(evidence.PROVENANCES)}")
+    one.add_argument("--out", default=None, help="the folder for the new version (by default, the folder of SCHEMA)")
+    args = parser.parse_args(argv)
+    try:
+        held = json.loads(Path(args.request).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        print(WORDING["not_a_request"], file=sys.stderr)
+        return 2
+    if isinstance(held, dict) and isinstance(held.get("requests"), list):
+        held = next((r for r in held["requests"] if args.id in (r.get("request_id"), r.get("id"))), None)
+    sitting = Describe()
+    try:
+        from importlib.metadata import version
+        sitting.version = version("schemalyser")
+    except Exception:  # noqa: BLE001 - the package may run from its folder without being installed
+        sitting.version = "unknown"
+    try:
+        files = _read_saved(args.schema)
+    except (OSError, zipfile.BadZipFile):
+        print(WORDING["folder_unreadable"], file=sys.stderr)
+        return 2
+    sitting.restore(files)
+    if sitting.data is None:
+        print(WORDING["folder_unreadable"], file=sys.stderr)
+        return 2
+    texts = [Path(r).read_text(encoding="utf-8", errors="replace") for r in args.results]
+    names = [q.get("name") for q in (held or {}).get("queries") or [] if isinstance(q, dict)]
+    result = dict(zip(names, texts)) if names and len(texts) == len(names) else texts[0]
+    try:
+        found = sitting.import_evidence(held, result, args.actor, args.provenance)
+    except DescribeError as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    out = Path(args.out) if args.out else Path(args.schema).resolve().parent
+    out.mkdir(parents=True, exist_ok=True)
+    target = out / found["file"]
+    data = _zipped(found["files"])
+    if target.exists() and target.read_bytes() != data:
+        print(f"{target.name} already holds another version, so Schemalyser has not overwritten it.", file=sys.stderr)
+        return 1
+    target.write_bytes(data)
+    print(WORDING["imported"].format(request=held["request_id"], schema_id=found["schema_id"], file=target.name))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

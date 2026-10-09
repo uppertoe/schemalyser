@@ -39,7 +39,7 @@ def saved(tmp_path_factory):
         s.confirm(about, "yes", date=DATE)
     s.choose_codes("role_reading.kind", {"52": "map_arterial", "51": "map_cuff"}, DATE)
     path = tmp_path_factory.mktemp("schema") / "hospital-schema.schemalyser.zip"
-    path.write_bytes(s.folder_zip(DATE))
+    path.write_bytes(s.save_zip(DATE))
     return path
 
 

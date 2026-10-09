@@ -46,10 +46,11 @@ HOME_PATH = re.compile(rb"(/Users/[A-Za-z0-9._-]+|/home/[a-z][a-z0-9._-]*/|[A-Za
 # policy and this module, so that an agent can check a question before handing it back.
 CORE_MODULES = (
     "__init__", "analysis", "audit", "catalogue", "charted", "checks", "concepts", "convert", "corrections", "datadict",
-    "describe", "dictionary", "extract", "facts", "feasibility", "first_ask", "harness", "hospital", "mapping", "memo",
-    "plan", "policy", "profile", "propose", "questions", "realistic", "release", "restructure", "rolemap", "rolepolicy", "roles",
-    "routes", "rules", "sandbox", "scripts", "skeleton", "sql_evidence", "statements", "target", "testbed", "translate", "tuning",
-    "vocabulary", "workspace",
+    "describe", "dictionary", "evidence", "extract", "facts", "feasibility", "first_ask", "harness", "hospital", "mapping", "memo",
+    "normalise",
+    "plan", "policy", "profile", "project", "propose", "questions", "realistic", "release", "restructure", "rolemap", "rolepolicy", "roles",
+    "routes", "rules", "sample_vocabulary", "sandbox", "scripts", "skeleton", "sql_evidence", "statements", "target", "testbed",
+    "translate", "tuning", "vocabulary", "workspace",
 )
 
 # Each entry is a file, or a folder whose files must all have one of its suffixes.
@@ -62,7 +63,7 @@ ALLOWLIST = tuple(
         {"path": "core/schemalyser/omop/SOURCE.md", "why": "where the field list comes from"},
         {"path": "core/schemalyser/realism", "tree": True, "suffixes": (".csv", ".md", ".py"),
          "why": "the public reference data behind the invented world's realistic values"},
-        {"path": "tools/sqlserver/harness.py", "why": "writes the sample vocabulary that the testbed uses"},
+        {"path": "tools/sqlserver/harness.py", "why": "the SQL Server harness, which the testbed runs for its SQL Server stage"},
         {"path": "fixtures/invented-catalogue.csv", "why": "the invented world's tables and columns"},
         {"path": "fixtures/invented-checks.csv", "why": "the invented world's check results"},
         {"path": "fixtures/invented-design.sql", "why": "the invented world's design"},
@@ -216,7 +217,7 @@ def invented_schema(repo, date):
     for about in CONFIRMED:
         sitting.confirm(about, "yes", date=date)
     sitting.choose_codes("role_reading.kind", dict(CODES), date)
-    return sitting.folder_zip(date)
+    return sitting.save_zip(date)
 
 
 def _contract_table():
@@ -243,7 +244,7 @@ This folder is a workspace in which a person or a coding agent can write a clini
 
 - `core/schemalyser/rolemodel/` holds the role contract, `contract.json`, with its description in words, `roles.md`, and the neonatal audit as the example of a question over the role views.
 - `fixtures/` holds the invented world: an invented catalogue, data dictionary, hospital tables, conversion to OMOP with its planted scenarios, and map.
-- `core/schemalyser/omop/cdm54_fields.csv` is the published field list of OMOP CDM 5.4, and `tools/sqlserver/harness.py` writes the sample vocabulary when the testbed runs.
+- `core/schemalyser/omop/cdm54_fields.csv` is the published field list of OMOP CDM 5.4, `core/schemalyser/sample_vocabulary.py` writes the sample vocabulary when the testbed runs, and `tools/sqlserver/harness.py` is the SQL Server harness that the testbed runs for its SQL Server stage.
 - `core/` holds a copy of the public modules of Schemalyser that the feasibility report, the audit's package and the testbed need.
 - `schemas/{schema}` is a saved hospital schema made from the invented dictionary, as the page makes one, so that the commands have a schema to read.
 - `queries/` holds the questions, one folder each, beginning with the example, `queries/{example}/`.
@@ -457,7 +458,7 @@ def _write_result(folder, result):
 def import_question(folder, hospital, schema=None, date=None):
     """Imports one question's folder into a hospital's project. Returns the counts-only result, which is also written
     into the folder as import-result.json."""
-    from .workbench.project import Project, ProjectError
+    from .project import Project, ProjectError
     folder = Path(folder)
     date = date or dt.date.today().isoformat()
     name = folder.name if SAFE_NAME.match(folder.name) else None

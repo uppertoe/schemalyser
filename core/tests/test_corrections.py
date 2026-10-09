@@ -203,8 +203,11 @@ def test_a_failing_correction_is_kept_only_with_a_reason_and_the_saved_schema_re
     assert [r["test"][:6] for r in rows] == ["passed", "failed"]
     assert json.loads(rows[1]["correction"]) == DOUBLING and rows[1]["reason"].startswith("The team says")
     journal = json.loads(files["journal.json"])["entries"]
-    entries = [e for e in journal if e["name"] == "correction"]
+    entries = [e["payload"] for e in journal if e["kind"] == "correction kept"]
     assert [e["passed"] for e in entries] == [True, False] and entries[1]["reason"].startswith("The team says")
+    # Each correction names the test run on made-up rows that checked it, which the journal holds as an entry of its own.
+    runs = {e["payload"]["run"] for e in journal if e["kind"] == "test run"}
+    assert entries[0]["run"] in runs and entries[1]["run"] in runs
     # map.json, with the new forms, is still a map that the checker reads.
     folder = s._work_folder()
     rolemap.read_map(folder, s.dictionary)

@@ -259,7 +259,8 @@ test('the record is described, saved as a hospital schema and opened again', asy
   const download = page.waitForEvent('download');
   await page.locator('#write-save').click();
   const saved = await download;
-  expect(saved.suggestedFilename()).toBe('hospital-schema.schemalyser.zip');
+  // Each save is a new version, and the file's name carries its schema_id.
+  expect(saved.suggestedFilename()).toMatch(/^hospital-schema-[0-9a-f]{16}\.schemalyser\.zip$/);
   // With columns still to answer, the hospital schema is saved as a draft and step 9 is not done.
   await expect(page.locator('#t-write-draft')).toContainText('Some of the hospital schema is not yet answered:');
   // Step 9 explains the three states once, asks for the time zone, and says how the proposals fared, naming no column.
@@ -268,7 +269,7 @@ test('the record is described, saved as a hospital schema and opened again', asy
   await expect(page.locator('#b-scoreboard h3')).toHaveText(d.scoreboardHeading);
   await expect(page.locator('#scoreboard')).toContainText('These figures name no table or column, so they may be shared.');
   await expect(page.locator('#scoreboard')).not.toContainText('PERSON_MASTER');
-  await expect(page.locator('#t-write-status')).toContainText('The page has saved the hospital schema as a draft (');
+  await expect(page.locator('#t-write-status')).toContainText('The page has saved a new version of the hospital schema as a draft (');
   await expect(page.locator('#step-9')).not.toHaveAttribute('data-state', 'done');
   await expect(page.locator('#rail a[href="#step-9"]')).toContainText(d.savedDraft(''));
   await stage(page, '9-written', '#step-9');
@@ -277,10 +278,14 @@ test('the record is described, saved as a hospital schema and opened again', asy
   await saved.saveAs(zipPath);
   execFileSync('python3', ['-c', 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])', zipPath, unzipped]);
   for (const name of ['README.md', 'journal.json', 'confirmations.csv', 'settings.json', 'map/map.json', 'map/role_reading.sql',
-    'queries/01-tables-and-columns.sql', 'results/01-tables-and-columns.tsv', 'codes/role_reading.kind.json',
-    'dictionary/invented-dictionary.csv', 'dictionary/invented-tables.csv']) {
+    'codes/role_reading.kind.json', 'dictionary/invented-dictionary.csv', 'dictionary/invented-tables.csv']) {
     expect(existsSync(join(unzipped, name)), name).toBe(true);
   }
+  // The query and its result are files that the journal names, numbered by their entries.
+  const named = (JSON.parse(readFileSync(join(unzipped, 'journal.json'), 'utf8')).entries as { payload: { name?: string; query?: string; result?: string } }[])
+    .filter((e) => e.payload.name === 'tables-and-columns').flatMap((e) => [e.payload.query, e.payload.result]).filter((f): f is string => !!f);
+  expect(named.length).toBe(2);
+  for (const name of named) expect(existsSync(join(unzipped, name)), name).toBe(true);
   expect(readFileSync(join(unzipped, 'map/role_reading.sql'), 'utf8')).toContain("IN ('52') THEN 'map_arterial'");
   // The view's head carries one true sentence about who has answered for it.
   expect(readFileSync(join(unzipped, 'map/role_anaesthetic.sql'), 'utf8')).not.toContain('No person has confirmed');
@@ -289,9 +294,10 @@ test('the record is described, saved as a hospital schema and opened again', asy
   expect(settings.answered).toBe(false);
   expect(settings.complete).toBeUndefined();
   expect(settings.time_zone).toBeTruthy();
-  expect(settings.readiness.parts.role_reading.status).toBe('contract');
-  expect(settings.readiness.parts.role_reading['clinically validated']).toBeNull();
-  expect(Object.keys(settings.readiness.states)).toEqual(['runs', 'checked against the database', 'clinically validated']);
+  // The readiness is derived from the evidence and never stored; the README states it, and settings name the version.
+  expect(settings.readiness).toBeUndefined();
+  expect(settings.schema_id).toMatch(/^[0-9a-f]{16}$/);
+  expect(saved.suggestedFilename()).toContain(settings.schema_id);
   expect(settings.invented).toBeUndefined();
   expect(settings.draft).toMatch(/^draft: [\d,]+ columns and [\d,]+ tables unanswered/);
   const readme = readFileSync(join(unzipped, 'README.md'), 'utf8');
@@ -310,7 +316,7 @@ test('the record is described, saved as a hospital schema and opened again', asy
   await expect(page.locator('#step-9')).not.toHaveAttribute('data-state', 'done');
   await expect(page.locator('#t-write-status')).toHaveText(d.writtenStale);
   // No description of the dictionary is in any query.
-  expect(readFileSync(join(unzipped, 'queries/01-tables-and-columns.sql'), 'utf8')).not.toContain('on which the patient was born');
+  expect(readFileSync(join(unzipped, named[0]), 'utf8')).not.toContain('on which the patient was born');
   expect(requestsWhileOffline).toEqual([]);
 
   // The page returned to: a saved schema without the dictionary is refused until one is loaded, and the saved file
@@ -608,11 +614,11 @@ test('each kind of correction is tested on made-up rows before it is kept', asyn
   await saved.saveAs(unzipped + '.zip');
   execFileSync('python3', ['-c', 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])', unzipped + '.zip', unzipped]);
   const confirmations = readFileSync(join(unzipped, 'confirmations.csv'), 'utf8');
-  expect(confirmations.split('\n')[0]).toBe('attribute,answer,replacement,date,note,version,correction,test,reason,provenance');
+  expect(confirmations.split('\n')[0]).toBe('attribute,answer,replacement,date,note,by,version,correction,test,reason,provenance,proposed_from,entry');
   expect(confirmations).toContain('failed: In Readings charted during an anaesthetic');
   expect(confirmations).toContain('The database team says that each visit holds one anaesthetic at this hospital.');
-  const journal = JSON.parse(readFileSync(join(unzipped, 'journal.json'), 'utf8')).entries as { name: string; passed?: boolean }[];
-  expect(journal.filter((e) => e.name === 'correction').map((e) => e.passed)).toEqual([true, true, true, true, true, true, true, true, false]);
+  const journal = JSON.parse(readFileSync(join(unzipped, 'journal.json'), 'utf8')).entries as { kind: string; payload: { passed?: boolean } }[];
+  expect(journal.filter((e) => e.kind === 'correction kept').map((e) => e.payload.passed)).toEqual([true, true, true, true, true, true, true, true, false]);
   expect(readFileSync(join(unzipped, 'map/role_reading.sql'), 'utf8')).toContain('LEFT JOIN ANAES_RECORD');
   expect(requestsWhileOffline).toEqual([]);
 });
@@ -715,7 +721,7 @@ test('the invented dictionary is loaded while online and marks the saved schema 
   const read = (name: string) => execFileSync('python3', ['-c', 'import sys, zipfile; sys.stdout.write(zipfile.ZipFile(sys.argv[1]).read(sys.argv[2]).decode())', path, name], { encoding: 'utf8' });
   expect(read('README.md').split('\n')[0]).toBe('This file was made with the invented dictionary, for practice, and describes no hospital.');
   expect(JSON.parse(read('settings.json')).invented).toBe(true);
-  expect(JSON.parse(read('journal.json')).entries[0].invented).toBe(true);
+  expect(JSON.parse(read('journal.json')).entries[0].payload.invented).toBe(true);
 });
 
 // The data dictionary made from the database: the one query, offered before anything is loaded, its result pasted with
@@ -1021,18 +1027,19 @@ test('the invented hospital answers every query, and the walk reaches a complete
   await saved.saveAs(path);
   const read = (name: string) => execFileSync('python3', ['-c', 'import sys, zipfile; sys.stdout.write(zipfile.ZipFile(sys.argv[1]).read(sys.argv[2]).decode())', path, name], { encoding: 'utf8' });
   expect(JSON.parse(read('settings.json')).answered).toBe(true);
-  expect(JSON.parse(read('settings.json')).readiness.reached).toBe('runs');
+  // The state reached is named in the receipt above and derived from the evidence; settings.json never stores it.
+  expect(JSON.parse(read('settings.json')).readiness).toBeUndefined();
   // Each journal entry says where its result came from, and the count of one year's readings is from a sample.
-  const sources = Object.fromEntries((JSON.parse(read('journal.json')).entries as { name: string; provenance: string }[]).map((e) => [e.name, e.provenance]));
+  type Entry = { kind: string; provenance: string; payload: { name?: string; from?: string; result?: string } };
+  const entries = (JSON.parse(read('journal.json')).entries as Entry[]).filter((e) => e.kind === 'result returned');
+  const sources = Object.fromEntries(entries.map((e) => [e.payload.name, e.provenance]));
   expect(sources['count-readings_by_kind']).toBe('a sample');
   expect(sources['count-coverage_by_year']).toBe('complete data');
-  const entries = JSON.parse(read('journal.json')).entries as { name: string; pasted?: string; from?: string }[];
-  const run = entries.filter((e) => e.pasted);
-  expect(run.length).toBeGreaterThan(5);
-  expect(run.every((e) => e.from === 'invented hospital')).toBe(true);
+  expect(entries.length).toBeGreaterThan(5);
+  expect(entries.every((e) => e.payload.from === 'invented hospital')).toBe(true);
   // The saved file says where each result came from, and that the invented hospital was the database.
   expect(JSON.parse(read('settings.json')).database).toBe('invented');
-  expect(read('results/01-tables-and-columns.tsv').split('\n')[0]).toMatch(/^# Run on the invented hospital into Schemalyser /);
+  expect(read(entries.find((e) => e.payload.name === 'tables-and-columns')!.payload.result!).split('\n')[0]).toMatch(/^# Run on the invented hospital into Schemalyser /);
   expect(JSON.parse(read('counts/judgements.json')).counts.coverage_by_year.note).toBe('Most anaesthetics have no patient.');
   const answers = read('confirmations.csv').trim().split('\n').slice(1);
   expect(answers.filter((line) => line.startsWith('role_patient.is_test,'))).toHaveLength(1);

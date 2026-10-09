@@ -132,8 +132,8 @@ def test_step_5_a_list_of_codes_and_the_counts_run_on_it_and_read_back_as_pastes
         assert receipt["rows"] >= 1, query["name"]
     assert {"map_arterial", "map_cuff"} <= {row[0] for row in s.counts["readings_by_kind"]["rows"]}
     journal = json.loads(s.folder_files(date=DATE)["journal.json"])["entries"]
-    run = [e for e in journal if e.get("pasted")]
-    assert run and all(e["from"] == "invented hospital" for e in run)
+    run = [e for e in journal if e["kind"] == "result returned"]
+    assert run and all(e["payload"]["from"] == "invented hospital" and e["actor"] == "Schemalyser" for e in run)
 
 
 def test_a_values_query_and_a_test_query_run_on_it(invented):

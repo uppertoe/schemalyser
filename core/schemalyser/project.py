@@ -14,7 +14,7 @@ import re
 import shutil
 from pathlib import Path
 
-from .. import audit, feasibility
+from . import audit, feasibility
 
 SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 FOLDERS = ("schemas", "questions", "audits", "runs")
@@ -93,10 +93,19 @@ class Project:
         temporary = self.tmp / f"upload-{name}"
         temporary.write_bytes(data)
         try:
-            feasibility.Schema.load(temporary)
+            schema = feasibility.Schema.load(temporary)
+            # Each save of a hospital schema is a version of its own, so a file of the same name that holds a different
+            # version is never overwritten.
+            if target.exists() and feasibility.Schema.load(target).schema_id != schema.schema_id:
+                raise ProjectError(f"The project already holds a different version of the hospital schema named {name}, "
+                                   "so the workbench has not replaced it. Save the new version under the name the page "
+                                   "gives it, which carries its version, then add it again.")
         except feasibility.FeasibilityError as error:
             temporary.unlink(missing_ok=True)
             raise ProjectError(str(error)) from None
+        except ProjectError:
+            temporary.unlink(missing_ok=True)
+            raise
         shutil.move(str(temporary), target)
         return name
 

@@ -51,6 +51,7 @@ from collections import Counter
 
 from . import propose, rolemap
 from .catalogue import NAME
+from .evidence import PERSON
 
 FORMS = ("column", "rows", "derived", "filter", "path", "pair", "window", "joined", "codes")
 DERIVED = ("flag", "scale", "date", "trim")
@@ -627,17 +628,19 @@ def apply(state, built, record):
         item = state.data["roles"][built["view"]]["rows"]
         item["says"] = built["sentence"]
         item["confirmation"] = record
+        item["provenance"] = PERSON
         return
     role = state.data["roles"][built["view"]]
     if built["form"] == "codes":
         held = dict((state.codes.get(built["about"]) or {}).get("chosen") or {})
         held.update(built["chosen"])
-        state.choose_codes(built["about"], held, record.get("date"))
+        state.choose_codes(built["about"], held, record.get("date"), actor=record.get("by"))
         item = role["columns"][built["column"]]
         item["says"] = built["sentence"]
         item["status"] = "person"
         item.pop("question", None)
         item["confirmation"] = record
+        item["provenance"] = PERSON
         return
     if built["form"] == "filter":
         binding = role["rows"]["binding"]
@@ -653,6 +656,7 @@ def apply(state, built, record):
     item["status"] = "person"
     item.pop("question", None)
     item["confirmation"] = record
+    item["provenance"] = PERSON
 
 
 # The shadow: invented rows of every role, written into tables shaped as the map's bindings name them.

@@ -161,6 +161,11 @@ export const describeStrings = {
   tablesLabel: "The vendor's file of tables, if the team can export one, with one row for each table:",
   tablesAbout:
     "This optional file comes from the same export. It gives each table's description and the column that identifies its rows, which help the page choose the right table and find how the tables link.",
+  referenceLabel: "A reference conversion's lineage, if the team has one:",
+  referenceAbout:
+    "This optional file is the lineage that the compare tool writes from another hospital's conversion to OMOP, which the page reads as further evidence beside the dictionary, and it stays in this browser and in the saved hospital schema.",
+  referenceReceipt: (r: { file: string; targets: number }) =>
+    `The page has also read the reference conversion's lineage, which covers ${plural(r.targets, 'OMOP table', 'OMOP tables')}.`,
   headingsSummary: 'If the page cannot find the headings',
   headingsWhat:
     'The page looks for the usual headings, such as TABLE_NAME, COLUMN_NAME and DESCRIPTION. If the file uses others, the clinician writes them here exactly as they appear in its first row and leaves the rest empty.',
@@ -265,6 +270,11 @@ export const describeStrings = {
     name: { high: 'high confidence, as the names match', medium: 'medium confidence, as the names match', low: 'low confidence, as only the names match' },
     key: { high: "high confidence, as this column identifies the part's rows", medium: "medium confidence, as this column identifies the part's rows", low: "low confidence, as this column identifies the part's rows" },
     link: { high: 'high confidence, as the column names match', medium: 'medium confidence, as the column names match', low: 'low confidence, as the link may repeat rows' },
+    reference: {
+      high: 'high confidence, as a conversion at another hospital reads this column',
+      medium: 'medium confidence, as a conversion at another hospital reads this column',
+      low: "low confidence, as only a conversion at another hospital reads this column and the dictionary's words do not match",
+    },
   } as Record<string, Record<string, string>>,
   reasonLabel: 'Why the page proposed it:',
   alternativesLabel: 'Other columns that came close',
@@ -498,8 +508,10 @@ export const describeStrings = {
   writeSaveNote: "The clinician keeps the file on the hospital's own storage, because it holds the hospital's data dictionary.",
   // The receipt of a save names the state of readiness that the parts every audit reads have reached.
   saved: (draft: string, reached: string | null = 'runs') =>
-    `The page has saved the hospital schema${draft ? ` as a draft (${draft})` : ''}. ${
-      reached === 'checked against the database'
+    `The page has saved a new version of the hospital schema${draft ? ` as a draft (${draft})` : ''}. ${
+      reached === 'clinically validated'
+        ? 'The parts that every audit reads are clinically validated, the third of the three states, by a reconciliation against the clinical record that was entered through the evidence import.'
+        : reached === 'checked against the database'
         ? 'The parts that every audit reads are checked against the database, the second of the three states. None is clinically validated, because only a reconciliation against the clinical record can establish that.'
         : reached === 'runs'
           ? 'The parts that every audit reads run on made-up rows, the first of the three states, and have not yet been checked against the database.'
@@ -507,7 +519,7 @@ export const describeStrings = {
     } Keep the file on the hospital's own storage.`,
   // Where step 9 begins: the three states of readiness, once.
   readiness:
-    "The saved file records how far each part of the hospital schema has been checked, in three states. A part runs once it compiles and runs on made-up rows, and it is checked against the database once the counts that read it have been run on the hospital's database and the clinician has judged them to look right. The file records the coverage that the counts measured beside that judgement and keeps the two apart, because a count can look right and still reach too few anaesthetics. A part is clinically validated only once someone has reconciled a sample of anaesthetics against the clinical record, which the page cannot do, so the page never records that state.",
+    "The saved file records the evidence for each part of the hospital schema, and Schemalyser works out from that evidence how far each part has been checked, in three states. A part runs once it compiles and runs on made-up rows, and it is checked against the database once the counts that read it have been run on the hospital's database and the clinician has judged them to look right. The file records the coverage that the counts measured beside that judgement and keeps the two apart, because a count can look right and still reach too few anaesthetics. A part is clinically validated only once someone has reconciled a sample of anaesthetics against the clinical record and the result has been entered through the evidence import, which this page does not do. Each save is a new version, and its file name carries the version's identifier.",
   // The time zone of the database's clocks, asked once before the save.
   timeZoneLegend: "The time zone of the hospital's database",
   timeZoneWhy:

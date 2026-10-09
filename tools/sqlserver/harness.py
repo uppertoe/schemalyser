@@ -65,7 +65,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "core"))
 sys.path.insert(0, str(ROOT / "fixtures"))
 
-from schemalyser import convert, harness, release, target  # noqa: E402
+from schemalyser import convert, harness, release, sample_vocabulary, target  # noqa: E402
 from schemalyser.catalogue import QUERY_ORDER  # noqa: E402
 from schemalyser.checks import LAYOUT, Checks, ChecksError  # noqa: E402
 from schemalyser.extract import decode  # noqa: E402
@@ -922,24 +922,6 @@ def compare_checks(server_text, duck_rows):
             "only_duckdb": list(only_duck.elements()), "only_sqlserver": list(only_server.elements())}
 
 
-def sample_vocabulary(folder):
-    """Writes a few concepts from the public OMOP vocabulary, so that the derived mappings can be exercised."""
-    concept = ["concept_id\tconcept_name\tdomain_id\tvocabulary_id\tconcept_class_id\tstandard_concept\tconcept_code\tvalid_start_date\tvalid_end_date\tinvalid_reason",
-               "753626\tpropofol\tDrug\tRxNorm\tIngredient\tS\t8782\t19700101\t20991231\t",
-               "1125315\tacetaminophen\tDrug\tRxNorm\tIngredient\tS\t161\t19700101\t20991231\t",
-               "4070719\tTonsillectomy\tProcedure\tSNOMED\tProcedure\tS\t173422009\t19700101\t20991231\t",
-               "45542411\tUmbilical hernia without obstruction or gangrene\tCondition\tICD10\tICD10 code\t\tK42.9\t19700101\t20991231\t",
-               "4245842\tUmbilical hernia\tCondition\tSNOMED\tDisorder\tS\t396347007\t19700101\t20991231\t"]
-    relationship = ["concept_id_1\tconcept_id_2\trelationship_id\tvalid_start_date\tvalid_end_date\tinvalid_reason",
-                    "45542411\t4245842\tMaps to\t19700101\t20991231\t"]
-    synonym = ["concept_id\tconcept_synonym_name\tlanguage_concept_id", "1125315\tparacetamol\t4180186"]
-    folder.mkdir(parents=True, exist_ok=True)
-    (folder / "CONCEPT.csv").write_text("\n".join(concept) + "\n")
-    (folder / "CONCEPT_RELATIONSHIP.csv").write_text("\n".join(relationship) + "\n")
-    (folder / "CONCEPT_SYNONYM.csv").write_text("\n".join(synonym) + "\n")
-    return folder
-
-
 # The report.
 
 def _show(row, names):
@@ -986,7 +968,7 @@ def main():
         world = make_checks.WORLD
     vocabulary = args.vocabulary
     if args.sample_vocabulary:
-        vocabulary = sample_vocabulary(server.local / "vocabulary")
+        vocabulary = sample_vocabulary.write(server.local / "vocabulary")
 
     version = server.scalar("SELECT CONCAT(CAST(SERVERPROPERTY('Edition') AS nvarchar(200)), N', version ', "
                             "CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(50)));")

@@ -19,7 +19,7 @@ from starlette.staticfiles import StaticFiles
 
 from .. import audit, feasibility, rolemap, testbed
 from . import jobs
-from .project import Project, ProjectError, read_json, safe_name
+from ..project import Project, ProjectError, read_json, safe_name
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]

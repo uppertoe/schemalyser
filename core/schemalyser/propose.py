@@ -21,6 +21,14 @@ ranking that gives the same answer every time:
     6. The view's table is the one with the best sum: its own description's score, the best score of each of the
        view's columns within its reach, and whether it has a key of one column for a view that needs one.
 
+    7. A reference. Where the proposer is given the lineage of a conversion written at another hospital (compare.py),
+       each column that the lineage reads for an OMOP table onto which a view projects (the view's omop tables in
+       contract.json) becomes a candidate for a column of the view whose meaning the OMOP field shares: a start time
+       for a field that starts, a code for a source value, a flag for a column that a filter tests. It ranks after
+       every candidate that the dictionary's own words fit, and leads only where none fits, with low confidence. A link
+       gains as candidates the columns that the lineage joins to the other role's key. A proposal that rests on the
+       reference says so in its evidence, and records "a reference conversion" under proposed_from.
+
 Each proposal gives the top few candidates, the dictionary's words that matched, and a confidence (high, medium or
 low). Where no candidate has at least two of the role's words or one of its phrases, of a type that suits, the
 proposal says that nothing fits and the view gives the column empty.
@@ -44,8 +52,9 @@ from collections import Counter, defaultdict
 from functools import lru_cache
 from pathlib import Path
 
-from . import rolemap
+from . import normalise, rolemap
 from .catalogue import NAME
+from .evidence import INFERENCE, PERSON
 from .extract import decode
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -89,6 +98,24 @@ QUOTE = 160                     # how many characters of a description a sentenc
 # The words, after their endings are taken off, of a table that keeps old or deleted copies of rows rather than the
 # record itself, such as a table of edited values or an audit trail.
 COPIES = {"edit", "audit", "original", "delet"}
+# Where a proposal came from when it rests on a reference conversion's lineage rather than on the dictionary.
+REFERENCE = "a reference conversion"
+# What a candidate from the reference scores for each word of meaning that it shares with the role's column, and what a
+# link from the reference's joins scores, below a link by the same name.
+REFERENCE_SCORE = 0.5
+REFERENCE_LINK = 0.6
+SHOWN_REFERENCE = 2
+# The words of a role column's name, after their endings are taken off, that say when something starts or stops, in the
+# words of OMOP's fields, and the patient as OMOP's person.
+REFERENCE_WORDS = {"plac": "start", "insert": "start", "admission": "start", "enter": "start", "given": "start",
+                   "taken": "start", "read": "start", "event": "start", "written": "start", "found": "start",
+                   "record": "start", "remov": "stop", "discharg": "stop", "left": "stop", "patient": "person"}
+WHEN_WORDS = {"start", "stop", "birth", "death"}
+# Words that every field shares, which say nothing of its meaning.
+GENERIC_WORDS = {"identifier", "concept", "source", "type", "date", "time"}
+# The source values that identify a row of another OMOP table, which are keys and not codes.
+KEY_SOURCE_VALUES = {"person_source_value", "visit_source_value", "visit_detail_source_value", "provider_source_value",
+                     "care_site_source_value", "location_source_value"}
 
 WORDING = {
     "description": "Schemalyser proposed this draft map from a data dictionary on {date}, and no person has yet confirmed any of its bindings.",
@@ -105,6 +132,9 @@ WORDING = {
     "link_says_quote": "{table}.{column} has the same name as {target}, the column that identifies a row of {role}, and the page reaches it {how}; the dictionary describes {first} as \"{quote}\".",
     "reverse_says": "{table}.{column} is the column that identifies a row of {role}, and the page reaches it {how}. That last link runs from the other side, so a row is repeated wherever one row of {other} has more than one row of {table}.",
     "column_question": "Please confirm whether {table}.{column} holds {about}, and name the column that holds it if it does not.",
+    "reference_field_says": "A conversion at another hospital reads this table for {target}, and fills {field} from {table}.{column}.",
+    "reference_filter_says": "A conversion at another hospital reads this table for {target}, and tests {table}.{column} to choose its rows.",
+    "reference_link_says": "A conversion at another hospital reads this table for {target}, and joins {table}.{column} to {other}.",
     "nothing_says": "The dictionary holds no column within reach of {table} that fits {about}, so the page leaves it empty.",
     "nothing_question": "Please name the table and column that hold {about}, or say that the hospital does not record it.",
     "no_rows_says": "The dictionary holds no table that fits {view}, so the proposer has not drafted it.",
@@ -115,6 +145,7 @@ WORDING = {
     "header_nothing": "-- The dictionary holds no column that fits {columns}, so this part gives {them} empty.",
     "header_vocabulary": "-- The hospital's codes in {columns} are not yet translated into the kinds the page knows or into 1 and 0, so this part gives a kind as other and a flag as empty until a person translates them.",
     "header_codes": "-- The hospital's codes of the mean pressures are not yet chosen, so every reading is of the kind other until a person chooses them.",
+    "header_normalised": "-- The hospital schema records {columns} as {named} ({names}), with {its} route, assumptions and tests, and this part reads {them} from there.",
     "header_person": "-- A person has answered for some of its columns, and the saved hospital schema records each answer with its date.",
     "via_one": "by matching {path}",
     "in_table": "in the table that holds this part",
@@ -135,6 +166,7 @@ WORDING = {
     "replacement_rows": "{where}: a different table for the rows changes every binding of the view, so please run propose again with --base {view}=TABLE.",
     "unreachable": "{where}: the table that holds this part does not reach {table} by any link the map knows, so please write the link as via TABLE.COLUMN = TABLE.COLUMN.",
     "hand_written": "{where}: this binding was written by hand and carries no binding data, so confirm can record yes or not sure for it but cannot change its SQL.",
+    "reference_unreadable": "Schemalyser could not read this file as a lineage, which python -m schemalyser.compare reference writes.",
     "confirmations_headings": "The file of confirmations needs the headings attribute and answer, and may add replacement, by, date and note.",
 }
 
@@ -468,12 +500,46 @@ def _confidence(score, runner_up, phrase, factor, matched):
 class Proposer:
     """Proposes a draft map for a role model from a dictionary that is already restricted to the catalogue."""
 
-    def __init__(self, dictionary, model=None):
+    def __init__(self, dictionary, model=None, reference=None):
+        """reference, when given, is a lineage of a reference conversion as compare.lineage gives it."""
         self.dictionary = dictionary
         self.model = model or rolemap.contract()
         self.index = _Index(dictionary)
         self.graph = _Graph(dictionary)
         self._scores, self._pools = {}, {}
+        self.reference = _Reference(reference, dictionary) if reference else None
+
+    def _reference_candidates(self, base, view, column):
+        """The columns that the reference reads for the view's OMOP tables and that share the column's meaning, within
+        base's reach, as candidates ranked by the meaning they share and how far away they lie."""
+        if self.reference is None or column["type"] == "key" or column["name"] in self._links(view):
+            return []
+        reach = self.graph.reach(base)
+        found = {}
+        for target in view.get("omop") or []:
+            for table, name, field, how in self.reference.columns(target):
+                held = reach.get(table.upper())
+                if held is None:
+                    continue
+                share = _shared_meaning(column, field, how, name)
+                if not share:
+                    continue
+                entry = self.dictionary.table(table).column(name)
+                factor = type_factor(column["type"], entry.data_type, entry.name)
+                if factor < 1.0:
+                    continue
+                score = REFERENCE_SCORE * share * held[0] * factor
+                key = (table.upper(), name.upper())
+                if key in found and found[key]["score"] >= score:
+                    continue
+                if how == "filter":
+                    says = WORDING["reference_filter_says"].format(target=target.upper(), table=table, column=entry.name)
+                else:
+                    says = WORDING["reference_field_says"].format(target=target.upper(), field=field, table=table, column=entry.name)
+                found[key] = {"table": self.dictionary.table(table).name, "column": entry.name, "path": held[1],
+                              "data_type": entry.data_type, "score": score, "matched": set(), "phrase": False,
+                              "factor": factor, "reference": says}
+        return sorted(found.values(), key=lambda c: (-c["score"], len(c["path"]), c["table"], c["column"]))
 
     # One column of a view, in a given base table's reach.
 
@@ -535,6 +601,23 @@ class Proposer:
                     found.append({"table": table.name, "column": entry.name, "path": path, "data_type": entry.data_type,
                                   "score": strength * factor, "exact": entry.name.upper() == target_column.upper(),
                                   "matched": set(), "phrase": False, "factor": 1.0})
+        if self.reference is not None:
+            held = {(c["table"].upper(), c["column"].upper()) for c in found}
+            for (table, name), (other, target_name) in self.reference.joined(target_table, target_column):
+                at = reach.get(table.upper())
+                if at is None or (table.upper(), name.upper()) in held:
+                    continue
+                factor, path = at
+                if path and path[-1][3].upper() == name.upper():
+                    continue
+                entry = self.dictionary.table(table).column(name)
+                held.add((table.upper(), name.upper()))
+                found.append({"table": self.dictionary.table(table).name, "column": entry.name, "path": path,
+                              "data_type": entry.data_type, "score": REFERENCE_LINK * factor, "exact": False,
+                              "matched": set(), "phrase": False, "factor": 1.0,
+                              "reference": WORDING["reference_link_says"].format(
+                                  target=target_name.upper(), table=self.dictionary.table(table).name, column=entry.name,
+                                  other=f"{target_table}.{target_column}")})
         if not found:
             # The other role's table may point at a table in reach, as an anaesthetic record points at its theatre case.
             # Such a join is one to many in principle, so it is offered last and with low confidence.
@@ -598,20 +681,35 @@ class Proposer:
                 found = self._link_candidates(base, target, self._avoid(role, bound))
                 if found:
                     best = found[0]
-                    confidence = "low" if best.get("reverse") else "high" if best["exact"] and len(best["path"]) <= 1 \
-                        else "medium" if best["exact"] else "low"
+                    confidence = "low" if best.get("reverse") or best.get("reference") else \
+                        "high" if best["exact"] and len(best["path"]) <= 1 else "medium" if best["exact"] else "low"
                     return {"best": best, "candidates": found[1:1 + SHOWN], "confidence": confidence, "link": (role, key, target)}
             ranked = self._candidates(base, view, column)
             return {"best": None, "candidates": ranked[:SHOWN], "confidence": "none", "link": (role, key, target)}
         ranked = self._candidates(base, view, column)
         own = set(name_words(column["name"]))
         fitting = [c for c in ranked if _fits(c, own)]
+        # The reference's candidates rank after every candidate that the dictionary's words fit, and lead only where
+        # none fits.
+        referred = self._reference_candidates(base, view, column)
         if not fitting:
+            if referred:
+                best = referred[0]
+                rest = [c for c in referred[1:1 + SHOWN_REFERENCE]] + \
+                       [c for c in ranked if (c["table"], c["column"]) != (best["table"], best["column"])]
+                return {"best": best, "candidates": rest[:SHOWN], "confidence": "low"}
             return {"best": None, "candidates": ranked[:SHOWN], "confidence": "none"}
         best = fitting[0]
         others = [c for c in fitting[1:] if c["column"].upper() != best["column"].upper()]
         runner_up = others[0]["score"] if others else 0
-        return {"best": best, "candidates": [c for c in fitting[1:]][:SHOWN],
+        shown = [c for c in fitting[1:]][:SHOWN]
+        # A listed candidate that the reference also reads keeps its rank and gains the reference's sentence.
+        by_key = {(c["table"].upper(), c["column"].upper()): c["reference"] for c in referred}
+        shown = [dict(c, reference=by_key[(c["table"].upper(), c["column"].upper())])
+                 if (c["table"].upper(), c["column"].upper()) in by_key else c for c in shown]
+        named = {(c["table"].upper(), c["column"].upper()) for c in [best] + shown}
+        shown += [c for c in referred if (c["table"].upper(), c["column"].upper()) not in named][:SHOWN_REFERENCE]
+        return {"best": best, "candidates": shown,
                 "confidence": _confidence(best["score"], runner_up, best["phrase"], best["factor"], best["matched"])}
 
     # The table of a view's rows.
@@ -728,6 +826,103 @@ class Proposer:
         return {name: found[name] for name in views}
 
 
+# A reference conversion's lineage.
+
+def _when(words_):
+    """The words of meaning of a time: start, stop, birth or death, with start where a time names none."""
+    found = {REFERENCE_WORDS.get(w, w) for w in words_} & WHEN_WORDS
+    return found or {"start"}
+
+
+def _field_words(field):
+    return {REFERENCE_WORDS.get(w, w) for w in name_words(field.replace("datetime", "date_time"))}
+
+
+def _shared_meaning(column, field, how, name):
+    """How much of its meaning a role's column shares with an OMOP field that a reference fills from a column, or with
+    a column that its filter tests: 0 for nothing, and otherwise the number of words of meaning shared, at least 1."""
+    kind = column["type"]
+    own = {REFERENCE_WORDS.get(w, w) for w in name_words(column["name"])}
+    if how == "filter":
+        if kind not in ("flag", "flag_or_empty"):
+            return 0
+        shared = (own - GENERIC_WORDS - {"is", "flag"}) & set(name_words(name))
+        return len(shared)
+    if kind in ("flag", "flag_or_empty"):
+        return 0
+    words_ = _field_words(field)
+    if kind in ("date", "datetime"):
+        if not (field.endswith("_date") or field.endswith("_datetime")):
+            return 0
+        return 2 if _when(own) == _when(words_) else 0
+    if field.endswith("_date") or field.endswith("_datetime") or field.endswith("_id") and not field.endswith("_concept_id"):
+        return 0
+    shared = len((own - GENERIC_WORDS) & words_)
+    if kind == "kind":
+        return 1 + shared if field.endswith("_source_value") and field not in KEY_SOURCE_VALUES else 0
+    if kind in ("number", "whole"):
+        return 1 + shared if field in ("value_as_number", "quantity") or field.endswith("_as_number") or shared else 0
+    if field.endswith("_source_value") and field not in KEY_SOURCE_VALUES:
+        return shared
+    return 0
+
+
+def read_reference(data):
+    """A reference conversion's lineage from the bytes or text of its file, checked to be one. Raises ProposeError."""
+    try:
+        text = data.decode("utf-8-sig") if isinstance(data, (bytes, bytearray)) else str(data)
+        lineage = json.loads(text)
+    except (UnicodeDecodeError, ValueError):
+        raise ProposeError(WORDING["reference_unreadable"]) from None
+    if not isinstance(lineage, dict) or lineage.get("format") != "schemalyser-lineage/1" or not isinstance(lineage.get("targets"), dict):
+        raise ProposeError(WORDING["reference_unreadable"])
+    return lineage
+
+
+class _Reference:
+    """A reference conversion's lineage, held by what each OMOP table reads: [(table, column, field, how)], where how
+    is field or filter, and the pairs of columns that its joins match, each in the dictionary's spelling."""
+
+    def __init__(self, lineage, dictionary):
+        self.dictionary = dictionary
+        self._columns, self._joins = {}, []
+        for target, entry in ((lineage or {}).get("targets") or {}).items():
+            held = self._columns.setdefault(target.lower(), [])
+            for field, item in sorted((entry.get("fields") or {}).items()):
+                for name in item.get("columns") or []:
+                    found = self._known(name)
+                    if found:
+                        held.append((*found, field, "field"))
+            for item in entry.get("filters") or []:
+                for name in item.get("columns") or []:
+                    found = self._known(name)
+                    if found:
+                        held.append((*found, "", "filter"))
+            for join in entry.get("joins") or []:
+                for a, b in join.get("on") or []:
+                    left, right = self._known(a), self._known(b)
+                    if left and right:
+                        self._joins.append((left, right, target.lower()))
+
+    def _known(self, name):
+        table, _, column = str(name).partition(".")
+        held = self.dictionary.table(table) if column and table.isupper() else None
+        entry = held.column(column) if held is not None else None
+        return (held.name, entry.name) if entry is not None else None
+
+    def columns(self, target):
+        return self._columns.get(target, [])
+
+    def joined(self, table, column):
+        """The columns that the reference joins to table.column, as [((table, column), (table.column, target))]."""
+        found, key = [], (table.upper(), column.upper())
+        for left, right, target in self._joins:
+            for here, there in ((left, right), (right, left)):
+                if (there[0].upper(), there[1].upper()) == key and here[0].upper() != key[0]:
+                    found.append((here, (f"{there[0]}.{there[1]}", target)))
+        return found
+
+
 # Wording of the evidence.
 
 def _quote(text, limit=QUOTE):
@@ -790,6 +985,8 @@ def _from_text(candidate):
 
 def _column_says(dictionary, candidate, view_name, column_name, link=None):
     table, column = candidate["table"], candidate["column"]
+    if candidate.get("reference"):
+        return candidate["reference"]
     description = dictionary.description(table, column)
     if candidate.get("own_key") and candidate.get("derive"):
         named = [f"{table}.{other}" for other in candidate["derive"]["with"]] + [f"{table}.{column}"]
@@ -835,6 +1032,8 @@ def _candidate_entry(dictionary, candidate):
     entry = {"from": _from_text(candidate)}
     if description:
         entry["words"] = _quote(description) + "."
+    if candidate.get("reference"):
+        entry["reference"] = candidate["reference"]
     return entry
 
 
@@ -873,7 +1072,7 @@ def draft(proposal, dictionary, model=None, date=None, world="the hospital"):
         evidence = {"status": "proposed", "from": table, "says": says,
                     "question": WORDING["rows_question"].format(table=table, what=what),
                     "binding": {"table": table}, "confidence": rows["confidence"],
-                    "candidates": [{"from": t} for t in rows["candidates"]]}
+                    "candidates": [{"from": t} for t in rows["candidates"]], "provenance": INFERENCE}
         columns = {}
         for column in view["columns"]:
             item = found["columns"][column["name"]]
@@ -884,14 +1083,17 @@ def draft(proposal, dictionary, model=None, date=None, world="the hospital"):
                     "status": "proposed", "from": "nothing in the dictionary fits",
                     "says": WORDING["nothing_says"].format(table=table, about=rolemap.plain_about(f"{name}.{column['name']}")),
                     "question": WORDING["nothing_question"].format(about=rolemap.plain_about(f"{name}.{column['name']}")),
-                    "binding": None, "confidence": "none", "candidates": candidates}
+                    "binding": None, "confidence": "none", "candidates": candidates, "provenance": INFERENCE}
                 continue
             columns[column["name"]] = {
                 "status": "proposed", "from": _from_text(best),
                 "says": _column_says(dictionary, best, name, column["name"], item.get("link")),
                 "question": WORDING["column_question"].format(table=best["table"], column=best["column"],
                                                               about=rolemap.plain_about(f"{name}.{column['name']}")),
-                "binding": _binding(best), "confidence": item["confidence"], "candidates": candidates}
+                "binding": _binding(best), "confidence": item["confidence"], "candidates": candidates,
+                "provenance": REFERENCE if best.get("reference") else INFERENCE}
+            if best.get("reference"):
+                columns[column["name"]]["proposed_from"] = REFERENCE
         roles[name] = {"file": f"{name}.sql", "rows": evidence, "columns": columns}
     kind_source = roles["role_reading"]["columns"]["kind"]["from"] if "role_reading" in roles else "the readings"
     kind_source = kind_source.split(",")[0]
@@ -901,7 +1103,7 @@ def draft(proposal, dictionary, model=None, date=None, world="the hospital"):
         meaning = meanings[kind][0].lower() + meanings[kind][1:]
         kinds[kind] = {"codes": [], "status": "proposed", "from": kind_source,
                        "says": WORDING["kind_says"].format(kind=kind),
-                       "question": WORDING["kind_question"].format(source=kind_source, meaning=meaning)}
+                       "question": WORDING["kind_question"].format(source=kind_source, meaning=meaning), "provenance": INFERENCE}
     return {"world": world, "description": WORDING["description"].format(date=date), "roles": roles, "kinds": kinds}
 
 
@@ -1093,7 +1295,7 @@ def view_sql(name, role, kinds=None, model=None, vocabularies=None):
     view = next(v for v in model["views"] if v["name"] == name)
     base = role["rows"]["binding"]["table"]
     aliases, joins = {(): "t0"}, []
-    lines, nothing, vocabulary = [], [], []
+    lines, nothing, vocabulary, normalised = [], [], [], []
     links = {link["column"] for link in view.get("links", [])}
     anchor = None
     refs, windows = {}, []
@@ -1107,6 +1309,8 @@ def view_sql(name, role, kinds=None, model=None, vocabularies=None):
         alias, _ = walk(binding["path"], aliases, joins)
         ref = f"{alias}.{_name(binding['column'])}"
         refs[column["name"]] = ref
+        if normalise.qualifies(binding):
+            normalised.append((rolemap.column_title(name, column["name"]), normalise.name_of(name, column["name"])))
         if binding.get("window"):
             # A link by a shared key and a time window waits until every other column is placed, because its join
             # reads the time of the row.
@@ -1148,6 +1352,11 @@ def view_sql(name, role, kinds=None, model=None, vocabularies=None):
         header.append(WORDING["header_none"])
     if nothing:
         header.append(WORDING["header_nothing"].format(columns=_and(nothing), them="it" if len(nothing) == 1 else "them"))
+    if normalised:
+        many = len(normalised) > 1
+        header.append(WORDING["header_normalised"].format(
+            columns=_and([f"the {c.removeprefix('the ')}" for c, _ in normalised]), named="named normalisations" if many else "a named normalisation",
+            names=", ".join(n for _, n in normalised), its="their" if many else "its", them="them" if many else "it"))
     if vocabulary:
         header.append(WORDING["header_vocabulary"].format(columns=_and(vocabulary)))
     if name == "role_reading" and not any((kinds or {}).get(k, {}).get("codes") for k in rolemap.MEAN_KINDS):
@@ -1189,15 +1398,18 @@ def write(data, folder, date, invented=False, model=None):
         role["_date"] = date
         (folder / f"{name}.sql").write_text(view_sql(name, role, data["kinds"], model), encoding="utf-8")
         role.pop("_date")
-    (folder / rolemap.MAP_FILE).write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    (folder / rolemap.MAP_FILE).write_text(json.dumps(normalise.lift(data, model), indent=2, ensure_ascii=False) + "\n",
+                                          encoding="utf-8")
 
 
-def propose_map(dictionary, catalogue, out, model=None, date=None, world="the hospital", bases=None, invented=False):
+def propose_map(dictionary, catalogue, out, model=None, date=None, world="the hospital", bases=None, invented=False,
+                reference=None):
     """The whole proposal: restricts the dictionary to the catalogue, proposes, writes the draft map to out and reads
-    it back with the map checker. Returns (proposal, checked map, number of dictionary columns that the catalogue
-    lacks)."""
+    it back with the map checker. reference, when given, is a reference conversion's lineage, whose columns become
+    candidates beside the dictionary's (see Proposer). Returns (proposal, checked map, number of dictionary columns
+    that the catalogue lacks)."""
     restricted = dictionary.restricted_to(catalogue)
-    proposer = Proposer(restricted, model)
+    proposer = Proposer(restricted, model, reference)
     proposal = proposer.propose(bases)
     date = date or dt.date.today().isoformat()
     data = draft(proposal, restricted, model, date, world)
@@ -1297,6 +1509,8 @@ def confirm(folder, confirmations, catalogue=None, dictionary=None, today=None, 
                 record["replacement"] = ", ".join(item["codes"])
             _settle(item, answer, row["replacement"])
             item["confirmation"] = record
+            if answer != "not sure":
+                item["provenance"] = PERSON
             changed.add("role_reading")
             counts[answer] += 1
             continue
@@ -1350,7 +1564,11 @@ def confirm(folder, confirmations, catalogue=None, dictionary=None, today=None, 
                 item["says"] = WORDING["no_says"].format(date=date)
             changed.add(view)
         _settle(item, answer, row["replacement"])
+        if item.get("proposed_from"):
+            record["proposed_from"] = item["proposed_from"]
         item["confirmation"] = record
+        if answer != "not sure":
+            item["provenance"] = PERSON
         counts[answer] += 1
     for name, role in data["roles"].items():
         if name in changed:
@@ -1359,7 +1577,8 @@ def confirm(folder, confirmations, catalogue=None, dictionary=None, today=None, 
             role["_date"] = _proposed_on(data)
             (folder / role["file"]).write_text(view_sql(name, role, data["kinds"], model), encoding="utf-8")
             role.pop("_date")
-    (folder / rolemap.MAP_FILE).write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    (folder / rolemap.MAP_FILE).write_text(json.dumps(normalise.lift(data, model), indent=2, ensure_ascii=False) + "\n",
+                                          encoding="utf-8")
     return counts, rolemap.read_map(folder, catalogue)
 
 

@@ -45,7 +45,7 @@ def saved(tmp_path_factory):
             s.read_count(query["name"], COUNTS[query["name"]], DATE)
             s.judge_count(query["name"], "yes", "", DATE)
     path = tmp_path_factory.mktemp("schema") / "hospital-schema.schemalyser.zip"
-    path.write_bytes(s.folder_zip(DATE))
+    path.write_bytes(s.save_zip(DATE))
     return path
 
 

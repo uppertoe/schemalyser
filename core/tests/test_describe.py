@@ -196,19 +196,23 @@ def test_the_saved_schema_records_everything_and_a_new_sitting_restores_and_chec
     assert {"settings.json", "journal.json", "confirmations.csv", "README.md", "map/map.json", "map/role_patient.sql",
             "codes/role_reading.kind.json", "counts/judgements.json", "dictionary/invented-dictionary.csv"} <= names
     assert "must stay on the hospital's own storage" in files["README.md"].decode()
-    queries = sorted(n for n in names if n.startswith("queries/"))
-    assert queries[0] == "queries/01-tables-and-columns.sql"
-    assert {n.replace("queries/", "results/").replace(".sql", ".tsv") for n in queries} == {n for n in names if n.startswith("results/")}
+    # Each query and result is a file that its entry in the journal names, numbered by that entry.
     journal = json.loads(files["journal.json"])
-    assert journal["version"] == "test" and journal["entries"][0]["name"] == "dictionary"
-    assert journal["entries"][0]["sha256"] and "description" not in json.dumps(journal["entries"][0]).lower()
-    assert all(e.get("database") == "training" for e in journal["entries"][1:] if e["name"].startswith("count-"))
+    entries = journal["entries"]
+    offered = [e["payload"]["query"] for e in entries if e["kind"] == "query offered"]
+    returned = [e["payload"]["result"] for e in entries if e["kind"] == "result returned" and e["payload"].get("result")]
+    assert offered[0].endswith("-tables-and-columns.sql") and set(offered) == {n for n in names if n.startswith("queries/")}
+    assert set(returned) == {n for n in names if n.startswith("results/")}
+    assert journal["version"] == "test" and entries[0]["kind"] == "dictionary loaded"
+    assert entries[0]["payload"]["sha256"] and "description" not in json.dumps(entries[0]).lower()
+    assert all(e["payload"]["database"] == "training" for e in entries
+               if e["kind"] == "result returned" and e["payload"]["name"].startswith("count-"))
     # The year that the lists and counts used is saved, the judgement says which database it was made on, and the README
     # lists each query run on a training database, to be run again on production.
     assert json.loads(files["settings.json"])["year"] is not None
     assert json.loads(files["counts/judgements.json"])["counts"]["coverage_by_year"]["database"] == "training"
     readme = files["README.md"].decode()
-    assert "## Queries to run again on production" in readme and "count-coverage_by_year.sql`" in readme
+    assert "## Queries to run again on production" in readme and "-count-coverage_by_year.sql`" in readme
     rows = list(csv.DictReader(io.StringIO(files["confirmations.csv"].decode())))
     assert [r["attribute"] for r in rows][:2] == ["role_patient.birth_date", "role_patient rows"]
     # Every file names the tool's version and the date, except map.json, whose format is fixed and which gives the
@@ -219,6 +223,8 @@ def test_the_saved_schema_records_everything_and_a_new_sitting_restores_and_chec
             continue
         if name == "map/map.json":
             assert DATE in json.loads(text)["description"]
+        elif name == "settings.json":
+            assert json.loads(text)["version"] == "test" and json.loads(text)["written"] == DATE
         elif name.endswith(".json"):
             assert json.loads(text)["version"] == "test" and json.loads(text)["written"] == DATE
         elif name == "confirmations.csv":
@@ -241,6 +247,9 @@ def test_the_saved_schema_records_everything_and_a_new_sitting_restores_and_chec
     restored = again.restore(files)
     assert restored["map"] and restored["tables"] and restored["codes"] == 2 and restored["counts"] == 3
     assert again.tally() == sitting.tally() and again.data == sitting.data
+    # The journal and the dimensions are read back as they were recorded, and nothing is worked out again.
+    assert again.log.entries() == sitting.log.entries() and again.dimensions == sitting.dimensions
+    assert again.confirmations == sitting.confirmations
     chosen = lambda s: [(v["key"], v["chosen"], v["rows"], v["lookup"] if v["chosen"] else None) for v in s.view()["vocabularies"]]  # noqa: E731
     assert chosen(again) == chosen(sitting)
     checked = again.check()
@@ -283,7 +292,7 @@ def test_a_schema_made_with_the_invented_dictionary_says_so_everywhere_and_keeps
     assert files["README.md"].decode().split("\n", 1)[0] == first
     settings = json.loads(files["settings.json"])
     assert settings["invented"] and settings["dictionary"]["invented"]
-    assert json.loads(files["journal.json"])["entries"][0]["invented"]
+    assert json.loads(files["journal.json"])["entries"][0]["payload"]["invented"]
     again = describe.Describe()
     again.restore(files)
     assert again.invented and again.folder_files(date=DATE)["README.md"].decode().startswith(first)
@@ -488,11 +497,15 @@ def test_the_vendor_s_descriptions_are_added_by_name_without_regard_to_case_and_
     assert s.view()["catalogue_source"] == "database"
     s.propose(date=DATE)
     files = s.folder_files(DATE)
-    assert {"dictionary/data-dictionary.csv", "dictionary/vendor.csv", "queries/01-data-dictionary.sql"} <= set(files)
+    assert {"dictionary/data-dictionary.csv", "dictionary/vendor.csv"} <= set(files)
+    assert any(n.startswith("queries/") and n.endswith("-data-dictionary.sql") for n in files)
     info = json.loads(files["dictionary/dictionary.json"])
     assert info["source"] == "database" and info["vendor"] == "vendor.csv"
-    entry = json.loads(files["journal.json"])["entries"][0]
-    assert entry["vendor_file"] == "vendor.csv" and entry["vendor_gained"] == 98 - before
+    # The vendor's descriptions are an entry of their own, appended after the dictionary's, which is never changed.
+    entries = json.loads(files["journal.json"])["entries"]
+    vendor = next(e for e in entries if e["kind"] == "vendor descriptions added")["payload"]
+    assert vendor["vendor_file"] == "vendor.csv" and vendor["vendor_gained"] == 98 - before
+    assert "vendor_file" not in entries[0]["payload"] and s.dictionary_entry["vendor_file"] == "vendor.csv"
     # A new sitting opens the saved schema with nothing else, and step 5 is answered again.
     again = describe.Describe()
     found = again.restore(files)
@@ -611,7 +624,9 @@ def test_each_count_records_its_measured_coverage_beside_the_judgement_and_kept_
     judged = json.loads(files["counts/judgements.json"])["counts"]
     assert judged["readings_by_kind"]["looks_right"] == "no" and judged["readings_by_kind"]["measured"]["figures"]["with_needed_kind"] == 75
     assert judged["coverage_by_year"]["looks_right"] == "yes" and judged["coverage_by_year"]["measured"]["figures"]["with_patient"] == 96
-    readiness = json.loads(files["settings.json"])["readiness"]
+    # The readiness is derived from the evidence whenever it is asked for, and never stored in the file.
+    assert "readiness" not in json.loads(files["settings.json"])
+    readiness = s.readiness()
     assert readiness["states"]["checked against the database"] == (
         "The counts that read the part have been run on the hospital's database, and the clinician judged them to look right.")
     assert readiness["measured"]["says"] == ("The counts measured that 96 per cent of anaesthetics have a patient, and that 75 per "
@@ -677,10 +692,10 @@ def test_results_from_the_invented_hospital_are_headed_as_such_and_the_database_
     s.tables_query("5")
     s.run_invented(invented, "tables-and-columns", "tables")
     files = s.folder_files(date=DATE)
-    result = files["results/01-tables-and-columns.tsv"].decode()
+    result = files[next(n for n in files if n.startswith("results/") and n.endswith("-tables-and-columns.tsv"))].decode()
     assert result.startswith("# Run on the invented hospital into Schemalyser test on ")
     assert "Pasted into" not in result
-    assert json.loads(files["journal.json"])["entries"][-1]["database"] == "invented"
+    assert json.loads(files["journal.json"])["entries"][-1]["payload"]["database"] == "invented"
     readme = files["README.md"].decode()
     assert "as the database analyst pasted it or as the invented hospital gave it" in readme
     assert "where the answer was no or where a Yes carried a translation" in readme
@@ -738,10 +753,16 @@ def test_the_saved_schema_names_the_state_each_part_has_reached_and_never_calls_
     s = fresh()
     s.set_settings(time_zone="Australia/Sydney", daylight_saving=True)
     s.set_settings(time_zone="not a zone; DROP")
-    files = s.folder_files(date=DATE)
+    # Before any test on made-up rows has run, no part runs: the state is never worked out at the time of the save.
+    assert s.readiness()["reached"] is None
+    files = s.save(date=DATE)
     settings = json.loads(files["settings.json"])
     assert settings["time_zone"] == "Australia/Sydney" and settings["daylight_saving"] is True
-    readiness = settings["readiness"]
+    assert "readiness" not in settings
+    # The save ran the test on made-up rows first, as an entry of the journal of its own, which the evidence names.
+    runs = [e for e in s.log.entries() if e["kind"] == "test run"]
+    assert len(runs) == 1 and runs[0]["actor"] == "Schemalyser" and runs[0]["provenance"] == "an inference"
+    readiness = s.readiness()
     # The three parts that every audit reads run on made-up rows, and nothing has yet been run on a database.
     assert readiness["reached"] == "runs"
     assert set(readiness["states"]) == {"runs", "checked against the database", "clinically validated"}
@@ -750,24 +771,34 @@ def test_the_saved_schema_names_the_state_each_part_has_reached_and_never_calls_
         assert part["status"] == "contract" and part["runs"] == DATE and part["checked against the database"] is None
     assert all(part["clinically validated"] is None for part in readiness["parts"].values())
     assert {p["status"] for v, p in readiness["parts"].items() if v not in rolemap.views()} == {"draft"}
+    tested = s.dimensions["bindings"]["role_patient.birth_date"]["tested"]
+    assert tested["entry"] == runs[0]["id"] and tested["run"] == runs[0]["payload"]["run"] and tested["outcome"] == "passed"
     # Counts from a training database check nothing.
     _counts_on(s, world, "training")
-    assert json.loads(s.folder_files(date=DATE)["settings.json"])["readiness"]["reached"] == "runs"
-    # Counts from the production database, judged to look right, check the parts that they read.
+    assert s.readiness()["reached"] == "runs"
+    assert all(d["reconciled"] is None for d in s.dimensions["bindings"].values())
+    # Counts from the production database, judged to look right, check the parts that they read, with the figures.
     _counts_on(s, world, "production")
-    files = s.folder_files(date=DATE)
-    readiness = json.loads(files["settings.json"])["readiness"]
+    files = s.save(date=DATE)
+    readiness = s.readiness()
     assert readiness["reached"] == "checked against the database"
     assert {v for v, p in readiness["parts"].items() if p["reached"] == "checked against the database"} == set(rolemap.views())
+    reconciled = s.dimensions["bindings"]["role_anaesthetic.start_time"]["reconciled"]
+    assert reconciled["judgement"] == "looks right" and reconciled["figure"]["coverage_by_year"]["with_patient"] > 0
+    assert s.log.get(reconciled["entry"])["kind"] == "judgement"
     readme = files["README.md"].decode()
     assert "## How far the hospital schema has been checked" in readme
     assert "The parts that every audit reads have reached the state checked against the database" in readme
     # The coverage that the counts measured on the invented world is kept beside the state, apart from the judgement.
     assert set(readiness["measured"]["figures"]) == {"with_patient", "with_needed_kind", "year"}
     assert 0 <= readiness["measured"]["figures"]["with_needed_kind"] <= 100 and readiness["measured"]["figures"]["with_patient"] > 0
-    # A change to the codes after the counts were written leaves the parts unchecked until the counts are run again.
+    # A change to the codes after the counts were written leaves the readings unchecked until the counts are run again,
+    # and the view says why, binding by binding.
     s.choose_codes("role_reading.kind", {"52": "map_arterial", "51": "map_cuff"}, DATE)
-    assert json.loads(s.folder_files(date=DATE)["settings.json"])["readiness"]["reached"] == "runs"
+    s.save(date=DATE)
+    assert s.readiness()["reached"] == "runs" and s.readiness()["parts"]["role_patient"]["reached"] == "checked against the database"
+    stale = [e for e in s.view()["stale"] if e["subject"] == "role_reading.value" and e["dimension"] == "reconciled"]
+    assert stale and stale[0]["reasons"] == ["the codes changed"]
     for name, data in s.folder_files(date=DATE).items():
         if not name.startswith(("dictionary/", "map/")):
             assert not re.search(r"\bcomplete\b", data.decode().replace("complete data", "")), name
@@ -786,9 +817,10 @@ def test_every_fact_of_the_saved_schema_says_where_it_came_from(world):
     s.choose_codes("role_reading.kind", {"52": "map_arterial", "51": "map_cuff"}, DATE)
     _counts_on(s, world, "production")
     files = s.folder_files(date=DATE)
-    sources = {"complete data", "a sample", "metadata", "a person", "an inference"}
-    journal = {e["name"]: e for e in json.loads(files["journal.json"])["entries"]}
-    assert all(e["provenance"] in sources for e in journal.values())
+    sources = {"complete data", "a sample", "metadata", "a person", "an inference", "a reference conversion"}
+    entries = json.loads(files["journal.json"])["entries"]
+    assert all(e["provenance"] in sources for e in entries)
+    journal = {e["payload"]["name"]: e for e in entries if e["kind"] in ("dictionary loaded", "result returned")}
     assert journal["dictionary"]["provenance"] == "metadata" and journal["tables-and-columns"]["provenance"] == "metadata"
     assert journal["count-coverage_by_year"]["provenance"] == "complete data"
     assert journal["count-readings_by_kind"]["provenance"] == "a sample"
@@ -809,7 +841,10 @@ def test_every_fact_of_the_saved_schema_says_where_it_came_from(world):
     assert data["kinds"]["map_cuff"]["provenance"] == "a person"
     assert all(r["provenance"] == "a person" for r in csv.DictReader(io.StringIO(files["confirmations.csv"].decode())))
     assert json.loads(files["dictionary/dictionary.json"])["provenance"] == "metadata"
-    # The page knows which results came from a sample, and a file opened again restores without the provenance.
+    # Every answer, choice of codes and judgement names who made it, and the page collected no name, so none is invented.
+    assert {e["actor"] for e in entries if e["kind"] in ("answer", "codes chosen", "judgement")} == {"not recorded"}
+    # The page knows which results came from a sample, and a file opened again keeps the provenance that each binding
+    # was written with, rather than working it out again from its status.
     assert s.view()["provenance"]["count-readings_by_kind"] == "a sample"
     again = describe.Describe()
     again.version = "test"

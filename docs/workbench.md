@@ -11,7 +11,7 @@ Run from `core/`, it needs the packages that `tools/workbench/requirements.txt` 
 The project folder is a plain folder, which the hospital may keep as a git repository.
 
 - `workbench.json` holds the folder's name and the tool's version, and nothing else.
-- `schemas/` holds saved hospital schemas, such as `hospital-schema.schemalyser.zip`.
+- `schemas/` holds saved hospital schemas, such as `hospital-schema-SCHEMA_ID.schemalyser.zip`, whose name carries the version. The workbench refuses to replace a saved schema with a different version under the same name.
 - `questions/` holds one `.sql` file for each question over the parts of the record, with its title as the leading comment.
 - `audits/NAME/` holds one audit: the request, the clinicians' decisions, the log of the build, any estimated plans, and `package/`, which is the folder that `schemalyser.audit build` wrote and that goes to the database analyst.
 - `runs/NAME/` holds one run: its settings in `run.json`, its log, and `out/`, which is the folder that `schemalyser.testbed run` wrote.

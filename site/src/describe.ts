@@ -48,9 +48,11 @@ interface Model {
   catalogue_source: 'database' | 'query' | null; vocabularies: Vocabulary[]; counts: Record<string, CountHeld>;
   settings: { made: string | null; updated: string | null; database: string | null; year: number | null; time_zone?: string | null; daylight_saving?: boolean | null };
   restored: Record<string, unknown> | null;
-  // The state of readiness that the last save recorded, the lines of how the proposals fared, and where the result of
-  // each query came from (a sample, complete data or metadata).
+  // The state of readiness that the core derives from the evidence, the lines of how the proposals fared, and where the
+  // result of each query came from (a sample, complete data or metadata).
   readiness?: { reached: string | null } | null; scoreboard?: string[]; provenance?: Record<string, string>;
+  // The version the sitting carries on from, and the name of its saved file, which carries the version's schema_id.
+  schema?: { schema_id: string | null; parent_id: string | null; file: string };
   values: Record<string, { value: string; rows: number | null }[]>; anaesthetic_table: string | null; bases: Record<string, string>;
 }
 interface CountQuery { name: string; safe: boolean; sql: string; tables: [string, number | null][] }
@@ -98,7 +100,7 @@ let written = false;
 let hospitalReady = false;
 // Whether the page is still fetching the invented hospital's files, during which the tab must stay online.
 let hospitalFetching = false;
-// The name of the one file that holds the saved hospital schema.
+// The name of the one file that holds the saved hospital schema, until the core names the version it saved.
 const SCHEMA_FILE = 'hospital-schema.schemalyser.zip';
 // Whether the hospital schema last saved was a draft, which leaves step 9 to be done again.
 let writtenDraft = false;
@@ -1449,6 +1451,8 @@ $('dictionary').addEventListener('change', show);
 $('dictionary-load').addEventListener('click', async () => {
   const file = $<HTMLInputElement>('dictionary').files?.[0];
   const tables = $<HTMLInputElement>('dictionary-tables').files?.[0];
+  // A reference conversion's lineage, where one is chosen, is read beside the dictionary and stays in the worker.
+  const reference = $<HTMLInputElement>('dictionary-reference').files?.[0];
   if (!file || !open()) return;
   const headings: Record<string, string> = {};
   for (const input of document.querySelectorAll<HTMLInputElement>('#headings input')) if (input.value.trim()) headings[input.dataset.field!] = input.value.trim();
@@ -1458,19 +1462,21 @@ $('dictionary-load').addEventListener('click', async () => {
   // descriptions to a dictionary made from the database, or otherwise the dictionary itself.
   status('t-vendor-status', d.dictionaryReading);
   try {
-    const reply = await ask('describe_dictionary_upload', [file, tables ?? undefined, JSON.stringify(headings), file.name, tables?.name ?? undefined, d.steps[1]]);
+    const reply = await ask('describe_dictionary_upload', [file, tables ?? undefined, JSON.stringify(headings), file.name, tables?.name ?? undefined, d.steps[1],
+      reference ?? undefined, reference?.name ?? undefined]);
     status('t-invented-status', '');
     if (reply.ok) {
       const kind = reply.kind as string;
-      const receipt = reply.receipt as Parameters<typeof d.dictionaryReceipt>[0];
+      const receipt = reply.receipt as Parameters<typeof d.dictionaryReceipt>[0] & { reference?: { file: string; targets: number } | null };
+      const also = receipt.reference ? ` ${d.referenceReceipt(receipt.reference)}` : '';
       if (kind === 'dictionary') {
         status('t-vendor-status', '');
         status('t-database-status', '');
-        status('t-dictionary-status', d.dictionaryReceipt(receipt), 'good');
+        status('t-dictionary-status', d.dictionaryReceipt(receipt) + also, 'good');
       } else {
         status('t-dictionary-status', '');
         status('t-database-status', d.databaseReceipt(receipt), 'good');
-        status('t-vendor-status', kind === 'vendor' && receipt.vendor ? d.vendorReceipt(receipt.vendor) : d.databaseReceipt(receipt), 'good');
+        status('t-vendor-status', (kind === 'vendor' && receipt.vendor ? d.vendorReceipt(receipt.vendor) : d.databaseReceipt(receipt)) + also, 'good');
       }
     } else {
       status('t-vendor-status', reply.problem ?? d.dictionaryFailed, 'problem');
@@ -1668,15 +1674,15 @@ $('write-save').addEventListener('click', async () => {
     await ask('describe_settings', [JSON.stringify({ timeZone: $<HTMLInputElement>('time-zone').value, daylightSaving: $<HTMLInputElement>('daylight-saving').checked })]);
     const reply = await call('describe_schema_zip');
     const zip = reply.zip as Uint8Array<ArrayBuffer>;
+    // Each save is a new version, and the core names its file with the version's schema_id.
+    await ask('describe_model');
     const link = el('a');
     link.href = URL.createObjectURL(new Blob([zip], { type: 'application/zip' }));
-    link.download = SCHEMA_FILE;
+    link.download = model?.schema?.file ?? SCHEMA_FILE;
     link.click();
     URL.revokeObjectURL(link.href);
     written = true;
     writtenDraft = !!model?.unfinished;
-    // The save records the state of readiness that each part has reached, which the receipt names.
-    await ask('describe_model');
     status('t-write-status', d.saved(model?.unfinished ?? '', model?.readiness?.reached ?? null), 'good');
   } catch {
     status('t-write-status', d.writeFailed, 'problem');
@@ -1780,6 +1786,9 @@ const fixed: Record<string, string> = {
   'l-dictionary-tables': d.tablesLabel,
   's-tables-about': d.aboutFile,
   't-tables-about': d.tablesAbout,
+  'l-dictionary-reference': d.referenceLabel,
+  's-reference-about': d.aboutFile,
+  't-reference-about': d.referenceAbout,
   's-headings': d.headingsSummary,
   't-headings-what': d.headingsWhat,
   'dictionary-load': d.dictionaryLoad,

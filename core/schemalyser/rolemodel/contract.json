@@ -17,6 +17,7 @@
   "views": [
     {
       "name": "role_patient",
+      "omop": ["person", "death"],
       "title": "Patients",
       "required": true,
       "status": "contract",
@@ -47,6 +48,7 @@
     },
     {
       "name": "role_anaesthetic",
+      "omop": ["visit_detail", "procedure_occurrence", "episode"],
       "title": "Anaesthetics",
       "required": true,
       "status": "contract",
@@ -77,6 +79,7 @@
     },
     {
       "name": "role_reading",
+      "omop": ["measurement"],
       "title": "Readings charted during an anaesthetic",
       "required": true,
       "status": "contract",
@@ -121,6 +124,7 @@
     },
     {
       "name": "role_patient_detail",
+      "omop": ["person", "measurement", "observation"],
       "title": "The patient's details at birth",
       "required": false,
       "status": "draft",
@@ -151,6 +155,7 @@
     },
     {
       "name": "role_stay",
+      "omop": ["visit_occurrence"],
       "title": "Hospital stays",
       "required": false,
       "status": "draft",
@@ -185,6 +190,7 @@
     },
     {
       "name": "role_anaesthetic_detail",
+      "omop": ["observation", "measurement", "procedure_occurrence"],
       "title": "The anaesthetic's details",
       "required": false,
       "status": "draft",
@@ -240,6 +246,7 @@
     },
     {
       "name": "role_operation",
+      "omop": ["procedure_occurrence"],
       "title": "Procedures done under an anaesthetic",
       "required": false,
       "status": "draft",
@@ -274,6 +281,7 @@
     },
     {
       "name": "role_unit_stay",
+      "omop": ["visit_detail"],
       "title": "Periods in a hospital unit",
       "required": false,
       "status": "draft",
@@ -304,6 +312,7 @@
     },
     {
       "name": "role_event",
+      "omop": ["procedure_occurrence", "observation", "condition_occurrence"],
       "title": "Milestones of an anaesthetic",
       "required": false,
       "status": "draft",
@@ -330,6 +339,7 @@
     },
     {
       "name": "role_drug",
+      "omop": ["drug_exposure"],
       "title": "Drugs given",
       "required": false,
       "status": "draft",
@@ -372,6 +382,7 @@
     },
     {
       "name": "role_device",
+      "omop": ["device_exposure"],
       "title": "Devices placed",
       "required": false,
       "status": "draft",
@@ -410,6 +421,7 @@
     },
     {
       "name": "role_staff",
+      "omop": ["provider"],
       "title": "Staff attending an anaesthetic",
       "required": false,
       "status": "draft",
@@ -448,6 +460,7 @@
     },
     {
       "name": "role_fluid",
+      "omop": ["drug_exposure", "measurement", "observation"],
       "title": "Fluids and blood products",
       "required": false,
       "status": "draft",
@@ -478,6 +491,7 @@
     },
     {
       "name": "role_lab",
+      "omop": ["measurement"],
       "title": "Laboratory results",
       "required": false,
       "status": "draft",
@@ -517,6 +531,7 @@
     },
     {
       "name": "role_diagnosis",
+      "omop": ["condition_occurrence"],
       "title": "Coded diagnoses",
       "required": false,
       "status": "draft",
@@ -560,6 +575,7 @@
     },
     {
       "name": "role_note",
+      "omop": ["note"],
       "title": "Notes in the record",
       "required": false,
       "status": "draft",
@@ -609,6 +625,7 @@
     },
     {
       "name": "role_finding",
+      "omop": ["observation", "note_nlp"],
       "title": "Facts found in the record",
       "required": false,
       "status": "draft",

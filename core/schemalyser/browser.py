@@ -960,22 +960,24 @@ def describe_dictionary_vendor(data, tables, headings, name, tables_name):
         name or "vendor-dictionary.csv", tables_name or "vendor-tables.csv")})
 
 
-def describe_dictionary_upload(data, tables, headings, name, tables_name, step):
+def describe_dictionary_upload(data, tables, headings, name, tables_name, step, reference=None, reference_name=None):
     """Reads a dictionary file that a person already has: a saved result of the data dictionary query, or a vendor's
-    export, which adds its descriptions to a dictionary made from the database or is otherwise the dictionary itself."""
+    export, which adds its descriptions to a dictionary made from the database or is otherwise the dictionary itself.
+    reference, when given, is the file of a reference conversion's lineage, which the proposer reads beside it."""
     d = _describing()
 
     def work():
         kind, receipt = d.upload(_bytes(data), _bytes(tables) if tables is not None else None, json.loads(headings or "{}"),
-                                 name or "dictionary.csv", tables_name or "tables.csv", step)
+                                 name or "dictionary.csv", tables_name or "tables.csv", step,
+                                 _bytes(reference) if reference is not None else None, reference_name or "lineage.json")
         return {"kind": kind, "receipt": receipt}
     return _reply(work)
 
 
 # The paths that a saved hospital schema holds. Anything else inside the file is let go of at once.
-_SCHEMA_PATH = re.compile(r"(settings\.json|journal\.json|confirmations\.csv|map/map\.json|codes/role_\w+\.\w+\.json|"
-                          r"counts/judgements\.json|queries/\d\d-[\w.-]+\.sql|results/\d\d-[\w.-]+\.tsv|"
-                          r"dictionary/[\w .()-]+\.(json|csv|tsv|txt))")
+_SCHEMA_PATH = re.compile(r"(settings\.json|journal\.json|dimensions\.json|confirmations\.csv|map/map\.json|"
+                          r"codes/role_\w+\.\w+\.json|counts/judgements\.json|queries/\d{2,4}-[\w.-]+\.sql|"
+                          r"results/\d{2,4}-[\w.-]+\.tsv|dictionary/[\w .()-]+\.(json|csv|tsv|txt))")
 
 
 def describe_schema_open(data):
@@ -1013,8 +1015,11 @@ def describe_tables_read(text):
 
 
 def describe_confirm(request):
+    """Records an answer. The name of the person who answered is passed on where the page collected one, and the core
+    records "not recorded" where it did not."""
     r = json.loads(request)
-    return _reply(lambda: _describing().confirm(r["about"], r["answer"], r.get("replacement") or "", r.get("note") or ""))
+    return _reply(lambda: _describing().confirm(r["about"], r["answer"], r.get("replacement") or "", r.get("note") or "",
+                                                actor=r.get("actor")))
 
 
 def describe_settings(request):
@@ -1034,7 +1039,7 @@ def describe_charted_read(request):
 
 def describe_codes(request):
     r = json.loads(request)
-    return _reply(lambda: _describing().choose_codes(r["key"], r["chosen"]))
+    return _reply(lambda: _describing().choose_codes(r["key"], r["chosen"], actor=r.get("actor")))
 
 
 def describe_counts(request):
@@ -1049,7 +1054,7 @@ def describe_count_read(request):
 
 def describe_count_judge(request):
     r = json.loads(request)
-    return _reply(lambda: _describing().judge_count(r["name"], r["looksRight"], r.get("note") or ""))
+    return _reply(lambda: _describing().judge_count(r["name"], r["looksRight"], r.get("note") or "", actor=r.get("actor")))
 
 
 def describe_schema_files():
@@ -1058,8 +1063,9 @@ def describe_schema_files():
 
 
 def describe_schema_zip():
-    """The saved hospital schema, as the bytes of its one file."""
-    return _describing().folder_zip()
+    """Saves a new version of the hospital schema and gives the bytes of its one file, whose name, which carries the
+    version's schema_id, the model then gives as schema.file."""
+    return _describing().save_zip()
 
 
 def describe_check():
@@ -1087,7 +1093,20 @@ def describe_model_check():
 
 def describe_correction_keep(request):
     r = json.loads(request)
-    return _reply(lambda: _describing().correction_keep(r["correction"], bool(r.get("although")), r.get("reason") or ""))
+    return _reply(lambda: _describing().correction_keep(r["correction"], bool(r.get("although")), r.get("reason") or "",
+                                                        actor=r.get("actor")))
+
+
+def describe_import_evidence(request):
+    """Imports the result of one of the feasibility report's evidence requests: request is {"request": the request as
+    the report wrote it, "result": the text of its result or {query: text}, "actor", "provenance"}. The new version is
+    saved in the worker, and the model gives its schema_id and file name."""
+    r = json.loads(request)
+
+    def work():
+        found = _describing().import_evidence(r.get("request"), r.get("result") or "", r.get("actor"), r.get("provenance"))
+        return {"imported": {"schema_id": found["schema_id"], "file": found["file"], "entry": found["entry"]["id"]}}
+    return _reply(work)
 
 
 def describe_names():

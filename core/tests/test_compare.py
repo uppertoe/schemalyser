@@ -184,3 +184,123 @@ def test_the_commands_write_the_lineage_and_the_report(tmp_path, capsys):
         assert str(FIXTURES.parent) not in (tmp_path / written).read_text()
     assert compare.main(["report", "--ours", str(tmp_path / "missing.json"), "--theirs", str(tmp_path / "theirs.json"),
                          "--out", str(tmp_path / "out")]) == 1
+
+
+# Transplanting the reference's routes into a conversion of our own.
+
+DICTIONARY = FIXTURES / "dictionary" / "invented-dictionary.csv"
+DICTIONARY_TABLES = FIXTURES / "dictionary" / "invented-tables.csv"
+
+
+@pytest.fixture(scope="module")
+def transplanted(dbt, tmp_path_factory):
+    from schemalyser import datadict, transplant
+    out = tmp_path_factory.mktemp("transplant") / "conversion"
+    report = transplant.transplant(dbt, datadict.load(DICTIONARY, DICTIONARY_TABLES), out, date="2026-10-09")
+    return {"out": out, "report": report}
+
+
+def test_the_transplant_writes_one_step_for_each_table_of_the_reference(transplanted):
+    import sqlglot
+    from sqlglot import exp
+    out, report = transplanted["out"], transplanted["report"]
+    steps = json.loads((out / "conversion.json").read_text())
+    assert [s["table"] for s in steps] == ["person", "provider", "visit_occurrence", "condition_era", "visit_detail", "device_exposure"]
+    assert [s["layer"] for s in steps] == ["core"] * 3 + ["anaesthesia"] * 3
+    counts = report["counts"]
+    assert (counts["written"], counts["incomplete"], counts["not_written"], counts["skipped"]) == (6, 0, 0, 0)
+    assert counts["not_in_dictionary"] == 0 and counts["fields_mapped"] == 36 and counts["placeholders"] == 10
+    for step in steps:
+        tree = sqlglot.parse_one((out / step["file"]).read_text(), dialect="tsql")
+        assert isinstance(tree, exp.Select), step["file"]
+    person = (out / "person.sql").read_text()
+    # A literal that the lineage redacted is never invented: the filter waits as a comment, with its placeholders.
+    assert "--   AND COALESCE(pm.TEST_PERSON_FLAG, {{decision:person.filter_1_1}}) = {{decision:person.filter_1_2}}" in person
+    assert "0 AS race_concept_id,  -- {{decision:person.race_concept_id}}" in person
+    # An identifier of another OMOP table is looked up there by its source value.
+    detail = (out / "visit_detail.sql").read_text()
+    assert "JOIN omop.visit_occurrence ovo ON ovo.visit_source_value = CAST(v.VISIT_KEY AS varchar(50))" in detail
+    # A join that would repeat rows is not made, and the field behind it is left empty with the reason.
+    assert "ANAES_STAFF is not joined" in detail and "NULL AS provider_id,  -- not reproduced" in detail
+    # An expression that the lineage could not follow to one column is written as NULL, naming its shape.
+    assert "NULL AS visit_end_date,  -- not reproduced from the lineage's expression CAST({VISIT.ADMIT_TS | VISIT.DISCH_TS} AS DATE)" \
+        in (out / "visit_occurrence.sql").read_text()
+    era = (out / "condition_era.sql").read_text()
+    assert "MIN(CAST(v.ADMIT_TS AS DATE)) AS condition_era_start_date" in era and "GROUP BY" in era
+    decisions = json.loads((out / "decisions.json").read_text())["decisions"]
+    assert len(decisions) == 10
+    held = next(d for d in decisions if d["name"] == "person.filter_1_2")
+    assert held["columns"] == ["PERSON_MASTER.TEST_PERSON_FLAG"] and held["type"] == "str" and held["value"] is None
+    assert held["question"].startswith("Please give the text that takes the place of {{decision:person.filter_1_2}}")
+    catalogue = (out / "catalogue.csv").read_text().splitlines()
+    assert catalogue[0].startswith("TABLE_SCHEMA,TABLE_NAME,COLUMN_NAME,ORDINAL_POSITION,DATA_TYPE")
+    assert "dbo,VISIT,VISIT_KEY,1,numeric,,18,0,NO" in catalogue
+    assert not any(",ANAES_STAFF," in line for line in catalogue)
+    text = (out / "transplant-report.md").read_text()
+    assert "Schemalyser wrote 6 steps, of which none is incomplete." in text
+    for name in ("conversion.json", "decisions.json", "transplant-report.json", "transplant-report.md", "person.sql"):
+        assert str(FIXTURES.parent) not in (out / name).read_text()
+
+
+def test_the_transplanted_steps_run_in_the_testbed_on_a_sandbox_built_from_their_catalogue(transplanted, tmp_path):
+    from schemalyser import testbed
+    world = tmp_path / "world"
+    (world / "requests").mkdir(parents=True)
+    shutil.copy(transplanted["out"] / "catalogue.csv", world / "catalogue.csv")
+    report = testbed.run(str(world), tmp_path / "testbed", rows=20, conversion_folder=transplanted["out"])
+    assert [(s["file"], s["status"]) for s in report["steps"]] == [
+        (f, "ok") for f in ("person.sql", "provider.sql", "visit_occurrence.sql", "condition_era.sql", "visit_detail.sql",
+                            "device_exposure.sql")]
+    assert all(s["rows"] > 0 for s in report["steps"])
+    passed = {c["check"]: c["passed"] for c in report["checks"]}
+    assert passed["every step ran cleanly"] and passed["the release script was written and carries every step that ran"]
+    # The one required field that the lineage cannot give is reported, and nothing else.
+    assert next(c for c in report["checks"] if c["check"] == "every row fits the CDM's field list")["detail"] == [
+        "visit_occurrence.visit_end_date: 20 rows have no value in a required field"]
+
+
+def test_an_existing_step_is_kept_and_the_transplanted_one_is_offered_beside_it(dbt, tmp_path):
+    from schemalyser import datadict, transplant
+    out = tmp_path / "conversion"
+    report = transplant.transplant(dbt, datadict.load(DICTIONARY, DICTIONARY_TABLES), out,
+                                   targets=["visit_detail", "condition_era", "measurement"], existing=CONVERSION)
+    steps = json.loads((out / "conversion.json").read_text())
+    detail = next(s for s in steps if s["table"] == "visit_detail")
+    assert detail["file"] == "visit_detail_through_case.sql"
+    assert detail["alternatives"] == ["visit_detail.sql", "visit_detail_from_reference.sql"]
+    assert (out / "visit_detail_through_case.sql").read_text() == (CONVERSION / "visit_detail_through_case.sql").read_text()
+    assert "The existing conversion already writes VISIT_DETAIL in visit_detail_through_case.sql, which is kept." \
+        in (out / "visit_detail_from_reference.sql").read_text()
+    assert steps.index(next(s for s in steps if s["table"] == "condition_era")) < [s["layer"] for s in steps].index("derived")
+    assert next(e for e in report["targets"] if e["target"] == "measurement")["status"] == "skipped"
+    assert json.loads((CONVERSION / "conversion.json").read_text())[10].get("alternatives") == ["visit_detail.sql"]
+
+
+def test_a_table_or_column_that_the_dictionary_lacks_is_reported_and_never_invented(dbt, tmp_path):
+    from schemalyser import datadict, transplant
+    lines = [line for line in DICTIONARY.read_text().splitlines()
+             if not line.startswith("AIRWAY_DEVICE,") and ",ANAES_STOP_TS," not in line]
+    thin = tmp_path / "thin.csv"
+    thin.write_text("\n".join(lines) + "\n")
+    out = tmp_path / "conversion"
+    report = transplant.transplant(dbt, datadict.load(thin, DICTIONARY_TABLES), out, targets=["visit_detail", "device_exposure"])
+    assert report["not_in_dictionary"] == ["AIRWAY_DEVICE", "ANAES_RECORD.ANAES_STOP_TS"]
+    rows = {e["target"]: e for e in report["targets"]}
+    assert rows["device_exposure"]["status"] == "incomplete" and rows["device_exposure"]["file"] is None
+    assert rows["visit_detail"]["status"] == "incomplete" and "visit_detail_end_date" in rows["visit_detail"]["fields_left_empty"]
+    assert [s["file"] for s in json.loads((out / "conversion.json").read_text())] == ["visit_detail.sql"]
+    sql = (out / "visit_detail.sql").read_text()
+    assert "This step is incomplete, because the dictionary does not list ANAES_RECORD.ANAES_STOP_TS." in sql
+    assert "ar.ANAES_STOP_TS" not in sql and "AIRWAY_DEVICE" not in (out / "catalogue.csv").read_text()
+
+
+def test_the_transplant_command_writes_the_folder(tmp_path, capsys):
+    assert compare.main(["reference", str(DBT), "--out", str(tmp_path / "theirs.json")]) == 0
+    capsys.readouterr()
+    assert compare.main(["transplant", "--lineage", str(tmp_path / "theirs.json"), "--dictionary", str(DICTIONARY),
+                         "--tables", str(DICTIONARY_TABLES), "--out", str(tmp_path / "out"), "--targets", "person,provider"]) == 0
+    printed = capsys.readouterr().out
+    assert printed.startswith("Schemalyser wrote 2 steps, of which none is incomplete.")
+    assert {p.name for p in (tmp_path / "out").iterdir()} == {
+        "conversion.json", "person.sql", "provider.sql", "catalogue.csv", "decisions.json", "transplant-report.json",
+        "transplant-report.md"}

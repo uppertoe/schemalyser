@@ -27,6 +27,11 @@ names tables and columns and stays where the reference is kept.
 
     python -m schemalyser.compare reference FOLDER --out lineage.json
     python -m schemalyser.compare report --ours lineage.json --theirs lineage.json [--schema SCHEMA.zip] --out FOLDER
+    python -m schemalyser.compare transplant --lineage lineage.json --dictionary DICT.csv --out FOLDER
+                                             [--tables TABLES.csv] [--targets T1,T2] [--existing CONVERSION]
+
+The transplant command writes a conversion folder from a lineage, one step for each OMOP table, checked against a data
+dictionary such as the vendor's public specification (see transplant.py).
 
 Agreement between two conversions is supporting evidence and not proof: workflows and configuration differ between
 hospitals, and two conversions can share a mistake.
@@ -844,8 +849,11 @@ def schema_view(path):
     else:
         text = path.read_text()
     try:
-        roles = json.loads(text).get("roles") or {}
-    except ValueError:
+        data = json.loads(text)
+        roles = data.get("roles") or {}
+        # A binding saved as a reference to a named normalisation takes its route from the normalisations section.
+        normalisations = data.get("normalisations") or {}
+    except (ValueError, AttributeError):
         raise CompareError(f"{path.name} holds no hospital schema.") from None
     view = {}
     named = re.compile(r"\b([A-Z][A-Z0-9_]{2,})(?:\.([A-Z][A-Z0-9_]*))?\b")
@@ -853,6 +861,8 @@ def schema_view(path):
     def add(target, item):
         held = view.setdefault(target, {"tables": set(), "columns": set(), "joins": set()})
         binding = (item or {}).get("binding")
+        if isinstance(binding, dict) and isinstance(normalisations.get(binding.get("normalisation")), dict):
+            binding = {**binding, "path": normalisations[binding["normalisation"]].get("path") or []}
         if isinstance(binding, dict) and binding.get("table"):
             held["tables"].add(binding["table"].upper())
             if binding.get("column"):
@@ -1139,9 +1149,31 @@ def main(argv=None):
     report.add_argument("--theirs", required=True)
     report.add_argument("--schema")
     report.add_argument("--out", required=True)
+    moving = commands.add_parser("transplant", help="write a conversion folder from a reference's lineage")
+    moving.add_argument("--lineage", required=True, help="the lineage file that the reference command wrote")
+    moving.add_argument("--dictionary", required=True, help="the data dictionary, such as the vendor's public specification")
+    moving.add_argument("--tables", help="a second file of the dictionary that gives each table's description and key")
+    moving.add_argument("--out", required=True, help="the conversion folder to write")
+    moving.add_argument("--targets", help="the OMOP tables to transplant, separated by commas; every table of the lineage when left out")
+    moving.add_argument("--existing", help="an existing conversion folder, whose steps are kept beside the transplanted ones")
     args = parser.parse_args(argv)
     try:
-        if args.command == "reference":
+        if args.command == "transplant":
+            from . import datadict, transplant
+            try:
+                dictionary = datadict.load(Path(args.dictionary), Path(args.tables) if args.tables else None)
+            except datadict.DictionaryError as problem:
+                raise CompareError(str(problem)) from None
+            found = transplant.transplant(_load(args.lineage), dictionary, args.out,
+                                          args.targets.split(",") if args.targets else None, args.existing)
+            c = found["counts"]
+            print(f"Schemalyser wrote {_plural(c['written'], 'step', 'steps')}, of which {transplant._are(c['incomplete'])} incomplete. "
+                  f"It could not write {_plural(c['not_written'], 'step', 'steps')}, and it skipped {_plural(c['skipped'], 'table', 'tables')}.")
+            print(f"The steps map {_plural(c['fields_mapped'], 'field', 'fields')} from the lineage, leave "
+                  f"{c['fields_left_empty'] + c['fields_awaiting_a_decision']} empty or at the concept 0, and hold "
+                  f"{_plural(c['placeholders'], 'placeholder', 'placeholders')} that decisions.json lists.")
+            print("The folder names the reference's tables and columns, so it stays wherever the reference is kept.")
+        elif args.command == "reference":
             data = lineage(args.folder)
             Path(args.out).write_text(json.dumps(data, indent=1) + "\n")
             files = data["files"]

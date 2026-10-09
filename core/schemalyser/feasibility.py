@@ -36,7 +36,7 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.optimizer.scope import traverse_scope
 
-from . import describe, rolemap
+from . import describe, evidence, normalise, rolemap
 
 # The summary states, in order. The first is a requirement that the role model itself cannot meet.
 NOT_DESCRIBED = "not described by the role model"
@@ -131,7 +131,7 @@ WORDING = {
     "req_values_unwritten": "The database analyst chooses Write the query of values for {title} at step {step}, runs it, and says which of its values mean yes.",
     "req_list": "The database analyst runs this list of what is charted in the SQL window connected to the hospital's database and pastes it at step {step} with Read the list. The clinician then chooses the codes of {kinds} and chooses Save these codes.",
     "req_list_unwritten": "At step {step}, the database analyst chooses Write the list for {title}, runs it and chooses Read the list, and the clinician then chooses the codes of {kinds} and chooses Save these codes.",
-    "req_probe": "The database analyst runs this test query in the SQL window connected to the hospital's database. It counts how many anaesthetics of {year} have at least one row through {title}, and how many have none. At present the page keeps a test query's result only beside a change kept at step 6, so until it accepts one here the clinician keeps the result beside this report.",
+    "req_probe": "The database analyst runs this test query in the SQL window connected to the hospital's database. It counts how many anaesthetics of {year} have at least one row through {title}, and how many have none. Its result enters the hospital schema through the evidence import, with python -m schemalyser.describe import-evidence.",
     "req_counts": "The database analyst runs {counts} on the production database, pastes each result at step {step} and chooses Read the result, and the clinician then chooses Save whether these look right. This checks {parts} against the database.",
     "req_counts_unwritten": "At step {step}, the clinician chooses Write the counts, the database analyst runs {counts} on the production database, and the clinician then judges whether each looks right. This checks {parts} against the database.",
     "req_draft": "No count at step 8 reads {part} yet, so the page cannot yet record it as checked against the database. The database analyst can run this query of values on {title} for evidence that the column holds what the question needs, and the clinician judges whether it looks right.",
@@ -481,11 +481,11 @@ class Schema:
         self.files = files
         self.settings = describe._json_of(files.get("settings.json"))
         try:
-            self.map = json.loads(describe._text(files["map/map.json"]))
+            self.map = normalise.resolve(json.loads(describe._text(files["map/map.json"])))
         except (KeyError, ValueError):
             raise FeasibilityError("The file holds no hospital schema that Schemalyser can read.") from None
-        self.journal = describe._json_of(files.get("journal.json")).get("entries") or []
         self.judgements = describe._json_of(files.get("counts/judgements.json")).get("counts") or {}
+        self.schema_id = self.settings.get("schema_id")
         sitting = describe.Describe()
         sitting.version = "feasibility"
         found = sitting.restore(files)
@@ -498,11 +498,14 @@ class Schema:
                 match = re.fullmatch(r"codes/(role_\w+\.\w+)\.json", path)
                 if match:
                     sitting.codes[match.group(1)] = describe._json_of(data)
+            held = describe._json_of(files.get("dimensions.json"))
+            sitting.dimensions = {kind: held.get(kind) or {} for kind in ("bindings", "links", "translations")}
             self.writes = False
         else:
             self.writes = True
         self.sitting = sitting
-        self.readiness = self.settings.get("readiness") or {}
+        # The readiness of each part is derived from the dimensions that the file records, and is never read as stored.
+        self.readiness = sitting.readiness() or {}
         self.year = int(self.settings.get("year") or dt.date.today().year - 1)
 
     @classmethod
@@ -547,7 +550,7 @@ class Schema:
 
     def probe(self, about):
         """The test query of a link as the journal records it, with its figures and what it found, or None."""
-        entry = next((e for e in self.journal if e.get("about") == about and e.get("probe")), None)
+        entry = next((e for e in self.sitting.journal.values() if e.get("about") == about and e.get("probe")), None)
         if entry is None or not entry.get("result"):
             return None
         held = self.sitting.probes.get(about) or {}
@@ -560,7 +563,7 @@ class Schema:
                 "year": entry.get("year"), "figures": figures, "findings": findings, "real": real}
 
     def correction(self, about):
-        found = [e for e in self.journal if e.get("name") == "correction" and e.get("about") == about]
+        found = [e for e in self.sitting.corrections if e.get("about") == about]
         if not found:
             return None
         last = found[-1]
@@ -883,6 +886,34 @@ def _requests(schema, rows):
     return list(found.values())
 
 
+def _versioned(schema, request):
+    """Adds to a request what the evidence import needs to take its result back: the request's format, the schema
+    version it was made from, a stable request id, and, for a request that a result answers, each of its queries with
+    the columns and types of the result it expects, or, for a reconciliation, what the reconciliation covers."""
+    sitting = schema.sitting
+    names = []
+    form = request["form"]
+    key = request["id"].split(":", 1)[-1]
+    if form == "counts":
+        names = [f"count-{n}" for n in key.split(",")]
+    elif form == "test query":
+        names = ["probe-" + re.sub(r"[^\w]+", "-", key).strip("-")]
+    elif form == "code list":
+        names = [f"charted-{key.replace('.', '-')}"]
+    elif form in ("values", "counting query") and request.get("sql"):
+        names = [n for n, state in sitting.journal.items() if n.startswith("values-") and state.get("about") == key][-1:]
+    queries = [q for q in (sitting.request_query(n) for n in names if request.get("sql")) if q]
+    request.update({"format": describe.REQUEST_FORMAT, "schema_id": schema.schema_id,
+                    "request_id": "q" + evidence.digest([schema.schema_id, request["id"], request.get("sql") or ""], 16),
+                    "queries": queries,
+                    "expects": [{"query": q["name"], "columns": q["expects"]} for q in queries] or None})
+    if form == "reconciliation":
+        parts = sorted({m.split(" ")[0].split(".")[0] for m in request["moves"] if m.startswith("role_")})
+        request["covers"] = sitting.covered(parts) if sitting.data is not None else {}
+        request["expects"] = [{"query": "clinical reconciliation",
+                               "columns": [{"name": n, "type": t} for n, t in describe.RECONCILIATION_COLUMNS]}]
+
+
 def _list_request(schema, add, key, moves, meanings):
     sitting = schema.sitting
     sql = _sql(lambda: sitting.charted_query(key, schema.year)["sql"]) if schema.writes else None
@@ -959,6 +990,8 @@ def assess(schema, sql, name="question.sql"):
         requests.append({"id": "time-zone", "form": "time zone", "role": CLINICIAN, "step": STEPS[9],
                          "says": WORDING["req_time_zone"].format(units=describe._and([f"{u}s" for u in clock]), step=9),
                          "question": None, "sql": None, "moves": ["time"]})
+    for request in requests:
+        _versioned(schema, request)
     # The requests that move the requirements furthest from being checked come first.
     rank = {r["id"]: RANK[r["state"]] for r in rows}
     requests.sort(key=lambda request: min((rank.get(m, RANK[CONFIRMED]) for m in request["moves"]), default=RANK[CONFIRMED]))

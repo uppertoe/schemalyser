@@ -55,7 +55,7 @@ import duckdb
 import sqlglot
 from sqlglot import exp
 
-from . import convert, harness, release
+from . import convert, harness, release, sample_vocabulary
 from .catalogue import Catalogue
 from .extract import decode
 from .translate import OMOP_SCHEMA, Unreadable, Unsupported, to_duckdb
@@ -97,12 +97,8 @@ def resolve_world(name):
 
 
 def _vocabulary(out):
-    """The vocabulary subset that the SQL Server harness uses, written to out/vocabulary. Returns the folder."""
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("schemalyser_sqlserver_harness", HARNESS)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.sample_vocabulary(out / "vocabulary")
+    """The vocabulary subset that the SQL Server harness also uses, written to out/vocabulary. Returns the folder."""
+    return sample_vocabulary.write(out / "vocabulary")
 
 
 # The Athena vocabulary. The download is licensed, so it stays on this machine: the testbed reads it from the folder

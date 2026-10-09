@@ -333,6 +333,138 @@ def test_confirmations_are_recorded_with_their_date_and_rewrite_the_views(drafte
                             "describes as \"The unique ID of the medication given\".")
 
 
+# A reference conversion's lineage as evidence.
+
+REFERENCE_DBT = FIXTURES / "compare" / "reference-dbt"
+SAYS_FILTER = ("A conversion at another hospital reads this table for PERSON, and tests PERSON_MASTER.TEST_PERSON_FLAG "
+               "to choose its rows.")
+
+
+@pytest.fixture(scope="module")
+def reference():
+    from schemalyser import compare
+    return compare.lineage(REFERENCE_DBT)
+
+
+def _thinned(tmp_path, table, column):
+    """The invented dictionary with one column's description left empty, as a thin vendor's description would be."""
+    import csv as csv_
+    rows = list(csv_.reader(io.StringIO(DICTIONARY.read_text())))
+    out = io.StringIO()
+    csv_.writer(out, lineterminator="\n").writerows([r[:4] + [""] if (r[0], r[1]) == (table, column) else r for r in rows])
+    path = tmp_path / "thin.csv"
+    path.write_text(out.getvalue())
+    return datadict.load(path, TABLES)
+
+
+def test_the_contract_names_the_omop_tables_of_each_view_as_roles_md_gives_them():
+    text = ROLES.read_text().split("## How each role relates to OMOP")[1].split("\n## ")[0]
+    for view in rolemap.contract()["views"]:
+        row = next(line for line in text.splitlines() if line.startswith(f"| {view['name']} |"))
+        named = re.findall(r"\b([A-Z][A-Z_]+[A-Z])\b", row.split("|")[2])
+        assert view["omop"] == [n.lower() for n in named], view["name"]
+
+
+def test_a_column_with_a_thin_description_gains_the_reference_s_table_as_a_candidate(reference, tmp_path):
+    thin = _thinned(tmp_path, "PERSON_MASTER", "TEST_PERSON_FLAG").restricted_to(CATALOGUE)
+    without = propose.Proposer(thin).propose()["role_patient"]["columns"]["is_test"]
+    assert without["best"] is None
+    found = propose.Proposer(thin, reference=reference).propose()["role_patient"]["columns"]["is_test"]
+    best = found["best"]
+    assert (best["table"], best["column"], found["confidence"]) == ("PERSON_MASTER", "TEST_PERSON_FLAG", "low")
+    assert best["reference"] == SAYS_FILTER
+
+
+def test_a_dictionary_match_still_outranks_the_reference(reference):
+    # A reference that fills the start of the anaesthetic from its stop: the dictionary's words name the start, so the
+    # dictionary's match leads and the reference's column is only listed after it.
+    import copy as copy_
+    altered = copy_.deepcopy(reference)
+    altered["targets"]["visit_detail"]["fields"]["visit_detail_start_datetime"]["columns"] = ["ANAES_RECORD.ANAES_STOP_TS"]
+    dictionary = datadict.load(DICTIONARY, TABLES).restricted_to(CATALOGUE)
+    found = propose.Proposer(dictionary, reference=altered).propose()["role_anaesthetic"]["columns"]["start_time"]
+    assert (found["best"]["table"], found["best"]["column"]) == ("ANAES_RECORD", "ANAES_START_TS")
+    assert not found["best"].get("reference") and found["confidence"] != "low"
+    listed = [(c["table"], c["column"]) for c in found["candidates"]]
+    assert ("ANAES_RECORD", "ANAES_STOP_TS") in listed
+    stop = next(c for c in found["candidates"] if c["column"] == "ANAES_STOP_TS")
+    assert stop["reference"] == ("A conversion at another hospital reads this table for VISIT_DETAIL, and fills "
+                                 "visit_detail_start_datetime from ANAES_RECORD.ANAES_STOP_TS.")
+    assert stop["score"] < found["best"]["score"]
+    # Without the reference, the proposal is the same.
+    plain = propose.Proposer(dictionary).propose()["role_anaesthetic"]["columns"]["start_time"]
+    assert (plain["best"]["table"], plain["best"]["column"]) == ("ANAES_RECORD", "ANAES_START_TS")
+
+
+def test_a_proposal_that_rests_on_the_reference_records_its_provenance(reference, tmp_path):
+    thin = _thinned(tmp_path, "PERSON_MASTER", "TEST_PERSON_FLAG")
+    lineage = tmp_path / "lineage.json"
+    lineage.write_text(json.dumps(reference))
+    out = tmp_path / "map"
+    printed = io.StringIO()
+    with redirect_stdout(printed):
+        rolemap.main(["propose", str(tmp_path / "thin.csv"), "--tables", str(TABLES), "--catalogue", str(CATALOGUE_FILE),
+                      "--out", str(out), "--reference", str(lineage)])
+    data = json.loads((out / "map.json").read_text())
+    item = data["roles"]["role_patient"]["columns"]["is_test"]
+    assert item["proposed_from"] == propose.REFERENCE == "a reference conversion"
+    assert item["says"] == SAYS_FILTER and item["from"] == "PERSON_MASTER.TEST_PERSON_FLAG"
+    assert sum(1 for role in data["roles"].values() for i in role["columns"].values() if i.get("proposed_from")) == 1
+    rolemap.read_map(out, CATALOGUE)
+    board = rolemap.scoreboard(data)
+    assert board["reference"]["proposals"] == 1 and board["reference"]["unanswered"] == 1
+    assert any(line.startswith("Among the proposals that rested on a reference conversion rather than on the dictionary, "
+                               "the page made 1 proposal.") for line in board["lines"])
+    (tmp_path / "answers.csv").write_text("attribute,answer\nrole_patient.is_test,yes\n")
+    propose.confirm(out, tmp_path / "answers.csv", CATALOGUE)
+    item = json.loads((out / "map.json").read_text())["roles"]["role_patient"]["columns"]["is_test"]
+    assert item["proposed_from"] == "a reference conversion" and item["confirmation"]["proposed_from"] == "a reference conversion"
+    assert rolemap.scoreboard(json.loads((out / "map.json").read_text()))["reference"]["as_proposed"] == 1
+    # A file that is not a lineage is refused with a sentence that a person can act on.
+    with pytest.raises(propose.ProposeError, match="could not read this file as a lineage"):
+        propose.read_reference(b"{}")
+
+
+def test_the_page_passes_the_reference_to_the_proposer_and_the_journal_records_only_its_name_and_hash(reference, tmp_path):
+    import hashlib
+    import zipfile
+    from schemalyser import describe
+    _thinned(tmp_path, "PERSON_MASTER", "TEST_PERSON_FLAG")
+    data = json.dumps(reference).encode()
+    d = describe.Describe()
+    kind, receipt = d.upload((tmp_path / "thin.csv").read_bytes(), TABLES.read_bytes(), {}, "thin.csv", "tables.csv", "Step 2",
+                             data, "their-lineage.json")
+    assert kind == "dictionary" and receipt["reference"] == {"file": "their-lineage.json", "targets": 6}
+    d.propose(date=DATE)
+    item = d.data["roles"]["role_patient"]["columns"]["is_test"]
+    # Where the proposal came from is recorded when it is written, and not worked out later from its status.
+    assert item["proposed_from"] == describe.REFERENCE and item["provenance"] == "a reference conversion"
+    d.confirm("role_patient.is_test", "yes", date=DATE)
+    files = d.folder_files(DATE)
+    journal = json.loads(files["journal.json"])["entries"]
+    entry = next(e for e in journal if e["kind"] == "reference lineage loaded")["payload"]
+    assert entry["reference_file"] == "their-lineage.json" and entry["reference_sha256"] == hashlib.sha256(data).hexdigest()
+    assert "PERSON_MASTER" not in files["journal.json"].decode()
+    assert files["dictionary/reference-lineage.json"] == data
+    rows = list(csv_rows(files["confirmations.csv"]))
+    assert next(r for r in rows if r["attribute"] == "role_patient.is_test")["proposed_from"] == "a reference conversion"
+    # The saved hospital schema opens again with the reference, and the proposal rebuilds the same.
+    archive = io.BytesIO(d.folder_zip(DATE))
+    with zipfile.ZipFile(archive) as held:
+        saved = {name: held.read(name) for name in held.namelist()}
+    again = describe.Describe()
+    found = again.restore(saved)
+    assert found["reference"] and again.reference == reference
+    assert again.dictionary_entry["reference_sha256"] == entry["reference_sha256"]
+    with pytest.raises(describe.DescribeError, match="reference conversion's lineage"):
+        describe.Describe().upload(DICTIONARY.read_bytes(), None, {}, "d.csv", "t.csv", "", b"not a lineage", "x.json")
+
+
+def csv_rows(data):
+    import csv as csv_
+    return csv_.DictReader(io.StringIO(data.decode()))
+
+
 def rolemap_today():
     import datetime
     return datetime.date.today().isoformat()

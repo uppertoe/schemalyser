@@ -45,6 +45,7 @@ nothing was recorded.
     python -m schemalyser.rolemap open MAP
     python -m schemalyser.rolemap propose DICTIONARY.csv --catalogue CATALOGUE.csv --out FOLDER [--tables TABLES.csv]
                                           [--model contract.json] [--heading FIELD=HEADING] [--base VIEW=TABLE]
+                                          [--reference lineage.json]
     python -m schemalyser.rolemap confirm MAP CONFIRMATIONS.csv [--catalogue CATALOGUE.csv] [--dictionary DICTIONARY.csv]
     python -m schemalyser.rolemap scoreboard FILE
 
@@ -78,8 +79,9 @@ CONFIRMED = ("person", "count")
 # The further fields that a draft map from the proposer carries in its evidence: the binding as data, from which the
 # view's SQL is written again after a confirmation, the confidence and the other candidates of the proposal, the
 # person's answer with its date, and where the binding came from (a person, or an inference), which the saved hospital
-# schema adds.
-PROPOSAL_FIELDS = ("binding", "confidence", "candidates", "confirmation", "provenance")
+# schema adds. proposed_from says that the proposal rested on a reference conversion's lineage rather than on the
+# dictionary, and stays after a person has answered.
+PROPOSAL_FIELDS = ("binding", "confidence", "candidates", "confirmation", "provenance", "proposed_from")
 MEAN_KINDS = ("map_arterial", "map_cuff")
 # The project's least count and the step to which every count is rounded down, as for the check script.
 MINIMUM_COUNT = 10
@@ -139,6 +141,23 @@ class MapError(ValueError):
 def contract():
     """The contract: the role views, their columns, types and meanings, and the vocabulary of kinds, as data."""
     return json.loads((MODEL / "contract.json").read_text(encoding="utf-8"))
+
+
+def part_hashes(model=None):
+    """The hash of each part's definition in the contract, as {view: hash}: the view itself, with the kinds or the
+    vocabularies that its columns of a kind name. A change to any of them is a change to the part, which makes the
+    evidence that rested on it stale."""
+    import hashlib
+    model = model or contract()
+    found = {}
+    for view in model["views"]:
+        named = sorted({c.get("vocabulary") for c in view["columns"] if c.get("vocabulary")})
+        definition = {"view": view, "vocabularies": {n: model["vocabularies"].get(n) for n in named}}
+        if view["name"] == "role_reading":
+            definition["kinds"] = model["kinds"]
+        text = json.dumps(definition, sort_keys=True, ensure_ascii=False)
+        found[view["name"]] = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+    return found
 
 
 def views():
@@ -274,9 +293,12 @@ def read_map_json(folder):
     except (OSError, ValueError):
         raise MapError(WORDING["map_json"].format(where=MAP_FILE)) from None
     if not isinstance(data, dict) or not {"world", "description", "roles", "kinds"} <= set(data) \
-            <= {"world", "description", "roles", "kinds", "eras", "questions"}:
+            <= {"world", "description", "roles", "kinds", "eras", "questions", "normalisations"}:
         raise MapError(WORDING["map_shape"].format(where=MAP_FILE, problem="the map holds world, description, roles, kinds and, "
-                                                                           "optionally, eras and questions"))
+                                                                           "optionally, eras, questions and normalisations"))
+    # A binding that names a normalisation is read back into its route, so that what follows checks the route itself.
+    from .normalise import resolve
+    data = resolve(data)
     _sentence(data["description"], MAP_FILE, "the description")
     required, wanted = views(), all_views()
     if not isinstance(data["roles"], dict) or not set(required) <= set(data["roles"]) <= set(wanted):
@@ -770,6 +792,10 @@ SCORE_WORDING = {
                 "corrected to an alternative that the page had listed, {unlisted} corrected to a column or table that the "
                 "page had not listed, {not_sure} marked not sure, and {unanswered} no answer yet.",
     "category_none": "Among {category}, the page made no proposal.",
+    "reference": "Among the proposals that rested on a reference conversion rather than on the dictionary, the page made "
+                 "{proposals}. Of these, {as_proposed} confirmed as proposed, {listed} corrected to an alternative that the "
+                 "page had listed, {unlisted} corrected to a column or table that the page had not listed, {not_sure} marked "
+                 "not sure, and {unanswered} no answer yet.",
     "shared": "These figures name no table or column, so they may be shared.",
 }
 
@@ -852,6 +878,7 @@ def scoreboard(data):
     empty = {"proposals": 0, "as_proposed": 0, "listed": 0, "unlisted": 0, "not_sure": 0, "unanswered": 0}
     overall, parts = dict(empty), []
     categories = {name: dict(empty) for name in SCORE_CATEGORIES}
+    reference = dict(empty)
     levels = {level: {"answered": 0, "corrected": 0} for level in SCORE_LEVELS}
     nothing = {"count": 0, "chosen": 0}
     for view in [name for name in all_views() if name in (data or {}).get("roles", {})]:
@@ -870,6 +897,9 @@ def scoreboard(data):
             held = categories[category(view, column, item)]
             held["proposals"] += 1
             held[fared] += 1
+            if item.get("proposed_from") == "a reference conversion":
+                reference["proposals"] += 1
+                reference[fared] += 1
             if fared in ("as_proposed", "listed", "unlisted"):
                 levels[item["confidence"]]["answered"] += 1
                 levels[item["confidence"]]["corrected"] += fared != "as_proposed"
@@ -894,6 +924,8 @@ def scoreboard(data):
         lines += [sentence(SCORE_WORDING["category"], counts, category=SCORE_CATEGORIES[name]) if counts["proposals"]
                   else SCORE_WORDING["category_none"].format(category=SCORE_CATEGORIES[name])
                   for name, counts in categories.items()]
+        if reference["proposals"]:
+            lines.append(sentence(SCORE_WORDING["reference"], reference))
         lines.append("")
         for level in SCORE_LEVELS:
             held = levels[level]
@@ -908,24 +940,28 @@ def scoreboard(data):
             lines.append(SCORE_WORDING["nothing"].format(count=f"{nothing['count']:,} {'column' if nothing['count'] == 1 else 'columns'}",
                                                          chosen=f"{nothing['chosen']:,}"))
     lines += ["", SCORE_WORDING["shared"]]
-    return {"parts": parts, "overall": overall, "categories": categories, "levels": levels, "nothing": nothing, "lines": lines,
-            "text": "\n".join(lines) + "\n"}
+    return {"parts": parts, "overall": overall, "categories": categories, "reference": reference, "levels": levels,
+            "nothing": nothing, "lines": lines, "text": "\n".join(lines) + "\n"}
 
 
 def read_saved_map(path):
     """map.json from a saved hospital schema: the one file that the page saves, its folder, or map.json itself."""
     import zipfile
+    from .normalise import resolve
     path = Path(path)
     try:
         if path.is_dir():
             inner = path / "map" / MAP_FILE
-            return json.loads(decode((inner if inner.exists() else path / MAP_FILE).read_bytes()))
-        if zipfile.is_zipfile(path):
+            data = json.loads(decode((inner if inner.exists() else path / MAP_FILE).read_bytes()))
+        elif zipfile.is_zipfile(path):
             with zipfile.ZipFile(path) as archive:
-                return json.loads(decode(archive.read(f"map/{MAP_FILE}")))
-        return json.loads(decode(path.read_bytes()))
+                data = json.loads(decode(archive.read(f"map/{MAP_FILE}")))
+        else:
+            data = json.loads(decode(path.read_bytes()))
     except (OSError, KeyError, ValueError, zipfile.BadZipFile):
         raise MapError(WORDING["map_json"].format(where=str(path.name))) from None
+    # A binding that names a normalisation is read back into its route.
+    return resolve(data, path.name) if isinstance(data, dict) else data
 
 
 # Running queries over the role views.
@@ -1201,6 +1237,8 @@ def main(argv=None):
     proposing.add_argument("--base", action="append", default=[], metavar="VIEW=TABLE",
                            help="the table whose rows a person has chosen for a view")
     proposing.add_argument("--world", default="the hospital", help="the name of the hospital or world, for map.json")
+    proposing.add_argument("--reference", type=Path, help="a reference conversion's lineage, as python -m schemalyser.compare "
+                                                         "reference writes it, whose routes become candidates beside the dictionary's")
     proposing.add_argument("--invented", action="store_true",
                            help="say that the dictionary is invented, so that its draft may be written into a published folder")
     confirming = commands.add_parser(
@@ -1275,8 +1313,10 @@ def _propose_or_confirm(args):
         if args.command == "propose":
             model = json.loads(decode(args.model.read_bytes())) if args.model else None
             dictionary = datadict.load(args.dictionary, args.tables, headings)
+            reference = propose.read_reference(args.reference.read_bytes()) if args.reference else None
             proposal, found, missing = propose.propose_map(dictionary, catalogue, args.out, model, world=args.world,
-                                                           bases=_pairs(args.base, "--base"), invented=args.invented)
+                                                           bases=_pairs(args.base, "--base"), invented=args.invented,
+                                                           reference=reference)
             if missing:
                 print(propose.WORDING["missing"].format(count=missing))
             for view, item in proposal.items():
