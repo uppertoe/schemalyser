@@ -891,3 +891,59 @@ def test_the_scoreboard_says_how_the_proposals_fared_and_names_no_table_or_colum
     with redirect_stdout(out):
         rolemap.main(["scoreboard", str(saved)])
     assert out.getvalue() == text
+
+
+# A16: a person's assessment of the recording pathways, which the evidence import records on the part.
+
+def _coverage_request(s, parts=("role_patient", "role_anaesthetic")):
+    return {"format": describe.REQUEST_FORMAT, "request_id": "qcoverage", "schema_id": s.identity["schema_id"],
+            "form": "pathway coverage", "moves": list(parts), "parts": list(parts),
+            "period": {"from": "2024-01-01", "to": "2024-12-31"}}
+
+
+def test_an_assessment_of_the_recording_pathways_is_recorded_on_each_part_with_its_period_the_person_and_the_date():
+    s = describe.Describe()
+    s.version = "test"
+    s.load_dictionary(DICTIONARY.read_bytes(), TABLES.read_bytes(), {}, "invented-dictionary.csv", "invented-tables.csv")
+    s.propose(date=DATE)
+    s.save(DATE)
+    request = _coverage_request(s)
+    result = ("part\tperiod_from\tperiod_to\tpathways_found\tpathways_mapped\tnote\n"
+              "role_patient\t2024-01-01\t2024-12-31\t1\t1\tOne register of patients.\n"
+              "role_anaesthetic\t2024-01-01\t2024-06-30\t2\t1\t\n")
+    entries = len(s.log)
+    # Each refusal leaves the journal as it was: no person named, a part the request does not ask about, a period that
+    # is not one, and more pathways mapped than found.
+    with pytest.raises(describe.DescribeError, match="name of the person who made it"):
+        s.import_evidence(request, result, None)
+    with pytest.raises(describe.DescribeError, match="not a part that this request asks about"):
+        s.import_evidence(request, result.replace("role_anaesthetic\t", "role_reading\t"), "Dr C")
+    with pytest.raises(describe.DescribeError, match="first not after the last"):
+        s.import_evidence(request, result.replace("2024-06-30", "2023-06-30"), "Dr C")
+    with pytest.raises(describe.DescribeError, match="cannot be more than the pathways found"):
+        s.import_evidence(request, result.replace("\t2\t1\t", "\t1\t2\t"), "Dr C")
+    with pytest.raises(describe.DescribeError, match="does not have the columns"):
+        s.import_evidence(request, "part\tpathways_found\nrole_patient\t1\n", "Dr C")
+    assert len(s.log) == entries
+    found = s.import_evidence(request, result, "Dr C", date=DATE)
+    entry = found["entry"]
+    assert entry["kind"] == "evidence imported" and entry["actor"] == "Dr C" and entry["provenance"] == "a person"
+    assert entry["payload"]["form"] == describe.COVERAGE_ASSESSED
+    assert entry["scope"]["period"] == {"from": "2024-01-01", "to": "2024-12-31"}
+    # The record is held on the part, never on a binding, with the period and the figures it covers.
+    held = s.dimensions["parts"]["role_anaesthetic"][describe.COVERAGE_ASSESSED]
+    assert len(held) == 1 and held[0]["by"] == "Dr C" and held[0]["date"] == DATE and held[0]["entry"] == entry["id"]
+    assert held[0]["period"] == {"from": "2024-01-01", "to": "2024-06-30"}
+    assert held[0]["figure"] == {"pathways_found": 2, "pathways_mapped": 1}
+    assert s.dimensions["parts"]["role_patient"][describe.COVERAGE_ASSESSED][0]["note"] == "One register of patients."
+    assert not any(describe.COVERAGE_ASSESSED in record for record in s.dimensions["bindings"].values())
+    # It survives the saved file, and a change to the part's pathways leaves it stale with the reason.
+    again = describe.Describe()
+    again.version = "test"
+    again.restore(found["files"])
+    assert again.dimensions["parts"] == s.dimensions["parts"]
+    assert not again.stale_evidence()
+    s.confirm("role_patient rows", "no", "PERSON_MASTER_2", date=DATE)
+    stale = [e for e in s.stale_evidence() if e["kind"] == "parts"]
+    assert stale == [{"kind": "parts", "subject": "role_patient", "dimension": describe.COVERAGE_ASSESSED,
+                      "reasons": ["the pathways changed"]}]

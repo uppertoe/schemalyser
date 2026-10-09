@@ -1,0 +1,40 @@
+{
+  "expectations": [
+    {
+      "says": "The anaesthesia layer writes the anaesthetic as a visit detail whose end datetime is empty and whose end date is the date of its start, because the model requires an end date.",
+      "query": "SELECT COUNT(*) AS visit_details, SUM(CASE WHEN vd.visit_detail_end_datetime IS NULL AND vd.visit_detail_end_date = vd.visit_detail_start_date THEN 1 ELSE 0 END) AS open_ended FROM omop.visit_detail vd WHERE vd.visit_detail_source_value = '990000531'",
+      "result": [
+        1,
+        1
+      ]
+    },
+    {
+      "says": "The anaesthetic's own procedure row has an empty end.",
+      "query": "SELECT COUNT(*) AS anaesthetics FROM omop.procedure_occurrence po JOIN omop.visit_detail vd ON vd.visit_detail_id = po.visit_detail_id WHERE vd.visit_detail_source_value = '990000531' AND po.procedure_source_value = 'ANAESTHETIC' AND po.procedure_end_date IS NULL AND po.procedure_end_datetime IS NULL",
+      "result": [
+        1
+      ]
+    },
+    {
+      "says": "The anaesthetic table holds the anaesthetic with an empty end and an empty duration, and its whole phase has an empty end.",
+      "query": "SELECT COUNT(*) AS anaesthetics FROM omop.anaesthetic a JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id JOIN omop.anaesthetic_phase ph ON ph.anaesthetic_id = a.anaesthetic_id WHERE vd.visit_detail_source_value = '990000531' AND a.end_datetime IS NULL AND a.duration_minutes IS NULL AND ph.phase_name = 'whole anaesthetic' AND ph.end_datetime IS NULL",
+      "result": [
+        1
+      ]
+    },
+    {
+      "says": "Both systolic readings point at the anaesthetic, because an anaesthetic without a stop has no upper end to the window in which a reading points at it.",
+      "query": "SELECT COUNT(*) AS readings FROM omop.measurement m JOIN omop.anaesthetic a ON a.anaesthetic_id = m.measurement_event_id JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id WHERE vd.visit_detail_source_value = '990000531' AND m.measurement_concept_id = 3004249",
+      "result": [
+        2
+      ]
+    },
+    {
+      "says": "The infusion belongs to the anaesthetic's visit detail.",
+      "query": "SELECT COUNT(*) AS periods FROM omop.drug_exposure d JOIN omop.visit_detail vd ON vd.visit_detail_id = d.visit_detail_id WHERE vd.visit_detail_source_value = '990000531'",
+      "result": [
+        1
+      ]
+    }
+  ]
+}

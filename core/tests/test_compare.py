@@ -253,7 +253,12 @@ def test_the_transplanted_steps_run_in_the_testbed_on_a_sandbox_built_from_their
                             "device_exposure.sql")]
     assert all(s["rows"] > 0 for s in report["steps"])
     passed = {c["check"]: c["passed"] for c in report["checks"]}
-    assert passed["every step ran cleanly"] and passed["the release script was written and carries every step that ran"]
+    assert passed["every step ran cleanly"]
+    # The transplant is a draft whose steps no person has reviewed, so the run says so and the release is refused.
+    assert report["routes"]["draft"]["sentence"].startswith("This conversion is a draft, transplanted from a reference")
+    assert len(report["routes"]["problems"]) == 6 and all("does not record the review" in p for p in report["routes"]["problems"])
+    assert not passed["the release script was written and carries every step that ran"]
+    assert report["release"]["reason"].startswith("person.sql: this step is written directly from the source tables")
     # The one required field that the lineage cannot give is reported, and nothing else.
     assert next(c for c in report["checks"] if c["check"] == "every row fits the CDM's field list")["detail"] == [
         "visit_occurrence.visit_end_date: 20 rows have no value in a required field"]
@@ -267,7 +272,8 @@ def test_an_existing_step_is_kept_and_the_transplanted_one_is_offered_beside_it(
     steps = json.loads((out / "conversion.json").read_text())
     detail = next(s for s in steps if s["table"] == "visit_detail")
     assert detail["file"] == "visit_detail_through_case.sql"
-    assert detail["alternatives"] == ["visit_detail.sql", "visit_detail_from_reference.sql"]
+    assert detail["alternatives"] == ["visit_detail.sql", {"file": "visit_detail_from_reference.sql", **transplant._route(
+        "a reference conversion's lineage, transplanted on " + report["date"])}]
     assert (out / "visit_detail_through_case.sql").read_text() == (CONVERSION / "visit_detail_through_case.sql").read_text()
     assert "The existing conversion already writes VISIT_DETAIL in visit_detail_through_case.sql, which is kept." \
         in (out / "visit_detail_from_reference.sql").read_text()
@@ -303,4 +309,24 @@ def test_the_transplant_command_writes_the_folder(tmp_path, capsys):
     assert printed.startswith("Schemalyser wrote 2 steps, of which none is incomplete.")
     assert {p.name for p in (tmp_path / "out").iterdir()} == {
         "conversion.json", "person.sql", "provider.sql", "catalogue.csv", "decisions.json", "transplant-report.json",
-        "transplant-report.md"}
+        "transplant-report.md", "draft.json"}
+
+
+def test_the_transplant_marks_every_step_it_writes_as_direct_and_the_folder_as_a_draft(transplanted):
+    from schemalyser import convert, release
+    out = transplanted["out"]
+    steps = json.loads((out / "conversion.json").read_text())
+    assert all(s["route"] == "direct" and s["reference"] == "a reference conversion's lineage, transplanted on 2026-10-09"
+               and s["reason"].startswith("The step was transplanted") and "review" not in s for s in steps)
+    draft = convert.read_draft(out)
+    assert draft["draft"] is True and draft["reference"] == steps[0]["reference"] and draft["date"] == "2026-10-09"
+    # The release names the first step that lacks its review, and once every step is reviewed it still refuses the draft.
+    with pytest.raises(release.Refused, match="person.sql: this step is written directly"):
+        release.script(out)
+    reviewed = out.parent / "reviewed"
+    shutil.copytree(out, reviewed)
+    for step in steps:
+        step["review"] = {"by": "a tester", "on": "2026-10-09"}
+    (reviewed / "conversion.json").write_text(json.dumps(steps))
+    with pytest.raises(release.Refused, match="This conversion is a draft"):
+        release.script(reviewed)

@@ -1,14 +1,3 @@
 {
-  "description": "The source lists one general anaesthetic twice under the same identifier, so that the anaesthesia layer writes that identifier twice and the gate on repeated identifiers fails.",
-  "fails_gate": "030_identifiers_are_not_repeated.sql",
-  "expectations": [
-    {
-      "says": "The visit detail table holds the anaesthetic twice under one identifier.",
-      "query": "SELECT COUNT(*) AS rows_written, COUNT(DISTINCT vd.visit_detail_id) AS identifiers FROM omop.visit_detail vd WHERE vd.visit_detail_source_value = '990001531'",
-      "result": [
-        2,
-        1
-      ]
-    }
-  ]
+  "description": "The source lists one general anaesthetic twice under the same identifier, so that the anaesthesia layer writes that identifier twice and the gate on repeated identifiers fails."
 }

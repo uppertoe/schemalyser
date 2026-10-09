@@ -1,0 +1,26 @@
+{
+ "says": "Within the window from 08:10 to 08:40, the saturation is below 90 for 1 minute after the 88 and for 2 minutes after the 89, the most that one reading stands, and the 87 at the window's end stands for no time. The anaesthetic with no stop spends 2 minutes below 90, and its last reading stands for no time.",
+ "columns": [
+  "anaesthetic_key",
+  "age_days",
+  "threshold",
+  "readings",
+  "minutes_beyond"
+ ],
+ "rows": [
+  [
+   "990006310",
+   1552,
+   90.0,
+   5,
+   3.0
+  ],
+  [
+   "990006311",
+   1553,
+   90.0,
+   2,
+   2.0
+  ]
+ ]
+}

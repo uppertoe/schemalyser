@@ -1,0 +1,37 @@
+{
+ "says": "The two-hour anaesthetic spends 30 minutes below 36, 15 after the 35.6 kept at 08:30 and 15 after the 35.9, its lowest is 35.6, and the temperature on arrival is the 35.4 ten minutes after the stop. The anaesthetic with no stop spends 10 minutes below 36 and has no temperature on arrival. The third has no temperature during it, so no minutes and no lowest, and 36.1 on arrival.",
+ "columns": [
+  "anaesthetic_key",
+  "readings",
+  "minutes_below",
+  "lowest",
+  "arrival_time",
+  "arrival_temperature"
+ ],
+ "rows": [
+  [
+   "990006320",
+   4,
+   30.0,
+   35.6,
+   "2024-05-01 10:10:00",
+   35.4
+  ],
+  [
+   "990006321",
+   2,
+   10.0,
+   35.0,
+   null,
+   null
+  ],
+  [
+   "990006322",
+   0,
+   null,
+   null,
+   "2024-05-03 09:20:00",
+   36.1
+  ]
+ ]
+}

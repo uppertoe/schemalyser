@@ -1,0 +1,14 @@
+{
+  "expectations": [
+    {
+      "says": "The infusion is written as one period whose end the source does not record: its end datetime is empty, its stop reason says that no stop was recorded, and its end date is the date of its start only because the model requires one. The period does not end at the anaesthetic's stop.",
+      "query": "SELECT COUNT(*) AS periods, SUM(CASE WHEN d.drug_exposure_end_datetime IS NULL THEN 1 ELSE 0 END) AS of_unknown_end, SUM(CASE WHEN d.drug_exposure_end_date = d.drug_exposure_start_date THEN 1 ELSE 0 END) AS end_date_is_start_date, MAX(d.stop_reason) AS stop_reason FROM omop.drug_exposure d JOIN omop.visit_detail vd ON vd.visit_detail_id = d.visit_detail_id WHERE vd.visit_detail_source_value = '990001131'",
+      "result": [
+        1,
+        1,
+        1,
+        "stop not recorded"
+      ]
+    }
+  ]
+}

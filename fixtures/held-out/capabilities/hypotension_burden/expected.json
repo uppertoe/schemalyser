@@ -1,0 +1,40 @@
+{
+ "says": "The neonate spends 5 minutes below 40: 3 after the arterial 38, none after the arterial 41 that is kept over the cuff 36 at the same moment, and 2 after the 35 until the stop; the reading after the stop and the one not accepted do not count. The child over a year old spends 8 minutes below 55. The infant with no stop spends 5 minutes below 45, and its last reading stands for no time. The test patient and the anaesthetic whose stop is before its start have no row, and the child with no reading has no minutes.",
+ "columns": [
+  "anaesthetic_key",
+  "age_days",
+  "threshold",
+  "readings",
+  "minutes_beyond"
+ ],
+ "rows": [
+  [
+   "990006300",
+   9,
+   40.0,
+   5,
+   5.0
+  ],
+  [
+   "990006301",
+   421,
+   55.0,
+   4,
+   8.0
+  ],
+  [
+   "990006302",
+   40,
+   45.0,
+   2,
+   5.0
+  ],
+  [
+   "990006304",
+   5034,
+   55.0,
+   0,
+   null
+  ]
+ ]
+}

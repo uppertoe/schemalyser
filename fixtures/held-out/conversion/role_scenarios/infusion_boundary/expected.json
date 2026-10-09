@@ -1,0 +1,19 @@
+{
+  "step": "drug_exposure_infusion_roles.sql",
+  "table": "drug_exposure",
+  "says": "The first infusion runs from its start to its first change of rate, from that change to the pause, and from the restart to the second change of rate. The pause adds nothing, and the order starts nothing. The last interval runs at the corrected rate, which supersedes the rate first charted, and it has no recorded end, so it is kept as an interval of unknown end and is not ended at the anaesthetic's stop or at the next day's infusion. The second anaesthetic's infusion runs from its start to its stop under its own order. The unmapped, ambiguous and unlisted drugs are each written once with the concept 0 and their status, and none is left out.",
+  "columns": ["person_id", "visit_occurrence_id", "visit_detail_id", "drug_concept_id", "drug_source_value",
+              "drug_exposure_start_datetime", "drug_exposure_end_datetime", "drug_exposure_start_date",
+              "drug_exposure_end_date", "stop_reason", "sig", "dose_unit_source_value", "route_source_value",
+              "drug_type_concept_id"],
+  "rows": [
+    [1, 11, 5000000021, 9100001, "mapped:kdrugmapped0001", "2024-08-06 08:20:00", "2024-08-06 08:50:00", "2024-08-06", "2024-08-06", null, "0.1", "kunitmicrogkgmn", "intravenous", 32818],
+    [1, 11, 5000000021, 9100001, "mapped:kdrugmapped0001", "2024-08-06 08:50:00", "2024-08-06 09:10:00", "2024-08-06", "2024-08-06", null, "0.2", "kunitmicrogkgmn", "intravenous", 32818],
+    [1, 11, 5000000021, 9100001, "mapped:kdrugmapped0001", "2024-08-06 09:25:00", "2024-08-06 09:45:00", "2024-08-06", "2024-08-06", null, "0.2", "kunitmicrogkgmn", "intravenous", 32818],
+    [1, 11, 5000000021, 9100001, "mapped:kdrugmapped0001", "2024-08-06 09:45:00", null, "2024-08-06", "2024-08-06", "stop not recorded", "0.12", "kunitmicrogkgmn", "intravenous", 32818],
+    [1, 11, 5000000022, 9100001, "mapped:kdrugmapped0001", "2024-08-07 14:10:00", "2024-08-07 15:00:00", "2024-08-07", "2024-08-07", null, "0.1", "kunitmicrogkgmn", "intravenous", 32818],
+    [1, 11, 5000000022, 0, "unmapped:kdrugunmapped01", "2024-08-07 14:20:00", "2024-08-07 14:50:00", "2024-08-07", "2024-08-07", null, "2", "kunitmicrogkgmn", "intravenous", 32818],
+    [1, 11, 5000000022, 0, "ambiguous:kdrugambiguous1", "2024-08-07 14:30:00", "2024-08-07 14:40:00", "2024-08-07", "2024-08-07", null, "1", "kunitmicrogkgmn", "intravenous", 32818],
+    [1, 11, 5000000022, 0, "unlisted:kdrugnotlisted1", "2024-08-07 14:35:00", "2024-08-07 14:45:00", "2024-08-07", "2024-08-07", null, "3", "kunitmicrogkgmn", "intravenous", 32818]
+  ]
+}

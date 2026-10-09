@@ -3,6 +3,11 @@
 sqlglot does most of the translation. This module rewrites the T-SQL habits that have a plain
 equivalent (variables, temp tables, table variables, three-part names, APPLY) and refuses the
 ones that have none (stored procedures, dynamic SQL, IF blocks).
+
+to_duckdb gives, beside the statements, the names of the rewrites it applied, so that a report
+can say how the form that DuckDB ran differs from the T-SQL that SQL Server runs. Each name is
+one of REWRITES, and sqlglot's own change of dialect, which applies to every statement, is not
+listed.
 """
 import re
 
@@ -28,6 +33,46 @@ SERVER_RECORDS = {("SYS", "TABLES"): "sys_tables", ("SYS", "PARTITIONS"): "sys_p
                   ("INFORMATION_SCHEMA", "COLUMNS"): "information_schema_columns",
                   ("INFORMATION_SCHEMA", "TABLES"): "information_schema_tables"}
 UNSUPPORTED_KEYS = {"ifblock", "whileblock", "execute", "executesql"}
+# The rewrites that to_duckdb may apply, each by name, with what it does.
+REWRITES = {
+    "old_hints_dropped": "A table hint of the old form, such as (NOLOCK) without WITH, is removed.",
+    "drop_if_exists": "IF OBJECT_ID(...) IS NOT NULL DROP TABLE becomes DROP TABLE IF EXISTS.",
+    "real_as_float_24": "A real is written as float(24), which is single precision in both.",
+    "float_as_double": "A float without a size, or with a size above 24, becomes DOUBLE.",
+    "server_records": "A read of SQL Server's records of its tables reads the practice database's copy of them.",
+    "source_qualifier_dropped": "A database or schema that names the source is removed, and only the omop schema is kept.",
+    "table_variable": "A table variable becomes a temporary table.",
+    "temp_table": "A temp table keeps a prefix of its own, so that it cannot collide with a real table.",
+    "compact_date": "A date written as 20190101 is written in the ISO form.",
+    "named_date": "A date written as 01-Jan-2017 is written in the ISO form.",
+    "stuff_for_xml_path": "STUFF over FOR XML PATH, which joins values into one string, becomes string_agg.",
+    "like_as_ilike": "LIKE becomes ILIKE, because SQL Server compares text without regard to case by default.",
+    "quotename_join": "Text joined to QUOTENAME with + is joined with ||.",
+    "dateadd_from_zero": "DATEADD(unit, n, 0) counts from the first of January 1900.",
+    "variable": "A variable is read with getvariable.",
+    "cross_apply": "CROSS APPLY becomes JOIN LATERAL.",
+    "outer_apply": "OUTER APPLY becomes LEFT JOIN LATERAL.",
+    "declare": "DECLARE becomes SET VARIABLE, or a temporary table for a table variable.",
+    "set_variable": "SET of a variable becomes SET VARIABLE.",
+    "session_setting_dropped": "A session setting, such as SET NOCOUNT ON, is removed.",
+    "whole_division": "A division of whole numbers becomes DuckDB's //, as SQL Server gives a whole number.",
+    "print_dropped": "PRINT is removed.",
+    "index_dropped": "CREATE INDEX is removed.",
+}
+
+
+class Translated(list):
+    """The DuckDB statements, in order, with the names of the rewrites applied, in the order first applied."""
+
+    def __init__(self, statements=(), rewrites=()):
+        super().__init__(statements)
+        self.rewrites = list(rewrites)
+
+
+def _applied(found, name):
+    """Records that a rewrite was applied, once, where a list is kept."""
+    if found is not None and name not in found:
+        found.append(name)
 UNSUPPORTED_KINDS = {"PROCEDURE", "FUNCTION", "TRIGGER"}
 
 
@@ -79,11 +124,12 @@ def _mark_real(sql):
     return sql
 
 
-def _widen(node):
+def _widen(node, found=None):
     """A T-SQL float without a size, or with a size above 24, is double precision, as DOUBLE is in DuckDB."""
     for data_type in node.find_all(exp.DataType):
         if data_type.this != exp.DataType.Type.FLOAT:
             continue
+        _applied(found, "float_as_double")
         size = data_type.expressions[0].this if data_type.expressions else None
         size = int(size.this) if isinstance(size, exp.Literal) and str(size.this).isdecimal() else None
         data_type.set("expressions", [])
@@ -101,35 +147,46 @@ def _joins_quotename(node):
     return any(_joins_quotename(n) if isinstance(n, exp.Add) else _quotename(n) for n in (node.this, node.expression))
 
 
-def _rewrite(node, date_columns=frozenset(), server_records=False):
-    _widen(node)
+def _rewrite(node, date_columns=frozenset(), server_records=False, found=None):
+    """Rewrites one statement in place, and returns it. found, where given, is a list to which the name of each
+    rewrite that was applied is added once."""
+    _widen(node, found)
     for table in node.find_all(exp.Table):
         record = SERVER_RECORDS.get(((table.db or "").upper(), table.name.upper())) if server_records else None
         if record is not None and not table.catalog:
             # The practice database keeps a copy of SQL Server's own records of its tables.
             table.set("db", exp.to_identifier(SERVER_SCHEMA))
             table.set("this", exp.to_identifier(record))
+            _applied(found, "server_records")
             continue
         # The OMOP tables live in a schema of their own, so that schema is kept. Every other
         # qualifier names the source database, which the sandbox holds without one.
         if (table.db or "").upper() != OMOP_SCHEMA.upper():
+            if table.db:
+                _applied(found, "source_qualifier_dropped")
             table.set("db", None)
+        if table.catalog:
+            _applied(found, "source_qualifier_dropped")
         table.set("catalog", None)
         this = table.this
         if isinstance(this, exp.Parameter):
             # A table variable becomes a temporary table.
             table.set("this", exp.to_identifier(f"tablevar_{this.name}"))
+            _applied(found, "table_variable")
         elif isinstance(this, exp.Identifier) and this.args.get("temporary"):
             # A temp table keeps a prefix, so that it cannot collide with a real table.
             this.set("this", f"temp_{this.name.lstrip('#')}")
+            _applied(found, "temp_table")
     for literal in node.find_all(exp.Literal):
         if not literal.is_string or not _is_date(literal, date_columns):
             continue
         # SQL Server reads '20190101' and '01-Jan-2017' as dates. DuckDB needs the ISO form.
         if COMPACT_DATE.match(literal.this):
             literal.set("this", f"{literal.this[:4]}-{literal.this[4:6]}-{literal.this[6:]}")
+            _applied(found, "compact_date")
         elif (named := NAMED_DATE.match(literal.this)) and named.group(2).upper() in MONTHS:
             literal.set("this", f"{named.group(3)}-{MONTHS[named.group(2).upper()]:02d}-{int(named.group(1)):02d}")
+            _applied(found, "named_date")
     for stuff in list(node.find_all(exp.Stuff)):
         # STUFF((SELECT ', ' + x FROM ... FOR XML PATH('')), 1, 2, '') joins the values of x into one
         # string and removes the leading separator. It is rewritten only in exactly that form.
@@ -146,15 +203,17 @@ def _rewrite(node, date_columns=frozenset(), server_records=False):
         separator = _sql(joined.this)
         order = select.args.get("order")
         if order is not None:
-            separator += " ORDER BY " + ", ".join(_sql(_rewrite(o.copy(), date_columns)) for o in order.expressions)
+            separator += " ORDER BY " + ", ".join(_sql(_rewrite(o.copy(), date_columns, found=found)) for o in order.expressions)
         replacement = select.copy()
         replacement.set("for_", None)
         replacement.set("order", None)
         replacement.set("expressions", [exp.Anonymous(this="string_agg", expressions=[
             exp.cast(joined.expression.copy(), "varchar"), exp.Var(this=separator)])])
         stuff.replace(exp.Subquery(this=replacement))
+        _applied(found, "stuff_for_xml_path")
     for like in list(node.find_all(exp.Like)):
         # SQL Server compares text without regard to case by default, so LIKE becomes ILIKE.
+        _applied(found, "like_as_ilike")
         ignoring_case = exp.ILike(this=like.this, expression=like.expression, escape=like.args.get("escape"))
         # The parser keeps the NOT of NOT LIKE on the LIKE itself, so it is carried across.
         like.replace(exp.Not(this=exp.Paren(this=ignoring_case)) if like.args.get("negate") else ignoring_case)
@@ -163,16 +222,20 @@ def _rewrite(node, date_columns=frozenset(), server_records=False):
             # SQL Server joins text with +, and DuckDB with ||.
             if _joins_quotename(added):
                 added.replace(exp.DPipe(this=added.this, expression=added.expression))
+                _applied(found, "quotename_join")
     for added in node.find_all(exp.DateAdd):
         # DATEADD(unit, n, 0) counts from the first of January 1900.
         if isinstance(added.this, exp.Literal) and not added.this.is_string:
             added.set("this", exp.cast(exp.Literal.string("1900-01-01"), "timestamp"))
+            _applied(found, "dateadd_from_zero")
     for parameter in list(node.find_all(exp.Parameter)):
         parameter.replace(exp.func("getvariable", exp.Literal.string(f"var_{parameter.name}")))
+        _applied(found, "variable")
     for join in node.find_all(exp.Join):
         lateral = join.this
         if isinstance(lateral, exp.Lateral) and lateral.args.get("cross_apply") is not None:
             # CROSS APPLY becomes JOIN LATERAL, and OUTER APPLY becomes LEFT JOIN LATERAL.
+            _applied(found, "cross_apply" if lateral.args["cross_apply"] else "outer_apply")
             if not lateral.args["cross_apply"]:
                 join.set("side", "LEFT")
             lateral.set("cross_apply", None)
@@ -180,32 +243,36 @@ def _rewrite(node, date_columns=frozenset(), server_records=False):
     return node
 
 
-def _declare(statement):
+def _declare(statement, found=None):
     out = []
+    _applied(found, "declare")
     for item in statement.expressions:
         name = _variable_name(item)
         kind = item.args.get("kind")
         if isinstance(kind, exp.Expression):
-            _widen(kind)
+            _widen(kind, found)
         if isinstance(kind, exp.Schema):
             columns = ", ".join(_sql(column) for column in kind.expressions)
             out.append(f"CREATE OR REPLACE TEMPORARY TABLE tablevar_{name} ({columns})")
             continue
         default = item.args.get("default")
-        value = _sql(_rewrite(default)) if isinstance(default, exp.Expression) else "NULL"
+        value = _sql(_rewrite(default, found=found)) if isinstance(default, exp.Expression) else "NULL"
         if kind is not None:
             value = f"CAST({value} AS {_sql(kind)})"
         out.append(f"SET VARIABLE var_{name} = {value}")
     return out
 
 
-def _set(statement):
+def _set(statement, found=None):
     out = []
     for item in statement.expressions:
         assignment = item.this
         if isinstance(assignment, exp.EQ) and isinstance(assignment.this, exp.Parameter):
-            out.append(f"SET VARIABLE var_{assignment.this.name} = {_sql(_rewrite(assignment.expression))}")
-        # Anything else is a session setting such as NOCOUNT, which has no meaning here.
+            out.append(f"SET VARIABLE var_{assignment.this.name} = {_sql(_rewrite(assignment.expression, found=found))}")
+            _applied(found, "set_variable")
+        else:
+            # Anything else is a session setting such as NOCOUNT, which has no meaning here.
+            _applied(found, "session_setting_dropped")
     return out
 
 
@@ -264,17 +331,19 @@ def _whole(node, statement, whole_columns, depth=0):
     return False
 
 
-def _whole_division(statement, whole_columns):
+def _whole_division(statement, whole_columns, found=None):
     """SQL Server divides a whole number by a whole number to give a whole number, so that (COUNT(*) / 10) * 10 rounds a
     count down to the nearest ten. DuckDB's / gives a fraction, so each such division becomes DuckDB's //."""
     for division in reversed(list(statement.find_all(exp.Div))):
         if _whole(division.this, statement, whole_columns) and _whole(division.expression, statement, whole_columns):
             division.replace(exp.IntDiv(this=division.this, expression=division.expression))
+            _applied(found, "whole_division")
     return statement
 
 
 def to_duckdb(sql, date_columns=frozenset(), whole_columns=None, server_records=False):
-    """Returns the DuckDB statements for a piece of T-SQL, in order.
+    """Returns the DuckDB statements for a piece of T-SQL, in order, as a Translated list whose rewrites attribute names
+    each rewrite of REWRITES that was applied, once, in the order first applied.
 
     date_columns holds the names of the columns that hold dates, so that a string compared with one
     of them can be read as a date. Where whole_columns is given, as the names of the columns that hold
@@ -284,13 +353,22 @@ def to_duckdb(sql, date_columns=frozenset(), whole_columns=None, server_records=
     database's copy of those records, in the schema SERVER_SCHEMA, and text joined to QUOTENAME with + is
     joined with ||.
     """
-    sql = drop_old_hints(sql.lstrip("\ufeff"))
-    sql = DROP_IF_EXISTS.sub(lambda m: f"DROP TABLE IF EXISTS {m.group(1)};", sql)
-    out = []
+    found = []
+    stripped = sql.lstrip("\ufeff")
+    sql = drop_old_hints(stripped)
+    if sql != stripped:
+        _applied(found, "old_hints_dropped")
+    sql, dropped = DROP_IF_EXISTS.subn(lambda m: f"DROP TABLE IF EXISTS {m.group(1)};", sql)
+    if dropped:
+        _applied(found, "drop_if_exists")
+    out = Translated()
     for batch in GO.split(sql):
         if not batch.strip():
             continue
-        statements = parse(_mark_real(batch), "tsql")
+        marked = _mark_real(batch)
+        if marked != batch:
+            _applied(found, "real_as_float_24")
+        statements = parse(marked, "tsql")
         if statements is None:
             raise Unreadable
         for statement in statements:
@@ -298,6 +376,7 @@ def to_duckdb(sql, date_columns=frozenset(), whole_columns=None, server_records=
                 continue
             if isinstance(statement, exp.Command):
                 if str(statement.this).upper() == "PRINT":
+                    _applied(found, "print_dropped")
                     continue
                 raise Unsupported
             if statement.key in UNSUPPORTED_KEYS or any(n.key in UNSUPPORTED_KEYS for n in statement.walk()):
@@ -307,16 +386,18 @@ def to_duckdb(sql, date_columns=frozenset(), whole_columns=None, server_records=
             if isinstance(statement, exp.Create):
                 kind = (statement.kind or "").upper()
                 if "INDEX" in kind:
+                    _applied(found, "index_dropped")
                     continue
                 if kind in UNSUPPORTED_KINDS:
                     raise Unsupported
             if isinstance(statement, exp.Declare):
-                out.extend(_declare(statement))
+                out.extend(_declare(statement, found))
             elif isinstance(statement, exp.Set):
-                out.extend(_set(statement))
+                out.extend(_set(statement, found))
             else:
-                rewritten = _rewrite(statement, date_columns, server_records)
+                rewritten = _rewrite(statement, date_columns, server_records, found)
                 if whole_columns is not None:
-                    rewritten = _whole_division(rewritten, whole_columns)
+                    rewritten = _whole_division(rewritten, whole_columns, found)
                 out.append(_sql(rewritten))
+    out.rewrites = found
     return out

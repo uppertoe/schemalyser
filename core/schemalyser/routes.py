@@ -14,6 +14,13 @@ as a group of patients that it can no longer leave out. The checklist repeats it
 The choice is applied to a copy of the conversion folder (apply), whose conversion.json then names the
 chosen file in the step's place, and which records the choices in ROUTES, so that every later reader of
 that folder, the checklist, the specification and the source query among them, follows the same route.
+
+Each step also records its route to OMOP in the contract's sense, over the roles or directly from the source tables,
+with what a direct step rests on (convert.route_problems). An alternative given as an entry may record a route of its
+own; one given as a bare file name takes its step's. When an alternative with a route of its own takes its step's
+place, its route record moves with it and the step's own record stays with the file it displaces. An alternative over
+the roles reads the role views, which no catalogue of source tables holds, so the choice here never takes one: whether
+a hospital can take the route over the roles is a question of its hospital schema, not of its catalogue.
 """
 import json
 from pathlib import Path
@@ -25,6 +32,9 @@ from .extract import decode
 from .translate import OMOP_SCHEMA
 
 ROUTES = "routes.json"
+# The fields of a route record, as convert.ROUTE_FIELDS names them; this layer reads the folder's format and does not
+# import the runner, which sits in the layer below.
+ROUTE_FIELDS = ("route", "reference", "reason", "review")
 MAXIMUM_EFFECT = 600
 
 
@@ -96,6 +106,8 @@ def choose(folder, catalogue):
             continue
         tried = []
         for item in offered:
+            if isinstance(item, dict) and item.get("route") == "roles":
+                continue
             name = item.get("file") if isinstance(item, dict) else item
             path = folder / str(name)
             if not isinstance(name, str) or not path.is_file() or path.parent != folder:
@@ -121,9 +133,18 @@ def apply(folder, choices):
         choice = by_step.get(entry.get("file"))
         if choice is None:
             continue
+        picked = next((item for item in entry.get("alternatives") or []
+                       if (item.get("file") if isinstance(item, dict) else item) == choice["chosen"]), None)
         rest = [item for item in entry.get("alternatives") or []
                 if (item.get("file") if isinstance(item, dict) else item) != choice["chosen"]]
-        entry["file"], entry["alternatives"] = choice["chosen"], [choice["step"], *rest]
+        displaced = choice["step"]
+        if isinstance(picked, dict) and "route" in picked:
+            # The chosen alternative brings its own route record, and the step's own record stays with its file.
+            own = {field: entry.pop(field) for field in ROUTE_FIELDS if field in entry}
+            if own:
+                displaced = {"file": choice["step"], **own}
+            entry.update({field: picked[field] for field in ROUTE_FIELDS if field in picked})
+        entry["file"], entry["alternatives"] = choice["chosen"], [displaced, *rest]
     (folder / "conversion.json").write_text(json.dumps(entries, indent=1) + "\n")
     (folder / ROUTES).write_text(json.dumps(choices, indent=1) + "\n")
 

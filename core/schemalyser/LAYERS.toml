@@ -34,6 +34,8 @@
 "schemalyser.release" = { layer = "3" }
 "schemalyser.mapping" = { layer = "3", note = "It proposes mapping rows for a conversion; the conversion steps are layer 3's." }
 "schemalyser.routes" = { layer = "3", note = "It chooses a route for each step of a conversion, which is part of writing the steps." }
+"schemalyser.capability" = { layer = "3", note = "It reads the SQL of a capability of the catalogue and fills its parameters, which is the first stage of compiling a derived section." }
+"schemalyser.specification" = { layer = "3", note = "The first stage of compilation: a specification of an export into SQL over the roles." }
 
 "schemalyser.testbed" = { layer = "4" }
 "schemalyser.convert" = { layer = "4", note = "It runs a conversion over the synthetic database and checks what it writes, which is layer 4's; it also defines the conversion folder's format, which release.py takes from it." }
@@ -53,6 +55,7 @@
 "schemalyser.plan" = { layer = "orchestration", note = "The plan review is one of the package's contents, and it takes its wording from audit.py." }
 "schemalyser.project" = { layer = "orchestration", note = "The project folder, which the workbench and the import from the public workspace both use; it reads the version from audit.py and checks a schema with feasibility.py." }
 "schemalyser.workspace" = { layer = "orchestration", note = "The export is a projection rather than a layer, and the import builds a package in a hospital's project, so it sits with the package assembler." }
+"schemalyser.results" = { layer = "orchestration", note = "The results package, written from an execution package and a production run's output; it stays inside the hospital." }
 
 "schemalyser.browser" = { layer = "5" }
 "schemalyser.workbench" = { layer = "5" }

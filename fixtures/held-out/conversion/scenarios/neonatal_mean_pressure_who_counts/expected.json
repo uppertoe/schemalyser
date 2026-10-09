@@ -1,0 +1,122 @@
+{
+  "expectations": [
+    {
+      "says": "The child is exactly 28 days old at the start, counted by calendar date although less than 28 whole days have passed since the hour of birth, so the query leaves the anaesthetic out.",
+      "query": "SELECT a.age_days, COUNT(d.person_id) AS died_within_90_days FROM omop.anaesthetic a JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id LEFT JOIN omop.death d ON d.person_id = a.person_id AND d.death_date >= CAST(a.start_datetime AS date) AND d.death_date <= DATEADD(day, 90, CAST(a.start_datetime AS date)) WHERE vd.visit_detail_source_value = '990003400' GROUP BY a.age_days",
+      "result": [
+        28,
+        0
+      ]
+    },
+    {
+      "says": "The readings below 40 of the child aged 28 days stand for exactly three minutes, which the query never counts.",
+      "query": "WITH reading AS (SELECT a.anaesthetic_id, a.end_datetime, m.measurement_datetime, m.value_as_number, ROW_NUMBER() OVER (PARTITION BY a.anaesthetic_id, m.measurement_datetime ORDER BY CASE WHEN m.measurement_concept_id = 21490852 THEN 0 ELSE 1 END, m.measurement_id) AS kept_at_time FROM omop.anaesthetic a JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id JOIN omop.measurement m ON m.measurement_event_id = a.anaesthetic_id AND m.measurement_concept_id IN (21492241, 21490852) AND m.measurement_datetime >= a.start_datetime AND (a.end_datetime IS NULL OR m.measurement_datetime <= a.end_datetime) WHERE vd.visit_detail_source_value = '990003400'), stood AS (SELECT value_as_number, measurement_datetime, COALESCE(LEAD(measurement_datetime) OVER (ORDER BY measurement_datetime), end_datetime) AS until_datetime FROM reading WHERE kept_at_time = 1) SELECT COALESCE(SUM(CASE WHEN value_as_number < 40 AND until_datetime IS NOT NULL THEN CASE WHEN DATEDIFF(second, measurement_datetime, until_datetime) > 300 THEN 300 ELSE DATEDIFF(second, measurement_datetime, until_datetime) END ELSE 0 END), 0) / 60.0 AS minutes_below_40, COUNT(*) AS kept_readings FROM stood",
+      "result": [
+        3,
+        3
+      ]
+    },
+    {
+      "says": "The child is 27 days old at the start, so the query counts the anaesthetic.",
+      "query": "SELECT a.age_days, COUNT(d.person_id) AS died_within_90_days FROM omop.anaesthetic a JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id LEFT JOIN omop.death d ON d.person_id = a.person_id AND d.death_date >= CAST(a.start_datetime AS date) AND d.death_date <= DATEADD(day, 90, CAST(a.start_datetime AS date)) WHERE vd.visit_detail_source_value = '990003401' GROUP BY a.age_days",
+      "result": [
+        27,
+        0
+      ]
+    },
+    {
+      "says": "The arterial reading below 40 of the child aged 27 days stand for exactly three minutes.",
+      "query": "WITH reading AS (SELECT a.anaesthetic_id, a.end_datetime, m.measurement_datetime, m.value_as_number, ROW_NUMBER() OVER (PARTITION BY a.anaesthetic_id, m.measurement_datetime ORDER BY CASE WHEN m.measurement_concept_id = 21490852 THEN 0 ELSE 1 END, m.measurement_id) AS kept_at_time FROM omop.anaesthetic a JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id JOIN omop.measurement m ON m.measurement_event_id = a.anaesthetic_id AND m.measurement_concept_id IN (21492241, 21490852) AND m.measurement_datetime >= a.start_datetime AND (a.end_datetime IS NULL OR m.measurement_datetime <= a.end_datetime) WHERE vd.visit_detail_source_value = '990003401'), stood AS (SELECT value_as_number, measurement_datetime, COALESCE(LEAD(measurement_datetime) OVER (ORDER BY measurement_datetime), end_datetime) AS until_datetime FROM reading WHERE kept_at_time = 1) SELECT COALESCE(SUM(CASE WHEN value_as_number < 40 AND until_datetime IS NOT NULL THEN CASE WHEN DATEDIFF(second, measurement_datetime, until_datetime) > 300 THEN 300 ELSE DATEDIFF(second, measurement_datetime, until_datetime) END ELSE 0 END), 0) / 60.0 AS minutes_below_40, COUNT(*) AS kept_readings FROM stood",
+      "result": [
+        3,
+        3
+      ]
+    },
+    {
+      "says": "The child is a neonate of 10 days at the start and has no recorded death.",
+      "query": "SELECT a.age_days, COUNT(d.person_id) AS died_within_90_days FROM omop.anaesthetic a JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id LEFT JOIN omop.death d ON d.person_id = a.person_id AND d.death_date >= CAST(a.start_datetime AS date) AND d.death_date <= DATEADD(day, 90, CAST(a.start_datetime AS date)) WHERE vd.visit_detail_source_value = '990003402' GROUP BY a.age_days",
+      "result": [
+        10,
+        0
+      ]
+    },
+    {
+      "says": "The neonate's charted pressure has no recorded mean, and the calculated mean is switched off, so no mean pressure is kept.",
+      "query": "WITH reading AS (SELECT a.anaesthetic_id, a.end_datetime, m.measurement_datetime, m.value_as_number, ROW_NUMBER() OVER (PARTITION BY a.anaesthetic_id, m.measurement_datetime ORDER BY CASE WHEN m.measurement_concept_id = 21490852 THEN 0 ELSE 1 END, m.measurement_id) AS kept_at_time FROM omop.anaesthetic a JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id JOIN omop.measurement m ON m.measurement_event_id = a.anaesthetic_id AND m.measurement_concept_id IN (21492241, 21490852) AND m.measurement_datetime >= a.start_datetime AND (a.end_datetime IS NULL OR m.measurement_datetime <= a.end_datetime) WHERE vd.visit_detail_source_value = '990003402'), stood AS (SELECT value_as_number, measurement_datetime, COALESCE(LEAD(measurement_datetime) OVER (ORDER BY measurement_datetime), end_datetime) AS until_datetime FROM reading WHERE kept_at_time = 1) SELECT COALESCE(SUM(CASE WHEN value_as_number < 40 AND until_datetime IS NOT NULL THEN CASE WHEN DATEDIFF(second, measurement_datetime, until_datetime) > 300 THEN 300 ELSE DATEDIFF(second, measurement_datetime, until_datetime) END ELSE 0 END), 0) / 60.0 AS minutes_below_40, COUNT(*) AS kept_readings FROM stood",
+      "result": [
+        0,
+        0
+      ]
+    },
+    {
+      "says": "The charted pressure of the neonate without a mean gives a systolic and a diastolic row and no mean of any kind.",
+      "query": "SELECT SUM(CASE WHEN m.measurement_concept_id IN (3004249, 3012888) THEN 1 ELSE 0 END) AS charted, SUM(CASE WHEN m.measurement_concept_id IN (21492241, 21490852, 3027598) THEN 1 ELSE 0 END) AS means FROM omop.measurement m JOIN omop.visit_detail vd ON vd.visit_detail_id = m.visit_detail_id WHERE vd.visit_detail_source_value = '990003402'",
+      "result": [
+        2,
+        0
+      ]
+    },
+    {
+      "says": "The child is a neonate of 10 days at the start and has no recorded death.",
+      "query": "SELECT a.age_days, COUNT(d.person_id) AS died_within_90_days FROM omop.anaesthetic a JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id LEFT JOIN omop.death d ON d.person_id = a.person_id AND d.death_date >= CAST(a.start_datetime AS date) AND d.death_date <= DATEADD(day, 90, CAST(a.start_datetime AS date)) WHERE vd.visit_detail_source_value = '990003403' GROUP BY a.age_days",
+      "result": [
+        10,
+        0
+      ]
+    },
+    {
+      "says": "The low mean that the source marks as not accepted is not written, so the readings below 40 stand for no time, and the query keeps two readings.",
+      "query": "WITH reading AS (SELECT a.anaesthetic_id, a.end_datetime, m.measurement_datetime, m.value_as_number, ROW_NUMBER() OVER (PARTITION BY a.anaesthetic_id, m.measurement_datetime ORDER BY CASE WHEN m.measurement_concept_id = 21490852 THEN 0 ELSE 1 END, m.measurement_id) AS kept_at_time FROM omop.anaesthetic a JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id JOIN omop.measurement m ON m.measurement_event_id = a.anaesthetic_id AND m.measurement_concept_id IN (21492241, 21490852) AND m.measurement_datetime >= a.start_datetime AND (a.end_datetime IS NULL OR m.measurement_datetime <= a.end_datetime) WHERE vd.visit_detail_source_value = '990003403'), stood AS (SELECT value_as_number, measurement_datetime, COALESCE(LEAD(measurement_datetime) OVER (ORDER BY measurement_datetime), end_datetime) AS until_datetime FROM reading WHERE kept_at_time = 1) SELECT COALESCE(SUM(CASE WHEN value_as_number < 40 AND until_datetime IS NOT NULL THEN CASE WHEN DATEDIFF(second, measurement_datetime, until_datetime) > 300 THEN 300 ELSE DATEDIFF(second, measurement_datetime, until_datetime) END ELSE 0 END), 0) / 60.0 AS minutes_below_40, COUNT(*) AS kept_readings FROM stood",
+      "result": [
+        0,
+        2
+      ]
+    },
+    {
+      "says": "The mean of 35 that the source marks as not accepted is not written.",
+      "query": "SELECT COUNT(*) AS readings FROM omop.measurement m JOIN omop.visit_detail vd ON vd.visit_detail_id = m.visit_detail_id WHERE vd.visit_detail_source_value = '990003403' AND m.value_as_number = 35",
+      "result": [
+        0
+      ]
+    },
+    {
+      "says": "The child is a neonate of 5 days at the start of the first anaesthetic and died within 90 days of it.",
+      "query": "SELECT a.age_days, COUNT(d.person_id) AS died_within_90_days FROM omop.anaesthetic a JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id LEFT JOIN omop.death d ON d.person_id = a.person_id AND d.death_date >= CAST(a.start_datetime AS date) AND d.death_date <= DATEADD(day, 90, CAST(a.start_datetime AS date)) WHERE vd.visit_detail_source_value = '990003404' GROUP BY a.age_days",
+      "result": [
+        5,
+        1
+      ]
+    },
+    {
+      "says": "The cuff reading below 40 in the first anaesthetic stand for exactly three minutes.",
+      "query": "WITH reading AS (SELECT a.anaesthetic_id, a.end_datetime, m.measurement_datetime, m.value_as_number, ROW_NUMBER() OVER (PARTITION BY a.anaesthetic_id, m.measurement_datetime ORDER BY CASE WHEN m.measurement_concept_id = 21490852 THEN 0 ELSE 1 END, m.measurement_id) AS kept_at_time FROM omop.anaesthetic a JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id JOIN omop.measurement m ON m.measurement_event_id = a.anaesthetic_id AND m.measurement_concept_id IN (21492241, 21490852) AND m.measurement_datetime >= a.start_datetime AND (a.end_datetime IS NULL OR m.measurement_datetime <= a.end_datetime) WHERE vd.visit_detail_source_value = '990003404'), stood AS (SELECT value_as_number, measurement_datetime, COALESCE(LEAD(measurement_datetime) OVER (ORDER BY measurement_datetime), end_datetime) AS until_datetime FROM reading WHERE kept_at_time = 1) SELECT COALESCE(SUM(CASE WHEN value_as_number < 40 AND until_datetime IS NOT NULL THEN CASE WHEN DATEDIFF(second, measurement_datetime, until_datetime) > 300 THEN 300 ELSE DATEDIFF(second, measurement_datetime, until_datetime) END ELSE 0 END), 0) / 60.0 AS minutes_below_40, COUNT(*) AS kept_readings FROM stood",
+      "result": [
+        3,
+        3
+      ]
+    },
+    {
+      "says": "The child is a neonate of 12 days at the start of the second anaesthetic and died within 90 days of it as well, so the query counts the death once for each anaesthetic.",
+      "query": "SELECT a.age_days, COUNT(d.person_id) AS died_within_90_days FROM omop.anaesthetic a JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id LEFT JOIN omop.death d ON d.person_id = a.person_id AND d.death_date >= CAST(a.start_datetime AS date) AND d.death_date <= DATEADD(day, 90, CAST(a.start_datetime AS date)) WHERE vd.visit_detail_source_value = '990003405' GROUP BY a.age_days",
+      "result": [
+        12,
+        1
+      ]
+    },
+    {
+      "says": "The arterial reading below 40 in the second anaesthetic stand for exactly five minutes.",
+      "query": "WITH reading AS (SELECT a.anaesthetic_id, a.end_datetime, m.measurement_datetime, m.value_as_number, ROW_NUMBER() OVER (PARTITION BY a.anaesthetic_id, m.measurement_datetime ORDER BY CASE WHEN m.measurement_concept_id = 21490852 THEN 0 ELSE 1 END, m.measurement_id) AS kept_at_time FROM omop.anaesthetic a JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id JOIN omop.measurement m ON m.measurement_event_id = a.anaesthetic_id AND m.measurement_concept_id IN (21492241, 21490852) AND m.measurement_datetime >= a.start_datetime AND (a.end_datetime IS NULL OR m.measurement_datetime <= a.end_datetime) WHERE vd.visit_detail_source_value = '990003405'), stood AS (SELECT value_as_number, measurement_datetime, COALESCE(LEAD(measurement_datetime) OVER (ORDER BY measurement_datetime), end_datetime) AS until_datetime FROM reading WHERE kept_at_time = 1) SELECT COALESCE(SUM(CASE WHEN value_as_number < 40 AND until_datetime IS NOT NULL THEN CASE WHEN DATEDIFF(second, measurement_datetime, until_datetime) > 300 THEN 300 ELSE DATEDIFF(second, measurement_datetime, until_datetime) END ELSE 0 END), 0) / 60.0 AS minutes_below_40, COUNT(*) AS kept_readings FROM stood",
+      "result": [
+        5,
+        3
+      ]
+    }
+  ],
+  "cases": [
+    "A child exactly 28 days old at the start by calendar date, with no recorded death, whose arterial means are 60 at 08:00, 35 at 08:10 and 60 at 08:13, should not be counted at all, because the child is not a neonate.",
+    "A child 27 days old at the start, with no recorded death, whose arterial means are 60 at 08:00, 35 at 08:10 and 60 at 08:13, should be counted, with 3 minutes below 40 and no death within 90 days.",
+    "A neonate of 10 days with no recorded death, whose only charted pressure is 50/30 with no recorded mean, should fall in the band for no mean pressure recorded, with no minutes below 40 and no death within 90 days.",
+    "A neonate of 10 days with no recorded death, whose arterial means are 60 at 09:00, 35 at 09:10, which the source marks as not accepted, and 60 at 09:20, should give no minutes below 40 and no death within 90 days.",
+    "A neonate who died within 90 days of both of two anaesthetics, the first at 5 days with cuff means of 60 at 09:00, 36 at 09:10 and 61 at 09:13, and the second at 12 days with arterial means of 60 at 09:00, 37 at 09:10 and 62 at 09:17, should give 3 minutes below 40 for the first and 5 minutes for the second, because a reading stands for no longer than five minutes, and count the death once for each anaesthetic."
+  ]
+}

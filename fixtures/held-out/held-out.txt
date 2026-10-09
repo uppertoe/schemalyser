@@ -1,0 +1,5 @@
+This folder holds the held-out fixtures: the expected rows and answers that judge a transformation, written by hand
+from the clinical description and never taken from a run. Each conversion has a folder of its own, with its scenarios'
+expected rows under scenarios/ and role_scenarios/, and each capability or question has one under capabilities/ or
+questions/. The planted inputs stay in the development fixtures beside the conversion and the role model. No code path
+of Schemalyser writes here, and a test asserts the hash of this file after a full fast run of the testbed.

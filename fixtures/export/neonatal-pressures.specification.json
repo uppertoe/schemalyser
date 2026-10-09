@@ -1,0 +1,18 @@
+{
+  "format": "schemalyser-specification/1",
+  "contract_version": "1.1",
+  "title": "Mean pressures of the planted neonates",
+  "episodes": {"form": "anaesthetic_keys"},
+  "sections": [
+    {"name": "anaesthetics", "part": "role_anaesthetic"},
+    {"name": "mean_pressures", "part": "role_reading", "kinds": ["map_arterial", "map_cuff"],
+     "window": {"from": "start", "from_minutes": -15, "to": "stop", "to_minutes": 15},
+     "flags": {"accepted": 1}}
+  ],
+  "derived": [
+    {"name": "minutes_below_40", "capability": "minutes_beyond_threshold", "version": 1,
+     "parameters": {"kind": "map_arterial", "direction": "below", "threshold": 40, "window": "anaesthetic"}},
+    {"name": "died_within_90_days", "capability": "death_within_days", "version": 1, "parameters": {"days": 90}}
+  ],
+  "output": {"class": "rows", "keys": "pseudonymised", "leaving": ["anaesthetics", "mean_pressures", "minutes_below_40"]}
+}

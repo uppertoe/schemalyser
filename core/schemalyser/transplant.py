@@ -33,6 +33,12 @@ How each step is made.
     A table or column that the dictionary lacks is reported and the step is marked incomplete, and nothing is
     invented in its place.
 
+Every step that the transplant writes is marked in conversion.json as a step on the direct route, from the source tables,
+with the reference it came from and the reason, and with no review, because no person has reviewed it; the release
+script refuses such a step until the owner records the review. The folder also receives draft.json, which marks the
+whole conversion as a draft, so that the runner reports it as one and the release script refuses it until the owner
+has reviewed every step and removed the file.
+
 Beside the steps the folder receives conversion.json, catalogue.csv with the tables and columns that the steps read in
 the layout of a world's catalogue, so that the sandbox can build rows for them, decisions.json, and
 transplant-report.json with transplant-report.md. With --existing, the existing conversion is copied into the folder,
@@ -60,6 +66,7 @@ REPORT_FORMAT = "schemalyser-transplant/1"
 DECISIONS_FILE = "decisions.json"
 CATALOGUE_FILE = "catalogue.csv"
 REPORT_FILE = "transplant-report"
+DRAFT_FILE = convert.DRAFT_FILE
 SUFFIX = "_from_reference"
 TEXT_LENGTH = 50
 LITERAL = re.compile(r"<(int|str|float)>")
@@ -124,6 +131,17 @@ WORDING = {
     "md_alternative": "The existing conversion already writes this table in {file}, so the transplanted step is offered beside it as {alternative}.",
     "md_empty_fields": "The fields left empty or at the concept 0 are {fields}.",
 }
+
+
+# The route record of a transplanted step, and the draft marker of the folder.
+ROUTE_REASON = "The step was transplanted from the reference's lineage, and no person has reviewed it yet."
+DRAFT_SAYS = ("This conversion was transplanted from a reference conversion's lineage. No person has reviewed its steps, so the "
+              "release script refuses the folder until the owner has reviewed each step, recorded the review in "
+              "conversion.json, and removed this file.")
+
+
+def _route(reference):
+    return {"route": "direct", "reference": reference, "reason": ROUTE_REASON}
 
 
 class TransplantError(ValueError):
@@ -679,9 +697,13 @@ def _sql_type(data_type):
     return "varchar", str(TEXT_LENGTH), "", ""
 
 
-def transplant(lineage, dictionary, out, targets=None, existing=None, date=None):
-    """Writes a conversion folder from a lineage, checked against a dictionary. Returns the report as data."""
+def transplant(lineage, dictionary, out, targets=None, existing=None, date=None, reference=None):
+    """Writes a conversion folder from a lineage, checked against a dictionary. Returns the report as data.
+
+    reference names the reference conversion in the route record of each step and in draft.json; without it, the
+    folder names the lineage and the date of the transplant."""
     date = date or dt.date.today().isoformat()
+    reference = reference or f"a reference conversion's lineage, transplanted on {date}"
     out = Path(out)
     keys, owners = _keys()
     cdm = _fields()
@@ -739,10 +761,10 @@ def transplant(lineage, dictionary, out, targets=None, existing=None, date=None)
             sql = "\n".join(lines)
             offered = list(kept_step.get("alternatives") or [])
             if file not in [o.get("file") if isinstance(o, dict) else o for o in offered]:
-                offered.append(file)
+                offered.append({"file": file, **_route(reference)})
             kept_step["alternatives"] = offered
         else:
-            new = {"table": target, "file": file, "layer": layer}
+            new = {"table": target, "file": file, "layer": layer, **_route(reference)}
             at = len(conversion)
             if layer == "core":
                 at = next((i for i, s in enumerate(conversion) if s.get("layer") != "core"), len(conversion))
@@ -753,6 +775,8 @@ def transplant(lineage, dictionary, out, targets=None, existing=None, date=None)
     for item in skipped:
         report_targets.append({"target": item["target"], "file": None, "status": "skipped", "reasons": [item["reason"]]})
     (out / "conversion.json").write_text("[\n" + ",\n".join("  " + json.dumps(s) for s in conversion) + "\n]\n", encoding="utf-8")
+    (out / DRAFT_FILE).write_text(json.dumps({"draft": True, "reference": reference, "date": date, "says": DRAFT_SAYS},
+                                             indent=1) + "\n", encoding="utf-8")
     placeholders = [p for t in order for p in steps[t].placeholders]
     (out / DECISIONS_FILE).write_text(json.dumps({
         "format": "schemalyser-decisions/1",

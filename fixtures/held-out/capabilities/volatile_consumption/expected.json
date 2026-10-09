@@ -1,0 +1,37 @@
+{
+ "says": "The first anaesthetic delivers 400, 400, 125 and 125 millilitres of sevoflurane vapour in its first thirty minutes, then none at the concentration 0 for the 10 minutes that the last readings stand, so 1050 millilitres of vapour, 5.25 of liquid and 2.625 kilograms of carbon dioxide equivalent over 40 minutes; desflurane has no factor and no row. The anaesthetic with no stop delivers 50 millilitres of vapour over 5 minutes. In the third, the only concentration is ten minutes old when the flow is first charted, so nothing is counted.",
+ "columns": [
+  "anaesthetic_key",
+  "agent",
+  "minutes",
+  "vapour_ml",
+  "liquid_ml",
+  "co2e_kg"
+ ],
+ "rows": [
+  [
+   "990006340",
+   "expired_sevoflurane",
+   40.0,
+   1050.0,
+   5.25,
+   2.625
+  ],
+  [
+   "990006341",
+   "expired_sevoflurane",
+   5.0,
+   50.0,
+   0.25,
+   0.125
+  ],
+  [
+   "990006342",
+   "expired_sevoflurane",
+   0.0,
+   0.0,
+   0.0,
+   0.0
+  ]
+ ]
+}

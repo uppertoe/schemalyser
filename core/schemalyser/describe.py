@@ -242,6 +242,11 @@ WORDING = {
     "result_columns": "The result of {name} does not have the columns that the request expects ({wanted}), so Schemalyser has not imported it.",
     "result_type": "In the result of {name}, the column {column} holds {value}, which is not {type}, so Schemalyser has not imported it.",
     "plan_empty": "The plan is empty, so Schemalyser has not imported it.",
+    "coverage_actor": "An assessment of the recording pathways is recorded with the name of the person who made it. Give that name, then import the assessment again.",
+    "coverage_empty": "The assessment holds no row, so Schemalyser has not imported it. Give one row for each part that the person assessed.",
+    "coverage_part": "The assessment names {part}, which is not a part that this request asks about, so Schemalyser has not imported it.",
+    "coverage_period": "The assessment of {part} gives the period {start} to {end}. Schemalyser needs a first and a last date written as 2024-01-31, with the first not after the last, so it has not imported the assessment.",
+    "coverage_figures": "The assessment of {part} says that {mapped} of {found} recording pathways are mapped. The pathways mapped cannot be more than the pathways found, so Schemalyser has not imported the assessment.",
     "provenance_unknown": "The provenance of the result is one of {known}.",
     "imported": "Schemalyser imported the result of the request {request} and saved the new version {schema_id} as {file}.",
 }
@@ -268,8 +273,16 @@ WHOLE, NUMBER, TEXT = "a whole number", "a number", "text"
 TEXT_COLUMNS = {"role_view", "kind", "code", "name", "value", "outcome"}
 RECONCILIATION_COLUMNS = (("anaesthetics_sampled", WHOLE), ("agreed", WHOLE), ("disagreed", WHOLE))
 PRODUCTION_COLUMNS = (("rows_returned", WHOLE), ("seconds", NUMBER), ("outcome", TEXT))
+# A person's assessment of the recording pathways of the parts a question reads, over a period: for each part, how
+# many pathways by which the hospital's database records it the person found, and how many of those the hospital
+# schema maps. It is recorded on the part, not on a binding, because a pathway that no binding knows of is what it looks
+# for.
+COVERAGE_ASSESSED = "pathway coverage assessed"
+COVERAGE_COLUMNS = (("part", TEXT), ("period_from", TEXT), ("period_to", TEXT), ("pathways_found", WHOLE),
+                    ("pathways_mapped", WHOLE))
 IMPORTS = {"counts": "count", "test query": "probe", "code list": "list", "values": "values", "counting query": "values",
-           "plan": "plan", "production outcome": "production outcome", "reconciliation": "clinical reconciliation"}
+           "plan": "plan", "production outcome": "production outcome", "reconciliation": "clinical reconciliation",
+           "pathway coverage": COVERAGE_ASSESSED}
 
 
 class DescribeError(ValueError):
@@ -440,8 +453,9 @@ class Describe:
         # The current text of each query and result, by the query's name, as the journal's latest entries give them.
         self.queries = {}
         self.results = {}
-        # The five dimensions of evidence of every binding, link and code translation (evidence.py).
-        self.dimensions = {"bindings": {}, "links": {}, "translations": {}}
+        # The five dimensions of evidence of every binding, link and code translation (evidence.py), and the
+        # assessments of each part's recording pathways, {part: {COVERAGE_ASSESSED: [record]}}.
+        self.dimensions = {"bindings": {}, "links": {}, "translations": {}, "parts": {}}
         # The identity of the version this sitting was restored from or last saved as, its ancestors, and the contract
         # that a restored file was made against.
         self.identity = {"schema_id": None, "parent_id": None, "lineage": []}
@@ -680,7 +694,8 @@ class Describe:
         self.data = data
         # Every binding is new, so no evidence of an earlier proposal is carried over to it; the result of the tables
         # and columns query, where one has been read, shows which of the new bindings are present.
-        self.dimensions = {"bindings": {}, "links": {}, "translations": dict(self.dimensions["translations"])}
+        self.dimensions = {"bindings": {}, "links": {}, "translations": dict(self.dimensions["translations"]),
+                           "parts": dict(self.dimensions.get("parts") or {})}
         self._refresh_present(self._catalogue_entry(), date)
         self.settings["made"] = self.settings["made"] or date
         self.settings["updated"] = date
@@ -2331,6 +2346,12 @@ ORDER  BY g.kind;"""
     def _current(self, kind, subject):
         """The hashes of what a subject's evidence rests on now: its binding (or both ends of a link), the codes of
         its part, and the contract's definition of its part."""
+        if kind == "parts":
+            # An assessment of a part's recording pathways rests on the pathways that the hospital schema maps for it.
+            role = ((self.data or {}).get("roles") or {}).get(subject) or {}
+            pathways = [(None, (role.get("rows") or {}).get("binding"))] + \
+                [(p.get("name"), (p.get("rows") or {}).get("binding")) for p in role.get("pathways") or []]
+            return {"pathways": evidence.digest(pathways), "contract": self.parts.get(subject)}
         if kind == "links":
             source, target = subject.split(" -> ")
             return {"link": evidence.digest([self._binding_of(source), self._binding_of(target)]),
@@ -2367,6 +2388,12 @@ ORDER  BY g.kind;"""
         for kind, held in self.dimensions.items():
             for subject, record in sorted(held.items()):
                 current = self._current(kind, subject)
+                if kind == "parts":
+                    for assessed in record.get(COVERAGE_ASSESSED) or []:
+                        reasons = evidence.stale(assessed, current)
+                        if reasons:
+                            found.append({"kind": kind, "subject": subject, "dimension": COVERAGE_ASSESSED, "reasons": reasons})
+                    continue
                 for dimension in evidence.DIMENSIONS:
                     reasons = evidence.stale(record.get(dimension), current)
                     if reasons:
@@ -2681,7 +2708,7 @@ ORDER  BY g.kind;"""
         self.codes, self.counts = {}, {}
         self.queries, self.results, self.values, self.probes = {}, {}, {}, {}
         self.log, self.texts, self._journal_cache = evidence.Journal(), {}, None
-        self.dimensions = {"bindings": {}, "links": {}, "translations": {}}
+        self.dimensions = {"bindings": {}, "links": {}, "translations": {}, "parts": {}}
         self._checked, self._after, self._baseline, self._tested = {}, {}, None, None
         held = _json_of(files.get("settings.json"))
         for key in ("made", "updated", "database", "year", "time_zone", "daylight_saving", "hospital"):
@@ -2946,7 +2973,8 @@ ORDER  BY g.kind;"""
         A count or a test query sets reconciled, with its figure, for each binding and link that has not changed since
         the query was written; the clinician's judgement of a count is recorded as before, at step 8. A plan is kept
         as a journal entry for the execution package. A production outcome and a clinical reconciliation set
-        validated for the parts they cover."""
+        validated for the parts they cover. A person's assessment of the recording pathways is recorded on each part
+        it names, with its period, its figures, the person and the date; it needs the person's name."""
         date = date or _today()
         if not isinstance(request, dict) or request.get("format") != REQUEST_FORMAT or not request.get("request_id") \
                 or not isinstance(request.get("queries", []), list):
@@ -2976,6 +3004,9 @@ ORDER  BY g.kind;"""
                                                        "form": form, "results": [e["id"] for e in returned], "date": date},
                                  actor, provenance or returned[0]["provenance"],
                                  period={"year": queries[0]["year"]} if queries[0].get("year") else None)
+        elif form == COVERAGE_ASSESSED:
+            entry = self._import_coverage(request, _text(result if not isinstance(result, dict) else next(iter(result.values()), "")),
+                                          actor, provenance, date)
         else:
             text = _text(result if not isinstance(result, dict) else next(iter(result.values()), ""))
             figure = None
@@ -3000,6 +3031,48 @@ ORDER  BY g.kind;"""
                                                                               entry=entry["id"], figure=figure, form=form))
         files = self.save(date)
         return {"schema_id": self.identity["schema_id"], "file": self.file_name(), "files": files, "entry": entry}
+
+    def _import_coverage(self, request, text, actor, provenance, date):
+        """Records a person's assessment of the recording pathways of the parts a request names, each over its period,
+        on the part, after checking every row. Returns the journal entry."""
+        if not (actor or "").strip() or actor.strip() == NOT_RECORDED:
+            raise DescribeError(WORDING["coverage_actor"])
+        shape = [{"name": n, "type": t} for n, t in COVERAGE_COLUMNS] + [{"name": "note", "type": TEXT, "optional": True}]
+        columns, rows = self._checked_result(COVERAGE_ASSESSED, text, shape)
+        if not rows:
+            raise DescribeError(WORDING["coverage_empty"])
+        asked = set(request.get("parts") or request.get("moves") or [])
+        known = set(rolemap.all_views())
+        found = []
+        for row in rows:
+            held = dict(zip(columns, row))
+            part = held["part"].strip()
+            if part not in known or (asked and part not in asked):
+                raise DescribeError(WORDING["coverage_part"].format(part=_clean_cell(part)))
+            try:
+                first, last = dt.date.fromisoformat(held["period_from"].strip()), dt.date.fromisoformat(held["period_to"].strip())
+            except ValueError:
+                first = last = None
+            if first is None or first > last:
+                raise DescribeError(WORDING["coverage_period"].format(part=part, start=_clean_cell(held["period_from"]),
+                                                                       end=_clean_cell(held["period_to"])))
+            pathways, mapped = _number(held["pathways_found"]), _number(held["pathways_mapped"])
+            if pathways is None or mapped is None or pathways < 0 or mapped < 0 or mapped > pathways:
+                raise DescribeError(WORDING["coverage_figures"].format(part=part, mapped=held["pathways_mapped"], found=held["pathways_found"]))
+            found.append({"part": part, "period": {"from": first.isoformat(), "to": last.isoformat()},
+                          "figure": {"pathways_found": pathways, "pathways_mapped": mapped}, "note": (held.get("note") or "").strip() or None})
+        safe = re.sub(r"[^\w]+", "-", request["request_id"])
+        path = f"results/{len(self.log) + 1:03d}-evidence-{safe}.tsv"
+        self.texts[path] = (text or "").replace("\r\n", "\n")
+        span = {"from": min(f["period"]["from"] for f in found), "to": max(f["period"]["to"] for f in found)}
+        entry = self._append("evidence imported", {"request_id": request["request_id"], "request": _request_summary(request),
+                                                   "form": COVERAGE_ASSESSED, "result": path, "assessed": found, "date": date},
+                             actor, provenance or PERSON, period=span)
+        for one in found:
+            record = evidence.record(date, self._current("parts", one["part"]), by=entry["actor"], entry=entry["id"],
+                                     figure=one["figure"], period=one["period"], note=one["note"])
+            self.dimensions.setdefault("parts", {}).setdefault(one["part"], {}).setdefault(COVERAGE_ASSESSED, []).append(record)
+        return entry
 
     def _import_query(self, query, text, actor, provenance, request_id, date):
         """Offers the request's own query, as it was written, and reads its result as a paste of it would be read."""

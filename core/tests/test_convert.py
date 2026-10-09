@@ -922,6 +922,10 @@ DEFAULT_SCENARIOS = {"age_by_calendar_date", "airway_still_in_place", "anaesthet
                      "reading_entered_twice", "stop_before_start", "test_patient",
                      "two_anaesthetics_one_stay", "weight_after_anaesthetic"}
 PRIVATE = FIXTURES.parent / "etl" / "clarity"
+HELD_OUT = FIXTURES / "held-out" / "conversion"
+# The scenarios whose expectations the public conversion has changed since the private twin last copied them, each
+# awaiting the owner's matching change to the private twin, which this project does not edit. The list only shrinks.
+PRIVATE_TWIN_BEHIND = {}
 
 
 def test_every_planted_scenario_meets_its_expectations_and_the_gates_still_pass(planted):
@@ -1009,12 +1013,14 @@ def test_the_sandbox_never_generates_an_identifier_in_the_range_kept_for_planted
 def test_an_expectation_that_is_not_met_fails_the_run_and_the_command(tmp_path, monkeypatch):
     folder = tmp_path / "conversion"
     shutil.copytree(FIXTURES / "conversion", folder)
+    shutil.copytree(HELD_OUT, tmp_path / "held-out" / "conversion")
     for path in (folder / "scenarios").iterdir():
         if path.name != "reading_entered_twice":
             shutil.rmtree(path)
-    spec = json.loads((folder / "scenarios" / "reading_entered_twice" / "scenario.json").read_text())
+    expected = tmp_path / "held-out" / "conversion" / "scenarios" / "reading_entered_twice" / "expected.json"
+    spec = json.loads(expected.read_text())
     spec["expectations"][0]["result"] = [1, 1]
-    (folder / "scenarios" / "reading_entered_twice" / "scenario.json").write_text(json.dumps(spec))
+    expected.write_text(json.dumps(spec))
     _, report = convert.run(make_checks.WORLD, folder, rows=200)
     (item,) = report["scenarios"][0]["expectations"]
     assert not item["met"] and item["found"] == "2, 1" and item["expected"] == "1, 1"
@@ -1100,9 +1106,13 @@ def test_an_expectation_reads_only_the_omop_tables():
 def test_the_private_twin_holds_the_same_scenarios_with_the_same_expectations():
     ours = sorted(p.name for p in (FIXTURES / "conversion" / "scenarios").iterdir())
     assert ours == sorted(p.name for p in (PRIVATE / "scenarios").iterdir())
-    for name in ours:
-        assert (PRIVATE / "scenarios" / name / "scenario.json").read_text() == \
-            (FIXTURES / "conversion" / "scenarios" / name / "scenario.json").read_text(), name
+    # The twin keeps its expectations beside its rows, and the invented world holds its own out; the two are compared
+    # as the runner reads them.
+    theirs = {s["name"]: s for s in convert.read_scenarios(PRIVATE)}
+    for scenario in convert.read_scenarios(FIXTURES / "conversion"):
+        name = scenario["name"]
+        same = all(scenario[key] == theirs[name][key] for key in ("description", "expectations", "fails_gate", "cases"))
+        assert same != (name in PRIVATE_TWIN_BEHIND), name
 
 
 def test_the_public_scenarios_hold_no_name_from_the_private_world():
@@ -1165,3 +1175,150 @@ def test_the_calculated_mean_pressure_is_written_only_when_its_setting_switches_
     others = "SELECT measurement_concept_id, COUNT(*) FROM omop.measurement WHERE measurement_concept_id <> 3027598 GROUP BY 1 ORDER BY 1"
     assert on.con.execute(others).fetchall() == off.con.execute(others).fetchall()
     assert all(gate["rows"] == 0 for gate in on_report["gates"])
+
+
+# The route of each step, and the draft.
+
+def test_every_step_of_the_invented_conversion_records_its_route():
+    steps = json.loads((FIXTURES / "conversion" / "conversion.json").read_text())
+    assert convert.route_problems(steps) == []
+    shares = convert.route_shares(steps)
+    assert (shares["steps"], shares["direct"], shares["roles"]) == (20, 20, 0)
+    assert shares["sentence"] == ("Of the 20 steps that read the hospital's record, 0 are written over the roles and 20 are "
+                                  "written directly from the source tables.")
+    # A derived step reads only the OMOP tables, so it takes neither route.
+    assert all(convert.route_of(s) is None for s in steps if s["layer"] == "derived")
+    # The step over the roles waits beside the direct infusion step, which stands until the map binds role_drug, and it
+    # is kept apart from the alternatives over the source tables.
+    infusion = next(s for s in steps if s["file"] == "drug_exposure_infusion.sql")
+    assert convert.route_of(infusion) == "direct" and "role_drug" in infusion["reason"]
+    assert convert.route_of(infusion, "drug_exposure_infusion_roles.sql") == "roles"
+    assert infusion["roles_step"] == "drug_exposure_infusion_roles.sql" and "alternatives" not in infusion
+    assert [e["file"] for e in convert.roles_steps(steps)] == ["drug_exposure_infusion_roles.sql"]
+
+
+@pytest.mark.parametrize("change, says", [
+    (lambda s: s.pop("route"), "records no route for this step"),
+    (lambda s: s.update(route="sideways"), "the route is"),
+    (lambda s: s.pop("review"), "does not record the review"),
+    (lambda s: (s.pop("reference"), s.pop("reason")), "does not record the reference or the reason"),
+    (lambda s: s.update(review={"by": "someone", "on": "yesterday"}), "the review is"),
+    (lambda s: s.update(reference="a line\nand another"), "the reference is one line"),
+])
+def test_a_route_record_that_breaks_a_rule_is_named_with_its_step(change, says):
+    steps = json.loads((FIXTURES / "conversion" / "conversion.json").read_text())
+    change(steps[11])
+    found = convert.route_problems(steps)
+    assert len(found) == 1 and found[0].startswith(steps[11]["file"] + ":") and says in found[0]
+
+
+def test_a_route_over_the_roles_needs_no_reference_and_a_derived_step_records_none():
+    steps = [{"table": "drug_exposure", "file": "a.sql", "layer": "anaesthesia", "route": "roles"},
+             {"table": "anaesthetic", "file": "b.sql", "layer": "derived", "route": "direct"}]
+    assert convert.route_problems(steps) == [convert.ROUTE_WORDING["derived"].format(name="b.sql")]
+    assert convert.roles_steps(steps) == [{"file": "a.sql", "table": "drug_exposure", "layer": "anaesthesia", "alternative_of": None}]
+
+
+def test_the_runner_reports_a_draft_and_the_routes(tmp_path):
+    folder = tmp_path / "conversion"
+    shutil.copytree(FIXTURES / "conversion", folder)
+    (folder / convert.DRAFT_FILE).write_text(json.dumps({"draft": True, "reference": "an invented reference"}))
+    _, report = convert.run(make_checks.WORLD, folder, rows=40, scenarios=[])
+    assert report["draft"]["sentence"] == ("This conversion is a draft, transplanted from an invented reference, so no step of "
+                                           "it has been accepted for a release.")
+    assert report["routes"]["problems"] == [] and report["routes"]["shares"]["direct"] == 20
+    _, plain = convert.run(make_checks.WORLD, FIXTURES / "conversion", rows=40, scenarios=[])
+    assert plain["draft"] is None
+
+
+def test_a_step_over_the_roles_is_never_run_over_the_source_tables():
+    steps = json.loads((FIXTURES / "conversion" / "conversion.json").read_text())
+    with pytest.raises(ValueError, match="written over the roles"):
+        convert.with_alternatives(steps, ["drug_exposure_infusion_roles.sql"])
+    # Nor may it be offered as the step's own file or as one of its alternatives.
+    infusion = next(s for s in steps if s["file"] == "drug_exposure_infusion.sql")
+    infusion["alternatives"] = ["drug_exposure_infusion_roles.sql"]
+    assert any("step over the roles is a file of its own" in p for p in convert.layer_problems(steps))
+
+
+# The held-out root.
+
+def test_the_scenarios_keep_their_inputs_beside_the_conversion_and_their_expectations_held_out():
+    assert convert.held_out_root(FIXTURES / "conversion") == HELD_OUT
+    for path in (FIXTURES / "conversion" / "scenarios").iterdir():
+        assert set(json.loads((path / "scenario.json").read_text())) == {"description"}, path.name
+        assert (HELD_OUT / "scenarios" / path.name / "expected.json").is_file(), path.name
+    assert all(s["expectations_from"] == "held out" and s["expectations"] for s in convert.read_scenarios(FIXTURES / "conversion"))
+    # The boundary scenario's inputs are in the development fixtures, and its expected rows are held out.
+    assert (FIXTURES / "conversion" / "role_scenarios" / "infusion_boundary" / "rows.json").is_file()
+    assert not (FIXTURES / "conversion" / "role_scenarios" / "infusion_boundary" / "expected.json").exists()
+    assert (HELD_OUT / "role_scenarios" / "infusion_boundary" / "expected.json").is_file()
+
+
+def test_expectations_held_out_and_beside_the_rows_at_once_are_refused(tmp_path):
+    folder = tmp_path / "conversion"
+    shutil.copytree(FIXTURES / "conversion", folder)
+    shutil.copytree(HELD_OUT, tmp_path / "held-out" / "conversion")
+    path = folder / "scenarios" / "test_patient" / "scenario.json"
+    path.write_text(json.dumps(dict(json.loads(path.read_text()), expectations=[])))
+    with pytest.raises(convert.ScenarioError, match="held out"):
+        convert.read_scenarios(folder)
+
+
+# The first step over the roles, and the boundary test's scenario.
+
+def test_the_step_over_the_roles_reads_only_the_roles_the_mapping_views_and_the_omop_tables():
+    sql = (FIXTURES / "conversion" / "drug_exposure_infusion_roles.sql").read_text()
+    from sqlglot import exp
+    tree = convert.check_roles_step(sql)
+    read = {(t.db or "", t.name) for t in tree.find_all(exp.Table)}
+    assert {("", "role_drug"), ("", "map_drug_concept"), ("omop", "visit_detail")} <= read
+    with pytest.raises(convert.RolesStepError, match="DRUG_GIVEN"):
+        convert.check_roles_step("SELECT g.GIVEN_KEY AS drug_exposure_id FROM DRUG_GIVEN g")
+
+
+def test_the_boundary_scenario_passes_against_rows_written_by_hand():
+    (result,) = convert.run_role_scenarios(FIXTURES / "conversion")
+    assert result["outcome"] == "passed", result
+    assert result["expected_rows"] == result["found_rows"] == 8 and not result["missing"] and not result["unexpected"]
+
+
+@pytest.mark.parametrize("old, new, why", [
+    ("WHERE  s.drug_event_key IS NULL\n      AND", "WHERE",
+     "a retrospective correction must supersede the row it amends"),
+    ("e.next_time  AS ended", "COALESCE(e.next_time, DATEADD(hour, 1, e.given_time)) AS ended",
+     "a missing stop must stay an interval of unknown end"),
+    ("PARTITION BY d.order_key,", "PARTITION BY d.drug,",
+     "the events of one infusion are grouped by its order, so a later infusion of the drug does not end it"),
+    ("LEFT JOIN concept c", "JOIN concept c", "an unmapped, ambiguous or unlisted drug is written, never dropped"),
+    ("'infusion_start', 'rate_change', 'infusion_restart')", "'infusion_start', 'rate_change', 'infusion_restart', 'infusion_pause')",
+     "a pause adds no exposure"),
+])
+def test_the_boundary_scenario_fails_a_step_that_breaks_a_rule_of_the_contract(tmp_path, old, new, why):
+    folder = tmp_path / "conversion"
+    shutil.copytree(FIXTURES / "conversion", folder)
+    path = folder / "drug_exposure_infusion_roles.sql"
+    text = path.read_text()
+    assert old in text
+    path.write_text(text.replace(old, new))
+    (result,) = convert.run_role_scenarios(folder)
+    assert result["outcome"] == "failed", why
+
+
+def test_the_direct_infusion_step_no_longer_ends_a_missing_stop_at_the_anaesthetic_s_end(planted):
+    conversion, _ = planted
+    rows = conversion.con.execute("""
+        SELECT d.drug_exposure_end_datetime, d.stop_reason, d.drug_exposure_end_date = d.drug_exposure_start_date
+        FROM omop.drug_exposure d JOIN omop.visit_detail vd ON vd.visit_detail_id = d.visit_detail_id
+        WHERE vd.visit_detail_source_value = '990001131'""").fetchall()
+    assert rows == [(None, "stop not recorded", True)]
+    # Every period with an end has no stop reason, and every period without one says why.
+    assert conversion.con.execute("""SELECT COUNT(*) FROM omop.drug_exposure WHERE sig IS NOT NULL
+        AND (drug_exposure_end_datetime IS NULL) <> (stop_reason IS NOT NULL)""").fetchone()[0] == 0
+
+
+def test_each_step_reports_the_rewrites_that_its_translation_applied(ran):
+    _, report = ran
+    from schemalyser.translate import REWRITES
+    assert all(set(step["rewrites"]) <= set(REWRITES) for step in report["steps"])
+    assert any(step["rewrites"] for step in report["steps"])

@@ -1,0 +1,19 @@
+{
+  "expectations": [
+    {
+      "says": "The anaesthetic lasts 500 minutes.",
+      "query": "SELECT a.duration_minutes FROM omop.anaesthetic a JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id WHERE vd.visit_detail_source_value = '990001431'",
+      "result": [
+        500
+      ]
+    },
+    {
+      "says": "All three thousand heart rates are written, and each points at the anaesthetic and falls within its times.",
+      "query": "SELECT COUNT(*) AS readings, SUM(CASE WHEN m.measurement_datetime BETWEEN a.start_datetime AND a.end_datetime THEN 1 ELSE 0 END) AS within FROM omop.measurement m JOIN omop.anaesthetic a ON a.anaesthetic_id = m.measurement_event_id JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id WHERE vd.visit_detail_source_value = '990001431' AND m.measurement_concept_id = 3027018",
+      "result": [
+        3000,
+        3000
+      ]
+    }
+  ]
+}

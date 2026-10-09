@@ -28,6 +28,14 @@ folder's tables.json defines, which the script creates in the anaesthesia schema
 layer's other tables and publishes as a view of its own rows. tables.json is checked as strictly
 as a step: a plain name that is not a table of CDM 5.4, a type from a short fixed list, and
 descriptions without a line break or $(.
+
+Every step records its route in conversion.json (convert.route_problems). The script refuses a direct step that
+does not record the reference it rests on, the reason it takes that route, and the review that accepted it, naming
+the step, and it refuses a folder that draft.json marks as a draft. Its header states how many of the anaesthesia
+steps it carries are written over the roles and how many directly from the source tables, and each step's comment
+names its route. A step over the roles reads the role views, which the script cannot yet compile through the hospital
+schema, so such a step is refused as a step and checked, where it waits beside a direct step as its roles_step or is
+offered as an alternative, for what it reads and what it writes.
 """
 import argparse
 import csv
@@ -43,8 +51,9 @@ from sqlglot import exp
 from sqlglot.tokens import TokenType
 
 from .catalogue import Catalogue
-from .convert import (COUNT_MARK, FIELDS, IDENTIFIER_OFFSET, LAYERS, TablesError, alternatives, as_request, custom_rows, layer_problems,
-                      read_counts, read_tables)
+from .convert import (COUNT_MARK, FIELDS, IDENTIFIER_OFFSET, LAYERS, ROLES_STEP, RolesStepError, TablesError, alternatives, as_request,
+                      check_roles_step, custom_rows, draft_sentence, layer_problems, read_counts, read_draft, read_tables,
+                      route_of, route_problems)
 from .extract import analyse_request, decode
 from .translate import OMOP_SCHEMA
 
@@ -97,8 +106,19 @@ WORDING = {
     # Awaiting approval: the derived layer.
     "stage_1_custom": "The script also creates the custom tables that the derived layer writes, beside the anaesthesia tables, and publishes a view of each one.",
     "stage_3_derived": "The derived steps run last. They read only the OMOP tables, and each one writes its custom table with the identifiers of the rows it is built from.",
+    # The routes of the steps, as the contract's layer 3 asks the release to state them.
+    "routes": "Of the {count} anaesthesia steps that this script carries, {roles} {roles_verb} written over the roles and {direct} {direct_verb} written directly from the source tables.",
+    "route_direct": "This step is written directly from the source tables. It rests on {reference}, and {review} accepted it on {on}.",
+    "route_roles": "This step is written over the roles and the mapping views.",
     # Awaiting approval: the conversion's counts.
     "stage_5_counts": "The script then reports each of the conversion's counts, such as the anaesthetics that the layer has left out, as a sentence that holds a number and never an identifier.",
+}
+# The reasons for which the script is refused, each completing the sentence of not_written, so without a full stop.
+REFUSALS = {
+    "draft": "{sentence} The release script is written only once the owner has reviewed every step and removed draft.json",
+    "roles": "{name}: the step is written over the roles, and the release script cannot yet compile the role views that it "
+             "reads through the hospital schema, so it cannot carry the step. Until it can, the step waits beside a direct "
+             "step as its roles_step",
 }
 PLACE = {"omop": "SCHEMALYSER_OMOP", "published": "SCHEMALYSER_PUBLISHED", "source": "SCHEMALYSER_SOURCE", "own": "SCHEMALYSER_OWN"}
 # Each place that a setting holds, and the sqlcmd variable that the operator gives for it.
@@ -257,7 +277,27 @@ def _steps(folder, custom=None):
         raise Refused("; ".join(problems))
     for step in steps:
         check_file_name(step["file"])
+    problems = route_problems(steps)
+    if problems:
+        raise Refused("; ".join(problem.rstrip(".") for problem in problems))
+    draft = read_draft(folder)
+    if draft is not None:
+        raise Refused(REFUSALS["draft"].format(sentence=draft_sentence(draft)))
+    for step in steps:
+        if step["layer"] == LAYERS[1] and step.get("route") == "roles":
+            raise Refused(REFUSALS["roles"].format(name=step["file"]))
     return [(step, decode((folder / step["file"]).read_bytes())) for step in steps if step["layer"] in LAYERS[1:]]
+
+
+def _route_line(step):
+    """The comment that names a step's route, or None for a derived step, which takes neither route."""
+    if step.get("route") == "direct":
+        review = step["review"]
+        return WORDING["route_direct"].format(reference=check_text(step["reference"], step["file"]),
+                                              review=check_text(review["by"], step["file"]), on=review["on"])
+    if step.get("route") == "roles":
+        return WORDING["route_roles"]
+    return None
 
 
 def _gates(folder):
@@ -455,6 +495,13 @@ def _insert(step, sql, written, fields, own, offset):
     return lines
 
 
+def route_summary(folder):
+    """The routes of the anaesthesia steps that the release script carries, as convert.route_shares gives them."""
+    from .convert import route_shares
+    steps = json.loads((Path(folder) / "conversion.json").read_text())
+    return route_shares(steps, layers=(LAYERS[1],))
+
+
 def script(folder, settings=None, mappings=None):
     """The whole release script for the anaesthesia steps of a conversion folder.
 
@@ -490,12 +537,34 @@ def script(folder, settings=None, mappings=None):
             path = folder / name
             if not path.is_file():
                 raise Refused(f"{name}: the alternative of {step['file']} is not in the conversion folder")
+            if route_of(step, name) == "roles":
+                # An alternative over the roles reads the role views, the mapping views and the OMOP tables, and nothing else.
+                try:
+                    check_roles_step(decode(path.read_bytes()), name)
+                except RolesStepError as error:
+                    raise Refused(str(error)) from None
+            _insert(dict(step, file=name), decode(path.read_bytes()), written, fields, own, offset)
+        # A step over the roles that waits beside a direct step is checked in the same way, and is not carried.
+        if step.get(ROLES_STEP):
+            name = check_file_name(step[ROLES_STEP])
+            path = folder / name
+            if not path.is_file():
+                raise Refused(f"{name}: the step over the roles of {step['file']} is not in the conversion folder")
+            try:
+                check_roles_step(decode(path.read_bytes()), name)
+            except RolesStepError as error:
+                raise Refused(str(error)) from None
             _insert(dict(step, file=name), decode(path.read_bytes()), written, fields, own, offset)
     checked_gates = [(name, _variables(rewrite(sql, written, where=name)[0])) for name, sql in gates]
     counts = _counts(folder, written)
     mapping_rows = _mapping_rows(_folder_mappings(folder) if mappings is None else mappings, fields[MAPPING_TABLE], own)
 
     header = WORDING["header"][:3] + [WORDING["header_empty"] if empty else WORDING["header"][3]]
+    carried = [step for step, _ in steps if step["layer"] == LAYERS[1]]
+    roles = sum(1 for step in carried if step.get("route") == "roles")
+    direct = sum(1 for step in carried if step.get("route") == "direct")
+    header.append(WORDING["routes"].format(count=len(carried), roles=roles, direct=direct,
+                                           roles_verb="is" if roles == 1 else "are", direct_verb="is" if direct == 1 else "are"))
     lines = [f"-- {line}" for line in header] + ["--", f"-- {WORDING['run']}", f"--   {run_command(chosen)}",
                                                  f"-- {WORDING['run_variables']}"]
     for key, name in VARIABLES:
@@ -543,7 +612,9 @@ def script(folder, settings=None, mappings=None):
     for (step, _), insert in zip(steps, inserts):
         if step["layer"] == "derived" and step is next(s for s, _ in steps if s["layer"] == "derived"):
             lines += ["", f"-- {WORDING['stage_3_derived']}"]
-        lines += insert
+        route = _route_line(step)
+        # The step's own comment line, -- FILE, comes first, and the line that names its route follows it.
+        lines += insert[:2] + ([f"-- {route}"] if route else []) + insert[2:]
 
     lines += ["", f"-- {WORDING['stage_4']}"]
     failed = WORDING["gate_failed_empty" if empty else "gate_failed"]
@@ -599,6 +670,10 @@ def main():
     (args.out / "release.sql").write_text(text, encoding="utf-8")
     (args.out / "source_manifest.csv").write_text(manifest, encoding="utf-8")
     print(f"release.sql holds the {LAYERS[1]} and {LAYERS[2]} steps, and source_manifest.csv lists {manifest.count(chr(10)) - 1} source columns")
+    shares = route_summary(args.conversion)
+    print(WORDING["routes"].format(count=shares["steps"], roles=shares["roles"], direct=shares["direct"],
+                                   roles_verb="is" if shares["roles"] == 1 else "are",
+                                   direct_verb="is" if shares["direct"] == 1 else "are"))
     print(WORDING["run_with"])
     print(f"  {run_command(settings_for(args.conversion))}")
     return 0

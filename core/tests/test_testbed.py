@@ -1,13 +1,34 @@
 """Tests for the OMOP testbed, run once on the invented world at a small size."""
+import hashlib
 import json
+import os
+import shutil
+import stat
+import sys
 from pathlib import Path
 
 import duckdb
 import pytest
 
 from schemalyser import convert, testbed
+from schemalyser.translate import REWRITES
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
+HELD_OUT = FIXTURES / "held-out"
+# The marker file of the held-out root, whose hash no run may change.
+MARKER_SHA256 = "3ebc562d5c5a1bdadb6d0c8fbfa6ee27a4f198bd115b0cffa2b2b59c0a5d4518"
+
+
+def _held_out_digest(root):
+    """A digest of every file under a held-out root, by relative path and content."""
+    found = hashlib.sha256()
+    for path in sorted(p for p in Path(root).rglob("*") if p.is_file()):
+        found.update(str(path.relative_to(root)).encode() + b"\0" + path.read_bytes() + b"\0")
+    return found.hexdigest()
+
+
+# Taken when the module is read, before any run, so that the tests below can show that no run wrote to the root.
+HELD_OUT_BEFORE = _held_out_digest(HELD_OUT)
 
 
 @pytest.fixture(scope="module")
@@ -342,3 +363,88 @@ def test_the_dashboard_script_sets_the_per_check_time_limit(tmp_path):
 def test_a_sleep_of_the_machine_during_the_dashboard_is_measured():
     assert testbed.paused_seconds(3600.4, 3600.0) == 0
     assert testbed.paused_seconds(3437 + 280.0, 280.0) == 3437
+
+
+# The routes, the scenarios over the roles, the translation, and the held-out root.
+
+def test_the_report_states_the_route_of_every_step_and_the_share_on_each(ran):
+    _, report = ran
+    routes = report["routes"]
+    assert routes["problems"] == [] and routes["draft"] is None
+    shares = routes["shares"]
+    assert shares["steps"] == 20 and shares["roles"] + shares["direct"] == 20 and shares["unrecorded"] == 0
+    assert routes["release_shares"]["steps"] == 10
+    assert shares["sentence"] in report["summary"]["sentences"] and shares["sentence"] in (ran[0] / "report.md").read_text()
+    assert {s["file"]: s["route"] for s in report["steps"]}["anaesthetic.sql"] is None
+    assert all(s["route"] in ("roles", "direct") for s in report["steps"] if s["layer"] != "derived")
+    # The step over the roles is offered beside the direct infusion step, and the report says so.
+    assert [(e["file"], e["alternative_of"]) for e in routes["over_the_roles"]] == [
+        ("drug_exposure_infusion_roles.sql", "drug_exposure_infusion.sql")]
+    check = next(c for c in report["checks"] if c["check"].startswith("every step records its route"))
+    assert check["passed"] is True
+
+
+def test_the_boundary_scenario_runs_the_step_over_the_roles_against_its_held_out_rows(ran):
+    _, report = ran
+    (boundary,) = report["roles"]
+    assert boundary["name"] == "infusion_boundary" and boundary["step"] == "drug_exposure_infusion_roles.sql"
+    assert boundary["outcome"] == "passed" and boundary["expected_rows"] == boundary["found_rows"] == 8
+    check = next(c for c in report["checks"] if c["check"].startswith("every scenario over the roles"))
+    assert check["passed"] is True
+    assert "## Scenarios over the roles" in (ran[0] / "report.md").read_text()
+
+
+def test_the_report_carries_the_rewrites_that_the_translation_applied(ran):
+    _, report = ran
+    translation = report["translation"]
+    assert [entry["file"] for entry in translation["steps"]] == [s["file"] for s in report["steps"]]
+    named = {item["name"] for item in translation["applied"]}
+    assert named and named <= set(REWRITES)
+    for item in translation["applied"]:
+        assert item["steps"] and all(item["name"] in next(e["rewrites"] for e in translation["steps"] if e["file"] == f)
+                                     for f in item["steps"])
+    assert "## Translation" in (ran[0] / "report.md").read_text()
+
+
+def test_no_run_writes_into_the_held_out_root(ran, tmp_path):
+    # The module's run over the invented world has left the held-out root as it was, marker and all.
+    assert _held_out_digest(HELD_OUT) == HELD_OUT_BEFORE
+    assert hashlib.sha256((HELD_OUT / "held-out.txt").read_bytes()).hexdigest() == MARKER_SHA256
+    assert ran[1]["world"]["held_out_sha256"]
+    # A copy of the conversion with its held-out root made read-only runs in full and passes, so that the testbed opens
+    # the root for reading alone: any write would have raised.
+    folder = tmp_path / "conversion"
+    shutil.copytree(FIXTURES / "conversion", folder)
+    shutil.copytree(HELD_OUT, tmp_path / "held-out")
+    root = tmp_path / "held-out"
+    before = _held_out_digest(root)
+    paths = sorted(root.rglob("*"), key=lambda p: len(p.parts), reverse=True)
+    for path in paths:
+        os.chmod(path, stat.S_IRUSR | (stat.S_IXUSR if path.is_dir() else 0))
+    os.chmod(root, stat.S_IRUSR | stat.S_IXUSR)
+    try:
+        report = testbed.run("fixtures", tmp_path / "out", rows=40, conversion_folder=folder)
+    finally:
+        for path in [root, *root.rglob("*")]:
+            os.chmod(path, stat.S_IRWXU)
+    assert report["summary"]["outcome"] == "passed", [c for c in report["checks"] if c["passed"] is False]
+    assert {s["name"] for s in report["scenarios"]} == {s["name"] for s in ran[1]["scenarios"]}
+    assert report["roles"][0]["outcome"] == "passed"
+    assert _held_out_digest(root) == before
+
+
+def test_a_scenario_whose_expected_rows_are_not_found_is_not_counted_as_met(tmp_path):
+    # A conversion whose scenario's planted rows differ from the invented world's, with no held-out root of its own,
+    # has no expectations for it, and the runner refuses to plant it rather than count it as met.
+    folder = tmp_path / "conversion"
+    shutil.copytree(FIXTURES / "conversion", folder)
+    rows = folder / "scenarios" / "test_patient" / "rows.sql"
+    rows.write_text(rows.read_text().replace("-- ", "-- Changed. ", 1))
+    found = {s["name"]: s for s in convert.read_scenarios(folder)}
+    assert found["test_patient"]["expectations"] == [] and found["test_patient"]["expectations_from"] is None
+    assert found["reading_entered_twice"]["expectations_from"] == "held out"
+    sys.path.insert(0, str(FIXTURES))
+    import make_checks
+    _, report = convert.run(make_checks.WORLD, folder, rows=40, scenarios=["test_patient"])
+    assert "held out" in report["scenarios"][0]["error"]
+    assert any(f.startswith("scenario test_patient: not planted") for f in convert.failures(report))

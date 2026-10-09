@@ -1,0 +1,852 @@
+{
+ "description": "The planted cases of the first five capabilities, written as rows of the three parts of version 1, one set for each capability, with the parameters under which the held-out answers in fixtures/held-out/capabilities were written. Every key lies in the range kept for planted rows. The factors given to volatile_consumption are invented for the test and are not a published source.",
+ "hypotension_burden": {
+  "description": "A neonate whose preferred arterial mean at one moment is above the threshold while a cuff mean at the same moment is below it, with a reading after the stop and one not accepted; a child over a year old with cuff means near its band's threshold; an infant whose anaesthetic has no stop; a test patient; a child with no reading; and an anaesthetic whose stop is before its start.",
+  "parameters": {
+   "kinds": [
+    [
+     "map_arterial",
+     1
+    ],
+    [
+     "map_cuff",
+     2
+    ]
+   ],
+   "direction": "below",
+   "threshold_by_age_band": [
+    [
+     0,
+     28,
+     40.0
+    ],
+    [
+     28,
+     365,
+     45.0
+    ],
+    [
+     365,
+     null,
+     55.0
+    ]
+   ],
+   "window_from_minutes": 0,
+   "window_until_minutes": null,
+   "reading_stands_minutes": 5
+  },
+  "rows": {
+   "role_patient": [
+    [
+     "990006100",
+     "2024-03-01",
+     null,
+     0
+    ],
+    [
+     "990006101",
+     "2023-01-15",
+     null,
+     0
+    ],
+    [
+     "990006102",
+     "2024-02-01",
+     null,
+     0
+    ],
+    [
+     "990006103",
+     "2024-01-01",
+     null,
+     1
+    ],
+    [
+     "990006104",
+     "2010-06-01",
+     null,
+     0
+    ]
+   ],
+   "role_anaesthetic": [
+    [
+     "990006300",
+     "990006100",
+     "2024-03-10 08:00:00",
+     "2024-03-10 09:00:00"
+    ],
+    [
+     "990006301",
+     "990006101",
+     "2024-03-11 10:00:00",
+     "2024-03-11 11:00:00"
+    ],
+    [
+     "990006302",
+     "990006102",
+     "2024-03-12 09:00:00",
+     null
+    ],
+    [
+     "990006303",
+     "990006103",
+     "2024-03-12 13:00:00",
+     "2024-03-12 14:00:00"
+    ],
+    [
+     "990006304",
+     "990006104",
+     "2024-03-13 08:00:00",
+     "2024-03-13 09:00:00"
+    ],
+    [
+     "990006305",
+     "990006100",
+     "2024-03-14 08:00:00",
+     "2024-03-14 07:00:00"
+    ]
+   ],
+   "role_reading": [
+    [
+     "990006300",
+     "map_arterial",
+     "2024-03-10 08:00:00",
+     45,
+     1,
+     "990R60001",
+     null
+    ],
+    [
+     "990006300",
+     "map_arterial",
+     "2024-03-10 08:03:00",
+     38,
+     1,
+     "990R60002",
+     null
+    ],
+    [
+     "990006300",
+     "map_arterial",
+     "2024-03-10 08:06:00",
+     41,
+     1,
+     "990R60003",
+     null
+    ],
+    [
+     "990006300",
+     "map_cuff",
+     "2024-03-10 08:06:00",
+     36,
+     1,
+     "990R60004",
+     null
+    ],
+    [
+     "990006300",
+     "map_cuff",
+     "2024-03-10 08:10:00",
+     20,
+     0,
+     "990R60005",
+     null
+    ],
+    [
+     "990006300",
+     "map_arterial",
+     "2024-03-10 08:20:00",
+     50,
+     1,
+     "990R60006",
+     null
+    ],
+    [
+     "990006300",
+     "map_arterial",
+     "2024-03-10 08:58:00",
+     35,
+     1,
+     "990R60007",
+     null
+    ],
+    [
+     "990006300",
+     "map_arterial",
+     "2024-03-10 09:05:00",
+     30,
+     1,
+     "990R60008",
+     null
+    ],
+    [
+     "990006301",
+     "map_cuff",
+     "2024-03-11 10:00:00",
+     60,
+     1,
+     "990R60009",
+     null
+    ],
+    [
+     "990006301",
+     "map_cuff",
+     "2024-03-11 10:04:00",
+     52,
+     1,
+     "990R60010",
+     null
+    ],
+    [
+     "990006301",
+     "map_cuff",
+     "2024-03-11 10:08:00",
+     54,
+     1,
+     "990R60011",
+     null
+    ],
+    [
+     "990006301",
+     "map_cuff",
+     "2024-03-11 10:12:00",
+     58,
+     1,
+     "990R60012",
+     null
+    ],
+    [
+     "990006302",
+     "map_cuff",
+     "2024-03-12 09:00:00",
+     40,
+     1,
+     "990R60013",
+     null
+    ],
+    [
+     "990006302",
+     "map_cuff",
+     "2024-03-12 09:05:00",
+     42,
+     1,
+     "990R60014",
+     null
+    ],
+    [
+     "990006303",
+     "map_cuff",
+     "2024-03-12 13:00:00",
+     20,
+     1,
+     "990R60015",
+     null
+    ],
+    [
+     "990006303",
+     "map_cuff",
+     "2024-03-12 13:05:00",
+     20,
+     1,
+     "990R60016",
+     null
+    ],
+    [
+     "990006305",
+     "map_cuff",
+     "2024-03-14 07:30:00",
+     20,
+     1,
+     "990R60017",
+     null
+    ]
+   ]
+  }
+ },
+ "hypoxaemia_burden": {
+  "description": "A child whose saturations fall below 90 inside a window from ten to forty minutes after the start, with readings before and after the window and one exactly at its end; and a second anaesthetic of the same child with no stop.",
+  "parameters": {
+   "kinds": [
+    [
+     "spo2",
+     1
+    ]
+   ],
+   "direction": "below",
+   "threshold_by_age_band": [
+    [
+     0,
+     null,
+     90.0
+    ]
+   ],
+   "window_from_minutes": 10,
+   "window_until_minutes": 40,
+   "reading_stands_minutes": 2
+  },
+  "rows": {
+   "role_patient": [
+    [
+     "990006110",
+     "2020-01-01",
+     null,
+     0
+    ]
+   ],
+   "role_anaesthetic": [
+    [
+     "990006310",
+     "990006110",
+     "2024-04-01 08:00:00",
+     "2024-04-01 09:00:00"
+    ],
+    [
+     "990006311",
+     "990006110",
+     "2024-04-02 08:00:00",
+     null
+    ]
+   ],
+   "role_reading": [
+    [
+     "990006310",
+     "spo2",
+     "2024-04-01 08:05:00",
+     85,
+     1,
+     "990R60018",
+     null
+    ],
+    [
+     "990006310",
+     "spo2",
+     "2024-04-01 08:10:00",
+     88,
+     1,
+     "990R60019",
+     null
+    ],
+    [
+     "990006310",
+     "spo2",
+     "2024-04-01 08:11:00",
+     95,
+     1,
+     "990R60020",
+     null
+    ],
+    [
+     "990006310",
+     "spo2",
+     "2024-04-01 08:20:00",
+     89,
+     1,
+     "990R60021",
+     null
+    ],
+    [
+     "990006310",
+     "spo2",
+     "2024-04-01 08:39:00",
+     92,
+     1,
+     "990R60022",
+     null
+    ],
+    [
+     "990006310",
+     "spo2",
+     "2024-04-01 08:40:00",
+     87,
+     1,
+     "990R60023",
+     null
+    ],
+    [
+     "990006310",
+     "spo2",
+     "2024-04-01 08:45:00",
+     80,
+     1,
+     "990R60024",
+     null
+    ],
+    [
+     "990006311",
+     "spo2",
+     "2024-04-02 08:15:00",
+     85,
+     1,
+     "990R60025",
+     null
+    ],
+    [
+     "990006311",
+     "spo2",
+     "2024-04-02 08:20:00",
+     86,
+     1,
+     "990R60026",
+     null
+    ]
+   ]
+  }
+ },
+ "hypothermia": {
+  "description": "A child who cools during a two-hour anaesthetic, with two temperatures charted at one moment and three after the stop, the first ten minutes after it; a second anaesthetic with no stop; and a third with no temperature during it and one in recovery.",
+  "parameters": {
+   "threshold_celsius": 36.0,
+   "window_from_minutes": 0,
+   "window_until_minutes": null,
+   "reading_stands_minutes": 15,
+   "recovery_window_minutes": 30
+  },
+  "rows": {
+   "role_patient": [
+    [
+     "990006120",
+     "2018-05-05",
+     null,
+     0
+    ]
+   ],
+   "role_anaesthetic": [
+    [
+     "990006320",
+     "990006120",
+     "2024-05-01 08:00:00",
+     "2024-05-01 10:00:00"
+    ],
+    [
+     "990006321",
+     "990006120",
+     "2024-05-02 08:00:00",
+     null
+    ],
+    [
+     "990006322",
+     "990006120",
+     "2024-05-03 08:00:00",
+     "2024-05-03 09:00:00"
+    ]
+   ],
+   "role_reading": [
+    [
+     "990006320",
+     "temperature",
+     "2024-05-01 08:00:00",
+     36.5,
+     1,
+     "990R60027",
+     null
+    ],
+    [
+     "990006320",
+     "temperature",
+     "2024-05-01 08:30:00",
+     35.8,
+     1,
+     "990R60028",
+     null
+    ],
+    [
+     "990006320",
+     "temperature",
+     "2024-05-01 08:30:00",
+     35.6,
+     1,
+     "990R60029",
+     null
+    ],
+    [
+     "990006320",
+     "temperature",
+     "2024-05-01 09:00:00",
+     35.9,
+     1,
+     "990R60030",
+     null
+    ],
+    [
+     "990006320",
+     "temperature",
+     "2024-05-01 09:50:00",
+     36.2,
+     1,
+     "990R60031",
+     null
+    ],
+    [
+     "990006320",
+     "temperature",
+     "2024-05-01 10:10:00",
+     35.4,
+     1,
+     "990R60032",
+     null
+    ],
+    [
+     "990006320",
+     "temperature",
+     "2024-05-01 10:20:00",
+     36.0,
+     1,
+     "990R60033",
+     null
+    ],
+    [
+     "990006320",
+     "temperature",
+     "2024-05-01 10:40:00",
+     36.4,
+     1,
+     "990R60034",
+     null
+    ],
+    [
+     "990006321",
+     "temperature",
+     "2024-05-02 08:00:00",
+     35.0,
+     1,
+     "990R60035",
+     null
+    ],
+    [
+     "990006321",
+     "temperature",
+     "2024-05-02 08:10:00",
+     35.5,
+     1,
+     "990R60036",
+     null
+    ],
+    [
+     "990006322",
+     "temperature",
+     "2024-05-03 09:20:00",
+     36.1,
+     1,
+     "990R60037",
+     null
+    ]
+   ]
+  }
+ },
+ "monitoring_completeness": {
+  "description": "A child whose cuff and arterial pressures cover an hour unevenly, with a cuff and an arterial reading at one moment and one reading not accepted; an anaesthetic of half an hour with no reading; and an anaesthetic with no stop.",
+  "parameters": {
+   "kinds": [
+    [
+     "map_cuff"
+    ],
+    [
+     "map_arterial"
+    ]
+   ],
+   "expected_interval_minutes": 5,
+   "window_from_minutes": 0,
+   "window_until_minutes": null
+  },
+  "rows": {
+   "role_patient": [
+    [
+     "990006130",
+     "2015-01-01",
+     null,
+     0
+    ]
+   ],
+   "role_anaesthetic": [
+    [
+     "990006330",
+     "990006130",
+     "2024-06-01 08:00:00",
+     "2024-06-01 09:00:00"
+    ],
+    [
+     "990006331",
+     "990006130",
+     "2024-06-02 08:00:00",
+     "2024-06-02 08:30:00"
+    ],
+    [
+     "990006332",
+     "990006130",
+     "2024-06-03 08:00:00",
+     null
+    ]
+   ],
+   "role_reading": [
+    [
+     "990006330",
+     "map_cuff",
+     "2024-06-01 08:02:00",
+     60,
+     1,
+     "990R60038",
+     null
+    ],
+    [
+     "990006330",
+     "map_cuff",
+     "2024-06-01 08:05:00",
+     61,
+     1,
+     "990R60039",
+     null
+    ],
+    [
+     "990006330",
+     "map_arterial",
+     "2024-06-01 08:05:00",
+     62,
+     1,
+     "990R60040",
+     null
+    ],
+    [
+     "990006330",
+     "map_cuff",
+     "2024-06-01 08:20:00",
+     63,
+     1,
+     "990R60041",
+     null
+    ],
+    [
+     "990006330",
+     "map_cuff",
+     "2024-06-01 08:24:00",
+     64,
+     1,
+     "990R60042",
+     null
+    ],
+    [
+     "990006330",
+     "map_cuff",
+     "2024-06-01 08:30:00",
+     10,
+     0,
+     "990R60043",
+     null
+    ],
+    [
+     "990006330",
+     "map_cuff",
+     "2024-06-01 08:58:00",
+     65,
+     1,
+     "990R60044",
+     null
+    ],
+    [
+     "990006332",
+     "map_cuff",
+     "2024-06-03 08:00:00",
+     60,
+     1,
+     "990R60045",
+     null
+    ],
+    [
+     "990006332",
+     "map_cuff",
+     "2024-06-03 08:05:00",
+     61,
+     1,
+     "990R60046",
+     null
+    ]
+   ]
+  }
+ },
+ "volatile_consumption": {
+  "description": "A child given sevoflurane at two flows and two concentrations and then switched off, with a desflurane reading that no factor names; a second anaesthetic with no stop; and a third whose only concentration is too old to stand once the flow is first charted.",
+  "parameters": {
+   "vapour_per_liquid": [
+    [
+     "expired_sevoflurane",
+     200.0
+    ]
+   ],
+   "co2e_per_liquid": [
+    [
+     "expired_sevoflurane",
+     0.5
+    ]
+   ],
+   "reading_stands_minutes": 10,
+   "window_from_minutes": 0,
+   "window_until_minutes": null
+  },
+  "rows": {
+   "role_patient": [
+    [
+     "990006140",
+     "2016-01-01",
+     null,
+     0
+    ]
+   ],
+   "role_anaesthetic": [
+    [
+     "990006340",
+     "990006140",
+     "2024-07-01 08:00:00",
+     "2024-07-01 09:00:00"
+    ],
+    [
+     "990006341",
+     "990006140",
+     "2024-07-02 08:00:00",
+     null
+    ],
+    [
+     "990006342",
+     "990006140",
+     "2024-07-03 08:00:00",
+     "2024-07-03 08:30:00"
+    ]
+   ],
+   "role_reading": [
+    [
+     "990006340",
+     "fresh_gas_flow",
+     "2024-07-01 08:00:00",
+     2.0,
+     1,
+     "990R60047",
+     null
+    ],
+    [
+     "990006340",
+     "fresh_gas_flow",
+     "2024-07-01 08:10:00",
+     2.0,
+     1,
+     "990R60048",
+     null
+    ],
+    [
+     "990006340",
+     "fresh_gas_flow",
+     "2024-07-01 08:20:00",
+     1.0,
+     1,
+     "990R60049",
+     null
+    ],
+    [
+     "990006340",
+     "fresh_gas_flow",
+     "2024-07-01 08:30:00",
+     1.0,
+     1,
+     "990R60050",
+     null
+    ],
+    [
+     "990006340",
+     "expired_sevoflurane",
+     "2024-07-01 08:00:00",
+     2.0,
+     1,
+     "990R60051",
+     null
+    ],
+    [
+     "990006340",
+     "expired_sevoflurane",
+     "2024-07-01 08:10:00",
+     2.0,
+     1,
+     "990R60052",
+     null
+    ],
+    [
+     "990006340",
+     "expired_sevoflurane",
+     "2024-07-01 08:20:00",
+     2.5,
+     1,
+     "990R60053",
+     null
+    ],
+    [
+     "990006340",
+     "expired_sevoflurane",
+     "2024-07-01 08:25:00",
+     2.5,
+     1,
+     "990R60054",
+     null
+    ],
+    [
+     "990006340",
+     "expired_sevoflurane",
+     "2024-07-01 08:30:00",
+     0.0,
+     1,
+     "990R60055",
+     null
+    ],
+    [
+     "990006340",
+     "expired_desflurane",
+     "2024-07-01 08:15:00",
+     6.0,
+     1,
+     "990R60056",
+     null
+    ],
+    [
+     "990006341",
+     "fresh_gas_flow",
+     "2024-07-02 08:00:00",
+     1.0,
+     1,
+     "990R60057",
+     null
+    ],
+    [
+     "990006341",
+     "expired_sevoflurane",
+     "2024-07-02 08:00:00",
+     1.0,
+     1,
+     "990R60058",
+     null
+    ],
+    [
+     "990006341",
+     "expired_sevoflurane",
+     "2024-07-02 08:05:00",
+     1.0,
+     1,
+     "990R60059",
+     null
+    ],
+    [
+     "990006342",
+     "expired_sevoflurane",
+     "2024-07-03 08:00:00",
+     2.0,
+     1,
+     "990R60060",
+     null
+    ],
+    [
+     "990006342",
+     "fresh_gas_flow",
+     "2024-07-03 08:10:00",
+     2.0,
+     1,
+     "990R60061",
+     null
+    ]
+   ]
+  }
+ }
+}

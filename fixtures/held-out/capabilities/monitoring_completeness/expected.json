@@ -1,0 +1,37 @@
+{
+ "says": "Over the hour, the five reading times cover 3, 5, 4, 5 and 2 minutes, 19 in all, and the longest gap is the 34 minutes from 08:24 to 08:58. The half-hour anaesthetic with no reading is one gap of 30 minutes with nothing covered. The anaesthetic with no stop has no known window, so its share and gap are empty, and its two readings are counted.",
+ "columns": [
+  "anaesthetic_key",
+  "window_minutes",
+  "readings",
+  "covered_minutes",
+  "share_covered",
+  "longest_gap_minutes"
+ ],
+ "rows": [
+  [
+   "990006330",
+   60.0,
+   5,
+   19.0,
+   0.316667,
+   34.0
+  ],
+  [
+   "990006331",
+   30.0,
+   0,
+   0.0,
+   0.0,
+   30.0
+  ],
+  [
+   "990006332",
+   null,
+   2,
+   null,
+   null,
+   null
+  ]
+ ]
+}

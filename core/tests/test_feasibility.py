@@ -81,7 +81,14 @@ def test_the_requirements_of_the_neonatal_audit_are_read_from_its_sql():
 
 def test_the_neonatal_audit_gives_the_state_of_each_requirement_from_the_saved_schema(neonatal):
     states = {r["id"]: r["state"] for r in neonatal["states"]}
-    assert neonatal["verdict_text"] == "This question is expressible but cannot yet be answered reliably."
+    assert neonatal["verdict_text"] == (
+        "This question is expressible but cannot yet be answered reliably. Not every requirement of the question is yet "
+        "mapped and checked against the database, and the coverage of the recording pathways has not been assessed.")
+    # The two claims stay apart: neither is established, and each is a field of its own.
+    assert neonatal["claims"] == {"requirements_checked": False, "pathway_coverage_assessed": False}
+    assert [(c["part"], c["state"]) for c in neonatal["coverage"]["parts"]] == [
+        (view, feasibility.COVERAGE_NOT_ASSESSED) for view in ("role_patient", "role_anaesthetic", "role_reading")]
+    assert neonatal["coverage"]["period"] == {"from": "2024-01-01", "to": "2024-12-31"}
     assert states["role_patient"] == states["role_patient.birth_date"] == feasibility.CHECKED
     assert states["role_patient.death_date"] == feasibility.PROPOSED
     # A flag confirmed whose codes are not yet translated, and a column marked not sure, are not confirmed.
@@ -111,8 +118,8 @@ def test_the_neonatal_audit_asks_for_the_smallest_investigation_of_each_gap(neon
     requests = neonatal["requests"]
     assert [(r["form"], r["role"]) for r in requests] == [
         ("answer", "database analyst"), ("values", "database analyst"), ("question", "clinician"),
-        ("counts", "database analyst"), ("test query", "database analyst")]
-    answer, values, question, counts, probe = requests
+        ("counts", "database analyst"), ("test query", "database analyst"), ("pathway coverage", "clinician")]
+    answer, values, question, counts, probe, coverage = requests
     assert answer["moves"] == ["role_patient.death_date"] and answer["step"] == "6. Confirm each column"
     assert answer["question"] == ("The page proposes PERSON_MASTER_2.DEATH_TS as the date of death in Patients. Is that right, "
                                   "and if not, which column holds it?")
@@ -124,8 +131,16 @@ def test_the_neonatal_audit_asks_for_the_smallest_investigation_of_each_gap(neon
     assert {"role_anaesthetic", "role_reading.value", "role_reading.kind = map_cuff", "role_reading.kind = map_arterial"} <= set(counts["moves"])
     assert "role_patient.birth_date" not in counts["moves"]
     assert probe["moves"] == [PATIENT_LINK] and "without_rows" in probe["sql"]
+    # The assessment of the recording pathways is asked for apart from every requirement, and the import can take it.
+    assert coverage["moves"] == coverage["parts"] == ["role_patient", "role_anaesthetic", "role_reading"]
+    assert coverage["period"] == {"from": "2024-01-01", "to": "2024-12-31"} and coverage["queries"] == []
+    assert [c["name"] for c in coverage["expects"][0]["columns"]] == ["part", "period_from", "period_to", "pathways_found",
+                                                                       "pathways_mapped", "note"]
     text = feasibility.markdown(neonatal)
     assert text.startswith("# Neonatal low mean pressure\n\nThis question is expressible but cannot yet be answered reliably.")
+    assert "## What has not yet been established" in text and "What is missing" not in text and "answerable" not in text
+    assert "## The coverage of the recording pathways" in text
+    assert "- No person has assessed the recording pathways of Readings charted during an anaesthetic for this period." in text
     assert "| The link from Readings charted during an anaesthetic to Anaesthetics | Checked against the database |" in text
     assert "1. **For the database analyst.** This request concerns the date of death in Patients." in text
     assert "Three requirements are proposed, not confirmed: the date of death in Patients" in text
@@ -165,8 +180,9 @@ def test_the_programme_orders_what_holds_back_the_most_questions_first(schema, s
     assert all(r["count"] == 1 for r in blocking[2:])
     assert "role_patient.birth_date" not in {r["id"] for r in blocking}
     assert {r["id"]: r["count"] for r in found["requirements"]}["role_patient.birth_date"] == 2
-    assert [q["verdict"] for q in found["questions"]] == ["not_yet", "not_yet", "answerable"]
+    assert [q["verdict"] for q in found["questions"]] == ["not_yet", "not_yet", "requirements_checked"]
     assert found["question_coverage"] == {"answered": 1, "total": 3}
+    assert found["pathway_coverage"] == {"assessed": 0, "total": 3}
     data = rolemap.read_saved_map(saved)
     columns = sum(len(c) for c in rolemap.all_views().values())
     structural = found["structural_coverage"]
@@ -174,6 +190,7 @@ def test_the_programme_orders_what_holds_back_the_most_questions_first(schema, s
     assert structural["parts"] == len(data["roles"]) and 0 < structural["columns"] < columns
     text = feasibility.programme_markdown(found)
     assert "One of the three questions has every requirement checked against the database." in text
+    assert "None of the three questions has the coverage of its recording pathways assessed for its period" in text
     # The command line writes the same report from a folder of questions.
     folder = tmp_path / "questions"
     folder.mkdir()
@@ -184,7 +201,8 @@ def test_the_programme_orders_what_holds_back_the_most_questions_first(schema, s
     assert json.loads(out.read_text())["question_coverage"] == {"answered": 1, "total": 3}
     report = tmp_path / "report.md"
     assert feasibility.main(["report", str(saved), str(folder / "c_births.sql"), "--out", str(report)]) == 0
-    assert "This question can be answered from the hospital schema as it stands." in report.read_text()
+    assert ("Every requirement of this question is mapped and checked against the database; the coverage of the recording "
+            "pathways has not been assessed.") in report.read_text()
     assert "reconciles a sample of anaesthetics" in report.read_text()
 
 
@@ -252,3 +270,78 @@ def test_a_translation_by_a_person_moves_a_mapping_view_and_one_from_a_reference
     # A capability declared with no SQL yet is resolved like any other, and its requirements say what it would read.
     exposure = next(c for c in found["capabilities"] if c["name"] == "exposure_intervals")
     assert {"role_drug.order_key", "role_drug.amends_key", "map_drug_concept", "map_unit_concept"} <= set(exposure["requirements"])
+
+
+# A16: the second claim, which only a person's assessment of the recording pathways establishes.
+
+BIRTHS = QUESTIONS["c_births.sql"]
+ASSESSED = "part\tperiod_from\tperiod_to\tpathways_found\tpathways_mapped\nrole_patient\t{start}\t{end}\t{found}\t{mapped}\n"
+
+
+def _assessed(saved, start="2024-01-01", end="2024-12-31", found=1, mapped=1):
+    """The saved schema with a person's assessment of the patients' recording pathways taken back through the import."""
+    files = feasibility.Schema.load(saved).files
+    s = describe.Describe()
+    s.version = "test"
+    s.restore(files)
+    request = next(r for r in feasibility.assess(feasibility.Schema(files), BIRTHS, "births.sql")["requests"]
+                   if r["form"] == "pathway coverage")
+    imported = s.import_evidence(request, ASSESSED.format(start=start, end=end, found=found, mapped=mapped), "Dr C", date=DATE)
+    return feasibility.Schema(imported["files"]), s
+
+
+def test_every_requirement_checked_is_never_stated_as_more_than_the_first_claim(schema):
+    found = feasibility.assess(schema, BIRTHS, "births.sql")
+    assert found["verdict"] == "requirements_checked"
+    assert found["claims"] == {"requirements_checked": True, "pathway_coverage_assessed": False}
+    assert found["verdict_text"] == ("Every requirement of this question is mapped and checked against the database; the coverage "
+                                     "of the recording pathways has not been assessed.")
+    request = next(r for r in found["requests"] if r["form"] == "pathway coverage")
+    assert request["moves"] == ["role_patient"] and "python -m schemalyser.describe import-evidence" in request["says"]
+
+
+def test_an_assessment_of_the_recording_pathways_establishes_the_second_claim_and_leaves_the_first_alone(saved):
+    schema, _ = _assessed(saved)
+    found = feasibility.assess(schema, BIRTHS, "births.sql")
+    assert found["verdict"] == "requirements_and_coverage"
+    assert found["claims"] == {"requirements_checked": True, "pathway_coverage_assessed": True}
+    assert found["verdict_text"] == ("Every requirement of this question is mapped and checked against the database, and a person "
+                                     "has assessed the coverage of the recording pathways of every part it reads over the "
+                                     "question's period, and found every pathway mapped.")
+    part = found["coverage"]["parts"][0]
+    assert part["state"] == feasibility.COVERAGE_ASSESSED and part["assessments"][0]["by"] == "Dr C"
+    assert not any(r["form"] == "pathway coverage" for r in found["requests"])
+    # The first claim's states are what they were: the assessment moves no requirement.
+    before = feasibility.assess(feasibility.Schema.load(saved), BIRTHS, "births.sql")
+    assert [(r["id"], r["state"]) for r in found["states"]] == [(r["id"], r["state"]) for r in before["states"]]
+    text = feasibility.markdown(found)
+    assert "- Dr C assessed the recording pathways of Patients on 7 October 2026, for 2024-01-01 to 2024-12-31, and found one pathway, all of which the hospital schema has mapped." in text
+    # The neonatal audit reads two more parts, which no one has assessed, so its second claim does not hold.
+    neonatal = feasibility.assess(schema, AUDIT, "neonatal.sql")
+    assert neonatal["claims"]["pathway_coverage_assessed"] is False
+    assert neonatal["verdict_text"].endswith("the coverage of the recording pathways has not been established for Anaesthetics "
+                                             "and Readings charted during an anaesthetic over the question's period.")
+    assert next(r for r in neonatal["requests"] if r["form"] == "pathway coverage")["moves"] == ["role_anaesthetic", "role_reading"]
+
+
+def test_an_assessment_is_read_for_the_question_s_period_and_says_what_it_found(saved):
+    # A pathway found and not mapped is stated as such, and the second claim does not hold.
+    gap, _ = _assessed(saved, found=2, mapped=1)
+    found = feasibility.assess(gap, BIRTHS, "births.sql")
+    assert found["verdict"] == "requirements_checked" and found["coverage"]["parts"][0]["state"] == feasibility.COVERAGE_GAP
+    assert found["verdict_text"].endswith("a person's assessment of the recording pathways found a pathway that the hospital schema "
+                                          "has not mapped, in Patients.")
+    assert "and found two pathways, of which the hospital schema has mapped one." in feasibility.markdown(found)
+    # An assessment of half the year covers a question of that half, and not a question of the whole year.
+    half, _ = _assessed(saved, end="2024-06-30")
+    assert feasibility.assess(half, BIRTHS, "births.sql", ("2024-01-01", "2024-06-30"))["claims"]["pathway_coverage_assessed"]
+    whole = feasibility.assess(half, BIRTHS, "births.sql")
+    assert whole["coverage"]["parts"][0]["state"] == feasibility.COVERAGE_PARTLY and not whole["claims"]["pathway_coverage_assessed"]
+    assert feasibility.assess(half, BIRTHS, "births.sql", ("2023-01-01", "2023-12-31"))["coverage"]["parts"][0]["state"] == \
+        feasibility.COVERAGE_NOT_ASSESSED
+    # A change to the pathways that the hospital schema maps for the part leaves the assessment stale.
+    _, s = _assessed(saved)
+    s.confirm("role_patient rows", "no", "PERSON_MASTER_2", date=DATE)
+    stale = feasibility.assess(feasibility.Schema(s.save(DATE)), BIRTHS, "births.sql")
+    assert stale["coverage"]["parts"][0]["state"] == feasibility.COVERAGE_STALE
+    assert stale["coverage"]["parts"][0]["assessments"][0]["stale"] == ["the pathways changed"]

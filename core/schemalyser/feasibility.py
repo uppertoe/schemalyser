@@ -15,11 +15,21 @@ test query run on the database with what it showed; for a kind, the codes chosen
 in one of five states, and for each gap writes the smallest investigation that screen 1 already offers, as a request
 that a named person can act on, with the query text where the saved schema can write it.
 
+The report keeps two claims apart and never merges them. The first is that every declared requirement of the question
+is mapped and checked against the database, which the states above establish. The second is that the coverage of the
+pathways by which the hospital's database records each part the question reads has been assessed for the question's
+period, which only a person's assessment establishes: it enters the hospital schema through the evidence import as
+"pathway coverage assessed", scoped to the parts and the period it covers, with the person and the date, and is held on
+the part rather than on a binding, because what it looks for is a pathway that no binding knows of. The verdict states
+both claims by name, and neither stands in for the other.
+
 A missing mapping says only that the hospital schema does not yet say where the record is held. It is never evidence
 that the hospital's database lacks it, and a route that has been checked is not evidence that it reaches every record.
 
-    python -m schemalyser.feasibility report SCHEMA.zip QUERY.sql [--out report.md|report.json]
-    python -m schemalyser.feasibility programme SCHEMA.zip FOLDER/ [--out programme.md|programme.json]
+    python -m schemalyser.feasibility report SCHEMA.zip QUERY.sql [--period FROM TO] [--out report.md|report.json]
+    python -m schemalyser.feasibility programme SCHEMA.zip FOLDER/ [--period FROM TO] [--out programme.md|programme.json]
+
+Without --period, the question's period is the year that the hospital schema records, as the audit's package takes it.
 
 The report names the hospital's tables where it quotes a proposal or a query, so it stays on the hospital's own storage
 with the hospital schema.
@@ -48,11 +58,22 @@ VALIDATED = "clinically validated"
 STATES = (NOT_DESCRIBED, NOT_MAPPED, PROPOSED, CONFIRMED, CHECKED, VALIDATED)
 RANK = {state: n for n, state in enumerate(STATES)}
 
+# The verdicts. The two claims are stated by name and never merged: whether every requirement is mapped and checked,
+# and whether the coverage of the recording pathways has been assessed. No verdict says that a question is answerable.
 VERDICTS = {
-    "answerable": "This question can be answered from the hospital schema as it stands.",
-    "not_yet": "This question is expressible but cannot yet be answered reliably.",
     "model": "This question needs parts the role model does not yet describe.",
+    "not_yet": "This question is expressible but cannot yet be answered reliably.",
+    "requirements_checked": "Every requirement of this question is mapped and checked against the database.",
+    "requirements_and_coverage": "Every requirement of this question is mapped and checked against the database.",
 }
+# The verdicts on which the first claim holds.
+REQUIREMENTS_CHECKED = ("requirements_checked", "requirements_and_coverage")
+# The state of the assessment of a part's recording pathways over the question's period.
+COVERAGE_NOT_ASSESSED = "not assessed"
+COVERAGE_PARTLY = "assessed for part of the period"
+COVERAGE_STALE = "assessed, and the pathways mapped have changed since"
+COVERAGE_GAP = "assessed, and a pathway found is not mapped"
+COVERAGE_ASSESSED = "assessed, and every pathway found is mapped"
 CLINICIAN, ANALYST = "clinician", "database analyst"
 STEPS = {4: "4. Propose where each part is held", 5: "5. Check which tables exist", 6: "6. Confirm each column",
          7: "7. Choose the hospital's codes", 8: "8. Run the counts", 9: "9. Save the hospital schema"}
@@ -66,16 +87,34 @@ TIME_NODES = tuple(getattr(exp, name) for name in ("DateDiff", "DateAdd", "DateS
 WORDING = {
     "heading_requirements": "What the question needs",
     "heading_tests": "What the question tests",
-    "heading_missing": "What is missing",
+    "heading_missing": "What has not yet been established",
+    "heading_coverage": "The coverage of the recording pathways",
     "heading_requests": "Evidence requests",
     "heading_principle": "What this report can and cannot say",
     "asks": "The question reads as follows: {question}",
     "read_on": "Schemalyser read this question against the hospital schema last updated on {date}.",
     "names": "The evidence requests below name the tables of the hospital's database, so this report stays on the hospital's own storage with the hospital schema.",
     "table_head": "| What the question needs | State | What the hospital schema records |",
-    "nothing_missing": "Every requirement of this question has been checked against the database.",
+    "nothing_missing": "Every requirement of this question is mapped and checked against the database.",
+    # The two claims, as the verdict states them.
+    "claim_requirements_not": "Not every requirement of the question is yet mapped and checked against the database, and {coverage}.",
+    "claim_requirements_only": "Every requirement of this question is mapped and checked against the database; {coverage}.",
+    "claim_both": "Every requirement of this question is mapped and checked against the database, and {coverage}.",
+    "coverage_none": "the coverage of the recording pathways has not been assessed",
+    "coverage_some": "the coverage of the recording pathways has not been established for {parts} over the question's period",
+    "coverage_gap": "a person's assessment of the recording pathways found a pathway that the hospital schema has not mapped, in {parts}",
+    "coverage_gap_and": "a person's assessment of the recording pathways found a pathway that the hospital schema has not mapped, in {parts}, and the coverage has not been established for {others} over the question's period",
+    "coverage_all": "a person has assessed the coverage of the recording pathways of every part it reads over the question's period, and found every pathway mapped",
+    # The coverage of each part, in the report.
+    "coverage_intro": "The question reads {parts} over the period from {start} to {end}. Only a person's assessment of the pathways by which the hospital's database records each part, entered through the evidence import, establishes whether every pathway is mapped. The states in the table above do not establish it.",
+    "coverage_part_none": "No person has assessed the recording pathways of {title} for this period.",
+    "coverage_part_full": "{actor} assessed the recording pathways of {title} on {date}, for {start} to {end}, and found {found}, all of which the hospital schema has mapped.",
+    "coverage_part_gap": "{actor} assessed the recording pathways of {title} on {date}, for {start} to {end}, and found {found}, of which the hospital schema has mapped {mapped}.",
+    "coverage_part_partly": "The assessments of the recording pathways of {title} cover {periods}, which is not the whole of the question's period.",
+    "coverage_part_stale": "{actor} assessed the recording pathways of {title} on {date}, and the pathways that the hospital schema has mapped for it have changed since.",
+    "req_coverage": "The clinician, with the database analyst, finds every pathway by which the hospital's database records {parts} over the period from {start} to {end}, and counts how many of those pathways the hospital schema has mapped. The clinician enters the assessment through the evidence import, with python -m schemalyser.describe import-evidence and the clinician's name as the actor, as one row for each part with the columns part, period_from, period_to, pathways_found and pathways_mapped, and a note where it helps.",
     "no_requests": "No evidence request is needed before the question is run.",
-    "principle": "Where this report says that something is not currently mapped, the hospital schema does not yet say where the hospital's database keeps it; that is not evidence that the database lacks it. Where a part has been checked against the database, the route through which the hospital schema reaches it runs and its counts looked right; that is not evidence that the route captures every record. Only a reconciliation of a sample of anaesthetics against the clinical record can show that, and the hospital schema never records it.",
+    "principle": "Where this report says that something is not currently mapped, the hospital schema does not yet say where the hospital's database keeps it; that is not evidence that the database lacks it. Where a part has been checked against the database, the route through which the hospital schema reaches it runs and its counts looked right; that is not evidence that the route captures every record. A person's assessment of the recording pathways says whether every pathway the person found is mapped, which is a separate claim and is shown separately. Only a reconciliation of a sample of anaesthetics against the clinical record can show that the routes capture every record.",
     # The plain names of requirements.
     "link": "The link from {source} to {target}",
     "kind": "The hospital's codes for {meaning}",
@@ -122,7 +161,7 @@ WORDING = {
     "codes_proposed": "The page proposed {count} for it, and no person has chosen them.",
     "codes_none": "No code has been chosen for it.",
     "not_described": "The role model does not describe this.",
-    # What is missing, by state.
+    # What has not yet been established, by state.
     "missing_one": "One requirement is {state}: {items}.",
     "missing_many": "{count} requirements are {state}: {items}.",
     "concerns": "This request concerns {items}.",
@@ -164,6 +203,7 @@ WORDING = {
     "programme_heading": "The programme of questions",
     "programme_read": "Schemalyser read {count} against the hospital schema last updated on {date}.",
     "question_coverage": "{answered} of the {total} {questions} {have} every requirement checked against the database.",
+    "pathway_coverage": "{assessed} of the {total} {questions} {have} the coverage of {their} recording pathways assessed for {their} period, with every pathway found mapped.",
     "structural_coverage": "The hospital schema gives a place for {parts} of the {all_parts} parts that the role model describes, and for {columns} of their {all_columns} columns.",
     "programme_blocking": "What holds back the most questions",
     "programme_blocking_head": "| Requirement | State | Questions that need it |",
@@ -572,7 +612,7 @@ class Schema:
                 if match:
                     sitting.codes[match.group(1)] = describe._json_of(data)
             held = describe._json_of(files.get("dimensions.json"))
-            sitting.dimensions = {kind: held.get(kind) or {} for kind in ("bindings", "links", "translations")}
+            sitting.dimensions = {kind: held.get(kind) or {} for kind in ("bindings", "links", "translations", "parts")}
             self.writes = False
         else:
             self.writes = True
@@ -1009,6 +1049,10 @@ def _versioned(schema, request):
                     "request_id": "q" + evidence.digest([schema.schema_id, request["id"], request.get("sql") or ""], 16),
                     "queries": queries,
                     "expects": [{"query": q["name"], "columns": q["expects"]} for q in queries] or None})
+    if form == "pathway coverage":
+        request["expects"] = [{"query": describe.COVERAGE_ASSESSED,
+                               "columns": [{"name": n, "type": t} for n, t in describe.COVERAGE_COLUMNS]
+                               + [{"name": "note", "type": describe.TEXT, "optional": True}]}]
     if form == "reconciliation":
         parts = sorted({m.split(" ")[0].split(".")[0] for m in request["moves"] if m.startswith("role_")})
         request["covers"] = sitting.covered(parts) if sitting.data is not None else {}
@@ -1060,18 +1104,93 @@ def _counts_request(schema, add, view, moves):
     add("counts:" + ",".join(wanted), ANALYST, 8, says, moves, sql=sql, form="counts")
 
 
+# The second claim: the coverage of the recording pathways of each part the question reads.
+
+def _period(schema, period):
+    """The question's period as (first, last) dates: the one given, or the year that the hospital schema records."""
+    if period:
+        first, last = (p if isinstance(p, dt.date) else dt.date.fromisoformat(str(p)) for p in period)
+    else:
+        first, last = dt.date(schema.year, 1, 1), dt.date(schema.year, 12, 31)
+    if first > last:
+        raise FeasibilityError("The question's period runs from a first date to a last date, with the first not after the last.")
+    return first, last
+
+
+def _covers(periods, first, last):
+    """Whether the periods, as [{"from", "to"}], together cover every day from first to last."""
+    reached = first - dt.timedelta(days=1)
+    for start, end in sorted((dt.date.fromisoformat(p["from"]), dt.date.fromisoformat(p["to"])) for p in periods):
+        if start > reached + dt.timedelta(days=1):
+            break
+        reached = max(reached, end)
+        if reached >= last:
+            return True
+    return reached >= last
+
+
+def coverage_evidence(schema, view, first, last):
+    """Whether a person has assessed the recording pathways of a part over the question's period, from the
+    assessments that the hospital schema holds on the part: {"part", "title", "state", "assessments", "covering"}."""
+    sitting = schema.sitting
+    held = (((sitting.dimensions.get("parts") or {}).get(view) or {}).get(describe.COVERAGE_ASSESSED)) or []
+    current = sitting._current("parts", view)
+    assessments = [{**record, "stale": evidence.stale(record, current)} for record in held]
+    overlapping = [a for a in assessments if a.get("period") and a["period"]["from"] <= last.isoformat()
+                   and a["period"]["to"] >= first.isoformat()]
+    usable = [a for a in overlapping if not a["stale"]]
+    if not overlapping:
+        state = COVERAGE_NOT_ASSESSED
+    elif not usable:
+        state = COVERAGE_STALE
+    elif not _covers([a["period"] for a in usable], first, last):
+        state = COVERAGE_PARTLY
+    elif any(a["figure"]["pathways_mapped"] < a["figure"]["pathways_found"] for a in usable):
+        state = COVERAGE_GAP
+    else:
+        state = COVERAGE_ASSESSED
+    return {"part": view, "title": rolemap.view_title(view), "state": state, "assessments": assessments,
+            "covering": [a["entry"] for a in usable]}
+
+
+def _coverage_clause(coverage):
+    parts = coverage["parts"]
+    gaps = [_inline(c["title"]) for c in parts if c["state"] == COVERAGE_GAP]
+    others = [_inline(c["title"]) for c in parts if c["state"] not in (COVERAGE_GAP, COVERAGE_ASSESSED)]
+    if parts and not gaps and not others:
+        return WORDING["coverage_all"]
+    if gaps:
+        return (WORDING["coverage_gap_and"] if others else WORDING["coverage_gap"]).format(
+            parts=describe._and(gaps), others=describe._and(others))
+    if len(others) == len(parts):
+        return WORDING["coverage_none"]
+    return WORDING["coverage_some"].format(parts=describe._and(others))
+
+
 # The report.
 
-def _verdict(rows):
+def _verdict(rows, coverage=None):
     if any(r["state"] == NOT_DESCRIBED for r in rows):
         return "model"
-    if all(RANK[r["state"]] >= RANK[CHECKED] for r in rows):
-        return "answerable"
-    return "not_yet"
+    if not all(RANK[r["state"]] >= RANK[CHECKED] for r in rows):
+        return "not_yet"
+    return "requirements_and_coverage" if coverage and coverage["established"] else "requirements_checked"
 
 
-def assess(schema, sql, name="question.sql"):
-    """The whole assessment of one question against a saved hospital schema, as a plain dictionary."""
+def _verdict_text(verdict, coverage):
+    if verdict == "model":
+        return VERDICTS["model"]
+    clause = _coverage_clause(coverage)
+    if verdict == "not_yet":
+        return VERDICTS["not_yet"] + " " + WORDING["claim_requirements_not"].format(coverage=clause)
+    return WORDING["claim_both" if verdict == "requirements_and_coverage" else "claim_requirements_only"].format(coverage=clause)
+
+
+def assess(schema, sql, name="question.sql", period=None):
+    """The whole assessment of one question against a saved hospital schema, as a plain dictionary. period, as (first,
+    last), is the question's period, over which the coverage of the recording pathways is read; without it, the year
+    that the hospital schema records."""
+    first, last = _period(schema, period)
     needs = requirements(sql, name)
     model, views, columns = _contract()
     rows = [part_evidence(schema, view) for view in needs["parts"]]
@@ -1099,7 +1218,22 @@ def assess(schema, sql, name="question.sql"):
     # The requests that move the requirements furthest from being checked come first.
     rank = {r["id"]: RANK[r["state"]] for r in rows}
     requests.sort(key=lambda request: min((rank.get(m, RANK[CONFIRMED]) for m in request["moves"]), default=RANK[CONFIRMED]))
-    verdict = _verdict(rows)
+    # The second claim, kept apart from the first: whether a person has assessed the recording pathways of each part.
+    parts = [coverage_evidence(schema, view, first, last) for view in needs["parts"]]
+    coverage = {"period": {"from": first.isoformat(), "to": last.isoformat()}, "parts": parts,
+                "established": bool(parts) and all(c["state"] == COVERAGE_ASSESSED for c in parts)}
+    unassessed = [c["part"] for c in parts if c["state"] != COVERAGE_ASSESSED]
+    if unassessed:
+        coverage_request = {"id": f"coverage:{first.isoformat()}:{last.isoformat()}", "form": "pathway coverage", "role": CLINICIAN,
+                            "step": None, "question": None, "sql": None, "moves": unassessed,
+                            "says": WORDING["req_coverage"].format(parts=describe._and([_inline(c["title"]) for c in parts if c["part"] in unassessed]),
+                                                                   start=first.isoformat(), end=last.isoformat()),
+                            "parts": unassessed, "period": dict(coverage["period"])}
+        _versioned(schema, coverage_request)
+        requests.append(coverage_request)
+    verdict = _verdict(rows, coverage)
+    requirements_checked = verdict in REQUIREMENTS_CHECKED
+    coverage["says"] = _capital(_coverage_clause(coverage)) + "."
     states = {r["id"]: r["state"] for r in rows}
     capabilities = []
     for capability in needs["capabilities"]:
@@ -1110,7 +1244,9 @@ def assess(schema, sql, name="question.sql"):
             capabilities.append({"name": gap["name"], "version": None, "meaning": None, "output_class": None,
                                  "requirements": [gap["id"]], "state": NOT_DESCRIBED})
     return {"name": needs["name"], "heading": needs["heading"], "question": needs["question"],
-            "verdict": verdict, "verdict_text": VERDICTS[verdict], "updated": schema.settings.get("updated"),
+            "verdict": verdict, "verdict_text": _verdict_text(verdict, coverage), "updated": schema.settings.get("updated"),
+            "claims": {"requirements_checked": requirements_checked, "pathway_coverage_assessed": coverage["established"]},
+            "coverage": coverage,
             "requirements": needs, "states": rows, "requests": requests, "capabilities": capabilities,
             "time_zone": {"zone": schema.settings.get("time_zone"), "daylight_saving": schema.settings.get("daylight_saving")}}
 
@@ -1193,6 +1329,7 @@ def markdown(found):
                     count=_number(len(held)), state=state, items=describe._and(held))), ""]
     else:
         lines += [WORDING["nothing_missing"], ""]
+    lines += _coverage_lines(found)
     lines += [f"## {WORDING['heading_requests']}", ""]
     if not found["requests"]:
         lines.append(WORDING["no_requests"])
@@ -1213,20 +1350,49 @@ def markdown(found):
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines))
 
 
+def _coverage_lines(found):
+    coverage = found.get("coverage")
+    if not coverage or not coverage["parts"]:
+        return []
+    period = coverage["period"]
+    lines = [f"## {WORDING['heading_coverage']}", "",
+             WORDING["coverage_intro"].format(parts=describe._and([_inline(c["title"]) for c in coverage["parts"]]),
+                                              start=period["from"], end=period["to"]), ""]
+    for part in coverage["parts"]:
+        title = _inline(part["title"])
+        usable = [a for a in part["assessments"] if a["entry"] in part["covering"]]
+        latest = (usable or [a for a in part["assessments"] if a["stale"]] or [None])[-1]
+        if part["state"] == COVERAGE_NOT_ASSESSED or latest is None:
+            line = WORDING["coverage_part_none"].format(title=title)
+        elif part["state"] == COVERAGE_STALE:
+            line = WORDING["coverage_part_stale"].format(actor=latest["by"], title=title, date=describe._day(latest["date"]))
+        elif part["state"] == COVERAGE_PARTLY:
+            line = WORDING["coverage_part_partly"].format(title=title, periods=describe._and(
+                [f"{a['period']['from']} to {a['period']['to']}" for a in usable]))
+        else:
+            figure = latest["figure"]
+            found_words = f"{_number(figure['pathways_found'])} {'pathway' if figure['pathways_found'] == 1 else 'pathways'}"
+            line = WORDING["coverage_part_full" if part["state"] == COVERAGE_ASSESSED else "coverage_part_gap"].format(
+                actor=latest["by"], title=title, date=describe._day(latest["date"]), start=latest["period"]["from"],
+                end=latest["period"]["to"], found=found_words, mapped=_number(figure["pathways_mapped"]))
+        lines.append(f"- {_capital(line)}")
+    return lines + [""]
+
+
 def to_json(found):
     return json.dumps(found, indent=2, ensure_ascii=False, default=str) + "\n"
 
 
 # The programme of questions.
 
-def programme(schema, queries):
+def programme(schema, queries, period=None):
     """Over several questions, given as [(name, sql)]: how many questions need each requirement, the unresolved
     requirements ordered by how many questions they hold back, the share of questions whose every requirement has
     been checked against the database, and the share of the role model's parts and columns that the hospital schema
     gives a place for."""
     found, needed = [], {}
     for name, sql in queries:
-        one = assess(schema, sql, name)
+        one = assess(schema, sql, name, period)
         found.append(one)
         for row in one["states"]:
             held = needed.setdefault(row["id"], {"id": row["id"], "title": row["title"], "state": row["state"], "questions": []})
@@ -1235,7 +1401,8 @@ def programme(schema, queries):
         held["count"] = len(held["questions"])
     blocking = sorted((r for r in needed.values() if RANK[r["state"]] < RANK[CHECKED]),
                       key=lambda r: (-r["count"], RANK[r["state"]], r["id"]))
-    answered = sum(1 for one in found if one["verdict"] == "answerable")
+    answered = sum(1 for one in found if one["verdict"] in REQUIREMENTS_CHECKED)
+    assessed = sum(1 for one in found if one["claims"]["pathway_coverage_assessed"])
     parts = columns = mapped_parts = mapped_columns = 0
     for view, names in rolemap.all_views().items():
         parts += 1
@@ -1248,6 +1415,7 @@ def programme(schema, queries):
                           for q in found],
             "requirements": sorted(needed.values(), key=lambda r: (-r["count"], r["id"])), "blocking": blocking,
             "question_coverage": {"answered": answered, "total": len(found)},
+            "pathway_coverage": {"assessed": assessed, "total": len(found)},
             "structural_coverage": {"parts": mapped_parts, "all_parts": parts, "columns": mapped_columns, "all_columns": columns},
             "updated": schema.settings.get("updated"), "assessments": found}
 
@@ -1259,9 +1427,15 @@ def programme_markdown(found):
                                               date=describe._day(found["updated"] or "")), "",
              _capital(WORDING["question_coverage"].format(answered=_number(found["question_coverage"]["answered"]), total=_number(total),
                                                           questions="question" if total == 1 else "questions",
-                                                          have="has" if found["question_coverage"]["answered"] == 1 else "have")), "",
-             WORDING["structural_coverage"].format(**found["structural_coverage"]), "",
-             f"## {WORDING['programme_blocking']}", ""]
+                                                          have="has" if found["question_coverage"]["answered"] == 1 else "have")), ""]
+    if "pathway_coverage" in found:
+        assessed = found["pathway_coverage"]["assessed"]
+        lines += [_capital(WORDING["pathway_coverage"].format(assessed=_number(assessed) if assessed else "none",
+                                                              total=_number(total), questions="question" if total == 1 else "questions",
+                                                              have="have" if assessed > 1 else "has",
+                                                              their="their" if assessed > 1 else "its")), ""]
+    lines += [WORDING["structural_coverage"].format(**found["structural_coverage"]), "",
+              f"## {WORDING['programme_blocking']}", ""]
     if found["blocking"]:
         lines += [WORDING["programme_blocking_head"], "| --- | --- | --- |"]
         lines += [f"| {_cell(r['title'])} | {r['state'][:1].upper() + r['state'][1:]} | {r['count']} |" for r in found["blocking"]]
@@ -1288,23 +1462,30 @@ def main(argv=None):
     one = commands.add_parser("report", help="The report on one question.")
     one.add_argument("schema")
     one.add_argument("query")
+    one.add_argument("--period", nargs=2, metavar=("FROM", "TO"))
     one.add_argument("--out")
     many = commands.add_parser("programme", help="The programme view over a folder of questions.")
     many.add_argument("schema")
     many.add_argument("folder")
+    many.add_argument("--period", nargs=2, metavar=("FROM", "TO"))
     many.add_argument("--out")
     args = parser.parse_args(argv)
     try:
+        if args.period:
+            try:
+                args.period = tuple(dt.date.fromisoformat(p) for p in args.period)
+            except ValueError:
+                raise FeasibilityError("The period is a first and a last date, each written as 2024-01-31.") from None
         schema = Schema.load(args.schema)
         if args.command == "report":
             path = Path(args.query)
-            found = assess(schema, path.read_text(encoding="utf-8"), path.name)
+            found = assess(schema, path.read_text(encoding="utf-8"), path.name, args.period)
             _write(markdown(found), found, args.out)
         else:
             queries = [(p.name, p.read_text(encoding="utf-8")) for p in sorted(Path(args.folder).glob("*.sql"))]
             if not queries:
                 raise FeasibilityError(f"{Path(args.folder).name} holds no .sql file.")
-            found = programme(schema, queries)
+            found = programme(schema, queries, args.period)
             _write(programme_markdown(found), found, args.out)
     except (FeasibilityError, OSError) as error:
         print(str(error), file=sys.stderr)

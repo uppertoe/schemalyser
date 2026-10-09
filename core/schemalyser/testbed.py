@@ -20,7 +20,15 @@ What the testbed adds is the account of the run:
 - the inputs for the Data Quality Dashboard, and in the full profile its results, with each failure set against
   the world's dqd-expectations.json;
 - the release equivalence check, which reads the SQL Server harness's summary.json;
+- the route of each step, over the roles or directly from the source tables, with the share of the steps on each and
+  every step whose route record the release would refuse, and whether the conversion is a draft;
+- the role scenarios: each step over the roles is run on the role-level shadow with a scenario's planted rows of the
+  role views, and what it writes is compared with the expected rows held out for it;
+- the translation: the rewrites by name that turned each step's T-SQL into the form that DuckDB ran;
 - report.json for a machine and report.md for a person.
+
+The expected rows of every scenario are read from the held-out root, held-out/<conversion> beside the conversion folder,
+which the testbed opens for reading only and never writes; report.json records a digest of it.
 
 The fast profile, the default, runs everything above apart from the dashboard, and passes when every judged check
 passes. The full profile also loads the tables into the OMOP database and runs the dashboard's Broadsea image, and it
@@ -64,7 +72,8 @@ ROOT = Path(__file__).resolve().parents[2]
 HARNESS = ROOT / "tools" / "sqlserver" / "harness.py"
 EXPECTATIONS = "testbed.json"
 DQD_EXPECTATIONS = "dqd-expectations.json"
-SECTIONS = ("versions", "world", "engines", "build", "steps", "scenarios", "reconciliation", "release", "dqd", "checks", "summary")
+SECTIONS = ("versions", "world", "engines", "build", "steps", "routes", "scenarios", "roles", "reconciliation", "release",
+            "translation", "dqd", "checks", "summary")
 CDM_VERSION = "5.4"
 # The schema into which load_postgresql.sql loads the testbed's tables, apart from the OMOP database's own cdm schema.
 POSTGRESQL_SCHEMA = "testbed"
@@ -545,6 +554,39 @@ def _scenario(entry, run_gates=None):
         out["gate_failed_as_intended"] = entry["fails_gate"] in failed_gates
         passed = passed and out["gate_failed_as_intended"]
     return dict(out, outcome="passed" if passed else "failed")
+
+
+# The routes and the translation.
+
+def routes_section(folder, steps, report):
+    """The route of each step, the share on each route, the problems the release would refuse, and the draft marker."""
+    by_step = []
+    for step in steps:
+        entry = {"file": step["file"], "layer": step["layer"], "route": convert.route_of(step)}
+        if entry["route"] == "direct":
+            entry.update(reference=step.get("reference"), reviewed=bool(step.get("review")))
+        offered = [{"file": item["file"], "route": item["route"]} for item in step.get("alternatives") or []
+                   if isinstance(item, dict) and "route" in item]
+        if step.get(convert.ROLES_STEP):
+            entry["roles_step"] = step[convert.ROLES_STEP]
+        if offered:
+            entry["alternatives"] = offered
+        by_step.append(entry)
+    return {"shares": convert.route_shares(steps), "release_shares": release.route_summary(folder),
+            "problems": report["routes"]["problems"], "draft": report["draft"], "steps": by_step,
+            "over_the_roles": convert.roles_steps(steps)}
+
+
+def translation_section(steps, results):
+    """The rewrites that the translation applied to each step, by name, and every rewrite that it applied at all."""
+    from .translate import REWRITES
+    per_step = [{"file": step["file"], "rewrites": result.get("rewrites", [])} for step, result in zip(steps, results)]
+    applied = list(dict.fromkeys(name for entry in per_step for name in entry["rewrites"]))
+    return {"note": "Each step runs on SQL Server as written and on DuckDB in a translated form. The rewrites below are the "
+                    "ones that the translation applied, by name, beyond sqlglot's own change of dialect.",
+            "applied": [{"name": name, "what": REWRITES[name],
+                         "steps": [entry["file"] for entry in per_step if name in entry["rewrites"]]} for name in applied],
+            "steps": per_step}
 
 
 # The release script.
@@ -1072,6 +1114,10 @@ def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, prof
 
     # 5: the reconciliation. 6: the release script with its gates and counts. 7: the dashboard's inputs.
     reconciliation = reconcile(conversion, folder, steps, report["steps"], expectations)
+    # The steps over the roles, each run on the role shadow with its role scenarios' planted rows.
+    roles = convert.run_role_scenarios(folder)
+    routes = routes_section(folder, steps, report)
+    translation = translation_section(steps, report["steps"])
     released, text, manifest = release_check(folder, world, steps, report)
     if text is not None:
         (out / "release").mkdir(exist_ok=True)
@@ -1093,6 +1139,12 @@ def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, prof
         {"check": "every gate passed", "passed": all(g["rows"] == 0 for g in report["gates"])},
         {"check": "every count ran", "passed": all(c["error"] is None for c in report["counts"])},
         {"check": "every planted scenario passed", "passed": all(s["outcome"] == "passed" for s in scenarios)},
+        {"check": "every step records its route, and every direct step its reference, reason and review",
+         "passed": not routes["problems"], "detail": routes["problems"]},
+        {"check": "every scenario over the roles passed against its held-out rows",
+         "passed": all(r["outcome"] == "passed" for r in roles) if roles else None,
+         "detail": [f"{r['name']}: {r['outcome']}" + (f" ({r['error']})" if r["error"] else "") for r in roles
+                    if r["outcome"] != "passed"]},
         {"check": "the reconciliation found no unexplained discrepancy", "passed": coverage_["outcome"] == "passed",
          "detail": coverage_["unexplained"]["items"]},
         {"check": "the release script was written and carries every step that ran",
@@ -1135,6 +1187,13 @@ def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, prof
         "sentences": [
             f"The conversion ran {sum(1 for s in report['steps'] if s['status'] == 'ok')} of {len(steps)} steps cleanly over {report['built'][len('Schemalyser has built '):].rstrip('.')}.",
             f"{passed} of {len(scenarios)} planted scenarios passed against their written expectations.",
+            routes["shares"]["sentence"],
+            *([report["draft"]["sentence"]] if report["draft"] else []),
+            *([f"{sum(1 for r in roles if r['outcome'] == 'passed')} of {len(roles)} "
+               f"{'scenario' if len(roles) == 1 else 'scenarios'} over the roles passed against the held-out rows, "
+               f"on the role shadow."] if roles else []),
+            (f"The translation to DuckDB applied {len(translation['applied'])} named "
+             f"{'rewrite' if len(translation['applied']) == 1 else 'rewrites'} to the steps."),
             *coverage_sentences(coverage_, reconciliation["totals"]),
             (f"{sum(1 for g in report['gates'] if g['rows'] == 0)} of {len(report['gates'])} gates passed, and "
              f"{sum(1 for c in report['counts'] if c['error'] is None)} of {len(report['counts'])} counts ran."),
@@ -1147,6 +1206,8 @@ def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, prof
         "world": {"folder": world_folder.name, "conversion": folder.name, "rows": rows,
                   "catalogue_sha256": _digest([world.catalogue_path]),
                   "conversion_sha256": _digest([p for p in folder.rglob("*") if p.is_file()]),
+                  "held_out_sha256": _digest([p for p in convert.held_out_root(folder).rglob("*") if p.is_file()])
+                  if convert.held_out_root(folder).is_dir() else None,
                   "requests_sha256": _digest(world.request_files()),
                   "expectations": EXPECTATIONS if expectations is not None else None,
                   "run_at": datetime.now(UTC).isoformat(timespec="seconds")},
@@ -1160,11 +1221,14 @@ def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, prof
                   "vocabulary": choice, "athena": athena,
                   "vocabulary_rows": vocabulary_rows, "concept_notes": len(concepts), "unmapped": report["unmapped"]},
         "steps": [{"file": step["file"], "layer": step["layer"], "table": result_["table"], "status": result_["status"],
-                   "rows": result_["rows"], "sha256": _digest([folder / step["file"]])}
+                   "rows": result_["rows"], "route": convert.route_of(step), "sha256": _digest([folder / step["file"]])}
                   for step, result_ in zip(steps, report["steps"])],
+        "routes": routes,
         "scenarios": scenarios,
+        "roles": roles,
         "reconciliation": reconciliation,
         "release": released,
+        "translation": translation,
         "dqd": dqd,
         "checks": checks,
         "summary": summary,
@@ -1196,12 +1260,33 @@ def markdown(report):
     for check in report["checks"]:
         mark = check.get("state") or ("not judged in this profile" if check["passed"] is None else "passed" if check["passed"] else "failed")
         lines.append(f"- {check['check']}: {mark}.")
+    routes = report["routes"]
+    lines += ["", "## Routes", "", routes["shares"]["sentence"]]
+    if routes["draft"]:
+        lines.append(routes["draft"]["sentence"])
+    lines.append("")
+    lines += [f"- {problem}" for problem in routes["problems"]]
+    for entry in routes["over_the_roles"]:
+        lines.append(f"- {entry['file']} is written over the roles"
+                     + (f", and waits beside {entry['alternative_of']}." if entry["alternative_of"] else "."))
     lines += ["", "## Scenarios", ""]
     for scenario in report["scenarios"]:
         lines.append(f"- {scenario['name']}: {scenario['outcome']}.")
         for item in scenario["expectations"]:
             if not item["met"]:
                 lines.append(f"  - {item['says']} The run gave {item['found']}, and the scenario expects {item['expected']}.")
+    if report["roles"]:
+        lines += ["", "## Scenarios over the roles", "",
+                  "Each step over the roles ran on the role shadow with the scenario's planted rows, and its rows were compared "
+                  "with the expected rows held out for it.", ""]
+        for role in report["roles"]:
+            if role["outcome"] == "passed":
+                lines.append(f"- {role['name']}, for {role['step']}: passed, with {role['found_rows']} of {role['expected_rows']} rows as expected.")
+            elif role["error"]:
+                lines.append(f"- {role['name']}: not run, because {role['error']}.")
+            else:
+                lines.append(f"- {role['name']}, for {role['step']}: failed, with {len(role['missing'])} expected rows missing and "
+                             f"{len(role['unexpected'])} rows that were not expected.")
     c = r["coverage"]
     lines += ["", "## Reconciliation", "", r["note"], "",
               f"- Traced, with every excluded row accounted for ({c['accounted']['count']}): {_names(c['accounted']['steps']) or 'none'}.",
@@ -1232,6 +1317,10 @@ def markdown(report):
                  else f"The release script was not written: {rel['reason']}.")
     for count in rel.get("counts", []):
         lines.append(f"- {count['says'] or count['count'] + ': the count could not be run.'}")
+    t = report["translation"]
+    lines += ["", "## Translation", "", t["note"], ""]
+    lines += [f"- {item['name']}: {item['what']} It applied to {len(item['steps'])} "
+              f"{'step' if len(item['steps']) == 1 else 'steps'}." for item in t["applied"]] or ["- None was applied."]
     lines += ["", "## Data Quality Dashboard", ""]
     if dqd["status"] == "ran":
         lines += [(f"The dashboard ran {dqd['checks']:,} checks in {dqd['seconds']} seconds: {dqd['passed']:,} passed, {dqd['failed']:,} "

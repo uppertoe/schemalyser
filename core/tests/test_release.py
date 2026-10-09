@@ -15,13 +15,16 @@ FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 CONVERSION = FIXTURES / "conversion"
 WRITTEN = ["visit_detail", "procedure_occurrence", "measurement", "observation", "drug_exposure", "device_exposure"]
 GOOD_STEP = "SELECT ROW_NUMBER() OVER (ORDER BY r.SEQ) AS measurement_id, r.SEQ AS person_id FROM OBS_READING r"
+# The route of a step written directly from the source tables, with everything that a direct step records.
+DIRECT = {"route": "direct", "reference": "an invented reference conversion", "reason": "The test needs one direct step.",
+          "review": {"by": "a tester", "on": "2026-10-09"}}
 
 
 def _folder(tmp_path, step=GOOD_STEP, gate=None, mappings=None, name="step.sql", table="measurement", settings=None):
     """A small conversion folder with one anaesthesia step, and optionally a gate, mapping rows and settings."""
     folder = tmp_path / "conversion"
     folder.mkdir(parents=True)
-    (folder / "conversion.json").write_text(json.dumps([{"table": table, "file": name, "layer": "anaesthesia"}]))
+    (folder / "conversion.json").write_text(json.dumps([{"table": table, "file": name, "layer": "anaesthesia", **DIRECT}]))
     if "/" not in name and "\n" not in name and name not in (".", ".."):
         (folder / name).write_text(step)
     if gate is not None:
@@ -440,3 +443,64 @@ def test_every_count_column_is_a_plain_name_written_in_brackets():
     text = release.script(CONVERSION)
     for statement in re.findall(r"^SELECT REPLACE\(N'.*", text, re.MULTILINE):
         assert re.search(r"CAST\(\(SELECT \[c\]\.\[[A-Za-z_][A-Za-z0-9_]*\] FROM \($", statement)
+
+
+# The route of each step.
+
+def test_the_script_states_the_share_of_steps_on_each_route_and_names_each_step_s_route():
+    text = release.script(CONVERSION)
+    assert ("-- " + release.WORDING["routes"].format(count=10, roles=0, direct=10, roles_verb="are", direct_verb="are")) in text
+    at = text.index("-- visit_detail_through_case.sql\n")
+    following = text[at:].splitlines()[1]
+    assert following.startswith("-- This step is written directly from the source tables. It rests on the invented world's own conversion")
+    # A derived step takes neither route, so its comment names none.
+    assert text[text.index("-- anaesthetic.sql\n"):].splitlines()[1].startswith("INSERT INTO")
+    assert release.route_summary(CONVERSION)["direct"] == 10
+
+
+@pytest.mark.parametrize("drop, what", [("review", "the review"), ("reference", "the reference"), ("reason", "the reason")])
+def test_a_direct_step_without_its_reference_reason_or_review_is_refused_by_name(tmp_path, drop, what):
+    folder = _folder(tmp_path)
+    steps = json.loads((folder / "conversion.json").read_text())
+    steps[0].pop(drop)
+    (folder / "conversion.json").write_text(json.dumps(steps))
+    with pytest.raises(Refused, match=rf"^step\.sql: this step is written directly from the source tables, and conversion\.json does not record {what}"):
+        release.script(folder)
+
+
+def test_a_step_with_no_route_is_refused_by_name(tmp_path):
+    folder = _folder(tmp_path)
+    (folder / "conversion.json").write_text(json.dumps([{"table": "measurement", "file": "step.sql", "layer": "anaesthesia"}]))
+    with pytest.raises(Refused, match="step.sql: conversion.json records no route for this step"):
+        release.script(folder)
+
+
+def test_a_draft_is_refused_until_its_marker_is_removed(tmp_path):
+    folder = _folder(tmp_path)
+    (folder / convert.DRAFT_FILE).write_text(json.dumps({"draft": True, "reference": "an invented reference"}))
+    with pytest.raises(Refused, match="This conversion is a draft, transplanted from an invented reference"):
+        release.script(folder)
+    (folder / convert.DRAFT_FILE).unlink()
+    release.script(folder)
+
+
+def test_a_step_over_the_roles_is_refused_as_a_step_and_checked_where_it_waits_beside_one(tmp_path):
+    folder = tmp_path / "conversion"
+    shutil.copytree(CONVERSION, folder)
+    steps = json.loads((folder / "conversion.json").read_text())
+    infusion = next(s for s in steps if s["file"] == "drug_exposure_infusion.sql")
+    # Waiting beside the direct step, it is checked for what it reads and what it writes, and the script carries the
+    # direct step.
+    text = release.script(folder)
+    assert "-- drug_exposure_infusion.sql\n" in text and "role_drug" not in text
+    (folder / "drug_exposure_infusion_roles.sql").write_text(
+        (CONVERSION / "drug_exposure_infusion_roles.sql").read_text().replace("FROM   role_drug d", "FROM   DRUG_GIVEN d"))
+    with pytest.raises(Refused, match="reads only the role views, the mapping views and the OMOP tables"):
+        release.script(folder)
+    # As the step itself, the script cannot yet compile the role views it reads, so it refuses the step by name.
+    shutil.copy(CONVERSION / "drug_exposure_infusion_roles.sql", folder / "drug_exposure_infusion_roles.sql")
+    infusion.pop("roles_step")
+    infusion.update(file="drug_exposure_infusion_roles.sql", route="roles")
+    (folder / "conversion.json").write_text(json.dumps(steps))
+    with pytest.raises(Refused, match="drug_exposure_infusion_roles.sql: the step is written over the roles"):
+        release.script(folder)

@@ -1,0 +1,19 @@
+{
+  "expectations": [
+    {
+      "says": "The anaesthesia layer does not write the anaesthetic as a visit detail or as a row of the anaesthetic table.",
+      "query": "SELECT (SELECT COUNT(*) FROM omop.visit_detail vd WHERE vd.visit_detail_source_value = '990000631') AS visit_details, (SELECT COUNT(*) FROM omop.anaesthetic a JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id WHERE vd.visit_detail_source_value = '990000631') AS anaesthetics",
+      "result": [
+        0,
+        0
+      ]
+    },
+    {
+      "says": "The core still writes the child and the hospital visit.",
+      "query": "SELECT COUNT(*) AS visits FROM omop.visit_occurrence vo JOIN omop.person p ON p.person_id = vo.person_id WHERE p.person_source_value = '990000611'",
+      "result": [
+        1
+      ]
+    }
+  ]
+}

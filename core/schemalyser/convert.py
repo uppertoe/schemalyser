@@ -2,7 +2,8 @@
 
 A conversion is a folder holding
 
-    conversion.json           the steps in order: [{"table": "person", "file": "person.sql", "layer": "core"}, ...]
+    conversion.json           the steps in order: [{"table": "person", "file": "person.sql", "layer": "core",
+                              "route": "direct", "reference": ..., "reason": ..., "review": {"by": ..., "on": ...}}, ...]
     *.sql                     one SELECT for each step, in T-SQL, naming its columns as the OMOP fields
     source_to_concept_map.csv optional mapping rows, in the layout of the OMOP table of that name
 
@@ -19,6 +20,25 @@ what it holds (routes.py); the runner and the release script ignore them, unless
 --alternative FILE to use one in its step's place.
 
 Each SELECT reads the source tables, and may read OMOP tables already written as omop.<table>.
+
+Each step of the core and anaesthesia layers records its route, as docs/contract.md's layer 3 requires. A step on the
+route "roles" is written over the role views and the mapping views, and reads OMOP tables already written; a step on
+the route "direct" is written from the hospital's source tables, and records the reference it rests on by name, the
+reason it takes that route, and its review, {"by": who accepted it, "on": the date}, without which the release script
+refuses it (route_problems). A derived step reads only the OMOP tables, so it takes neither route and records none.
+An alternative given as {"file": ..., "route": ...} records its own route in the same way, and one given as a bare
+file name takes its step's. The runner over the source tables cannot run a step over the roles, so a direct step may
+name, as "roles_step", a step over the roles that makes the same rows, which waits beside it until the world's map
+binds the parts it reads; it is kept apart from the alternatives, which are routes over the source tables, and its
+role scenarios run on the role shadow instead (run_role_scenarios). draft.json, where the folder holds it, marks the conversion as a draft, such as
+one that transplant.py wrote from a reference, and the runner and the release script report it as one.
+
+A planted scenario keeps its inputs beside the conversion, in scenarios/<name>/rows.sql with a scenario.json that
+describes them, and its expected rows apart, in the held-out root: held-out/<conversion folder's name>/scenarios/<name>/
+expected.json beside the conversion folder (held_out_root). The expected rows are written by hand from the clinical
+description and never from a run, and no code path writes into the held-out root. A folder without a held-out root,
+such as a private twin, may keep its expectations in scenario.json; a copy of the invented world's conversion reads
+the invented world's held-out root for the scenarios whose planted rows it holds unchanged.
 
 Each step belongs to a layer. The core layer stands in for an OMOP database that someone else
 maintains: people, visits and the other tables the anaesthesia steps rely on. It exists so that
@@ -245,6 +265,13 @@ def layer_problems(steps, custom=None):
             elif layer != "derived" and table in custom:
                 found.append(WORDING["custom_written"].format(name=name, table=table))
         found += _alternative_problems(step)
+        if ROLES_STEP in step:
+            named = step[ROLES_STEP]
+            if not isinstance(named, str) or not FILE_NAME.fullmatch(named) or set(named) == {"."}:
+                found.append(WORDING["file_name"].format(name=repr(named)))
+            elif named == name or named in alternatives(step) or layer == "derived":
+                found.append(f"{name}: its step over the roles is a file of its own, apart from the step and its "
+                             f"alternatives, and a derived step names none")
     return found
 
 
@@ -258,7 +285,7 @@ def _alternative_problems(step):
     found, seen = [], {name}
     for item in offered:
         if isinstance(item, dict):
-            if not set(item) <= {"file", "table", "layer", "effect"} or str(item.get("table", step.get("table"))).lower() != \
+            if not set(item) <= {"file", "table", "layer", "effect", *ROUTE_FIELDS} or str(item.get("table", step.get("table"))).lower() != \
                     str(step.get("table")).lower() or item.get("layer", step.get("layer")) != step.get("layer"):
                 found.append(WORDING["alternative_entry"].format(name=name))
                 continue
@@ -271,17 +298,191 @@ def _alternative_problems(step):
     return found
 
 
+# The routes of a step, as the contract's layer 3 names them.
+ROUTES = ("roles", "direct")
+ROUTE_FIELDS = ("route", "reference", "reason", "review")
+ROLES_STEP = "roles_step"
+DRAFT_FILE = "draft.json"
+HELD_OUT = "held-out"
+EXPECTED_FILE = "expected.json"
+ROLE_SCENARIOS = "role_scenarios"
+INVENTED_CONVERSION = Path(__file__).resolve().parents[2] / "fixtures" / "conversion"
+ROUTE_WORDING = {
+    "no_route": "{name}: conversion.json records no route for this step. A step that reads the hospital's record is written "
+                "over the roles or directly from the source tables, and its entry says which, as \"route\": \"roles\" or "
+                "\"direct\".",
+    "bad_route": "{name}: the route is \"roles\" or \"direct\".",
+    "direct_needs": "{name}: this step is written directly from the source tables, and conversion.json does not record {what}, "
+                    "so the release cannot carry it. A direct step records the reference it rests on, the reason it takes that "
+                    "route, and the review that accepted it.",
+    "text": "{name}: the {field} is one line of text, of at most 400 characters, with no $(.",
+    "review": "{name}: the review is {{\"by\": who accepted the step, \"on\": the date as YYYY-MM-DD}}.",
+    "derived": "{name}: a derived step reads only the OMOP tables, so it takes neither route and records none.",
+    "draft": "This conversion is a draft{source}, so no step of it has been accepted for a release.",
+    "shares": "Of the {count} steps that read the hospital's record, {roles} {roles_verb} written over the roles and {direct} "
+              "{direct_verb} written directly from the source tables.",
+}
+
+
+def _one_line(value):
+    return isinstance(value, str) and value.strip() and len(value) <= 400 and "\n" not in value and "\r" not in value \
+        and "$(" not in value
+
+
+def _route_record_problems(entry, name, inherited=None):
+    """What one route record breaks: an entry of conversion.json, or an alternative given as an entry of its own."""
+    route = entry.get("route", (inherited or {}).get("route"))
+    if route is None:
+        return [ROUTE_WORDING["no_route"].format(name=name)]
+    if route not in ROUTES:
+        return [ROUTE_WORDING["bad_route"].format(name=name)]
+    if route != "direct":
+        return []
+    record = entry if "route" in entry else (inherited or {})
+    found, absent = [], []
+    for field in ("reference", "reason"):
+        if field not in record or record[field] in (None, ""):
+            absent.append(f"the {field}")
+        elif not _one_line(record[field]):
+            found.append(ROUTE_WORDING["text"].format(name=name, field=field))
+    review = record.get("review")
+    if not review:
+        absent.append("the review")
+    elif not isinstance(review, dict) or not _one_line(review.get("by")) or not isinstance(review.get("on"), str) \
+            or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", review["on"]) or not set(review) <= {"by", "on", "note"} \
+            or ("note" in review and not _one_line(review["note"])):
+        found.append(ROUTE_WORDING["review"].format(name=name))
+    if absent:
+        what = absent[0] if len(absent) == 1 else ", ".join(absent[:-1]) + " or " + absent[-1]
+        found.insert(0, ROUTE_WORDING["direct_needs"].format(name=name, what=what))
+    return found
+
+
+def route_problems(steps):
+    """What the steps break in the rule of routes, one sentence for each, naming its step or alternative.
+
+    Every step of the core and anaesthesia layers records its route. A direct step records its reference, its reason and
+    its review. A derived step records none. An alternative given as an entry records its own route or takes its step's.
+    """
+    found = []
+    for step in steps:
+        name = step.get("file")
+        if step.get("layer") == "derived":
+            if any(field in step for field in ROUTE_FIELDS):
+                found.append(ROUTE_WORDING["derived"].format(name=name))
+            continue
+        found += _route_record_problems(step, name)
+        for item in step.get("alternatives") or []:
+            if isinstance(item, dict) and "route" in item:
+                found += _route_record_problems(item, item.get("file"))
+    return found
+
+
+def route_of(step, alternative=None):
+    """The route of a step, or of one of its alternatives or its step over the roles by file name: "roles", "direct", or
+    None for a derived step."""
+    if step.get("layer") == "derived":
+        return None
+    if alternative is not None and alternative == step.get(ROLES_STEP):
+        return "roles"
+    for item in step.get("alternatives") or []:
+        if alternative is not None and isinstance(item, dict) and item.get("file") == alternative and "route" in item:
+            return item["route"]
+    return step.get("route")
+
+
+def route_shares(steps, layers=("core", "anaesthesia")):
+    """How many of the steps of the given layers take each route: {"steps", "roles", "direct", "unrecorded", "sentence"}."""
+    chosen = [step for step in steps if step.get("layer") in layers]
+    roles = sum(1 for step in chosen if step.get("route") == "roles")
+    direct = sum(1 for step in chosen if step.get("route") == "direct")
+    count = len(chosen)
+    sentence = ROUTE_WORDING["shares"].format(count=count, roles=roles, direct=direct,
+                                              roles_verb="is" if roles == 1 else "are", direct_verb="is" if direct == 1 else "are")
+    return {"steps": count, "roles": roles, "direct": direct, "unrecorded": count - roles - direct,
+            "share_roles": round(roles / count, 3) if count else None,
+            "share_direct": round(direct / count, 3) if count else None, "sentence": sentence}
+
+
+def roles_steps(steps):
+    """Each step or alternative on the route over the roles: [{"file", "table", "layer", "alternative_of"}]."""
+    found = []
+    for step in steps:
+        if step.get("layer") != "derived" and step.get("route") == "roles":
+            found.append({"file": step["file"], "table": step["table"], "layer": step["layer"], "alternative_of": None})
+        for item in step.get("alternatives") or []:
+            if isinstance(item, dict) and item.get("route") == "roles":
+                found.append({"file": item["file"], "table": step["table"], "layer": step["layer"], "alternative_of": step["file"]})
+        if step.get("layer") != "derived" and isinstance(step.get(ROLES_STEP), str):
+            found.append({"file": step[ROLES_STEP], "table": step["table"], "layer": step["layer"], "alternative_of": step["file"]})
+    return found
+
+
+def read_draft(folder):
+    """The folder's draft.json, which marks the conversion as a draft, or None where the folder holds none."""
+    path = Path(folder) / DRAFT_FILE
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(decode(path.read_bytes()))
+    except ValueError:
+        data = {}
+    return data if isinstance(data, dict) else {}
+
+
+def draft_sentence(draft):
+    """The sentence that reports a draft, naming where it came from where draft.json says."""
+    source = draft.get("reference") if isinstance(draft, dict) else None
+    return ROUTE_WORDING["draft"].format(source=f", transplanted from {source}" if _one_line(source) else "")
+
+
+def held_out_root(folder):
+    """The held-out root of a conversion folder: held-out/<the folder's name> beside it. It is only ever read."""
+    folder = Path(folder).resolve()
+    return folder.parent / HELD_OUT / folder.name
+
+
+def _read_held_out(path):
+    """One held-out file, opened for reading only, as JSON."""
+    with open(path, "rb") as f:
+        return json.loads(decode(f.read()))
+
+
+def _held_out_for(folder, kind, name):
+    """The held-out expected file for one scenario, or None. kind is SCENARIOS or ROLE_SCENARIOS.
+
+    The folder's own held-out root comes first. A copy of the invented world's conversion, whose planted inputs for the
+    scenario are unchanged, reads the invented world's held-out root, so that a test may work on a copy."""
+    own = held_out_root(folder) / kind / name / EXPECTED_FILE
+    if own.is_file():
+        return own
+    invented = held_out_root(INVENTED_CONVERSION) / kind / name / EXPECTED_FILE
+    planted = "rows.sql" if kind == SCENARIOS else "rows.json"
+    mine, theirs = Path(folder) / kind / name / planted, INVENTED_CONVERSION / kind / name / planted
+    if invented.is_file() and mine.is_file() and theirs.is_file() and mine.read_bytes() == theirs.read_bytes():
+        return invented
+    return None
+
+
 def alternatives(step):
     """The file names of a step's alternatives, in the order that conversion.json gives them."""
     return [item.get("file") if isinstance(item, dict) else item for item in step.get("alternatives") or []]
 
 
 def with_alternatives(steps, names):
-    """The steps with each named alternative in place of its step's own file. Raises ValueError for a name that is not offered."""
+    """The steps with each named alternative in place of its step's own file. Raises ValueError for a name that is not
+    offered, or for an alternative over the roles, which the runner over the source tables cannot run."""
     names = list(names or [])
+    waiting = [name for name in names if any(step.get(ROLES_STEP) == name for step in steps)]
+    if waiting:
+        raise ValueError(f"{waiting[0]} is written over the roles, which the runner over the source tables cannot run; "
+                         f"its role scenarios run on the role shadow instead")
     chosen = []
     for step in steps:
         picked = [name for name in names if name in alternatives(step)]
+        if picked and route_of(step, picked[0]) == "roles":
+            raise ValueError(f"{picked[0]} is written over the roles, which the runner over the source tables cannot run; "
+                             f"its role scenarios run on the role shadow instead")
         chosen.append(dict(step, file=picked[0]) if picked else step)
     offered = {name for step in steps for name in alternatives(step)}
     unknown = [name for name in names if name not in offered]
@@ -470,11 +671,18 @@ class Conversion:
             return {"table": table, "status": "unreadable", "rows": 0}
         except Unsupported:
             return {"table": table, "status": "unsupported", "rows": 0}
+        rewrites = list(getattr(statements, "rewrites", []))
         if len(statements) != 1:
-            return {"table": table, "status": "not-one-select", "rows": 0}
+            return {"table": table, "status": "not-one-select", "rows": 0, "rewrites": rewrites}
+        found = self._insert_step(table, statements[0], layer)
+        found["rewrites"] = rewrites
+        return found
+
+    def _insert_step(self, table, statement, layer):
+        """Inserts the rows of one translated step, as step describes. Returns what happened."""
         known = {name for name, _, _ in self.tables[table]}
         try:
-            produced = [d[0].lower() for d in self.con.execute(f"SELECT * FROM ({statements[0]}) AS step LIMIT 0").description]
+            produced = [d[0].lower() for d in self.con.execute(f"SELECT * FROM ({statement}) AS step LIMIT 0").description]
             extra = sorted(set(produced) - known)
             if extra:
                 return {"table": table, "status": "unknown-fields", "rows": 0, "fields": extra}
@@ -485,7 +693,7 @@ class Conversion:
             base = self.layer_highest.get(table, self.identifier_offset)
             outputs = ", ".join(f'"{name}" + {base} AS "{name}"' if name == key else f'"{name}"' for name in produced)
             before = self.count(table)
-            self.con.execute(f'CREATE OR REPLACE TEMP TABLE step_rows AS SELECT {outputs} FROM ({statements[0]}) AS step')
+            self.con.execute(f'CREATE OR REPLACE TEMP TABLE step_rows AS SELECT {outputs} FROM ({statement}) AS step')
             self.con.execute(f'INSERT INTO {OMOP_SCHEMA}."{table}" ({columns}) SELECT {columns} FROM step_rows')
             if key:
                 highest = self.con.execute(f'SELECT MAX("{key}") FROM step_rows').fetchone()[0]
@@ -899,11 +1107,17 @@ def report_count(says, rows):
 
 
 def read_scenarios(folder):
-    """The planted scenarios of a conversion folder, checked, in the order of their names, or [] when it has none."""
+    """The planted scenarios of a conversion folder, checked, in the order of their names, or [] when it has none.
+
+    Each scenario's planted rows and description come from the folder, and its expectations, the gate it exists to make
+    fail and its cases from the held-out root (held_out_root), or from scenario.json where the folder has no held-out
+    root. A scenario whose expectations are found nowhere has none, and the runner refuses to count it as met."""
     from . import memo
     if not (Path(folder) / SCENARIOS).is_dir():
         return []
-    return memo.remembered("scenarios", memo.folder(folder), lambda: _read_scenarios(folder))
+    roots = [held_out_root(folder), held_out_root(INVENTED_CONVERSION)]
+    key = memo.digest(memo.folder(folder), *[memo.folder(root) if root.is_dir() else "" for root in roots])
+    return memo.remembered("scenarios", key, lambda: _read_scenarios(folder))
 
 
 def _read_scenarios(folder):
@@ -922,8 +1136,22 @@ def _read_scenarios(folder):
             rows = decode((path / "rows.sql").read_bytes())
         except (OSError, ValueError):
             raise ScenarioError(f"{where}: the folder holds scenario.json and rows.sql, and both can be read") from None
-        if not isinstance(data, dict) or not {"description", "expectations"} <= set(data) <= {"description", "expectations", "fails_gate", "cases"}:
-            raise ScenarioError(f"{where}: scenario.json holds a description, the expectations and, optionally, fails_gate and cases")
+        if not isinstance(data, dict) or not {"description"} <= set(data) <= {"description", "expectations", "fails_gate", "cases"}:
+            raise ScenarioError(f"{where}: scenario.json holds a description and, where the folder has no held-out root, "
+                                f"the expectations and, optionally, fails_gate and cases")
+        held = _held_out_for(folder, SCENARIOS, path.name)
+        source = "held out" if held is not None else "beside the rows" if "expectations" in data else None
+        if held is not None:
+            try:
+                expected = _read_held_out(held)
+            except (OSError, ValueError):
+                raise ScenarioError(f"{where}: the held-out expected.json cannot be read") from None
+            if not isinstance(expected, dict) or not {"expectations"} <= set(expected) <= {"expectations", "fails_gate", "cases"}:
+                raise ScenarioError(f"{where}: the held-out expected.json holds the expectations and, optionally, "
+                                    f"fails_gate and cases")
+            if set(data) - {"description"}:
+                raise ScenarioError(f"{where}: the expectations are held out, so scenario.json holds the description alone")
+            data = dict(expected, description=data["description"])
         # cases, where given, says for each planted case in one sentence what a query that follows the rules should give.
         cases = data.get("cases", [])
         if not isinstance(cases, list) or not all(isinstance(c, str) and c.strip() and "\n" not in c and len(c) <= 600 for c in cases):
@@ -932,8 +1160,8 @@ def _read_scenarios(folder):
             raise ScenarioError(f"{where}: the description is one sentence of text")
         if "fails_gate" in data and data["fails_gate"] not in gates:
             raise ScenarioError(f"{where}: fails_gate names a gate of the conversion")
-        expectations, reads = data["expectations"], set()
-        if not isinstance(expectations, list) or not expectations:
+        expectations, reads = data.get("expectations", []), set()
+        if source is not None and (not isinstance(expectations, list) or not expectations):
             raise ScenarioError(f"{where}: a scenario has at least one expectation")
         for number, item in enumerate(expectations, start=1):
             if not isinstance(item, dict) or set(item) != {"says", "query", "result"} or not isinstance(item["says"], str) \
@@ -944,7 +1172,7 @@ def _read_scenarios(folder):
             tree = check_expectation_query(item["query"], f"{where}, expectation {number}")
             reads.update(table.name.lower() for table in tree.find_all(exp.Table) if (table.db or "").upper() == OMOP_SCHEMA.upper())
         found.append({"name": path.name, "description": data["description"], "fails_gate": data.get("fails_gate"),
-                      "cases": [" ".join(c.split()) for c in cases],
+                      "expectations_from": source, "cases": [" ".join(c.split()) for c in cases],
                       "expectations": expectations, "reads": sorted(reads), "rows": rows, "tables": _scenario_tables(rows, where, codes)})
     return found
 
@@ -1027,6 +1255,168 @@ def evaluate(conversion, scenario):
     return results
 
 
+# The steps over the roles, and their role scenarios on the role shadow.
+
+class RolesStepError(ValueError):
+    """A step over the roles reads something other than the role views, the mapping views and the OMOP tables."""
+
+
+def check_roles_step(sql, where="step"):
+    """Raises RolesStepError unless sql is one SELECT, by the rule that release.py applies to a step, that reads only the
+    role views, the mapping views, its own common table expressions and the OMOP tables as omop.<table>."""
+    from . import rolemap
+    from .release import Refused, _single_select
+    try:
+        tree = _single_select(sql, where)
+    except Refused as error:
+        raise RolesStepError(str(error)) from None
+    named = {cte.alias.lower() for cte in tree.find_all(exp.CTE)}
+    public = set(rolemap.public_views())
+    for table in tree.find_all(exp.Table):
+        if (table.db or "").upper() == OMOP_SCHEMA.upper() and not table.catalog:
+            continue
+        if table.db or table.catalog or table.name.lower() not in public | named:
+            raise RolesStepError(f"{where}: a step over the roles reads only the role views, the mapping views and the OMOP "
+                                 f"tables, and not {table.sql(dialect='tsql')}")
+    return tree
+
+
+def read_role_scenarios(folder):
+    """The role scenarios of a conversion folder, in the order of their names, or [] when it has none.
+
+    A role scenario plants rows of the role views and the mapping views, and of the OMOP tables that the core would hold,
+    in role_scenarios/<name>/rows.json as {"description", "roles": {view: [row, ...]}, "omop": {table: [{field: value}]}},
+    with each role row in the order of the contract's columns. Its expected rows are held out, in the held-out root's
+    role_scenarios/<name>/expected.json, as {"step", "table", "says", "columns", "rows"}: the step over the roles that it
+    judges, the OMOP table that the step writes, a sentence, and the rows expected in the named columns, written by hand.
+    """
+    from . import rolemap
+    base = Path(folder) / ROLE_SCENARIOS
+    if not base.is_dir():
+        return []
+    public = rolemap.public_views()
+    cdm = cdm_fields()
+    found = []
+    for path in sorted(p for p in base.iterdir() if p.is_dir()):
+        where = f"{ROLE_SCENARIOS}/{path.name}"
+        if not SCENARIO_NAME.fullmatch(path.name):
+            raise ScenarioError(f"{where}: a scenario's name is a plain name in lower case")
+        try:
+            data = json.loads(decode((path / "rows.json").read_bytes()))
+        except (OSError, ValueError):
+            raise ScenarioError(f"{where}: the folder holds rows.json, and it can be read as JSON") from None
+        if not isinstance(data, dict) or set(data) != {"description", "roles", "omop"} or not _one_line(data["description"]):
+            raise ScenarioError(f"{where}: rows.json holds a description of one line, the roles and the omop rows")
+        for view, rows in data["roles"].items():
+            if view not in public or not isinstance(rows, list) or not all(
+                    isinstance(row, list) and len(row) == len(public[view]) for row in rows):
+                raise ScenarioError(f"{where}: {view} is a role view or a mapping view, and each of its rows gives every "
+                                    f"column of the contract, in order")
+        for table, rows in data["omop"].items():
+            fields = {name for name, _, _ in cdm.get(table, [])}
+            if not fields or not isinstance(rows, list) or not all(isinstance(row, dict) and set(row) <= fields for row in rows):
+                raise ScenarioError(f"{where}: {table} is a table of CDM 5.4, and each of its rows names its fields")
+        held = _held_out_for(folder, ROLE_SCENARIOS, path.name)
+        expected = None
+        if held is not None:
+            expected = _read_held_out(held)
+            if not isinstance(expected, dict) or set(expected) != {"step", "table", "says", "columns", "rows"} \
+                    or not isinstance(expected["columns"], list) or not all(
+                        isinstance(row, list) and len(row) == len(expected["columns"]) for row in expected["rows"]):
+                raise ScenarioError(f"{where}: the held-out expected.json holds the step, the table, what it says, the "
+                                    f"columns and the expected rows")
+        found.append({"name": path.name, "description": data["description"], "roles": data["roles"], "omop": data["omop"],
+                      "expected": expected})
+    return found
+
+
+def _comparable(value):
+    """A value of a row as the comparison of a role scenario sees it: a number, or text that reads as one, as a float,
+    and a time in the ISO form."""
+    import datetime as dt
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return round(float(value), 6)
+    if isinstance(value, dt.datetime):
+        return value.isoformat(sep=" ")
+    if isinstance(value, dt.date):
+        return value.isoformat()
+    # Text that reads as a number is compared as one, so that a rate kept as text, such as 2 or 2.0, compares alike
+    # whichever engine wrote it.
+    try:
+        return round(float(value), 6)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _sorted_rows(rows):
+    return sorted(rows, key=lambda row: [(value is None, str(value)) for value in row])
+
+
+def run_role_scenario(folder, scenario):
+    """Runs the step that a role scenario judges on the role shadow with the scenario's rows, and compares what it writes
+    with the expected rows. Returns {"name", "step", "table", "says", "outcome", "expected_rows", "found_rows", "missing",
+    "unexpected", "error", "rewrites"}; the outcome is passed, failed, or not run, with the error."""
+    from . import rolemap
+    expected = scenario["expected"]
+    out = {"name": scenario["name"], "description": scenario["description"], "step": None, "table": None, "says": None,
+           "outcome": "not run", "expected_rows": 0, "found_rows": 0, "missing": [], "unexpected": [], "error": None,
+           "rewrites": []}
+    if expected is None:
+        return dict(out, error="its expected rows are held out, and the runner has found no held-out root that holds them")
+    out.update(step=expected["step"], table=expected["table"], says=expected["says"], expected_rows=len(expected["rows"]))
+    steps = json.loads((Path(folder) / "conversion.json").read_text())
+    offered = {item["file"]: item for item in roles_steps(steps)}
+    if expected["step"] not in offered or offered[expected["step"]]["table"].lower() != expected["table"].lower():
+        return dict(out, error=f"{expected['step']} is not a step over the roles that writes {expected['table']}")
+    sql = decode((Path(folder) / expected["step"]).read_bytes())
+    try:
+        check_roles_step(sql, expected["step"])
+        statements = to_duckdb(sql)
+    except (RolesStepError, Unreadable, Unsupported) as error:
+        return dict(out, error=str(error) or type(error).__name__)
+    out["rewrites"] = list(statements.rewrites)
+    con = rolemap.role_shadow(seed=1, anaesthetics=0, with_planted=False, extra=scenario["roles"])
+    try:
+        con.execute(f"CREATE SCHEMA {OMOP_SCHEMA}")
+        for table, fields in cdm_fields().items():
+            con.execute(f'CREATE TABLE {OMOP_SCHEMA}."{table}" (' + ", ".join(f'"{n}" {k}' for n, _, k in fields) + ")")
+        for table, rows in scenario["omop"].items():
+            for row in rows:
+                names = list(row)
+                con.execute(f'INSERT INTO {OMOP_SCHEMA}."{table}" (' + ", ".join(f'"{n}"' for n in names) + ") VALUES ("
+                            + ", ".join("?" for _ in names) + ")", [row[n] for n in names])
+        if len(statements) != 1:
+            return dict(out, error="the step is not one statement")
+        cursor = con.execute(statements[0])
+        produced = [d[0].lower() for d in cursor.description]
+        rows = cursor.fetchall()
+    except duckdb.Error as error:
+        return dict(out, error=str(error).splitlines()[0])
+    finally:
+        con.close()
+    absent = [c for c in expected["columns"] if c.lower() not in produced]
+    if absent:
+        return dict(out, error=f"the step writes no {', '.join(absent)}")
+    at = [produced.index(c.lower()) for c in expected["columns"]]
+    found = _sorted_rows([[_comparable(row[i]) for i in at] for row in rows])
+    wanted = _sorted_rows([[_comparable(v) for v in row] for row in expected["rows"]])
+    missing, unexpected = list(wanted), []
+    for row in found:
+        if row in missing:
+            missing.remove(row)
+        else:
+            unexpected.append(row)
+    return dict(out, outcome="passed" if not missing and not unexpected else "failed", found_rows=len(found),
+                missing=missing, unexpected=unexpected)
+
+
+def run_role_scenarios(folder):
+    """Every role scenario of a conversion folder, run as run_role_scenario does, in the order of their names."""
+    return [run_role_scenario(folder, scenario) for scenario in read_role_scenarios(folder)]
+
+
 def run(world, folder, rows=500, vocabulary=None, checks=None, between=None, identifier_offset=None, scenarios=None,
         alternatives=None):
     """Builds the sandbox for a world with its conversion's SQL included, and runs the conversion.
@@ -1092,6 +1482,8 @@ def run(world, folder, rows=500, vocabulary=None, checks=None, between=None, ide
         entry = {"name": scenario["name"], "description": scenario["description"], "fails_gate": scenario["fails_gate"],
                  "tables": scenario["tables"], "reads": scenario["reads"], "planted": 0, "error": None, "expectations": []}
         try:
+            if not scenario["expectations"]:
+                raise ScenarioError("its expected rows are held out, and the runner has found no held-out root that holds them")
             entry["planted"] = plant(conversion, scenario)
         except ScenarioError as error:
             entry["error"] = str(error)
@@ -1123,9 +1515,12 @@ def run(world, folder, rows=500, vocabulary=None, checks=None, between=None, ide
     for scenario, entry in planting:
         if entry["error"] is None:
             entry["expectations"] = evaluate(conversion, scenario)
+    draft = read_draft(folder)
     return conversion, {"built": built["sentence"], "mappings": mapped, "derived": proposed, "steps": results,
                         "gates": gates, "counts": counts, "problems": problems, "unmapped": conversion.unmapped(),
-                        "scenarios": [entry for _, entry in planting]}
+                        "scenarios": [entry for _, entry in planting],
+                        "routes": {"shares": route_shares(steps), "problems": route_problems(steps)},
+                        "draft": {"sentence": draft_sentence(draft), **draft} if draft is not None else None}
 
 
 def failures(report):
@@ -1182,6 +1577,11 @@ def main():
     layers = {step["file"]: step.get("layer") for step in json.loads((args.conversion / "conversion.json").read_text())}
     for layer in LAYERS:
         print(f"{layer} layer: {sum(1 for name in layers.values() if name == layer)} steps")
+    if report["draft"]:
+        print(report["draft"]["sentence"])
+    print(report["routes"]["shares"]["sentence"])
+    for problem in report["routes"]["problems"]:
+        print("route:", problem)
     print(WORDING["unmapped"].format(rows=f"{unmapped['rows']:,}", variables=f"{unmapped['variables']:,}"))
     if unmapped["rows"]:
         print(WORDING["worklist"])

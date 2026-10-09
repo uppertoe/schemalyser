@@ -1,0 +1,385 @@
+{
+ "description": "One child has two anaesthetics in one stay. In the first, an infusion is ordered, started, changed in rate twice, paused and restarted, and never stopped, and its second change of rate is corrected retrospectively that afternoon. In the second, the same drug runs under a new order and is stopped, beside three short infusions whose drugs are unmapped, ambiguous and not listed.",
+ "roles": {
+  "role_patient": [
+   [
+    "990005100",
+    "2015-03-10",
+    null,
+    0
+   ]
+  ],
+  "role_stay": [
+   [
+    "990005200",
+    "990005100",
+    "2024-08-05 07:00:00",
+    "2024-08-09 12:00:00",
+    0
+   ]
+  ],
+  "role_anaesthetic": [
+   [
+    "990005300",
+    "990005100",
+    "2024-08-06 08:00:00",
+    "2024-08-06 10:30:00"
+   ],
+   [
+    "990005301",
+    "990005100",
+    "2024-08-07 14:00:00",
+    "2024-08-07 15:30:00"
+   ]
+  ],
+  "role_anaesthetic_detail": [
+   [
+    "990005300",
+    "990005200",
+    2,
+    0,
+    31.0,
+    0,
+    0,
+    135.0,
+    "theatre"
+   ],
+   [
+    "990005301",
+    "990005200",
+    2,
+    0,
+    31.0,
+    0,
+    0,
+    135.0,
+    "theatre"
+   ]
+  ],
+  "role_drug": [
+   [
+    "990005501",
+    "990005300",
+    "990005200",
+    "990005400",
+    "kdrugmapped0001",
+    "ordered",
+    0.1,
+    "kunitmicrogkgmn",
+    "intravenous",
+    "2024-08-06 08:05:00",
+    "order",
+    null,
+    null
+   ],
+   [
+    "990005502",
+    "990005300",
+    "990005200",
+    "990005400",
+    "kdrugmapped0001",
+    "infusion_start",
+    0.1,
+    "kunitmicrogkgmn",
+    "intravenous",
+    "2024-08-06 08:20:00",
+    "administration",
+    null,
+    null
+   ],
+   [
+    "990005503",
+    "990005300",
+    "990005200",
+    "990005400",
+    "kdrugmapped0001",
+    "rate_change",
+    0.2,
+    "kunitmicrogkgmn",
+    "intravenous",
+    "2024-08-06 08:50:00",
+    "administration",
+    null,
+    null
+   ],
+   [
+    "990005504",
+    "990005300",
+    "990005200",
+    "990005400",
+    "kdrugmapped0001",
+    "infusion_pause",
+    null,
+    null,
+    "intravenous",
+    "2024-08-06 09:10:00",
+    "administration",
+    null,
+    null
+   ],
+   [
+    "990005505",
+    "990005300",
+    "990005200",
+    "990005400",
+    "kdrugmapped0001",
+    "infusion_restart",
+    0.2,
+    "kunitmicrogkgmn",
+    "intravenous",
+    "2024-08-06 09:25:00",
+    "administration",
+    null,
+    null
+   ],
+   [
+    "990005506",
+    "990005300",
+    "990005200",
+    "990005400",
+    "kdrugmapped0001",
+    "rate_change",
+    0.15,
+    "kunitmicrogkgmn",
+    "intravenous",
+    "2024-08-06 09:45:00",
+    "administration",
+    null,
+    null
+   ],
+   [
+    "990005507",
+    "990005300",
+    "990005200",
+    "990005400",
+    "kdrugmapped0001",
+    "rate_change",
+    0.12,
+    "kunitmicrogkgmn",
+    "intravenous",
+    "2024-08-06 09:45:00",
+    "correction",
+    "2024-08-06 16:00:00",
+    "990005506"
+   ],
+   [
+    "990005508",
+    "990005301",
+    "990005200",
+    "990005401",
+    "kdrugmapped0001",
+    "ordered",
+    0.1,
+    "kunitmicrogkgmn",
+    "intravenous",
+    "2024-08-07 14:05:00",
+    "order",
+    null,
+    null
+   ],
+   [
+    "990005509",
+    "990005301",
+    "990005200",
+    "990005401",
+    "kdrugmapped0001",
+    "infusion_start",
+    0.1,
+    "kunitmicrogkgmn",
+    "intravenous",
+    "2024-08-07 14:10:00",
+    "administration",
+    null,
+    null
+   ],
+   [
+    "990005510",
+    "990005301",
+    "990005200",
+    "990005401",
+    "kdrugmapped0001",
+    "infusion_stop",
+    null,
+    null,
+    "intravenous",
+    "2024-08-07 15:00:00",
+    "administration",
+    null,
+    null
+   ],
+   [
+    "990005511",
+    "990005301",
+    "990005200",
+    "990005402",
+    "kdrugunmapped01",
+    "infusion_start",
+    2.0,
+    "kunitmicrogkgmn",
+    "intravenous",
+    "2024-08-07 14:20:00",
+    "administration",
+    null,
+    null
+   ],
+   [
+    "990005512",
+    "990005301",
+    "990005200",
+    "990005402",
+    "kdrugunmapped01",
+    "infusion_stop",
+    null,
+    null,
+    "intravenous",
+    "2024-08-07 14:50:00",
+    "administration",
+    null,
+    null
+   ],
+   [
+    "990005513",
+    "990005301",
+    "990005200",
+    "990005403",
+    "kdrugambiguous1",
+    "infusion_start",
+    1.0,
+    "kunitmicrogkgmn",
+    "intravenous",
+    "2024-08-07 14:30:00",
+    "administration",
+    null,
+    null
+   ],
+   [
+    "990005514",
+    "990005301",
+    "990005200",
+    "990005403",
+    "kdrugambiguous1",
+    "infusion_stop",
+    null,
+    null,
+    "intravenous",
+    "2024-08-07 14:40:00",
+    "administration",
+    null,
+    null
+   ],
+   [
+    "990005515",
+    "990005301",
+    "990005200",
+    "990005404",
+    "kdrugnotlisted1",
+    "infusion_start",
+    3.0,
+    "kunitmicrogkgmn",
+    "intravenous",
+    "2024-08-07 14:35:00",
+    "administration",
+    null,
+    null
+   ],
+   [
+    "990005516",
+    "990005301",
+    "990005200",
+    "990005404",
+    "kdrugnotlisted1",
+    "infusion_stop",
+    null,
+    null,
+    "intravenous",
+    "2024-08-07 14:45:00",
+    "administration",
+    null,
+    null
+   ]
+  ],
+  "map_drug_concept": [
+   [
+    "kdrugmapped0001",
+    9100001,
+    "mapped",
+    "a person"
+   ],
+   [
+    "kdrugunmapped01",
+    0,
+    "unmapped",
+    "a person"
+   ],
+   [
+    "kdrugambiguous1",
+    9100002,
+    "ambiguous",
+    "a reference conversion"
+   ],
+   [
+    "kdrugambiguous1",
+    9100003,
+    "ambiguous",
+    "a reference conversion"
+   ]
+  ],
+  "map_unit_concept": [
+   [
+    "kunitmicrogkgmn",
+    9100102,
+    "mapped",
+    "a person"
+   ]
+  ]
+ },
+ "omop": {
+  "person": [
+   {
+    "person_id": 1,
+    "person_source_value": "990005100",
+    "gender_concept_id": 0,
+    "year_of_birth": 2015,
+    "race_concept_id": 0,
+    "ethnicity_concept_id": 0
+   }
+  ],
+  "visit_occurrence": [
+   {
+    "visit_occurrence_id": 11,
+    "person_id": 1,
+    "visit_concept_id": 9201,
+    "visit_start_date": "2024-08-05",
+    "visit_end_date": "2024-08-09",
+    "visit_type_concept_id": 32817,
+    "visit_source_value": "990005200"
+   }
+  ],
+  "visit_detail": [
+   {
+    "visit_detail_id": 5000000021,
+    "person_id": 1,
+    "visit_detail_concept_id": 9201,
+    "visit_detail_start_date": "2024-08-06",
+    "visit_detail_start_datetime": "2024-08-06 08:00:00",
+    "visit_detail_end_date": "2024-08-06",
+    "visit_detail_end_datetime": "2024-08-06 10:30:00",
+    "visit_detail_type_concept_id": 32817,
+    "visit_detail_source_value": "990005300",
+    "visit_occurrence_id": 11
+   },
+   {
+    "visit_detail_id": 5000000022,
+    "person_id": 1,
+    "visit_detail_concept_id": 9201,
+    "visit_detail_start_date": "2024-08-07",
+    "visit_detail_start_datetime": "2024-08-07 14:00:00",
+    "visit_detail_end_date": "2024-08-07",
+    "visit_detail_end_datetime": "2024-08-07 15:30:00",
+    "visit_detail_type_concept_id": 32817,
+    "visit_detail_source_value": "990005301",
+    "visit_occurrence_id": 11
+   }
+  ]
+ }
+}

@@ -1,0 +1,22 @@
+{
+  "expectations": [
+    {
+      "says": "The readings taken ten minutes before the start and ten minutes after the end point at the anaesthetic, because each falls within the margin of 15 minutes.",
+      "query": "SELECT COUNT(*) AS readings, MIN(m.value_as_number) AS lowest, MAX(m.value_as_number) AS highest FROM omop.measurement m JOIN omop.anaesthetic a ON a.anaesthetic_id = m.measurement_event_id JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id WHERE vd.visit_detail_source_value = '990001631' AND m.measurement_concept_id = 3004249",
+      "result": [
+        2,
+        92,
+        93
+      ]
+    },
+    {
+      "says": "The readings taken twenty minutes before the start and twenty minutes after the end do not point at the anaesthetic, and both still carry its visit detail.",
+      "query": "SELECT COUNT(*) AS readings, MIN(m.value_as_number) AS lowest, MAX(m.value_as_number) AS highest FROM omop.measurement m JOIN omop.visit_detail vd ON vd.visit_detail_id = m.visit_detail_id WHERE vd.visit_detail_source_value = '990001631' AND m.measurement_concept_id = 3004249 AND m.measurement_event_id IS NULL",
+      "result": [
+        2,
+        91,
+        94
+      ]
+    }
+  ]
+}

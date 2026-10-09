@@ -17,7 +17,7 @@ from xml.sax.saxutils import escape
 
 import pytest
 
-from schemalyser import audit, corrections, describe, feasibility, plan, policy, propose, rolemap
+from schemalyser import audit, corrections, describe, feasibility, plan, policy, propose, results, rolemap, specification
 from schemalyser.translate import to_duckdb
 from test_describe import DATE, DICTIONARY, TABLES, tables_result
 from test_feasibility import CONFIRMED
@@ -71,13 +71,14 @@ def _failed(found):
 
 def test_the_neonatal_audit_builds_a_package_of_class_b_whose_policy_passes(package):
     out, manifest = package
-    assert sorted(p.name for p in out.iterdir()) == ["README.md", "expected-output.json", "feasibility.json", "feasibility.md",
-                                                     "manifest.json", "query.sql", "safety-report.json", "specification.md"]
+    assert sorted(p.name for p in out.iterdir()) == ["README.md", "decisions.json", "expected-output.json", "feasibility.json",
+                                                     "feasibility.md", "manifest.json", "query.sql", "question.sql",
+                                                     "safety-report.json", "specification.md"]
     safety = json.loads((out / "safety-report.json").read_text(encoding="utf-8"))
     assert safety["execution_class"] == "B" and safety["outcome"] == "passed", [r for r in safety["rules"] if not r["passed"]]
     assert safety["large_tables"] == ["OBS_READING"]
     assert manifest["execution_class"] == "B" and manifest["policy_outcome"] == "passed"
-    assert manifest["plan_review"] == {"state": audit.NOT_REVIEWED}
+    assert manifest["plan_review"] == {"state": audit.NOT_REVIEWED, "plan_sha256": None}
     assert manifest["sql_sha256"] == audit.sha256((out / "query.sql").read_text(encoding="utf-8"))
     assert manifest["query"]["sha256"] == audit.sha256(rolemap.AUDIT.read_text(encoding="utf-8"))
     assert manifest["role_model_version"] == "1.1" and manifest["schema_file"]["sha256"]
@@ -174,13 +175,21 @@ def test_a_question_that_needs_parts_the_model_does_not_describe_stops_the_build
 GOOD = """SET NOCOUNT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 IF OBJECT_ID('tempdb..#cohort') IS NOT NULL DROP TABLE #cohort;
-SELECT TOP ({top}) ISNULL(a.ANAES_KEY, 0) AS anaesthetic_key
+SELECT TOP ({top}) ISNULL(a.ANAES_KEY, 0) AS anaesthetic_key, a.ANAES_START_TS AS started
 INTO   #cohort
 FROM   ANAES_RECORD AS a WITH (NOLOCK)
 WHERE  a.ANAES_START_TS >= CAST('2024-01-01' AS datetime)
   AND  a.ANAES_START_TS < CAST('2025-01-01' AS datetime)
 ORDER  BY a.ANAES_KEY;
 ALTER TABLE #cohort ADD PRIMARY KEY (anaesthetic_key);
+-- series: count
+SELECT COUNT(*) AS anaesthetics FROM #cohort AS c
+WHERE  c.started >= CAST('2024-01-01' AS datetime) AND c.started < CAST('2025-01-01' AS datetime);
+-- series: coverage
+SELECT COUNT(*) AS anaesthetics, COUNT(s.ANAES_KEY) AS with_a_sheet
+FROM   #cohort AS c
+LEFT JOIN OBS_SHEET AS s WITH (NOLOCK) ON s.ANAES_KEY = c.anaesthetic_key;
+-- series: rows
 {part2};
 DROP TABLE #cohort;
 """
@@ -300,5 +309,242 @@ def test_a_change_to_the_script_voids_the_plan_review(saved, tmp_path):
     audit.build(saved, rolemap.AUDIT, out, ("2024-01-01", "2024-12-31"), date=DATE)
     query = out / "query.sql"
     query.write_text(query.read_text(encoding="utf-8").replace("TOP (5000)", "TOP (50000)"), encoding="utf-8")
-    with pytest.raises(audit.AuditError, match="has changed since the package was built"):
+    with pytest.raises(audit.AuditError, match="has changed since it was built"):
         audit.review_plan(out, PLANS / "scan-of-readings.sqlplan")
+
+
+# The series of bounded steps (A17).
+
+def _statements_after(text, marker):
+    """The statement that follows a marker line, up to the semicolon that ends it."""
+    after = text.split(marker + "\n", 1)[1]
+    statements, _ = policy.split(after)
+    return statements[0]
+
+
+def test_part_1_and_part_2_form_the_series_of_a_count_a_coverage_and_the_rows(package, schema):
+    out, _ = package
+    text = (out / "query.sql").read_text(encoding="utf-8")
+    lines = text.splitlines()
+    markers = [line for line in lines if line.startswith("-- series:")]
+    assert markers == list(audit.SERIES_MARKERS)
+    # Each marker is a line of its own, just before its statement.
+    for marker in audit.SERIES_MARKERS:
+        following = lines[lines.index(marker) + 1]
+        assert not following.startswith("--") and following.strip(), (marker, following)
+    count = _statements_after(text, "-- series: count")
+    assert count.startswith("SELECT COUNT(*) AS anaesthetics_in_period\nFROM   #cohort AS c")
+    assert "CAST('2024-01-01' AS datetime)" in count and "CAST('2025-01-01' AS datetime)" in count
+    coverage = _statements_after(text, "-- series: coverage")
+    assert "FROM   #cohort AS c" in coverage and "JOIN   OBS_SHEET AS t1 WITH (NOLOCK) ON t1.ANAES_KEY = c.anaesthetic_key" in coverage
+    assert "COUNT(r1.anaesthetic_key) AS cohort_reaching_reading" in coverage
+    rows = _statements_after(text, "-- series: rows")
+    assert rows.startswith("WITH role_reading AS (") and rows == audit.part2_text(text)
+    # The rows statement is the first to read a large table.
+    before = text.split("-- series: rows\n", 1)[0]
+    assert "OBS_READING" not in "\n".join(line for line in before.splitlines() if not line.startswith("--"))
+    assert "OBS_READING" in rows
+    found = _policy(schema, text)
+    assert next(r for r in found["rules"] if r["id"] == "series")["passed"], found["rules"]
+    assert found["execution_class"] == "B"
+
+
+def test_the_coverage_step_does_not_follow_a_link_that_begins_at_a_large_table(schema, saved, tmp_path):
+    compiled = audit.compile_audit(schema, rolemap.AUDIT.read_text(encoding="utf-8"), dt.date(2024, 1, 1),
+                                   dt.date(2024, 12, 31), large=1)
+    # With every table counted as large, no link can be measured before the rows are read.
+    assert compiled["coverage_tables"] == [] and set(compiled["unmeasured"]) == {"role_reading"}
+    assert "OBS" not in compiled["coverage"]
+
+
+# The manifest, its approval and its voiding (A20).
+
+def test_the_manifest_records_everything_that_the_contract_lists(package):
+    out, manifest = package
+    assert manifest["sql_sha256"] == audit.sha256((out / "query.sql").read_text(encoding="utf-8"))
+    assert manifest["schema_file"]["schema_id"] and manifest["inputs"]["schema"]["sha256"] == manifest["schema_file"]["sha256"]
+    assert manifest["contract"]["version"] == "1.1"
+    assert set(manifest["contract"]["part_hashes"]) == {"role_anaesthetic", "role_patient", "role_reading"}
+    assert manifest["contract"]["part_hashes"]["role_reading"] == rolemap.part_hashes()["role_reading"]
+    assert manifest["query"]["question"].startswith("Among neonates") and manifest["cohort"]["cap"] == 5000
+    assert manifest["cohort"]["step"] == "neonatal" and manifest["cohort"]["conditions"]
+    assert manifest["period"] == {"from": "2024-01-01", "to": "2024-12-31"}
+    assert manifest["decisions"]["decisions"][0]["about"] == "The period"
+    assert manifest["execution_class"] == "B" and manifest["policy_version"] == str(getattr(policy, "POLICY_VERSION", "not recorded"))
+    assert manifest["permissions"]["select_on"] == sorted(json.loads((out / "safety-report.json").read_text())["tables_read"])
+    assert "OBS_READING" in manifest["permissions"]["select_on"] and manifest["permissions"]["temporary_tables"] == ["#cohort"]
+    assert manifest["expected_output"]["columns"][0] == "minutes_below_40" and manifest["expected_output"]["counts_only"] is True
+    assert manifest["expected_output"]["rows_on_made_up_rows"] == 5
+    assert manifest["resources"]["cohort_cap"] == 5000 and manifest["resources"]["large_tables"] == ["OBS_READING"]
+    assert manifest["resources"]["assumes"]
+    assert manifest["plan_review"] == {"state": audit.NOT_REVIEWED, "plan_sha256": None}
+    report = manifest["correctness_report"]
+    assert report["file"] == "expected-output.json" and report["sha256"] == audit.sha256((out / report["file"]).read_bytes())
+    assert manifest["approval"]["state"] == "not approved" and manifest["approval"]["by"] is None
+    assert manifest["approval"]["command"].startswith("python -m schemalyser.audit approve ")
+    for name in audit.HASHED:
+        assert manifest["inputs"]["files"][name] == audit.sha256((out / name).read_bytes()), name
+
+
+def _approved(package, tmp_path):
+    out = _copy(package, tmp_path)
+    approval = audit.approve(out, "the database analyst", note="Run on the replica.", date=DATE)
+    assert approval["state"] == "approved" and approval["by"] == "the database analyst" and approval["date"] == DATE
+    assert audit.status(out)["approval"] == "approved"
+    return out
+
+
+def test_an_approval_is_recorded_with_its_actor_and_date_and_shown_in_the_readme(package, tmp_path):
+    out = _approved(package, tmp_path)
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["approval"]["inputs_sha256"] and manifest["approval"]["note"] == "Run on the replica."
+    assert "the database analyst approved the package on 7 October 2026." in (out / "README.md").read_text(encoding="utf-8")
+    with pytest.raises(audit.AuditError, match="names the person"):
+        audit.approve(out, "  ")
+    refused = audit.approve(out, "the database team", refuse=True, date=DATE)
+    assert refused["state"] == "refused" and audit.status(out)["approval"] == "refused"
+    assert audit.main(["approve", str(out), "--by", "the database analyst", "--date", DATE]) == 0
+
+
+@pytest.mark.parametrize("name", audit.HASHED)
+def test_a_change_to_any_hashed_file_voids_the_reviews_and_the_approval(package, tmp_path, name):
+    out = _approved(package, tmp_path)
+    path = out / name
+    path.write_bytes(path.read_bytes() + b"\n")
+    found = audit.status(out)
+    assert found["voided"] and name in found["changed"] and found["approval"] == "not approved"
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["approval"]["state"] == "not approved" and manifest["approval"]["voided"]["changed"] == found["changed"]
+    assert manifest["plan_review"]["state"] == "voided"
+    with pytest.raises(audit.AuditError, match="has changed since it was built"):
+        audit.approve(out, "the database analyst")
+
+
+def test_a_plan_that_appears_or_changes_after_the_review_voids_the_approval(package, tmp_path):
+    out = _approved(package, tmp_path)
+    (out / audit.PLAN_FILE).write_bytes(b"<ShowPlanXML/>")
+    assert audit.PLAN_FILE in audit.status(out)["changed"]
+    reviewed = _copy(package, tmp_path / "second")
+    saved = tmp_path / "plan.sqlplan"
+    saved.write_text(_seek_plan(audit.part2_text((reviewed / "query.sql").read_text(encoding="utf-8"))), encoding="utf-8")
+    audit.review_plan(reviewed, saved, date=DATE)
+    assert (reviewed / audit.PLAN_FILE).read_bytes() == saved.read_bytes() and not audit.status(reviewed)["voided"]
+    audit.approve(reviewed, "the database analyst", date=DATE)
+    # A second review moves the package on, so the approval given before it no longer stands.
+    audit.review_plan(reviewed, saved, date=DATE)
+    assert audit.status(reviewed)["approval"] == "not approved"
+    (reviewed / audit.PLAN_FILE).write_bytes(b"changed")
+    assert audit.PLAN_FILE in audit.status(reviewed)["changed"]
+
+
+def test_a_change_to_the_contract_the_policy_version_or_the_schema_voids_the_approval(package, tmp_path, monkeypatch, saved):
+    out = _approved(package, tmp_path)
+    assert not audit.status(out, saved)["voided"]
+    other = tmp_path / "other.zip"
+    other.write_bytes(saved.read_bytes() + b" ")
+    assert "the hospital schema" in audit.status(out, other)["changed"]
+    out = _approved(package, tmp_path / "policy")
+    monkeypatch.setattr(policy, "POLICY_VERSION", "a later version", raising=False)
+    assert "the policy's version" in audit.status(out)["changed"]
+    monkeypatch.undo()
+    out = _approved(package, tmp_path / "contract")
+    hashes = dict(rolemap.part_hashes(), role_reading="changed")
+    monkeypatch.setattr(rolemap, "part_hashes", lambda model=None: hashes)
+    found = audit.status(out)
+    assert "the role contract" in found["changed"] and found["approval"] == "not approved"
+
+
+def test_a_script_of_class_d_cannot_be_approved_but_can_be_refused(package, tmp_path):
+    out = _copy(package, tmp_path)
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    manifest["execution_class"] = "D"
+    (out / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(audit.AuditError, match="class D"):
+        audit.approve(out, "the database analyst")
+    assert audit.approve(out, "the database analyst", refuse=True)["state"] == "refused"
+
+
+# The form that the import's status rests on, from the question and the contract alone (A7).
+
+def test_the_public_form_is_judged_from_the_question_alone():
+    assert audit.public_form(rolemap.AUDIT.read_text(encoding="utf-8")) == []
+    rows = ("WITH chosen AS (SELECT a.anaesthetic_key, a.start_time FROM role_anaesthetic a)\n"
+            "SELECT r.value FROM chosen c JOIN role_reading r ON r.anaesthetic_key = c.anaesthetic_key")
+    assert audit.public_form(rows) == ["counts"]
+    assert audit.public_form(rows.replace("SELECT r.value", "SELECT COUNT(*) AS readings")) == []
+    assert audit.public_form("SELECT COUNT(*) AS readings FROM role_reading r") == ["cohort"]
+    assert audit.public_form("SELECT 1 FROM ((") == ["form"]
+
+
+# The export of a specification, through the existing path.
+
+def test_a_specification_is_exported_as_a_package_for_each_section(saved, tmp_path):
+    folder = Path(rolemap.MODEL).parents[2] / "fixtures" / "export"
+    found = audit.build_export(saved, folder / "neonatal-pressures.specification.json", folder / "invented-episodes.csv",
+                               tmp_path / "export", ("2024-01-01", "2024-12-31"), date=DATE)
+    outcomes = {s["name"]: s for s in found["sections"]}
+    assert outcomes["anaesthetics"]["outcome"] == "packaged" and outcomes["mean_pressures"]["outcome"] == "packaged"
+    # Rows of the readings are a large clinical extraction.
+    assert outcomes["mean_pressures"]["execution_class"] == "C" and outcomes["episode_key"]["leaves"] is False
+    # A derived section has a package once its capability's SQL is written, and is declared without SQL until then.
+    for name, capability in (("minutes_below_40", "minutes_beyond_threshold"), ("died_within_90_days", "death_within_days")):
+        if (specification.CAPABILITIES / f"{capability}.sql").is_file():
+            assert outcomes[name]["outcome"] != "declared without SQL"
+        else:
+            assert outcomes[name]["outcome"] == "declared without SQL"
+    manifest = json.loads((tmp_path / "export" / "sections" / "mean_pressures" / "manifest.json").read_text(encoding="utf-8"))
+    spec_sha = audit.sha256((folder / "neonatal-pressures.specification.json").read_bytes())
+    assert manifest["specification"]["sha256"] == spec_sha and manifest["specification"]["output_class"] == "rows"
+    assert manifest["specification"]["output_classes"]["mean_pressures"] == "rows"
+    assert manifest["episodes"] == {"form": "anaesthetic_keys", "count": 6,
+                                    "sha256": audit.sha256((folder / "invented-episodes.csv").read_bytes())}
+    assert json.loads((tmp_path / "export" / "export.json").read_text(encoding="utf-8"))["specification"]["sha256"] == spec_sha
+
+
+
+# The results package (A21).
+
+def test_the_results_package_records_the_approved_query_the_cohort_the_coverage_and_the_disclosure(package, tmp_path):
+    out = _approved(package, tmp_path)
+    output = tmp_path / "result.csv"
+    output.write_text("minutes_below_40,anaesthetics\nnone,120\n", encoding="utf-8")
+    reconciliation = tmp_path / "reconciliation.md"
+    reconciliation.write_text("Twenty anaesthetics were compared with the chart.\n", encoding="utf-8")
+    record = results.write(out, output, tmp_path / "results", reconciliation, ran_by="the database analyst", date=DATE)
+    held = json.loads((tmp_path / "results" / "results.json").read_text(encoding="utf-8"))
+    assert held == json.loads(json.dumps(record, default=str)) and held["format"] == results.FORMAT
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    query = held["approved_query"]
+    assert query["sql_sha256"] == manifest["sql_sha256"] and query["inputs_sha256"] == manifest["approval"]["inputs_sha256"]
+    assert query["approval"] == {"by": "the database analyst", "date": DATE} and query["schema"]["schema_id"]
+    assert "readiness" not in query["schema"] and query["contract"]["version"] == "1.1"
+    assert held["cohort"]["definition"]["step"] == "neonatal" and held["cohort"]["period"] == {"from": "2024-01-01", "to": "2024-12-31"}
+    assert held["coverage"]["limitations"] is not None
+    disclosure = held["disclosure"]
+    assert disclosure["small_counts_blanked"] is True and disclosure["rounded"] is False and disclosure["row_level"] is False
+    assert disclosure["protects"] and any("differencing" in line for line in disclosure["does_not_protect"])
+    assert held["output"]["sha256"] == audit.sha256(output.read_bytes())
+    assert (tmp_path / "results" / held["output"]["file"]).read_bytes() == output.read_bytes()
+    assert held["reconciliation"]["state"] == "recorded"
+    readme = (tmp_path / "results" / "README.md").read_text(encoding="utf-8")
+    assert "stays inside the hospital" in readme and "!" not in readme
+
+
+def test_no_results_package_is_written_for_a_changed_or_unapproved_package_or_into_a_workspace(package, tmp_path):
+    output = tmp_path / "result.csv"
+    output.write_text("anaesthetics\n120\n", encoding="utf-8")
+    unapproved = _copy(package, tmp_path / "unapproved")
+    with pytest.raises(results.ResultsError, match="has not been approved"):
+        results.write(unapproved, output, tmp_path / "one")
+    approved = _approved(package, tmp_path / "approved")
+    workspace_folder = tmp_path / "workspace"
+    workspace_folder.mkdir()
+    (workspace_folder / "manifest.json").write_text(json.dumps({"profile": "public", "files": []}), encoding="utf-8")
+    with pytest.raises(results.ResultsError, match="inside a public workspace"):
+        results.write(approved, output, workspace_folder / "results")
+    assert not (workspace_folder / "results").exists()
+    query = approved / "query.sql"
+    query.write_text(query.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    with pytest.raises(results.ResultsError, match="has changed since it was built"):
+        results.write(approved, output, tmp_path / "two")
+    assert not (tmp_path / "one").exists() and not (tmp_path / "two").exists()

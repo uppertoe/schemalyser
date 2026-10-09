@@ -15,11 +15,14 @@ check applies the import's rules to a folder of the workspace without any hospit
 its question would be accepted.
 
 import treats the folder as untrusted. It accepts question.sql, title.txt and note.md and nothing else, refuses a
-symbolic link, a subfolder, a file over SIZE_LIMIT and any declaration of dependencies, and applies the role-level
+symbolic link, a subfolder, a file over SIZE_LIMIT, an executable file and any declaration of dependencies, and applies the role-level
 policy of rolepolicy.py to question.sql. A question that passes is copied into the project's questions/, the
 feasibility report is made against the saved hospital schema, and the audit's package is built into the project's
 audits/, beside a private validation report. The only thing written back into the workspace is import-result.json,
-which holds a fixed status from RESULTS with the names of any rules broken, and nothing that the hospital supports.
+which holds a fixed status from RESULTS with the names of any rules broken, and nothing that the hospital supports. The
+status is decided by check_folder from the package and the public contract alone, before the private build runs, so
+the workspace's own check gives the same status, and the same package gives the same status whichever hospital the
+project holds. The export denies fixtures/held-out/ and the planted answers and values whatever the allowlist says.
 """
 import argparse
 import datetime as dt
@@ -35,8 +38,13 @@ from . import audit, feasibility, rolemap, rolepolicy
 
 ROOT = Path(__file__).resolve().parents[2]
 PROFILES = ("public",)
-# Folders that no workspace may draw on, whatever an allowlist says.
-DENIED = ("reference", "etl", "notes", ".git")
+# Folders that no workspace may draw on, whatever an allowlist says. fixtures/held-out holds the planted scenarios and
+# their expected rows, which judge an agent's work and so are never shown to it.
+DENIED = ("reference", "etl", "notes", ".git", "fixtures/held-out")
+# Files that no workspace may hold, whatever an allowlist says: the planted neonates' expected answers, which the
+# export replaces with the planted rows alone, and the planted values that a run's output is searched for.
+DENIED_FILES = ("core/schemalyser/rolemodel/planted_neonates.json", "fixtures/planted-values.txt")
+PLANTED_NEONATES = "core/schemalyser/rolemodel/planted_neonates.json"
 # Names that are never part of a source tree and are passed over without being copied.
 SKIPPED = ("__pycache__", ".DS_Store", ".pytest_cache")
 # Text that would name a folder on someone's own computer.
@@ -45,11 +53,11 @@ HOME_PATH = re.compile(rb"(/Users/[A-Za-z0-9._-]+|/home/[a-z][a-z0-9._-]*/|[A-Za
 # The modules of the core that the feasibility report, the audit's package and the testbed import, with the role
 # policy and this module, so that an agent can check a question before handing it back.
 CORE_MODULES = (
-    "__init__", "analysis", "audit", "catalogue", "charted", "checks", "concepts", "convert", "corrections", "datadict",
+    "__init__", "analysis", "audit", "capability", "catalogue", "charted", "checks", "concepts", "convert", "corrections", "datadict",
     "describe", "dictionary", "evidence", "extract", "facts", "feasibility", "first_ask", "harness", "hospital", "mapping", "memo",
     "normalise",
     "plan", "policy", "profile", "project", "propose", "questions", "realistic", "release", "restructure", "rolemap", "rolepolicy", "roles",
-    "routes", "rules", "sample_vocabulary", "sandbox", "scripts", "skeleton", "sql_evidence", "statements", "target", "testbed",
+    "routes", "rules", "sample_vocabulary", "sandbox", "scripts", "skeleton", "specification", "sql_evidence", "statements", "target", "testbed",
     "translate", "tuning", "vocabulary", "workspace",
 )
 
@@ -68,7 +76,6 @@ ALLOWLIST = tuple(
         {"path": "fixtures/invented-checks.csv", "why": "the invented world's check results"},
         {"path": "fixtures/invented-design.sql", "why": "the invented world's design"},
         {"path": "fixtures/invented-site-rules.json", "why": "the invented world's site rules"},
-        {"path": "fixtures/planted-values.txt", "why": "the invented world's planted values"},
         {"path": "fixtures/testbed.json", "why": "what the testbed expects of the invented conversion"},
         {"path": "fixtures/dqd-expectations.json", "why": "the dashboard findings that the invented world permits"},
         {"path": "fixtures/make_hospital.py", "why": "writes the invented hospital's tables"},
@@ -108,6 +115,7 @@ FOLDER_RULES = {
     "size": f"Each file is at most {SIZE_LIMIT // 1024} KB.",
     "text": "Each file is UTF-8 text.",
     "title": f"The title is one line of at most {TITLE_LIMIT} characters.",
+    "executable": "No file is executable.",
 }
 # What returns to the workspace: a fixed status from RESULTS and nothing else. A verdict, a class or a count of
 # requirements in each state would tell the agent what the hospital supports, so none of them returns.
@@ -136,7 +144,9 @@ def sha256(data):
 
 def _denied(relative):
     parts = Path(relative).parts
-    return bool(parts) and (parts[0] in DENIED or ".." in parts or Path(relative).is_absolute())
+    text = Path(relative).as_posix()
+    return bool(parts) and (".." in parts or Path(relative).is_absolute() or text in DENIED_FILES
+                            or any(text == d or text.startswith(d + "/") for d in DENIED))
 
 
 def _covered(relative, allowlist):
@@ -170,6 +180,9 @@ def sources(repo=ROOT, allowlist=ALLOWLIST, include=()):
         for path in sorted(source.rglob("*")):
             inner = path.relative_to(repo).as_posix()
             if any(part in SKIPPED for part in Path(inner).parts) or path.suffix == ".pyc":
+                continue
+            if _denied(inner):
+                # A held-out file or folder inside an allowlisted folder is passed over and never copied.
                 continue
             if path.is_symlink():
                 raise WorkspaceError(f"{inner} is a symbolic link, which no workspace may hold.")
@@ -243,7 +256,8 @@ This folder is a workspace in which a person or a coding agent can write a clini
 ## What the workspace holds
 
 - `core/schemalyser/rolemodel/` holds the role contract, `contract.json`, with its description in words, `roles.md`, and the neonatal audit as the example of a question over the role views.
-- `fixtures/` holds the invented world: an invented catalogue, data dictionary, hospital tables, conversion to OMOP with its planted scenarios, and map.
+- `fixtures/` holds the invented world: an invented catalogue, data dictionary, hospital tables, conversion to OMOP, and map.
+- `core/schemalyser/rolemodel/planted_neonates.json` holds the planted neonates as rows of the role views, without the answers that the neonatal audit must give for them. Those answers, and the expected rows of the planted scenarios, are held out of the workspace, so that a question is judged against answers that its author has not seen.
 - `core/schemalyser/omop/cdm54_fields.csv` is the published field list of OMOP CDM 5.4, `core/schemalyser/sample_vocabulary.py` writes the sample vocabulary when the testbed runs, and `tools/sqlserver/harness.py` is the SQL Server harness that the testbed runs for its SQL Server stage.
 - `core/` holds a copy of the public modules of Schemalyser that the feasibility report, the audit's package and the testbed need.
 - `schemas/{schema}` is a saved hospital schema made from the invented dictionary, as the page makes one, so that the commands have a schema to read.
@@ -320,7 +334,7 @@ PYTHONPATH=core python -m schemalyser.testbed run --world fixtures --out runs/fi
 
 - `check` applies the import's rules to the folder and lists each rule with any fragment that broke it.
 - `feasibility report` reads the question against the invented hospital schema and says, for each requirement, how far that schema supplies it, with the investigation that would move each one that falls short.
-- `audit build` compiles the question through the invented hospital schema into the package that a database analyst would run, with the answer on made-up rows and the planted neonates, and the safety report with its execution class.
+- `audit build` compiles the question through the invented hospital schema into the package that a database analyst would run, with the answer on made-up rows, and the safety report with its execution class.
 - `testbed run` builds the invented world, runs its conversion to OMOP, checks the planted scenarios and reconciles source with target, all on invented data.
 
 Every table that these reports name is a table of the invented world. On the hospital's side the same commands name the hospital's tables, which is why their reports stay there.
@@ -328,6 +342,16 @@ Every table that these reports name is a table of the invented world. On the hos
 
 NOTE_TEXT = """The neonatal low mean pressure audit measures, for each neonatal anaesthetic, how many minutes the mean arterial pressure spent below 40, and how many of the children died within 90 days. It reports counts for each band of minutes and no row of any patient.
 """
+
+
+def planted_inputs(repo=ROOT):
+    """The planted neonates as rows of the role views, which are development fixtures, without the expected answers,
+    which are held out."""
+    held = json.loads((Path(repo) / PLANTED_NEONATES).read_text(encoding="utf-8"))
+    kept = {key: value for key, value in held.items() if key != "expectations"}
+    kept["description"] = ("The planted neonates, written once as rows of the three role views. The answers that the "
+                           "neonatal audit must give for them are held out of the public workspace.")
+    return (json.dumps(kept, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
 def export(out, profile="public", repo=ROOT, allowlist=ALLOWLIST, include=(), date=None):
@@ -351,6 +375,7 @@ def export(out, profile="public", repo=ROOT, allowlist=ALLOWLIST, include=(), da
     written["README.md"] = (README.format(**words).encode("utf-8"), None)
     written["QUERIES.md"] = (QUERIES.format(**words).encode("utf-8"), None)
     written[f"schemas/{SCHEMA_NAME}"] = (invented_schema(repo, date), None)
+    written[PLANTED_NEONATES] = (planted_inputs(repo), None)
     written[f"queries/{EXAMPLE}/{QUESTION}"] = ((repo / EXAMPLE_SOURCE).read_bytes(), EXAMPLE_SOURCE)
     written[f"queries/{EXAMPLE}/{TITLE}"] = (b"Neonatal low mean pressure\n", None)
     written[f"queries/{EXAMPLE}/{NOTE}"] = (NOTE_TEXT.encode("utf-8"), None)
@@ -409,6 +434,9 @@ def read_folder(folder):
             fail("files", f"{name} is not one of question.sql, title.txt and note.md")
             continue
         present.add(name)
+        if entry.stat(follow_symlinks=False).st_mode & 0o111:
+            fail("executable", f"{name} is executable")
+            continue
         size = entry.stat(follow_symlinks=False).st_size
         if size > SIZE_LIMIT:
             fail("size", f"{name} holds {size:,} bytes")
@@ -435,11 +463,25 @@ def read_folder(folder):
 
 
 def check_folder(folder):
-    """The folder's rules and, when they pass, the role-level policy on question.sql, as {"rules", "failed", "texts"}."""
+    """The folder's rules and, when they pass, the role-level policy on question.sql, with the status that the import
+    returns, as {"rules", "failed", "status", "form", "texts"}.
+
+    The status is a function of the package and the public contract alone: malformed where a rule fails,
+    requires_private_review where the question passes every rule but lacks the form of the two-part script (a step
+    that chooses the anaesthetics, every part reached from it by key, and counts in the result; audit.public_form),
+    and accepted otherwise. No hospital schema is read, so the workspace's own check and the import give the same
+    status for the same package, whichever hospital the project holds."""
     rules, texts = read_folder(folder)
+    form = []
     if all(r["passed"] for r in rules):
         rules = rules + rolepolicy.check(texts[QUESTION])["rules"]
-    return {"rules": rules, "failed": [r["id"] for r in rules if not r["passed"]], "texts": texts}
+    failed = [r["id"] for r in rules if not r["passed"]]
+    if failed:
+        status = "malformed"
+    else:
+        form = audit.public_form(texts[QUESTION])
+        status = "requires_private_review" if form else "accepted"
+    return {"rules": rules, "failed": failed, "status": status, "form": form, "texts": texts}
 
 
 def _schema_path(project, name):
@@ -476,27 +518,31 @@ def import_question(folder, hospital, schema=None, date=None):
     try:
         project = Project(hospital)
         schema_path = _schema_path(project, schema)
-        loaded = feasibility.Schema.load(schema_path)
+        feasibility.Schema.load(schema_path)
     except (ProjectError, feasibility.FeasibilityError) as error:
         raise WorkspaceError(str(error)) from None
+    # The status is decided here, from the package and the public contract alone, before the hospital schema is read
+    # for anything, and nothing that follows changes it.
+    status = checked["status"]
+    result.update(result=status, rules_failed=[], says=WORDING[status])
     title = " ".join(texts[TITLE].split())
     question = project.add_question(title, texts[QUESTION])
     question_path = project.question_path(question)
-    found = feasibility.assess(loaded, question_path.read_text(encoding="utf-8"), question)
-    states = {}
-    for row in found["states"]:
-        states[row["state"]] = states.get(row["state"], 0) + 1
     audit_name = project.unique("audits", f"{Path(question).stem}_{date}")
     record = project.folder("audits") / audit_name
     record.mkdir()
-    manifest, built = None, False
+    # The private build runs after the status is decided. What it finds, and any error it meets, goes to the owner's
+    # feasibility report and validation report in the project, never to the status.
+    found, manifest, failure = None, None, None
     try:
+        found = feasibility.assess(feasibility.Schema.load(schema_path), question_path.read_text(encoding="utf-8"), question)
         manifest = audit.build(schema_path, question_path, record / "package", date=date)
-        built = True
-    except audit.AuditError:
-        pass
-    status = "accepted" if built else "requires_private_review"
-    result.update(result=status, rules_failed=[], says=WORDING[status])
+    except Exception as error:  # noqa: BLE001 - nothing the build meets may reach the status or the workspace
+        failure = {"error": type(error).__name__, "says": str(error)}
+    built = manifest is not None
+    states = {}
+    for row in (found or {}).get("states", []):
+        states[row["state"]] = states.get(row["state"], 0) + 1
     stamp = dt.datetime.now().astimezone().isoformat(timespec="seconds")
     (record / "request.json").write_text(json.dumps(
         {"schema": schema_path.name, "question": question, "period": None, "decisions": [], "exact_small_numbers": False,
@@ -504,8 +550,10 @@ def import_question(folder, hospital, schema=None, date=None):
         encoding="utf-8")
     report = {"imported": date, "from": f"queries/{name}", "files": {k: sha256(v) for k, v in sorted(texts.items())},
               "title": title, "question": question, "schema": schema_path.name, "rules": checked["rules"],
-              "feasibility": {"verdict": found["verdict"], "says": found["verdict_text"], "states": states},
-              "package": "package" if built else None, "execution_class": manifest["execution_class"] if manifest else None,
+              "public_form": checked["form"],
+              "feasibility": {"verdict": found["verdict"], "says": found["verdict_text"], "states": states} if found else None,
+              "package": "package" if built else None, "build_failure": failure,
+              "execution_class": manifest["execution_class"] if manifest else None,
               "returned_to_workspace": result}
     (record / "import-validation.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     _write_result(folder, result)
@@ -549,13 +597,14 @@ def main(argv=None):
             _print_rules(found["rules"])
             print("The folder passes every rule of the import." if not found["failed"] else
                   f"The folder fails {len(found['failed'])} of the import's rules.")
+            print(f"The import would return the status {found['status']}.")
             return 0 if not found["failed"] else 1
         result, checked, _ = import_question(args.folder, args.hospital, args.schema)
         _print_rules(checked["rules"])
-        print(WORDING["printed_accepted"] if result["result"] == "accepted" else WORDING["printed_refused"])
+        print(WORDING["printed_refused"] if result["result"] == "malformed" else WORDING["printed_accepted"])
         print(json.dumps(result, indent=2))
         print(WORDING["printed_nothing"])
-        return 0 if result["result"] == "accepted" else 1
+        return 0 if result["result"] != "malformed" else 1
     except (WorkspaceError, OSError) as error:
         print(str(error), file=sys.stderr)
         return 1

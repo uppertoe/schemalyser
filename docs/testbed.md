@@ -27,7 +27,7 @@ The dashboard reads the vocabulary from PostgreSQL. If the OMOP database's `cdm`
 
 ## What it does
 
-The testbed builds the synthetic source into a fresh DuckDB database, creates the tables of OMOP CDM 5.4 from the published field list, loads the vocabulary that the run uses, plants the scenarios and runs every step of the conversion. It then checks each scenario against the rows that its `scenario.json` states, which were written by hand and are never taken from the output.
+The testbed builds the synthetic source into a fresh DuckDB database, creates the tables of OMOP CDM 5.4 from the published field list, loads the vocabulary that the run uses, plants the scenarios and runs every step of the conversion. It then checks each scenario against its expected rows, which were written by hand from the clinical description and are never taken from the output. Those rows are held out, as the next section describes.
 
 The reconciliation runs each step's own SELECT again with its output replaced by the row number of the table that the step starts from, first with every inner join made a left join and no WHERE, then with each join and condition restored in turn. Every source row that does not reach the target is put down to the join or condition that left it out. A gate removes no rows; it fails the run. A world's `testbed.json` names the steps that may write several rows for one source row, such as the blood pressure step; every other step is expected to write at most one. Without the file, a step that writes several rows for one source row is counted as an unexplained discrepancy, because nothing says whether it may.
 
@@ -35,9 +35,29 @@ The reconciliation then sorts the steps into four groups, by count and by name: 
 
 It then runs the gates and counts, and confirms that the release script carries every step that ran.
 
+## The held-out root
+
+A scenario keeps its planted inputs beside the conversion, in `scenarios/NAME/rows.sql` with a `scenario.json` that describes them, and its expectations apart, in `fixtures/held-out/conversion/scenarios/NAME/expected.json`. The held-out root is `held-out/` beside the conversion folder, with one folder for each conversion, and one for each capability or question under `capabilities/` or `questions/`. The planted inputs are development fixtures, which an agent may see and iterate against; the expected rows are held-out fixtures, which judge the agent's work and are kept out of the public workspace, so that a transformation cannot be fitted to the examples it can see.
+
+The testbed opens the held-out root for reading only and never writes there, and `report.json` records a digest of it under `world`. A test runs the fast profile on a copy whose held-out root is read-only, so that any write would fail the run, and checks the hash of the marker file `fixtures/held-out/held-out.txt` and of every file in the root before and after. A scenario whose expectations the runner cannot find is not planted, and the run fails rather than count it as met. A private twin of the conversion that has no held-out root of its own may keep its expectations in `scenario.json`.
+
+## Routes
+
+Every step records its route in `conversion.json`: over the roles, or directly from the source tables with the reference it rests on, the reason, and the review that accepted it. A derived step reads only the OMOP tables and takes neither route. The report gives the route of each step under `steps`, and under `routes` the share of the steps on each route, the share among the anaesthesia steps that the release script carries, each step whose route record the release would refuse, and whether the conversion is a draft. The check "every step records its route, and every direct step its reference, reason and review" fails on any such step. The invented world's conversion has twenty steps that read the record, all of them direct, because they were written before the role model existed.
+
+## Scenarios over the roles
+
+A step over the roles cannot run on the hospital-shaped sandbox until the world's map binds the parts that it reads, and the invented hospital's map does not yet bind `role_drug`. Such a step therefore waits beside the direct step, named in its entry as `roles_step` and kept apart from the alternatives, which are routes over the source tables, and the testbed runs it on the role shadow instead. A role scenario plants rows of the role views and the mapping views, and the OMOP rows that the core would hold, in `role_scenarios/NAME/rows.json`, and its expected rows are held out in `role_scenarios/NAME/expected.json`, which names the step it judges, the table, and the rows expected in the named columns. The testbed runs the step on a role shadow that holds only the scenario's rows, compares what it writes with the expected rows as a whole, regardless of order, and reports the rows missing and the rows not expected under `roles`.
+
+The scenario `infusion_boundary` is the boundary test's history: an order, a start, two changes of rate, a pause and a restart, a missing stop, a second anaesthetic in the same admission, and a retrospective correction, with drugs that are unmapped, ambiguous and not listed. It judges `drug_exposure_infusion_roles.sql`, the first step over the roles, against eight rows written by hand. The tests also change the step in five ways that break a rule of the contract, such as ending a missing stop or ignoring a correction, and check that the scenario fails each time.
+
+## The translation
+
+Each step runs on SQL Server as it is written and on DuckDB in a translated form. The translation names each rewrite it applies, beyond sqlglot's own change of dialect, such as `like_as_ilike` or `whole_division`, and the report lists them under `translation`, each with what it does and the steps it applied to.
+
 ## What it reports
 
-`report.json` holds the versions of the tool, CDM, vocabulary and DuckDB; the world's checksums; the engine for each stage; each step; each scenario with its expected and found rows; the reconciliation by step, source table and target table, with its coverage; the release script; the dashboard's inputs, and its results in the full profile; every check, release equivalence among them, with its outcome; and a plain summary. Each scenario names the steps that write the OMOP tables its expectations read, and each table with an unexplained discrepancy names the steps that write it, so that a failure leads to the SQL behind it. `report.md` sets out the same for a person.
+`report.json` holds the versions of the tool, CDM, vocabulary and DuckDB; the world's checksums, the held-out root's among them; the engine for each stage; each step with its route; the routes; each scenario with its expected and found rows; each scenario over the roles; the reconciliation by step, source table and target table, with its coverage; the release script; the translation's rewrites; the dashboard's inputs, and its results in the full profile; every check, release equivalence among them, with its outcome; and a plain summary. Each scenario names the steps that write the OMOP tables its expectations read, and each table with an unexplained discrepancy names the steps that write it, so that a failure leads to the SQL behind it. `report.md` sets out the same for a person.
 
 ## The Data Quality Dashboard
 

@@ -114,7 +114,7 @@ WORDING = {
         "start_end": "The step {step} writes a row only where the source gives a start, and an end that is not before the start.",
         "start_open_end": "The step {step} writes a row only where the source gives a start and no end before it, and it leaves the end empty where the source gives none.",
         "still_in_place": "The step {step} leaves {table}.{field} empty where the source gives a removal time in or after the year {year}, which is how the source says that the device is still in place.",
-        "periods": "The step {step} writes one row for each period at one rate: a period ends at the next action for the same medicine, or at the end of the anaesthetic where no later action follows.",
+        "periods": "The step {step} writes one row for each period at one rate: a period ends at the next action for the same medicine; where no later action follows, the end is left empty, because the source does not say when the infusion stopped.",
         "converted": "The step {step} writes values in metric units: it writes {pairs} in {table}.{field}, and converts {table}.{value_field} to match.",
         "converted_pair": "the unit {to} where the mapping rows give {source}",
         "event_outside": "A row that the step {step} writes outside an anaesthetic's own record has no {table}.{field}.",
@@ -507,14 +507,12 @@ def _conventions(context, step, scope):
                     if isinstance(_unwrap(less.this), exp.Year) and targeting._literal(less.expression) is not None:
                         found.append(c["still_in_place"].format(step=step.file, table=table, field=field,
                                                                 year=targeting._literal(less.expression)))
-        # Periods at one rate: the end is the next action, from LEAD, or the end of the anaesthetic.
-        if field.endswith("_end_datetime") and isinstance(node, exp.Coalesce):
-            first = _unwrap(node.this)
+        # Periods at one rate: the end is the next action, from LEAD, and is left empty where there is none.
+        if field.endswith("_end_datetime"):
+            first = _unwrap(node.this) if isinstance(node, exp.Coalesce) else _unwrap(node)
             subquery = _subquery(step, first.table.upper()) if isinstance(first, exp.Column) and first.table else None
             if subquery is not None and any(isinstance(p, exp.Window) and isinstance(p.this, exp.Lead)
-                                             for p in _projections(subquery, first.name)) \
-                    and any(f.get("field") == "visit_detail.visit_detail_end_datetime"
-                            for f in context._leaves(context.fill(step, node))):
+                                             for p in _projections(subquery, first.name)):
                 found.append(c["periods"].format(step=step.file))
         # Units converted: CASE unit WHEN from THEN to ... END.
         if field == "unit_concept_id" and isinstance(node, exp.Case) and node.args.get("this") is not None:

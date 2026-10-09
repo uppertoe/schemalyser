@@ -99,3 +99,27 @@ def test_the_invented_conversion_with_its_full_catalogue_is_unchanged(tmp_path):
     assert not facts["targets"][0]["routes"]
     assert "route-" not in outputs["targets/neonatal_low_mean_pressure/checklist.csv"]
 
+
+
+def test_an_alternative_with_its_own_route_record_brings_it_and_the_step_keeps_its_own(tmp_path):
+    conversion = _conversion(tmp_path / "conversion")
+    steps = json.loads((conversion / "conversion.json").read_text())
+    person = next(s for s in steps if s["file"] == "person.sql")
+    own = {k: person[k] for k in ("route", "reference", "reason", "review")}
+    record = {"route": "direct", "reference": "an invented reference", "reason": "The test needs a route of its own.",
+              "review": {"by": "a tester", "on": "2026-10-09"}}
+    person["alternatives"] = [{"file": "person_all_people.sql", "effect": EFFECT, **record}]
+    (conversion / "conversion.json").write_text(json.dumps(steps))
+    catalogue = Catalogue.from_csv(_without(FULL, column=("PERSON_MASTER", "TEST_PERSON_FLAG")))
+    routes.apply(conversion, routes.choose(conversion, catalogue))
+    after = next(s for s in json.loads((conversion / "conversion.json").read_text()) if s["table"] == "person")
+    assert after["file"] == "person_all_people.sql" and after["reference"] == "an invented reference"
+    assert after["alternatives"][0] == {"file": "person.sql", **own}
+
+
+def test_an_alternative_over_the_roles_is_never_chosen_by_the_catalogue(tmp_path):
+    conversion = tmp_path / "conversion"
+    shutil.copytree(FIXTURES / "conversion", conversion)
+    catalogue = Catalogue.from_csv(_without(FULL, table="DRUG_DEF"))
+    chosen = routes.choose(conversion, catalogue)
+    assert "drug_exposure_infusion.sql" not in {c["step"] for c in chosen}

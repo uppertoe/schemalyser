@@ -1,0 +1,40 @@
+{
+  "expectations": [
+    {
+      "says": "The child anaesthetised on the day before the first birthday is 0 years and 11 months old, although 365 days have passed since the birth.",
+      "query": "SELECT a.age_years, a.age_months, a.age_days FROM omop.anaesthetic a JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id WHERE vd.visit_detail_source_value = '990000231'",
+      "result": [
+        0,
+        11,
+        365
+      ]
+    },
+    {
+      "says": "The child anaesthetised on the first birthday is one year old, although the anaesthetic starts before the hour of birth.",
+      "query": "SELECT a.age_years, a.age_months, a.age_days FROM omop.anaesthetic a JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id WHERE vd.visit_detail_source_value = '990000232'",
+      "result": [
+        1,
+        12,
+        366
+      ]
+    },
+    {
+      "says": "The child born on 29 February is 0 years and 11 months old on 28 February of the next year.",
+      "query": "SELECT a.age_years, a.age_months, a.age_days FROM omop.anaesthetic a JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id WHERE vd.visit_detail_source_value = '990000233'",
+      "result": [
+        0,
+        11,
+        365
+      ]
+    },
+    {
+      "says": "The child born on 29 February is one year old on 1 March of the next year.",
+      "query": "SELECT a.age_years, a.age_months, a.age_days FROM omop.anaesthetic a JOIN omop.visit_detail vd ON vd.visit_detail_id = a.visit_detail_id WHERE vd.visit_detail_source_value = '990000234'",
+      "result": [
+        1,
+        12,
+        366
+      ]
+    }
+  ]
+}

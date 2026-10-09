@@ -22,17 +22,30 @@ The rules, each passed or failed with the fragment that broke it:
                        starts from the cohort, by equality with a column already joined
     cohort_cap         every SELECT or INSERT that fills a temporary table carries TOP (n) with n at most the cap
     cohort_period      every statement that fills a temporary table tests a column against a first and a last date
+    series             a script that reads a large table reaches it through a series of bounded steps of increasing
+                       size, each marked by a comment line of its own just before its statement: "-- series: count", a
+                       SELECT COUNT over the cohort bounded by a first and a last date; then "-- series: coverage", a
+                       SELECT COUNT over the cohort that joins each link; then "-- series: rows", and no statement
+                       before the rows step reads a large table. The structure behind each marker is checked, not
+                       only the comment.
     counts_only        no result returns a value of a large table that is not aggregated
 
 The execution class is derived from the rules, never from a flag:
 
     A  metadata only: the script reads only the server's own records of its tables;
     B  bounded validation: small tables, or large tables reached from a bounded cohort, and counts only;
-    C  large clinical extraction: a result returns rows of a large table, or a cohort is above the cap or unbounded by
-       a period;
+    C  large clinical extraction: a result returns rows of a large table, a cohort is above the cap or unbounded by
+       a period, or a large table is reached without the series;
     D  not permitted: any other rule fails.
 
 A table is large when the tables and columns query gave it at least LARGE rows, or gave no figure for it at all.
+
+The same check reads a conversion step, or a gate of the release script, given as text with purpose="conversion". Such
+a text is one or more SELECT statements over the source and target tables with no cohort, so the rules about the cohort,
+the series and counts are reported as not applying, the report names what the policy therefore cannot establish, and
+the class is C at best. docs/policy.md says how the release script is checked.
+
+POLICY_VERSION is recorded in every report, so that the package's manifest can record the policy that derived its class.
 """
 import re
 
@@ -40,8 +53,16 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.optimizer.scope import build_scope
 
+# The version of the policy: a change to any rule, threshold or class makes a new version, which voids every class
+# that an earlier version derived.
+POLICY_VERSION = "1"
 LARGE = 10_000_000
 CAP = 5000
+# The purposes of a script that the policy reads: an audit's two-part script, or a conversion step or gate.
+PURPOSES = ("audit", "conversion")
+# The markers of the series, in the order in which the steps must come.
+SERIES = ("count", "coverage", "rows")
+SERIES_MARKER = re.compile(r"^[ \t]*--[ \t]*series[ \t]*:.*$", re.I | re.M)
 
 # The session settings that a script may carry, as their text with single spaces and in capitals.
 SESSION = ("SET NOCOUNT ON", "SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED", "SET LOCK_TIMEOUT 10000",
@@ -55,6 +76,11 @@ FUNCTIONS = {"Count", "Sum", "Min", "Max", "Avg", "Cast", "TryCast", "Coalesce",
              "Case", "Concat", "DateDiff", "DateAdd", "Year", "Month", "Day", "TimeStrToTime", "TsOrDsToDate",
              "TsOrDsAdd", "TsOrDsDiff", "RowNumber", "Lead", "Lag"}
 WINDOWED = {"RowNumber", "Lead", "Lag"}
+# What a conversion step may use besides: the text functions that shape a source value into a field of the target, and
+# the ranks that number its rows, each with a window. CHARINDEX is read as StrPosition and LEN as Length.
+CONVERSION_FUNCTIONS = {"Left", "Right", "Substring", "Upper", "Lower", "Trim", "Length", "StrPosition", "Replace",
+                        "DateFromParts", "DenseRank", "Rank"}
+CONVERSION_WINDOWED = {"DenseRank", "Rank"}
 # Words that never belong in a script, wherever they stand outside a string or a comment.
 FORBIDDEN_WORDS = {"EXEC", "EXECUTE", "SP_EXECUTESQL", "OPENQUERY", "OPENROWSET", "OPENDATASOURCE", "OPENXML", "WAITFOR",
                    "SHUTDOWN", "RECONFIGURE", "GRANT", "REVOKE", "DENY", "BACKUP", "RESTORE", "DBCC", "KILL"}
@@ -71,14 +97,22 @@ RULES = {
     "large_from_cohort": "Every large table is reached from the cohort by key.",
     "cohort_cap": "The cohort carries TOP (n) with n at most {cap}.",
     "cohort_period": "The cohort is limited to a period by a first and a last date.",
+    "series": "Every large table is reached through the series: a count of the cohort over the period, then the coverage of each link, then the rows.",
     "counts_only": "No result returns a value of a large table that is not aggregated.",
 }
 # The rules whose failure makes a script a large clinical extraction rather than one that is not permitted.
-EXTRACTION = ("cohort_cap", "cohort_period", "counts_only")
+EXTRACTION = ("cohort_cap", "cohort_period", "series", "counts_only")
+# The rules that do not apply to a conversion step or gate, which has no cohort and returns the rows it writes, and
+# what the policy therefore cannot establish about it.
+COHORT_RULES = ("large_from_cohort", "cohort_cap", "cohort_period", "series", "counts_only")
+CANNOT = {
+    "no_cohort": "The script fills no cohort, so the policy cannot establish that what it reads from the hospital's tables is bounded by a capped cohort and a period.",
+    "conversion": "The script is a conversion step or gate, which reads its source tables whole and returns the rows it writes, so the policy cannot establish that it is bounded by a cohort, reaches large tables through the series, or returns counts only.",
+}
 CLASSES = {
     "A": "Class A: metadata only. The script reads only the server's own records of its tables.",
-    "B": "Class B: bounded validation. The script reads small tables, or large tables reached from a bounded cohort, and returns counts only.",
-    "C": "Class C: large clinical extraction. The script returns rows of a large table, or its cohort is above the cap or not limited to a period.",
+    "B": "Class B: bounded validation. The script reads small tables, or large tables reached from a bounded cohort through the series, and returns counts only.",
+    "C": "Class C: large clinical extraction. The script returns rows of a large table, its cohort is above the cap or not limited to a period, or it reaches a large table without the series.",
     "D": "Class D: not permitted. The script breaks a rule that no approval can set aside, and is not to be run.",
 }
 
@@ -89,23 +123,31 @@ def _fragment(node_or_text, limit=200):
     return text if len(text) <= limit else text[:limit - 3] + "..."
 
 
-def split(sql):
-    """The statements of a script as [text], split at each semicolon outside a string, a bracket or a comment. Raises
-    sqlglot's error where the text cannot be read into tokens."""
+def spans(sql):
+    """Where each statement of a script begins and ends, as [(first, last)] offsets into the text, split at each
+    semicolon outside a string, a bracket or a comment, with the tokens. Raises sqlglot's error where the text cannot
+    be read into tokens."""
     tokens = sqlglot.tokenize(sql, dialect="tsql")
     out, first, last = [], None, None
     for token in tokens:
         if token.token_type.name == "SEMICOLON":
             if first is not None:
-                out.append(sql[first:last + 1])
+                out.append((first, last))
             first = last = None
             continue
         if first is None:
             first = token.start
         last = token.end
     if first is not None:
-        out.append(sql[first:last + 1])
+        out.append((first, last))
     return out, tokens
+
+
+def split(sql):
+    """The statements of a script as [text], split at each semicolon outside a string, a bracket or a comment. Raises
+    sqlglot's error where the text cannot be read into tokens."""
+    found, tokens = spans(sql)
+    return [sql[first:last + 1] for first, last in found], tokens
 
 
 def _bare(node):
@@ -133,16 +175,47 @@ def _metadata(table):
     return (table.db or "").lower() in METADATA
 
 
+def _bounds(statement):
+    """Whether a statement tests a column against a first date and a last date, as (first, last)."""
+    lower = upper = False
+    for node in statement.find_all(exp.GTE, exp.GT, exp.LT, exp.LTE, exp.Between):
+        if isinstance(node, exp.Between):
+            if _dated(node.args.get("low")) and _dated(node.args.get("high")) and isinstance(_bare(node.this), exp.Column):
+                lower = upper = True
+            continue
+        one, other = _bare(node.this), _bare(node.expression)
+        if isinstance(one, exp.Column) and _dated(other):
+            op = type(node)
+        elif isinstance(other, exp.Column) and _dated(one):
+            op = {exp.GTE: exp.LTE, exp.GT: exp.LT, exp.LT: exp.GT, exp.LTE: exp.GTE}[type(node)]
+        else:
+            continue
+        if op in (exp.GTE, exp.GT):
+            lower = True
+        else:
+            upper = True
+    return lower, upper
+
+
 class _Checker:
-    def __init__(self, tables, sizes, large, cap, schemas):
+    def __init__(self, tables, sizes, large, cap, schemas, purpose="audit"):
         self.tables = {t.upper() for t in tables}
         self.sizes = {k.upper(): v for k, v in (sizes or {}).items()}
         self.large = large
         self.cap = cap
         self.schemas = {s.lower() for s in schemas}
+        self.purpose = purpose
         self.failures = {rule: [] for rule in RULES}
         self.clinical, self.metadata_read, self.large_read = set(), set(), set()
         self.temps_filled = []
+        # The statement being read, by its place in the script; what each statement reads of large tables; and the
+        # tree of each statement that is a query, for the series.
+        self.index = 0
+        self.large_by_statement = {}
+        self.trees = {}
+        conversion = purpose == "conversion"
+        self.functions = FUNCTIONS | CONVERSION_FUNCTIONS if conversion else FUNCTIONS
+        self.windowed = WINDOWED | CONVERSION_WINDOWED if conversion else WINDOWED
 
     def fail(self, rule, fragment):
         if fragment not in self.failures[rule]:
@@ -179,13 +252,18 @@ class _Checker:
             return
         if isinstance(tree, exp.Query):
             into = tree.args.get("into")
+            self.trees[self.index] = tree
             if into is not None:
                 target = into.this
-                if not _is_temp(target):
+                if not _is_temp(target) or self.purpose == "conversion":
                     self.fail("statements", _fragment(flat))
                     return
                 self.filled(tree, tree, target)
             self.query(tree, returns=into is None)
+            return
+        if self.purpose == "conversion":
+            # A conversion step or gate is read as its SELECT statements alone; release.py writes what wraps them.
+            self.fail("statements", _fragment(flat))
             return
         if isinstance(tree, exp.Insert):
             target = tree.this.this if isinstance(tree.this, exp.Schema) else tree.this
@@ -226,23 +304,7 @@ class _Checker:
         if n is None or n > self.cap:
             shown = f"TOP ({n})" if n is not None else "no TOP (n)"
             self.fail("cohort_cap", _fragment(f"{shown} in the statement that fills {_temp_name(target)}"))
-        lower = upper = False
-        for node in statement.find_all(exp.GTE, exp.GT, exp.LT, exp.LTE, exp.Between):
-            if isinstance(node, exp.Between):
-                if _dated(node.args.get("low")) and _dated(node.args.get("high")) and isinstance(_bare(node.this), exp.Column):
-                    lower = upper = True
-                continue
-            one, other = _bare(node.this), _bare(node.expression)
-            if isinstance(one, exp.Column) and _dated(other):
-                op = type(node)
-            elif isinstance(other, exp.Column) and _dated(one):
-                op = {exp.GTE: exp.LTE, exp.GT: exp.LT, exp.LT: exp.GT, exp.LTE: exp.GTE}[type(node)]
-            else:
-                continue
-            if op in (exp.GTE, exp.GT):
-                lower = True
-            else:
-                upper = True
+        lower, upper = _bounds(statement)
         if not (lower and upper):
             self.fail("cohort_period", _fragment(f"no first and last date in the statement that fills {_temp_name(target)}"))
 
@@ -275,14 +337,15 @@ class _Checker:
             self.clinical.add(table.name.upper())
             if self.is_large(table.name):
                 self.large_read.add(table.name.upper())
+                self.large_by_statement.setdefault(self.index, set()).add(table.name.upper())
         for func in tree.find_all(exp.Func):
             name = type(func).__name__
             # sqlglot counts the operators AND and OR, and each branch of a CASE, among its functions.
             if isinstance(func, (exp.Connector, exp.Binary, exp.Predicate)) or (isinstance(func, exp.If) and isinstance(func.parent, exp.Case)):
                 continue
-            if isinstance(func, exp.Anonymous) or name not in FUNCTIONS:
+            if isinstance(func, exp.Anonymous) or name not in self.functions:
                 self.fail("functions", _fragment(func))
-            elif name in WINDOWED and not isinstance(func.parent, exp.Window):
+            elif name in self.windowed and not isinstance(func.parent, exp.Window):
                 self.fail("functions", _fragment(func))
         for select in tree.find_all(exp.Select):
             self.select(select, ctes)
@@ -317,6 +380,10 @@ class _Checker:
                 if not isinstance(c, exp.EQ):
                     continue
                 one, other = _bare(c.this), _bare(c.expression)
+                if self.purpose == "conversion":
+                    # A conversion step joins a target table on its source value, which is text, so a column cast to
+                    # text still names the column on which it joins.
+                    one, other = _uncast(one), _uncast(other)
                 if not (isinstance(one, exp.Column) and isinstance(other, exp.Column)):
                     continue
                 a, b = one.table.lower(), other.table.lower()
@@ -353,6 +420,69 @@ class _Checker:
             source = node.args.get("from_") or node.args.get("from")
             return source is not None and self.anchored(source.this, ctes, guard)
         return False
+
+    # The series: a count, then the coverage of each link, then the rows, before any large table is read.
+
+    def series(self, sql, places):
+        """Checks the series of a script whose statements stand at places, [(first, last)] offsets into sql, and
+        returns {"required", "steps": [{"step", "statement"}], "first_large_read"}."""
+        marks, problems = {}, []
+        for found in SERIES_MARKER.finditer(sql):
+            line = found.group(0).strip()
+            if line not in {f"-- series: {name}" for name in SERIES}:
+                problems.append(f"{line} is not one of the markers -- series: count, -- series: coverage and -- series: rows")
+                continue
+            at = found.start()
+            following = next((n for n, (first, _) in enumerate(places) if first > at), None)
+            inside = any(first <= at <= last for first, last in places)
+            if following is None or inside:
+                problems.append(f"{line} stands where no statement follows it")
+                continue
+            if following in marks:
+                problems.append(f"{line} marks a statement that another marker already marks")
+                continue
+            marks[following] = line[len("-- series: "):]
+        steps = [{"step": step, "statement": n + 1} for n, step in sorted(marks.items())]
+        reading = sorted(self.large_by_statement)
+        first = reading[0] if reading else None
+        found = {"required": first is not None, "steps": steps,
+                 "first_large_read": {"statement": first + 1, "tables": sorted(self.large_by_statement[first])} if first is not None else None}
+        for problem in problems:
+            self.fail("series", _fragment(problem))
+        if first is None:
+            return found
+        tables = _and_names(sorted(self.large_by_statement[first]))
+        before = [(n, step) for n, step in sorted(marks.items()) if n <= first]
+        order = [step for _, step in before]
+        if not order:
+            self.fail("series", _fragment(f"the script reads {tables} with no series of a count, a coverage and the rows before it"))
+            return found
+        if order != list(SERIES[:len(order)]) or len(order) > len(SERIES):
+            self.fail("series", _fragment(f"the steps before the first read of {tables} are marked {', '.join(order)}, where "
+                                          "count, coverage and rows are wanted, in that order"))
+            return found
+        if len(order) < len(SERIES):
+            self.fail("series", _fragment(f"{tables} is read before the {SERIES[len(order)]} step of the series"))
+            return found
+        for n, step in before:
+            tree = self.trees.get(n)
+            if tree is None or tree.args.get("into") is not None:
+                self.fail("series", _fragment(f"the {step} step is not a SELECT that returns its result"))
+                continue
+            if step == "rows":
+                continue
+            outer = tree if isinstance(tree, exp.Select) else tree.find(exp.Select)
+            ctes = {cte.alias.lower(): cte.this for cte in tree.find_all(exp.CTE)}
+            source = (outer.args.get("from_") or outer.args.get("from")) if outer is not None else None
+            if outer is None or not any(p.find(exp.Count) is not None for p in outer.expressions):
+                self.fail("series", _fragment(f"the {step} step returns no COUNT"))
+            if source is None or not self.anchored(source.this, ctes, set()):
+                self.fail("series", _fragment(f"the {step} step does not start from the cohort"))
+            if step == "count" and not all(_bounds(tree)):
+                self.fail("series", _fragment("the count step is not bounded by a first and a last date"))
+            if step == "coverage" and not _links(tree):
+                self.fail("series", _fragment("the coverage step joins no link to the cohort"))
+        return found
 
     # Whether a result returns a value of a large table that is not aggregated.
 
@@ -425,6 +555,28 @@ class _Checker:
         return found
 
 
+def _uncast(node):
+    return _bare(node.this) if isinstance(node, (exp.Cast, exp.TryCast)) else node
+
+
+def _and_names(names):
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def _links(tree):
+    """Whether a statement joins a link: a join on an equality of two columns, or an EXISTS whose subquery tests one."""
+    for join in tree.find_all(exp.Join):
+        on = join.args.get("on")
+        if on is not None and any(isinstance(c, exp.EQ) and isinstance(_bare(c.this), exp.Column) and isinstance(_bare(c.expression), exp.Column)
+                                  for c in _conjuncts(on)):
+            return True
+    for exists in tree.find_all(exp.Exists):
+        for c in exists.find_all(exp.EQ):
+            if isinstance(_bare(c.this), exp.Column) and isinstance(_bare(c.expression), exp.Column):
+                return True
+    return False
+
+
 def _aggregated(column, top):
     node = column.parent
     while node is not None and node is not top.parent:
@@ -441,16 +593,24 @@ def _dated(node):
     return isinstance(node, exp.Literal) and node.is_string and re.match(r"^\d{4}-\d{2}-\d{2}", node.this) is not None
 
 
-def check(sql, tables, sizes, large=LARGE, cap=CAP, schemas=("dbo",)):
-    """The policy on the final text of a script. tables are the tables that the hospital schema names, and sizes is
-    {table: rows} from the tables and columns query. Returns {"rules": [{"id", "rule", "passed", "fragments"}],
-    "execution_class", "class_says", "outcome", "large_tables", "tables_read", "statements"}."""
-    checker = _Checker(tables, sizes, large, cap, schemas)
+def check(sql, tables, sizes, large=LARGE, cap=CAP, schemas=("dbo",), purpose="audit"):
+    """The policy on the final text of a script. tables are the tables that the hospital schema names (and, for a
+    conversion step, the target tables it reads), and sizes is {table: rows} from the tables and columns query.
+    purpose is "audit" for an audit's script, or "conversion" for a conversion step or a gate of the release script,
+    to which the rules about the cohort, the series and counts do not apply.
+
+    Returns {"policy_version", "purpose", "rules": [{"id", "rule", "applies", "passed", "fragments"}],
+    "execution_class", "class_says", "outcome", "cannot_establish", "series", "large_tables", "tables_read",
+    "metadata_read", "statements", "thresholds"}. A rule that does not apply has passed None."""
+    if purpose not in PURPOSES:
+        raise ValueError(f"The purpose of a script is one of {', '.join(PURPOSES)}.")
+    checker = _Checker(tables, sizes, large, cap, schemas, purpose)
     try:
-        statements, tokens = split(sql)
+        places, tokens = spans(sql)
+        statements = [sql[first:last + 1] for first, last in places]
     except sqlglot.errors.SqlglotError:
         checker.fail("parse", "the script cannot be read into tokens")
-        statements, tokens = [], []
+        places, statements, tokens = [], [], []
     for token in tokens:
         if token.token_type.name in ("STRING", "NATIONAL_STRING"):
             continue
@@ -459,21 +619,34 @@ def check(sql, tables, sizes, large=LARGE, cap=CAP, schemas=("dbo",)):
             checker.fail("dynamic", word)
     if not statements:
         checker.fail("parse", "the script holds no statement")
-    for text in statements:
+    for index, text in enumerate(statements):
+        checker.index = index
         checker.statement(text)
-    rules = [{"id": rule, "rule": RULES[rule].format(cap=f"{cap:,}"), "passed": not checker.failures[rule],
-              "fragments": checker.failures[rule]} for rule in RULES]
-    failed = {r["id"] for r in rules if not r["passed"]}
+    series = checker.series(sql, places)
+    applies = {rule: purpose == "audit" or rule not in COHORT_RULES for rule in RULES}
+    rules = [{"id": rule, "rule": RULES[rule].format(cap=f"{cap:,}"), "applies": applies[rule],
+              "passed": not checker.failures[rule] if applies[rule] else None,
+              "fragments": checker.failures[rule] if applies[rule] else []} for rule in RULES]
+    failed = {r["id"] for r in rules if r["passed"] is False}
+    cannot = []
+    if purpose == "conversion":
+        cannot.append(CANNOT["conversion"])
+    elif checker.clinical and not checker.temps_filled:
+        cannot.append(CANNOT["no_cohort"])
     if failed - set(EXTRACTION):
         grade = "D"
     elif failed:
         grade = "C"
     elif not checker.clinical:
         grade = "A"
+    elif purpose == "conversion":
+        # Nothing bounds what a conversion step reads, so it is a large clinical extraction at best.
+        grade = "C"
     else:
         grade = "B"
-    return {"rules": rules, "execution_class": grade, "class_says": CLASSES[grade],
-            "outcome": "passed" if not failed else "failed",
+    return {"policy_version": POLICY_VERSION, "purpose": purpose, "rules": rules, "execution_class": grade,
+            "class_says": CLASSES[grade], "outcome": "passed" if not failed else "failed", "cannot_establish": cannot,
+            "series": series if purpose == "audit" else None,
             "large_tables": sorted(checker.large_read), "tables_read": sorted(checker.clinical),
             "metadata_read": sorted(checker.metadata_read), "statements": len(statements),
             "thresholds": {"large_table_rows": large, "cohort_cap": cap}}
