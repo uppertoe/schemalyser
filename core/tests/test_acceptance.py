@@ -26,7 +26,8 @@ from xml.sax.saxutils import escape
 import pytest
 import sqlglot
 
-from schemalyser import audit, convert, corrections, describe, feasibility, policy, propose, rolemap, workspace
+from schemalyser import (audit, compiler, convert, corrections, describe, feasibility, policy, propose, rolemap,
+                         roleshadow, workspace)
 from schemalyser.translate import to_duckdb
 from test_describe import DICTIONARY, TABLES, tables_result
 from test_feasibility import CONFIRMED
@@ -148,13 +149,13 @@ def _private_schema(path, extra_confirmed=()):
         sitting.confirm(about, "yes", date=DATE)
     sitting.choose_codes("role_reading.kind", {"52": "map_arterial", "51": "map_cuff", "10": "spo2"}, DATE)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(sitting.save_zip(DATE))
+    path.write_bytes(roleshadow.save_zip(sitting, DATE))
     return path
 
 
 def _per_anaesthetic(sql):
     """The question with its final SELECT replaced by one that reads each anaesthetic's minutes from its own step."""
-    tree = rolemap.check_audit(sql)
+    tree = compiler.check_audit(sql)
     final = sqlglot.parse_one("SELECT x.anaesthetic_key, x.minutes_below_90 FROM burden x", dialect="tsql")
     final.set("with_" if "with_" in final.arg_types else "with", (tree.args.get("with_") or tree.args.get("with")).copy())
     return final.sql(dialect="tsql")
@@ -173,12 +174,12 @@ def _hospital_shadow(schema, planted):
         views[name] = propose.view_sql(name, role, data["kinds"], sitting.model, vocabularies[name])
     held = copy.copy(sitting)
     held.data = data
-    shadow = corrections.Shadow(held, views, data["kinds"], vocabularies)
+    shadow = roleshadow.Shadow(held, views, data["kinds"], vocabularies)
     shadow.register()
     contract = {v["name"]: v for v in sitting.model["views"]}
     for name in ("role_patient", "role_anaesthetic", "role_reading"):
         for row in planted[name]:
-            shadow.place(name, corrections._typed(contract[name], row))
+            shadow.place(name, roleshadow._typed(contract[name], row))
     shadow.pair_encounters()
     return shadow.database()
 
@@ -297,8 +298,8 @@ def test_the_query_lifecycle_runs_end_to_end_on_invented_material(tmp_path):
 
     # 5. The question passes independently specified planted scenarios on made-up rows, held out from the workspace the
     # agent was given.
-    con = rolemap.role_shadow(seed=1, anaesthetics=0, with_planted=False, extra=planted)
-    run = rolemap.duckdb_runner(con)
+    con = roleshadow.role_shadow(seed=1, anaesthetics=0, with_planted=False, extra=planted)
+    run = roleshadow.duckdb_runner(con)
     _, answer = run(QUESTION)
     assert [list(r) for r in answer] == held_out["answer"]["rows"], held_out["answer"]["says"]
     _, minutes = run(_per_anaesthetic(QUESTION))
@@ -361,13 +362,13 @@ BOUNDARY = "infusion_boundary"
 PUBLIC_HALF = """
 import json
 from pathlib import Path
-from schemalyser import convert, rolemap
+from schemalyser import convert, rolemap, roleshadow
 from schemalyser.translate import to_duckdb
 
 folder = Path("fixtures/conversion")
 (scenario,) = [s for s in convert.read_role_scenarios(folder) if s["name"] == "infusion_boundary"]
 (statement,) = to_duckdb((folder / "drug_exposure_infusion_roles.sql").read_text(encoding="utf-8"))
-con = rolemap.role_shadow(seed=1, anaesthetics=0, with_planted=False, extra=scenario["roles"])
+con = roleshadow.role_shadow(seed=1, anaesthetics=0, with_planted=False, extra=scenario["roles"])
 con.execute("CREATE SCHEMA omop")
 for table, fields in convert.cdm_fields().items():
     con.execute(f'CREATE TABLE omop."{table}" (' + ", ".join(f'"{n}" {k}' for n, _, k in fields) + ")")

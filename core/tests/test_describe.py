@@ -15,7 +15,9 @@ from pathlib import Path
 
 import pytest
 
-from schemalyser import describe, rolemap
+from schemalyser import describe, rolemap, roleshadow
+from schemalyser.rolemap import __main__ as rolemap_main
+from schemalyser.describe import __main__ as describe_main
 from schemalyser.translate import to_duckdb
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -341,7 +343,7 @@ def test_a_yes_on_a_column_that_holds_codes_leaves_it_to_translate_and_the_schem
     readme = files["README.md"].decode()
     assert "## This hospital schema is a draft" in readme and "The test patient in Patients (`PERSON_MASTER.TEST_PERSON_FLAG`)" in readme
     # The 1-or-0 form on the proposed column translates it, and step 7's codes translate the kind.
-    s.correction_keep({"form": "derived", "about": "role_patient.is_test", "table": "PERSON_MASTER",
+    roleshadow.correction_keep(s, {"form": "derived", "about": "role_patient.is_test", "table": "PERSON_MASTER",
                        "column": "TEST_PERSON_FLAG", "derive": {"form": "flag", "values": ["Y"]}}, date=DATE)
     s.choose_codes("role_reading.kind", {"52": "map_arterial"}, DATE)
     tally = s.tally()
@@ -350,7 +352,7 @@ def test_a_yes_on_a_column_that_holds_codes_leaves_it_to_translate_and_the_schem
 
 def test_the_form_on_the_proposed_column_is_a_confirmation_and_its_probe_counts_1_and_0():
     s = fresh()
-    kept = s.correction_keep({"form": "derived", "about": "role_patient.is_test", "table": "PERSON_MASTER",
+    kept = roleshadow.correction_keep(s, {"form": "derived", "about": "role_patient.is_test", "table": "PERSON_MASTER",
                               "column": "TEST_PERSON_FLAG", "derive": {"form": "flag", "values": ["Y"]}}, date=DATE)
     item = s.data["roles"]["role_patient"]["columns"]["is_test"]
     assert kept["probe"] == "flag" and item["confirmation"]["answer"] == "yes"
@@ -366,7 +368,7 @@ def test_the_form_on_the_proposed_column_is_a_confirmation_and_its_probe_counts_
     assert not values["script"] and "year" not in s.journal[values["name"]]
     assert "PERSON_MASTER, whose size is not known" in values["sql"] and "small tables" not in values["sql"]
     # A different column through the same form is a correction.
-    s.correction_keep({"form": "column", "about": "role_anaesthetic.patient_key", "table": "THEATRE_CASE", "column": "PERSON_KEY"},
+    roleshadow.correction_keep(s, {"form": "column", "about": "role_anaesthetic.patient_key", "table": "THEATRE_CASE", "column": "PERSON_KEY"},
                       date=DATE)
     assert s.data["roles"]["role_anaesthetic"]["columns"]["patient_key"]["confirmation"]["answer"] == "no"
 
@@ -588,9 +590,9 @@ def test_a_change_kept_over_old_problems_says_that_it_broke_nothing_new_and_they
     assert corrections.outcome({"passed": True, "problems": [], "remaining": ["a", "b"]}) == \
         "passed: broke nothing new; 2 problems were there before it and remain"
     s = fresh()
-    found = s.correction_check({"form": "column", "about": "role_drug.route", "replacement": "LK_ROUTE.LABEL"})
+    found = roleshadow.correction_check(s, {"form": "column", "about": "role_drug.route", "replacement": "LK_ROUTE.LABEL"})
     assert found["passed"] and found["remaining"]
-    s.correction_keep({"form": "column", "about": "role_drug.route", "replacement": "LK_ROUTE.LABEL"}, date=DATE)
+    roleshadow.correction_keep(s, {"form": "column", "about": "role_drug.route", "replacement": "LK_ROUTE.LABEL"}, date=DATE)
     assert s.confirmations[-1]["test"].startswith("passed: broke nothing new; ")
 
 
@@ -670,7 +672,7 @@ def test_reopening_a_saved_file_counts_each_answer_once_and_keeps_the_time_of_ea
     s.confirm("role_patient.birth_date", "yes", date=DATE)
     s.confirm("role_patient.is_test", "yes", date=DATE)
     # A translation kept on a column already confirmed is one answer, recorded once.
-    s.correction_keep({"form": "derived", "about": "role_patient.is_test", "table": "PERSON_MASTER",
+    roleshadow.correction_keep(s, {"form": "derived", "about": "role_patient.is_test", "table": "PERSON_MASTER",
                        "column": "TEST_PERSON_FLAG", "derive": {"form": "flag", "values": ["Y"]}}, date=DATE)
     assert [c["attribute"] for c in s.confirmations].count("role_patient.is_test") == 1
     files = s.folder_files(date=DATE)
@@ -759,7 +761,7 @@ def test_the_saved_schema_names_the_state_each_part_has_reached_and_never_calls_
     s.set_settings(time_zone="not a zone; DROP")
     # Before any test on made-up rows has run, no part runs: the state is never worked out at the time of the save.
     assert s.readiness()["reached"] is None
-    files = s.save(date=DATE)
+    files = roleshadow.save(s, date=DATE)
     settings = json.loads(files["settings.json"])
     assert settings["time_zone"] == "Australia/Sydney" and settings["daylight_saving"] is True
     assert "readiness" not in settings
@@ -783,7 +785,7 @@ def test_the_saved_schema_names_the_state_each_part_has_reached_and_never_calls_
     assert all(d["reconciled"] is None for d in s.dimensions["bindings"].values())
     # Counts from the production database, judged to look right, check the parts that they read, with the figures.
     _counts_on(s, world, "production")
-    files = s.save(date=DATE)
+    files = roleshadow.save(s, date=DATE)
     readiness = s.readiness()
     assert readiness["reached"] == "checked against the database"
     assert {v for v, p in readiness["parts"].items() if p["reached"] == "checked against the database"} == set(rolemap.views())
@@ -799,7 +801,7 @@ def test_the_saved_schema_names_the_state_each_part_has_reached_and_never_calls_
     # A change to the codes after the counts were written leaves the readings unchecked until the counts are run again,
     # and the view says why, binding by binding.
     s.choose_codes("role_reading.kind", {"52": "map_arterial", "51": "map_cuff"}, DATE)
-    s.save(date=DATE)
+    roleshadow.save(s, date=DATE)
     assert s.readiness()["reached"] == "runs" and s.readiness()["parts"]["role_patient"]["reached"] == "checked against the database"
     stale = [e for e in s.view()["stale"] if e["subject"] == "role_reading.value" and e["dimension"] == "reconciled"]
     assert stale and stale[0]["reasons"] == ["the codes changed"]
@@ -893,7 +895,7 @@ def test_the_scoreboard_says_how_the_proposals_fared_and_names_no_table_or_colum
     out = io.StringIO()
     from contextlib import redirect_stdout
     with redirect_stdout(out):
-        rolemap.main(["scoreboard", str(saved)])
+        rolemap_main.main(["scoreboard", str(saved)])
     assert out.getvalue() == text + ("Schemalyser has written the counts alone to scoreboard-summary.md, beside the saved "
                                      "schema. Once you have read that file, you may show it to the developer's model.\n")
     # The command writes the scoreboard's summary beside the saved schema, with the same counts.
@@ -915,7 +917,7 @@ def test_an_assessment_of_the_recording_pathways_is_recorded_on_each_part_with_i
     s.version = "test"
     s.load_dictionary(DICTIONARY.read_bytes(), TABLES.read_bytes(), {}, "invented-dictionary.csv", "invented-tables.csv")
     s.propose(date=DATE)
-    s.save(DATE)
+    roleshadow.save(s, DATE)
     request = _coverage_request(s)
     result = ("part\tperiod_from\tperiod_to\tpathways_found\tpathways_mapped\tnote\n"
               "role_patient\t2024-01-01\t2024-12-31\t1\t1\tOne register of patients.\n"
@@ -988,7 +990,7 @@ def test_the_view_gives_each_step_its_state_and_the_step_that_comes_next():
 def test_step_9_is_done_once_saved_complete_and_stale_once_anything_changes_after():
     s = fresh()
     assert s.view()["steps"]["9"]["saved"] is None
-    s.save(DATE)
+    roleshadow.save(s, DATE)
     held = s.view()["steps"]["9"]
     assert held["saved"] == "current" and held["draft"] and held["state"] == "available"
     s.confirm("role_patient.birth_date", "yes", date=DATE)
@@ -1030,7 +1032,7 @@ def test_the_time_zone_records_whether_a_person_gave_it_or_the_page_proposed_it(
     s.set_settings(time_zone="Australia/Sydney", daylight_saving=True, time_zone_from="proposed from this computer")
     assert s.view()["settings"]["time_zone_from"] == "proposed from this computer"
     again = describe.Describe()
-    again.restore(s.save(DATE))
+    again.restore(roleshadow.save(s, DATE))
     assert again.settings["time_zone_from"] == "proposed from this computer"
     s.set_settings(time_zone="UTC")
     assert s.view()["settings"]["time_zone_from"] == "a person"
@@ -1044,10 +1046,10 @@ def test_the_command_line_walks_the_page_s_calls_and_goes_on_past_a_refused_one(
         {"call": "describe_confirm", "request": {"about": "role_patient.birth_date", "answer": "yes"}},
     ]}
     (tmp_path / "calls.json").write_text(json.dumps(calls))
-    assert describe.main(["walk", str(tmp_path / "calls.json"), "--out", str(tmp_path / "out")]) == 0
+    assert describe_main.main(["walk", str(tmp_path / "calls.json"), "--out", str(tmp_path / "out")]) == 0
     (saved,) = (tmp_path / "out").glob("hospital-schema-*.schemalyser.zip")
     restored = describe.Describe()
     restored.restore(describe._read_saved(saved))
     assert [c["answer"] for c in restored.confirmations if c["attribute"] == "role_patient.birth_date"] == ["yes"]
     (tmp_path / "bad.json").write_text(json.dumps({"calls": [{"call": "describe_nothing"}]}))
-    assert describe.main(["walk", str(tmp_path / "bad.json")]) == 1
+    assert describe_main.main(["walk", str(tmp_path / "bad.json")]) == 1

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from schemalyser import capability, rolemap, rolepolicy
+from schemalyser import capability, rolemap, rolepolicy, roleshadow
 from schemalyser.translate import to_duckdb
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
@@ -18,7 +18,7 @@ NEONATAL = {"kinds": [["map_arterial", 1], ["map_cuff", 2]], "direction": "below
 
 def _run(name, parameters, rows=None, con=None):
     """The capability filled with its parameters and run on a role shadow: (columns, rows)."""
-    con = con or rolemap.role_shadow(seed=1, anaesthetics=0, with_planted=False, extra=rows)
+    con = con or roleshadow.role_shadow(seed=1, anaesthetics=0, with_planted=False, extra=rows)
     statements = to_duckdb(capability.fill(name, parameters))
     assert len(statements) == 1
     cursor = con.execute(statements[0])
@@ -74,8 +74,8 @@ def test_each_capability_gives_the_held_out_answers_on_its_planted_cases(name):
 def test_the_neonatal_audit_is_the_first_instance_of_hypotension_burden():
     # On the role shadow with the planted neonates and four hundred generated anaesthetics, the capability with the
     # audit's settings gives the same minutes below 40 for every anaesthetic that the audit counts, and for no other.
-    con = rolemap.role_shadow(seed=1, anaesthetics=400)
-    audit = rolemap.per_anaesthetic(rolemap.duckdb_runner(con))
+    con = roleshadow.role_shadow(seed=1, anaesthetics=400)
+    audit = roleshadow.per_anaesthetic(roleshadow.duckdb_runner(con))
     _, rows = _run("hypotension_burden", NEONATAL, con=con)
     banded = {str(key): minutes for key, _, threshold, _, minutes in rows if threshold is not None}
     assert set(banded) == set(audit) and len(audit) > 20

@@ -15,22 +15,25 @@
 "schemalyser.catalogue" = { layer = "shared" }
 "schemalyser.extract" = { layer = "shared", note = "Safe reading of files, and the finding of facts in a request, which the synthetic world's analysis (harness.py) and the release's list of the source columns that the steps read (release.py) both use. It knows nothing of any layer." }
 "schemalyser.statements" = { layer = "shared" }
-"schemalyser.translate" = { layer = "shared", note = "The DuckDB translation is layer 4's work, but layer 2's test of a correction on made-up rows uses it as well." }
+"schemalyser.translate" = { layer = "shared", note = "The DuckDB translation is layer 4's work, but the first ask of the hospital schema (layer 2) and the conversion's format and routes (layer 3) read its names of the OMOP schema as well." }
 "schemalyser.memo" = { layer = "shared" }
-"schemalyser.blanking" = { layer = "shared", note = "The blanking of small counts in a result, which the compiled audit (audit.py) and the query compiled through a map (rolemap.py) both use." }
+"schemalyser.blanking" = { layer = "shared", note = "The blanking of small counts in a result, which the two-part script and the query compiled through a map (compiler.py) both use." }
 "schemalyser.vocabulary" = { layer = "shared" }
+"schemalyser.selects" = { layer = "shared", note = "The rule that a text of T-SQL is one SELECT that only reads, which the release script (layer 3), the map's own checks (layer 2) and the compilation of a question (layer 3) all apply. It reads T-SQL and nothing else." }
+"schemalyser.datadict" = { layer = "shared", note = "The reader of a data dictionary file, which the hospital schema (layer 2) and the reference adapter's transplant both read. It imports only the shared tier and knows nothing of any layer: it reads a plain table of tables, columns and descriptions." }
 "schemalyser.summaries" = { layer = "shared", note = "By its purpose it is orchestration, but the reference adapters that write two of the three named summaries may import only layers 1 and 3 and the shared tier, and the scoreboard sits in layer 2, so the exporters import nothing from the package and take each output as data." }
 
-"schemalyser.rolemap" = { layer = "2", note = "It loads contract.json (layer 1), reads and writes maps (layer 2), compiles an audit through a map (layer 3) and builds the role-level shadow (layer 4). Layer 2 is where the most of it sits." }
+"schemalyser.rolemap" = { layer = "2", note = "It loads contract.json (layer 1) and reads and writes maps (layer 2). The compilation of a query through a map is compiler.py's, the role-level shadow is roleshadow.py's, and the command line is rolemap/__main__.py's." }
 "schemalyser.describe" = { layer = "2", note = "The saved hospital schema and every operation that writes it; it is also the core behind the Describe screen." }
 "schemalyser.propose" = { layer = "2" }
-"schemalyser.corrections" = { layer = "2" }
-"schemalyser.datadict" = { layer = "2" }
+"schemalyser.corrections" = { layer = "2", note = "The correction forms and how they are written into the map. The shadow on which a correction is tested is roleshadow.py's." }
 "schemalyser.first_ask" = { layer = "2" }
 "schemalyser.evidence" = { layer = "2", note = "The append-only journal, the dimensions records and the identity of each saved version." }
 "schemalyser.normalise" = { layer = "2", note = "The named normalisations of the map, written and read at the file's boundary." }
 
 "schemalyser.feasibility" = { layer = "3" }
+"schemalyser.compiler" = { layer = "3", note = "Compilation through a hospital schema: a query over the roles compiled with a map into one statement, and an audit compiled into the two-part script, with its specification." }
+"schemalyser.conversion" = { layer = "3", note = "The conversion folder's format: conversion.json, its steps, layers, routes and alternatives, the custom tables, the counts, the draft marker and the held-out root, which the runner, the release script and the transplant all read." }
 "schemalyser.policy" = { layer = "3" }
 "schemalyser.rolepolicy" = { layer = "3" }
 "schemalyser.release" = { layer = "3" }
@@ -40,7 +43,8 @@
 "schemalyser.specification" = { layer = "3", note = "The first stage of compilation: a specification of an export into SQL over the roles." }
 
 "schemalyser.testbed" = { layer = "4" }
-"schemalyser.convert" = { layer = "4", note = "It runs a conversion over the synthetic database and checks what it writes, which is layer 4's; it also defines the conversion folder's format, which release.py takes from it." }
+"schemalyser.convert" = { layer = "4", note = "It runs a conversion over the synthetic database and checks what it writes. The conversion folder's format is conversion.py's, which it reads by the same names as before." }
+"schemalyser.roleshadow" = { layer = "4", note = "The role-level shadow with its planted cases, the map's shadow on which a hospital schema and a correction are tested, the hospital run of a world, and the correctness report of an execution package. It runs the test that a sitting of screen 1 owes and hands the result back to the sitting as data." }
 "schemalyser.harness" = { layer = "4", note = "The synthetic world: the analysis of its requests, the checks that its stand-in database answers and the script that writes them, which the conversion's run and the SQL Server harness both use." }
 "schemalyser.sample_vocabulary" = { layer = "4", note = "A few public concepts for the fast profile, which the testbed and the SQL Server harness both write." }
 "schemalyser.hospital" = { layer = "4" }
@@ -51,13 +55,15 @@
 "schemalyser.rules" = { layer = "4", note = "The site rules file, which only the synthetic world reads." }
 "schemalyser.realism.build_data" = { layer = "4" }
 
-"schemalyser.audit" = { layer = "orchestration", note = "It assembles the execution package. compile_audit, script and specification are layer 3's compilation and could move to a module of their own." }
+"schemalyser.audit" = { layer = "orchestration", note = "It assembles the execution package from layer 3's compilation (compiler.py) and reports, and reads the correctness report that the role shadow (roleshadow.py) writes into the package." }
 "schemalyser.plan" = { layer = "orchestration", note = "The plan review is one of the package's contents, and it takes its wording from audit.py." }
 "schemalyser.project" = { layer = "orchestration", note = "The project folder, which the workbench and the import from the public workspace both use; it reads the version from audit.py and checks a schema with feasibility.py." }
 "schemalyser.workspace" = { layer = "orchestration", note = "The export is a projection rather than a layer, and the import builds a package in a hospital's project, so it sits with the package assembler." }
 "schemalyser.results" = { layer = "orchestration", note = "The results package, written from an execution package and a production run's output; it stays inside the hospital." }
 
 "schemalyser.browser" = { layer = "5" }
+"schemalyser.describe.__main__" = { layer = "5", note = "The command line of the hospital schema, which python -m schemalyser.describe runs, with the walk of the page's calls." }
+"schemalyser.rolemap.__main__" = { layer = "5", note = "The command line of the roles and the maps, which python -m schemalyser.rolemap runs." }
 "schemalyser.workbench" = { layer = "5" }
 "schemalyser.workbench.__main__" = { layer = "5" }
 "schemalyser.workbench.app" = { layer = "5" }

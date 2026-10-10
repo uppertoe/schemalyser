@@ -39,22 +39,7 @@ OUTSIDE = ("tools", "site")
 # An edge is one module importing another, wherever in the module the import sits. Remove an entry once its fix lands;
 # the test fails while a listed edge no longer exists, so that the list only shrinks.
 KNOWN_DEBTS = [
-    ("schemalyser.release", "schemalyser.convert", "layer 3 may not import from layer 4",
-     "Put the conversion folder's format (its fields, layers, counts and mapping rows) in a layer 3 module that both "
-     "release.py and convert.py import."),
-    ("schemalyser.rolemap", "schemalyser.release", "layer 2 may not import from layer 3",
-     "Move _single_select, which both modules use to check a single SELECT, into the shared tier."),
-    ("schemalyser.rolemap", "schemalyser.convert", "layer 2 may not import from layer 4",
-     "Move rolemap's world shadow (hospital_run) to a layer 4 module."),
-    ("schemalyser.rolemap", "schemalyser.harness", "layer 2 may not import from layer 4",
-     "Move rolemap's command line, whose shadow command builds a world, to layer 4."),
-    ("schemalyser.describe", "schemalyser.hospital", "layer 2 may not import from layer 4",
-     "Have browser.py pass the invented hospital's runner into describe.py, so that describe.py imports nothing below it."),
-    ("schemalyser.compare", "schemalyser.datadict", "reference adapters import from layers 1 and 3 only",
-     "Have compare.py read the data dictionary that datadict.py writes as a file."),
-    ("schemalyser.transplant", "schemalyser.convert", "reference adapters import from layers 1 and 3 only",
-     "Have transplant.py read the conversion folder that convert.py's format describes as files, through the layer 3 "
-     "module that will hold that format."),
+    # Empty since phase 6a of 10 October 2026 paid the seven debts of 9 October (C1 and C2 of docs/alignment.md).
 ]
 
 # The edges from an active module to a superseded one, as (importer, superseded module, the planned fix). Remove an
@@ -371,15 +356,7 @@ def test_the_known_debts_only_shrink():
 
 # The entries of each list on 9 October 2026. A debt that is paid is removed from its list and from here; nothing is
 # ever added here, so that a list that has grown fails the test below.
-PINNED_KNOWN_DEBTS = {
-    ("schemalyser.release", "schemalyser.convert"),
-    ("schemalyser.rolemap", "schemalyser.release"),
-    ("schemalyser.rolemap", "schemalyser.convert"),
-    ("schemalyser.rolemap", "schemalyser.harness"),
-    ("schemalyser.describe", "schemalyser.hospital"),
-    ("schemalyser.compare", "schemalyser.datadict"),
-    ("schemalyser.transplant", "schemalyser.convert"),
-}
+PINNED_KNOWN_DEBTS = set()
 PINNED_SUPERSEDED_DEBTS = set()
 PINNED_DEBTS_THROUGH_SUPERSEDED = set()
 

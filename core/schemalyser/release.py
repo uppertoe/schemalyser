@@ -29,7 +29,7 @@ layer's other tables and publishes as a view of its own rows. tables.json is che
 as a step: a plain name that is not a table of CDM 5.4, a type from a short fixed list, and
 descriptions without a line break or $(.
 
-Every step records its route in conversion.json (convert.route_problems). The script refuses a direct step that
+Every step records its route in conversion.json (conversion.route_problems). The script refuses a direct step that
 does not record the reference it rests on, the reason it takes that route, and the review that accepted it, naming
 the step, and it refuses a folder that draft.json marks as a draft. Its header states how many of the anaesthesia
 steps it carries are written over the roles and how many directly from the source tables, and each step's comment
@@ -40,7 +40,7 @@ schema as the audit path compiles a question (compile_roles_step): each view tha
 expression ahead of the step's own, written from the schema's SELECT over the hospital's tables or from its translation
 of the local codes, and the script carries the result as the step's text, so that the same artefact runs on the
 testbed and on SQL Server. The hospital schema is given with --schema, or is the map folder beside the conversion
-folder (convert.hospital_schema). Without one, the script refuses a step over the roles by name. A step over the roles
+folder (conversion.hospital_schema). Without one, the script refuses a step over the roles by name. A step over the roles
 that waits beside a direct step as its roles_step, or is offered as an alternative, is checked for what it reads and
 what it writes.
 
@@ -63,14 +63,15 @@ from pathlib import Path
 
 import sqlglot
 from sqlglot import exp
-from sqlglot.tokens import TokenType
 
 from .catalogue import Catalogue
 from . import policy
-from .convert import (COUNT_MARK, FIELDS, IDENTIFIER_OFFSET, LAYERS, ROLES_STEP, RolesStepError, TablesError, alternatives, as_request,
+from .conversion import (COUNT_MARK, FIELDS, IDENTIFIER_OFFSET, LAYERS, ROLES_STEP, RolesStepError, TablesError, alternatives, as_request,
                       check_roles_step, custom_rows, draft_sentence, hospital_schema, layer_problems, read_counts, read_draft,
                       read_tables, route_of, route_problems)
 from .extract import analyse_request, decode
+from .selects import (QUOTED_TOKENS, REFUSED_NODES, REFUSED_WORDS, VARIABLE_TOKENS, Refused, _single_select,  # noqa: F401
+                      check_text)
 from .translate import OMOP_SCHEMA
 
 SETTINGS = {
@@ -163,20 +164,8 @@ SCHEMA_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
 COLUMN_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
 SOURCE_PREFIX = re.compile(r"([A-Za-z_][A-Za-z0-9_]*\.){1,3}")
 FILE_NAME = re.compile(r"[A-Za-z0-9_.-]+")
-# Functions that reach another server or run text as SQL. A step or a gate may name none of them.
-REFUSED_WORDS = {"OPENQUERY", "OPENROWSET", "OPENDATASOURCE", "OPENXML", "EXEC", "EXECUTE", "SP_EXECUTESQL", "XP_CMDSHELL"}
-# Statements and clauses that change something. A step or a gate may hold none of them.
-REFUSED_NODES = tuple(getattr(exp, name) for name in (
-    "Insert", "Update", "Delete", "Merge", "Drop", "Create", "TruncateTable", "Alter", "Command", "Into", "Execute", "Use")
-    if hasattr(exp, name))
-VARIABLE_TOKENS = {getattr(TokenType, name) for name in ("PARAMETER", "SESSION_PARAMETER") if hasattr(TokenType, name)}
-QUOTED_TOKENS = {TokenType.STRING, TokenType.NATIONAL_STRING, TokenType.IDENTIFIER}
 # A line that sqlcmd would read as a command of its own, and not as T-SQL.
 SQLCMD_LINE = re.compile(r"\s*(GO\b|:|!!)", re.IGNORECASE)
-
-
-class Refused(ValueError):
-    """Something in the conversion folder or the settings cannot go into a release script."""
 
 
 def _fields():
@@ -214,42 +203,6 @@ def check_column(name, where):
     if not isinstance(name, str) or not COLUMN_NAME.fullmatch(name):
         raise Refused(f"{where}: an output column must be named with letters, digits and underscores, beginning with a letter or an underscore")
     return name
-
-
-def check_text(value, where):
-    """Refuses text that could carry a sqlcmd command or variable: a line break, or $(."""
-    if "\r" in value or "\n" in value or "$(" in value:
-        raise Refused(f"{where}: a value may not hold a line break or $(, which sqlcmd would read as a command or a variable")
-    return value
-
-
-def _single_select(sql, where):
-    """The parsed tree of one SELECT, or of a union of SELECTs, after every rule that keeps a script safe."""
-    try:
-        tokens = sqlglot.tokenize(sql, dialect="tsql")
-        trees = [tree for tree in sqlglot.parse(sql, dialect="tsql") if tree is not None]
-    except sqlglot.errors.SqlglotError as error:
-        raise Refused(f"{where}: the SQL cannot be read ({str(error).splitlines()[0]})") from None
-    for token in tokens:
-        check_text(token.text, where)
-        if token.token_type in VARIABLE_TOKENS or token.text.startswith("@"):
-            raise Refused(f"{where}: a step or a gate may not use a variable")
-        if token.token_type not in QUOTED_TOKENS and token.text.upper() in REFUSED_WORDS:
-            raise Refused(f"{where}: a step or a gate may not use {token.text.upper()}")
-    if len(trees) != 1:
-        raise Refused(f"{where}: a step or a gate must be exactly one statement, and this holds {len(trees)}")
-    tree = trees[0]
-    selects = [tree] if isinstance(tree, exp.Select) else list(tree.find_all(exp.Select)) if isinstance(tree, exp.SetOperation) else []
-    if not selects or (isinstance(tree, exp.SetOperation) and any(
-            not isinstance(side, (exp.Select, exp.SetOperation, exp.Subquery)) for node in tree.find_all(exp.SetOperation)
-            for side in (node.this, node.expression))):
-        raise Refused(f"{where}: a step or a gate must be one SELECT, or a union of SELECTs")
-    for node in tree.walk():
-        if isinstance(node, REFUSED_NODES) or (isinstance(node, exp.Select) and node.args.get("into")):
-            raise Refused(f"{where}: a step or a gate may only read, and this one holds {node.key.upper()}")
-        if isinstance(node, exp.Table) and not isinstance(node.this, exp.Identifier) and node.this is not None:
-            raise Refused(f"{where}: a table may be named with at most three parts, and may not be a function")
-    return tree
 
 
 def rewrite(sql, written, table=None, where="step", fields=None):
@@ -303,7 +256,7 @@ def read_schema(folder, schema=None, catalogue=None):
     """The hospital schema through which the steps over the roles are compiled, as rolemap.read_map gives it, or None.
 
     schema is a map folder, or a map already read; without one, the map folder beside the conversion folder is used
-    where there is one (convert.hospital_schema). catalogue, when given, is a Catalogue or its text, and every table and
+    where there is one (conversion.hospital_schema). catalogue, when given, is a Catalogue or its text, and every table and
     column that a role view names must be in it. Raises Refused when the map breaks a rule of the contract."""
     from . import rolemap
     if isinstance(schema, dict):
@@ -579,7 +532,7 @@ def _mapping_rows(rows, fields, own):
 
 def _folder_mappings(folder):
     """The folder's mapping rows, with the site's confirmed rows added, as the conversion runner loads them."""
-    from .convert import mapping_dicts
+    from .conversion import mapping_dicts
     return mapping_dicts(folder)
 
 
@@ -685,8 +638,8 @@ def _insert(step, sql, written, fields, own, offset):
 
 
 def route_summary(folder):
-    """The routes of the anaesthesia steps that the release script carries, as convert.route_shares gives them."""
-    from .convert import route_shares
+    """The routes of the anaesthesia steps that the release script carries, as conversion.route_shares gives them."""
+    from .conversion import route_shares
     steps = json.loads((Path(folder) / "conversion.json").read_text())
     return route_shares(steps, layers=(LAYERS[1],))
 

@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from schemalyser import policy, rolemap, rolepolicy, specification
+from schemalyser import policy, rolemap, rolepolicy, roleshadow, specification
 from schemalyser.translate import to_duckdb
 
 FIXTURES = rolemap.MODEL.parents[2] / "fixtures" / "export"
@@ -22,7 +22,7 @@ PAIRS = FIXTURES / "invented-episode-pairs.csv"
 
 @pytest.fixture(scope="module")
 def shadow():
-    con = rolemap.role_shadow()
+    con = roleshadow.role_shadow()
     yield con
     con.close()
 
@@ -43,7 +43,7 @@ def _section(compiled, name):
 
 
 def _planted(view):
-    held = rolemap.planted()[view]
+    held = roleshadow.planted()[view]
     return [dict(zip(held["columns"], row)) for row in held["rows"]]
 
 

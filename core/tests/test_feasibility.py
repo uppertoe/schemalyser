@@ -10,7 +10,7 @@ import re
 
 import pytest
 
-from schemalyser import describe, feasibility, rolemap
+from schemalyser import describe, feasibility, rolemap, roleshadow
 from test_describe import DATE, DICTIONARY, TABLES, tables_result
 
 AUDIT = rolemap.AUDIT.read_text(encoding="utf-8")
@@ -45,7 +45,7 @@ def saved(tmp_path_factory):
             s.read_count(query["name"], COUNTS[query["name"]], DATE)
             s.judge_count(query["name"], "yes", "", DATE)
     path = tmp_path_factory.mktemp("schema") / "hospital-schema.schemalyser.zip"
-    path.write_bytes(s.save_zip(DATE))
+    path.write_bytes(roleshadow.save_zip(s, DATE))
     return path
 
 
@@ -258,7 +258,7 @@ def test_a_translation_by_a_person_moves_a_mapping_view_and_one_from_a_reference
                                                    {"code": "S42.4", "concept_id": 0, "status": "unmapped", "provenance": "a person"}],
                          date=DATE)
     path = tmp_path / "schema.zip"
-    path.write_bytes(s.save_zip(DATE))
+    path.write_bytes(roleshadow.save_zip(s, DATE))
     schema = feasibility.Schema.load(path)
     sql = "-- capability: principal_diagnosis\n-- capability: exposure_intervals\nSELECT a.anaesthetic_key FROM role_anaesthetic a\n"
     found = feasibility.assess(schema, sql, "two.sql")
@@ -342,6 +342,6 @@ def test_an_assessment_is_read_for_the_question_s_period_and_says_what_it_found(
     # A change to the pathways that the hospital schema maps for the part leaves the assessment stale.
     _, s = _assessed(saved)
     s.confirm("role_patient rows", "no", "PERSON_MASTER_2", date=DATE)
-    stale = feasibility.assess(feasibility.Schema(s.save(DATE)), BIRTHS, "births.sql")
+    stale = feasibility.assess(feasibility.Schema(roleshadow.save(s, DATE)), BIRTHS, "births.sql")
     assert stale["coverage"]["parts"][0]["state"] == feasibility.COVERAGE_STALE
     assert stale["coverage"]["parts"][0]["assessments"][0]["stale"] == ["the pathways changed"]

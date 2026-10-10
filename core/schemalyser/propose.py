@@ -1150,7 +1150,7 @@ def _literal(text):
 
 def plan(column, binding, codes=None):
     """What a view does with the column that a binding names, as a small description that both the SQL writer
-    (render) and the check's model of the binding (corrections.evaluate) read, so that the two cannot drift apart.
+    (render) and the check's model of the binding (roleshadow.evaluate) read, so that the two cannot drift apart.
 
     It is a tuple whose first item names the operation: raw, date, float, int, const, flag_in, kind, derive_flag,
     scale, trim, key, held_text or local_key, with the operation's own settings after it. local_key gives each code that

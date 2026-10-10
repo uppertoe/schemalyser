@@ -3,8 +3,8 @@
 The lineage (compare.py) says, for each OMOP table that a reference conversion writes, which source tables it reads,
 how it joins them, which columns its filters test, and which source columns and expression shape fill each field, with
 every literal replaced by its type. This module writes one step file for each of those tables that follows the
-conventions of convert.py: one SELECT in T-SQL, naming its columns as the OMOP fields, which reads the source tables
-and the OMOP tables already written as omop.<table>.
+conventions of the conversion folder (conversion.py): one SELECT in T-SQL, naming its columns as the OMOP fields, which
+reads the source tables and the OMOP tables already written as omop.<table>.
 
     python -m schemalyser.compare transplant --lineage lineage.json --dictionary DICT.csv --out FOLDER
                                              [--tables TABLES.csv] [--targets T1,T2] [--existing CONVERSION]
@@ -61,13 +61,15 @@ from pathlib import Path
 import sqlglot
 from sqlglot import exp
 
-from . import convert, summaries
+from . import summaries
+from .conversion import CORE_ONLY_TABLES, DRAFT_FILE as _DRAFT_FILE, _definitions, cdm_fields
+from .translate import OMOP_SCHEMA
 
 REPORT_FORMAT = "schemalyser-transplant/1"
 DECISIONS_FILE = "decisions.json"
 CATALOGUE_FILE = "catalogue.csv"
 REPORT_FILE = "transplant-report"
-DRAFT_FILE = convert.DRAFT_FILE
+DRAFT_FILE = _DRAFT_FILE
 SUFFIX = "_from_reference"
 TEXT_LENGTH = 50
 LITERAL = re.compile(r"<(int|str|float)>")
@@ -182,13 +184,13 @@ def _is_base(name):
 # What the CDM says of each table.
 
 def _fields():
-    return {table: [(name, required, kind) for name, required, kind in fields] for table, fields in convert.cdm_fields().items()}
+    return {table: [(name, required, kind) for name, required, kind in fields] for table, fields in cdm_fields().items()}
 
 
 def _keys():
     """The primary key field of each table of CDM 5.4, and the table that each such field identifies."""
     keys = {}
-    for row in convert._definitions():
+    for row in _definitions():
         if row["primary_key"] == "Y":
             keys[row["table"]] = row["field"]
     owners = {field: table for table, field in keys.items()}
@@ -506,7 +508,7 @@ class _Step:
             on = " AND ".join(f"{aliases[table]}.{c} = {aliases[parent]}.{p}" for p, c in columns)
             joins.append(f"{kind} {table} {aliases[table]} ON {on}")
         for table, (alias, column, needed_) in lookup_joins.items():
-            joins.append(f"{'JOIN' if needed_ else 'LEFT JOIN'} {convert.OMOP_SCHEMA}.{table} {alias} ON "
+            joins.append(f"{'JOIN' if needed_ else 'LEFT JOIN'} {OMOP_SCHEMA}.{table} {alias} ON "
                          f"{alias}.{SOURCE_VALUES[table]} = CAST({column} AS varchar({TEXT_LENGTH}))")
         header = [WORDING["header"].format(target=self.target.upper(), date=self.date)]
         if self.reasons:
@@ -629,7 +631,7 @@ class _Step:
 def _order(targets, needs):
     """The targets in the order in which they can run: the core's tables first, each after the tables it looks up."""
     def layer(t):
-        return "core" if t in convert.CORE_ONLY_TABLES else "anaesthesia"
+        return "core" if t in CORE_ONLY_TABLES else "anaesthesia"
     rank = {t: (0 if layer(t) == "core" else 1, CORE_ORDER.index(t) if t in CORE_ORDER else len(CORE_ORDER), t) for t in targets}
     done, order = set(), []
     pending = sorted(targets, key=lambda t: rank[t])
@@ -742,7 +744,7 @@ def transplant(lineage, dictionary, out, targets=None, existing=None, date=None,
     report_targets = []
     for target in order:
         step = steps[target]
-        layer = "core" if target in convert.CORE_ONLY_TABLES else "anaesthesia"
+        layer = "core" if target in CORE_ONLY_TABLES else "anaesthesia"
         kept_step = next((s for s in conversion if str(s.get("table", "")).lower() == target), None)
         file = f"{target}{SUFFIX}.sql" if kept_step is not None else f"{target}.sql"
         entry = {"target": target, "file": file if step.sql else None, "layer": layer,

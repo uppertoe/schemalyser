@@ -22,10 +22,17 @@ they settle is written to the hospital folder:
     settings.json                   the version's identity (schema_id, a hash of the other files' contents, and the
                                     parent_id of the version it was made from), the time of the save, the contract's
                                     version and the hash of each of its parts, the dates, the database, the year of the
-                                    lists and the time zone of the database's clocks
+                                    lists and the time zone of the database's clocks, and test_owed where the hospital
+                                    schema has changed since its last test on made-up rows
 
 Each save is a new immutable version. The readiness of each part (runs, checked against the database, clinically
 validated) is never stored: readiness() derives it from the dimensions whenever it is asked for.
+
+The test on made-up rows is layer 4's work, the role shadow's (roleshadow.py). The sitting records what the test found,
+given to it as data (record_baseline, record_check and test), and never runs the test itself. The page's bridge and the
+command line (describe/__main__.py) hand the sitting to the role shadow wherever a test is owed, so that a save, a
+correction's check and keep and the check of the map do what they did when the sitting ran the test. A save made while
+the test is owed says so in settings.json.
 
 The dictionary is licensed. It is read here, in the browser's worker or on the hospital's own machine, and nothing
 from it leaves except into the hospital folder: map.json quotes it as evidence, and the dictionary's own files are
@@ -46,13 +53,12 @@ import hashlib
 import re
 import secrets
 import tempfile
-import time
 import zipfile
 from pathlib import Path
 
-from . import corrections, datadict, evidence, first_ask, normalise, propose, rolemap
-from .catalogue import NAME, QUERY_ORDER, Catalogue, CatalogueError
-from .evidence import COMPLETE, INFERENCE, METADATA, NOT_RECORDED, PERSON, SAMPLE, TOOL
+from .. import corrections, datadict, evidence, first_ask, normalise, propose, rolemap
+from ..catalogue import NAME, QUERY_ORDER, Catalogue, CatalogueError
+from ..evidence import COMPLETE, INFERENCE, METADATA, NOT_RECORDED, PERSON, SAMPLE, TOOL
 
 # A table of at least this many rows is marked as large, and no count on this screen reads it in full.
 LARGE = 10_000_000
@@ -190,6 +196,8 @@ WORDING = {
     "row_new": "The row {key} is in the new result and was not in the earlier one.",
     "count_changed": "{column} of the row {key} was {before} and is now {after}, a change of more than a tenth.",
     "keep_failing": "This change fails the test on made-up rows, so Schemalyser keeps it only if the database analyst ticks Keep it although the test fails and gives the reason.",
+    "test_owed": "The hospital schema has changed since Schemalyser last tested it on made-up rows, and Schemalyser records the result once that test has run.",
+    "check_owed": "Schemalyser has not yet tested this change on made-up rows, so it keeps the change only once that test has run.",
     "no_probe": "Schemalyser offers no test query for this kind of change.",
     "values_comment": "Part 2 lists the commonest values of {column} among the rows of the anaesthetics in #cohort, at most {most}, with the number of rows that hold each, rounded down to ten and left empty under ten.",
     "values_safe": "This query lists the commonest values of {column}, at most {most}, with the number of rows that hold each, rounded down to ten and left empty under ten. It returns at most {most} rows and reads no table of readings. It reads each of these tables once: {tables}.",
@@ -324,7 +332,7 @@ def _text(data):
         return None
     if isinstance(data, str):
         return data
-    from .extract import decode
+    from ..extract import decode
     return decode(bytes(data))
 
 
@@ -1084,11 +1092,25 @@ class Describe:
         corrections.apply(trial, built, {"answer": "no", "date": _today()})
         return {"sentence": built["sentence"], "sql": trial.view_sql(built["view"]), "view": built["view"]}
 
+    # The test on made-up rows. The role shadow (roleshadow.py, layer 4) runs it, and hands what it found back to the
+    # sitting as data through record_baseline and record_check; the sitting records the result and never runs the test.
+
+    def baseline_owed(self):
+        """Whether the sitting holds no test on made-up rows of the map as it stands."""
+        return self._baseline is None or self._baseline[0] != corrections.fingerprint(self)
+
+    def record_baseline(self, found):
+        """Records found, what roleshadow.run_check found of the map as it stands, as the test of the map now."""
+        self._baseline = (corrections.fingerprint(self), found)
+
     def _baseline_check(self):
-        mark = corrections.fingerprint(self)
-        if self._baseline is None or self._baseline[0] != mark:
-            self._baseline = (mark, corrections.run_check(self))
+        if self.baseline_owed():
+            raise DescribeError(WORDING["test_owed"])
         return self._baseline[1]
+
+    def test_owed(self):
+        """Whether the hospital schema has changed since its last test on made-up rows, so that a save owes one."""
+        return self.data is not None and self._tested != self._test_mark()
 
     def check_model(self, date=None):
         """The check of the map as it stands, with no change, which the journal records as a test run."""
@@ -1106,9 +1128,9 @@ class Describe:
         return evidence.digest([roles, kinds, {k: v.get("chosen") for k, v in self.codes.items()}])
 
     def test(self, date=None, found=None):
-        """Runs the test on made-up rows of the map as it stands, or records found, a test of the map as it stands
-        that has just been run, and sets the tested dimension of every binding, link and code translation from it.
-        Returns the journal entry of the run."""
+        """Records the test on made-up rows of the map as it stands, which is found where given and otherwise the test
+        that record_baseline last recorded, and sets the tested dimension of every binding, link and code translation
+        from it. Returns the journal entry of the run."""
         date = date or _today()
         found = found or self._baseline_check()
         contract = [v for v, status in rolemap.statuses().items() if status == "contract"]
@@ -1134,20 +1156,28 @@ class Describe:
         self._tested = mark
         return entry
 
-    def correction_check(self, correction):
-        """Tests a correction on invented rows: the whole map with the change, against the map as it stands."""
+    def correction_trial(self, correction):
+        """A copy of the sitting with the correction applied, on which the role shadow tests the change."""
         built = self._built(correction)
-        began = time.perf_counter()
-        before = self._baseline_check()
         trial = self._clone()
         corrections.apply(trial, built, {"answer": "no", "date": _today()})
-        after = corrections.run_check(trial)
+        return trial
+
+    def record_check(self, correction, after, seconds=None):
+        """Records the test of a correction on invented rows: after is what roleshadow.run_check found of the map with
+        the change (correction_trial), which is reported against the test of the map as it stands. Returns the report."""
+        built = self._built(correction)
+        before = self._baseline_check()
         found = corrections.report(before, after)
         found["sentence_of_change"] = built["sentence"]
-        found["seconds"] = round(time.perf_counter() - began, 1)
+        found["seconds"] = seconds if seconds is not None else found["seconds"]
         self._checked[json.dumps(correction, sort_keys=True)] = found
         self._after[json.dumps(correction, sort_keys=True)] = after
         return found
+
+    def check_recorded(self, correction):
+        """Whether the sitting holds a test of this correction that has not yet been kept."""
+        return json.dumps(correction, sort_keys=True) in self._checked
 
     def correction_keep(self, correction, although=False, reason="", date=None, actor=None):
         """Keeps a correction that has been checked. One that fails its check is kept only with although and a reason,
@@ -1156,7 +1186,9 @@ class Describe:
         date = date or _today()
         built = self._built(correction)
         key = json.dumps(correction, sort_keys=True)
-        found = self._checked.get(key) or self.correction_check(correction)
+        found = self._checked.get(key)
+        if found is None:
+            raise DescribeError(WORDING["check_owed"])
         after = self._after.get(key)
         reason = " ".join((reason or "").split())[:400]
         if not found["passed"] and not (although and reason):
@@ -2287,8 +2319,11 @@ ORDER  BY g.kind;"""
     def run_invented(self, hospital, query, read, **given):
         """Runs a query that the page has offered on the invented hospital, and reads its result exactly as a paste of
         it would be read, recording in the journal that the result came from the invented hospital. read names the
-        reading: tables, charted (key, year), count (name), values or probe (about). Returns the reading's receipt."""
-        from .hospital import HospitalError
+        reading: tables, charted (key, year), count (name), values or probe (about). Returns the reading's receipt.
+
+        The surface builds the invented hospital (hospital.py) and hands it here, so that this module imports nothing of
+        the test worlds. Its grid(sql) gives the result as the results grid copies it, and raises a ValueError, which
+        may name the table that the query reads and the invented hospital does not hold, where it cannot run the query."""
         if not self.invented or hospital is None:
             raise DescribeError(WORDING["invented_only"])
         sql = self.queries.get(query)
@@ -2296,7 +2331,7 @@ ORDER  BY g.kind;"""
             raise DescribeError(WORDING["invented_not_offered"])
         try:
             text = hospital.grid(sql)
-        except HospitalError as error:
+        except ValueError as error:
             missing = getattr(error, "table", None)
             raise DescribeError(WORDING["invented_missing"].format(table=missing) if missing
                                 else WORDING["invented_failed"]) from None
@@ -2697,6 +2732,9 @@ ORDER  BY g.kind;"""
             lineage.append(parent)
         settings.update({"schema_id": schema_id, "content_sha256": content, "parent_id": parent, "lineage": lineage,
                          "saved": evidence.now(), "contract": self.contract_record()})
+        if self.test_owed():
+            # The hospital schema has changed since its last test on made-up rows, and the file says that the test is owed.
+            settings["test_owed"] = True
         files["settings.json"] = self._json(settings, date)
         files["README.md"] = readme(sorted(files), self.version, date, kept, training, unfinished,
                                     self.untranslated() if self.data is not None else [], self.invented,
@@ -2708,11 +2746,10 @@ ORDER  BY g.kind;"""
         return _zipped(self.folder_files(date))
 
     def save(self, date=None):
-        """Saves a new version: the test on made-up rows is run first where the hospital schema has changed since the
-        last test, which the journal records as a test run of its own, and the files are then written and become the
-        version that the sitting carries on from. Returns {path: bytes}."""
-        if self.data is not None and self._tested != self._test_mark():
-            self.test(date)
+        """Saves a new version: the files are written and become the version that the sitting carries on from. Where
+        the hospital schema has changed since its last test on made-up rows, the test is owed, and settings.json says so;
+        roleshadow.save runs the owed test first, which the journal records as a test run of its own, as the page and
+        the command line do. Returns {path: bytes}."""
         files = self.folder_files(date)
         settings = json.loads(files["settings.json"])
         self.identity = {"schema_id": settings["schema_id"], "parent_id": settings["parent_id"], "lineage": settings["lineage"]}
@@ -3673,15 +3710,7 @@ def readme(paths, version, date, kept, training=(), unfinished="", untranslated=
     return "\n".join(lines)
 
 
-# The command line: the evidence import, so that the database analyst's result can enter the hospital schema without
-# the page.
-#
-#     python -m schemalyser.describe import-evidence SCHEMA.zip REQUEST.json RESULT [RESULT ...] [--id REQUEST_ID]
-#                                    [--actor NAME] [--provenance SOURCE] [--out FOLDER]
-#
-# REQUEST.json is one request of the feasibility report, or the report itself with --id naming the request. Each RESULT
-# is the result of one of the request's queries, in the order the request lists them, as the results grid copies it.
-# The new version is written beside SCHEMA.zip, or into FOLDER, under the name that carries its schema_id.
+# A saved hospital schema read from its one file or from its folder, as the command line (describe/__main__.py) reads it.
 
 def _read_saved(path):
     path = Path(path)
@@ -3689,177 +3718,3 @@ def _read_saved(path):
         return {item.relative_to(path).as_posix(): item.read_bytes() for item in path.rglob("*") if item.is_file()}
     with zipfile.ZipFile(path) as archive:
         return {name: archive.read(name) for name in archive.namelist() if not name.endswith("/")}
-
-
-def walk(calls, base=".", version="", sitting=None):
-    """Makes the hospital schema from the calls that the page makes of its bridge, in order, so that the command line can
-    do whatever the page does with the same files. Each call is {"call": the bridge function's name without describe_,
-    "request": what the page sends}. A file the page reads is named by "file" (and "tables" beside a dictionary), a
-    pasted result by "text" or by "file", and the invented hospital by "folder" and "catalogue", each relative to base.
-    A call whose input the core refuses changes nothing and the walk goes on, as the page does when it shows the
-    refusal. Returns (the sitting, which the caller saves, and [(the number of each call refused, why)])."""
-    base = Path(base)
-    s = sitting or Describe()
-    s.version = s.version or str(version or "")
-
-    def data(r, key="file"):
-        return (base / r[key]).read_bytes() if r.get(key) else None
-
-    def text(r):
-        return r["text"] if "text" in r else (base / r["file"]).read_text(encoding="utf-8")
-
-    def name(r, key, fallback):
-        return Path(r[key]).name if r.get(key) else fallback
-
-    held = {"hospital": None}
-
-    def hospital(r):
-        # The invented hospital from the folder of its tables and the invented catalogue, as the page publishes them
-        # beside the invented dictionary.
-        from .hospital import HospitalError, InventedHospital, files_from
-        try:
-            held["hospital"] = InventedHospital(files_from(base / r["folder"], base / r["catalogue"]))
-        except (HospitalError, OSError, ValueError, KeyError):
-            raise DescribeError(WORDING["invented_failed"]) from None
-
-    actions = {
-        "dictionary_upload": lambda r: s.upload(data(r), data(r, "tables"), r.get("headings") or {},
-                                                name(r, "file", "dictionary.csv"), name(r, "tables", "tables.csv"),
-                                                r.get("step") or "", data(r, "reference"), name(r, "reference", "lineage.json")),
-        "dictionary": lambda r: s.load_dictionary(data(r), data(r, "tables"), r.get("headings") or {},
-                                                  name(r, "file", "dictionary.csv"), name(r, "tables", "tables.csv"),
-                                                  r.get("step") or "", invented=bool(r.get("invented"))),
-        "dictionary_database": lambda r: s.load_from_database(data(r) if r.get("file") else r["text"],
-                                                              name(r, "file", "data-dictionary.csv"), r.get("step") or ""),
-        "dictionary_vendor": lambda r: s.add_descriptions(data(r), data(r, "tables"), r.get("headings") or {},
-                                                          name(r, "file", "vendor-dictionary.csv"),
-                                                          name(r, "tables", "vendor-tables.csv")),
-        "schema_open": lambda r: s.restore(_read_saved(base / r["file"])),
-        "hospital_build": hospital,
-        "hospital_run": lambda r: s.run_invented(held["hospital"], r["query"], r["read"],
-                                                 **{k: r[k] for k in ("key", "year", "name", "about") if k in r}),
-        "propose": lambda r: s.propose(),
-        "settings": lambda r: s.set_settings(r.get("database"), r.get("year"), r.get("timeZone"), r.get("daylightSaving"),
-                                             r.get("timeZoneFrom")),
-        "tables_query": lambda r: s.tables_query(r.get("step") or ""),
-        "tables_read": lambda r: s.read_tables(text(r)),
-        "confirm": lambda r: s.confirm(r["about"], r["answer"], r.get("replacement") or "", r.get("note") or "",
-                                       actor=r.get("actor")),
-        "correction_preview": lambda r: s.correction_preview(r["correction"]),
-        "correction_check": lambda r: s.correction_check(r["correction"]),
-        "correction_keep": lambda r: s.correction_keep(r["correction"], bool(r.get("although")), r.get("reason") or "",
-                                                       actor=r.get("actor")),
-        "model_check": lambda r: s.check_model(),
-        "charted_query": lambda r: s.charted_query(r["key"], r["year"], r.get("step") or ""),
-        "charted_read": lambda r: s.read_charted(r["key"], text(r), r["year"]),
-        "codes": lambda r: s.choose_codes(r["key"], r["chosen"], actor=r.get("actor")),
-        "counts": lambda r: s.count_queries(r.get("year"), r.get("step") or ""),
-        "count_read": lambda r: s.read_count(r["name"], text(r)),
-        "count_judge": lambda r: s.judge_count(r["name"], r["looksRight"], r.get("note") or "", actor=r.get("actor")),
-        "values_query": lambda r: s.values_query(r["about"], r["table"], r["column"], r.get("year"), r.get("step") or ""),
-        "values_read": lambda r: s.read_values(r["name"], text(r)),
-        "probe_query": lambda r: s.probe_query(r["about"], r.get("year"), r.get("step") or ""),
-        "probe_read": lambda r: s.read_probe(r["about"], text(r)),
-    }
-    refused = []
-    for number, held in enumerate(calls, 1):
-        action = actions.get(str(held.get("call", "")).removeprefix("describe_"))
-        if action is None:
-            raise DescribeError(WORDING["walk_unknown"].format(number=number, call=held.get("call")))
-        try:
-            action(held.get("request") or {})
-        except DescribeError as error:
-            refused.append((number, str(error)))
-    return s, refused
-
-
-def main(argv=None):
-    import argparse
-    import sys
-    parser = argparse.ArgumentParser(prog="python -m schemalyser.describe")
-    commands = parser.add_subparsers(dest="command", required=True)
-    walked = commands.add_parser("walk", help="make a hospital schema from the calls that the page makes, and save it")
-    walked.add_argument("calls", help="a JSON file of {\"version\", \"calls\": [{\"call\", \"request\"}]}, whose files are "
-                                      "named relative to its own folder")
-    walked.add_argument("--out", default=None, help="the folder for the saved file (by default, the folder of CALLS)")
-    one = commands.add_parser("import-evidence", help="import the result of an evidence request into a saved hospital schema")
-    one.add_argument("schema")
-    one.add_argument("request")
-    one.add_argument("results", nargs="+")
-    one.add_argument("--id", default=None, help="the request's request_id or id, where REQUEST.json is a whole report")
-    one.add_argument("--actor", default=None, help="the name of the person who ran the query and returned its result")
-    one.add_argument("--provenance", default=None, help=f"one of: {', '.join(evidence.PROVENANCES)}")
-    one.add_argument("--out", default=None, help="the folder for the new version (by default, the folder of SCHEMA)")
-    args = parser.parse_args(argv)
-    if args.command == "walk":
-        return _main_walk(args)
-    try:
-        held = json.loads(Path(args.request).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        print(WORDING["not_a_request"], file=sys.stderr)
-        return 2
-    if isinstance(held, dict) and isinstance(held.get("requests"), list):
-        held = next((r for r in held["requests"] if args.id in (r.get("request_id"), r.get("id"))), None)
-    sitting = Describe()
-    try:
-        from importlib.metadata import version
-        sitting.version = version("schemalyser")
-    except Exception:  # noqa: BLE001 - the package may run from its folder without being installed
-        sitting.version = "unknown"
-    try:
-        files = _read_saved(args.schema)
-    except (OSError, zipfile.BadZipFile):
-        print(WORDING["folder_unreadable"], file=sys.stderr)
-        return 2
-    sitting.restore(files)
-    if sitting.data is None:
-        print(WORDING["folder_unreadable"], file=sys.stderr)
-        return 2
-    texts = [Path(r).read_text(encoding="utf-8", errors="replace") for r in args.results]
-    names = [q.get("name") for q in (held or {}).get("queries") or [] if isinstance(q, dict)]
-    result = dict(zip(names, texts)) if names and len(texts) == len(names) else texts[0]
-    try:
-        found = sitting.import_evidence(held, result, args.actor, args.provenance)
-    except DescribeError as error:
-        print(str(error), file=sys.stderr)
-        return 1
-    out = Path(args.out) if args.out else Path(args.schema).resolve().parent
-    out.mkdir(parents=True, exist_ok=True)
-    target = out / found["file"]
-    data = _zipped(found["files"])
-    if target.exists() and target.read_bytes() != data:
-        print(f"{target.name} already holds another version, so Schemalyser has not overwritten it.", file=sys.stderr)
-        return 1
-    target.write_bytes(data)
-    print(WORDING["imported"].format(request=held["request_id"], schema_id=found["schema_id"], file=target.name))
-    return 0
-
-
-
-def _main_walk(args):
-    import sys
-    path = Path(args.calls)
-    try:
-        held = json.loads(path.read_text(encoding="utf-8"))
-        calls = held["calls"]
-    except (OSError, ValueError, KeyError, TypeError):
-        print(WORDING["walk_unreadable"], file=sys.stderr)
-        return 2
-    try:
-        sitting, refused = walk(calls, path.resolve().parent, held.get("version") or "")
-    except DescribeError as error:
-        print(str(error), file=sys.stderr)
-        return 1
-    for number, why in refused:
-        print(WORDING["walk_refused"].format(number=number, why=why), file=sys.stderr)
-    files = sitting.save()
-    out = Path(args.out) if args.out else path.resolve().parent
-    out.mkdir(parents=True, exist_ok=True)
-    target = out / sitting.file_name()
-    target.write_bytes(_zipped(files))
-    print(WORDING["walk_saved"].format(file=target.name))
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

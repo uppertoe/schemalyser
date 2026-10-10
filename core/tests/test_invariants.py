@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from schemalyser import audit, browser, describe, evidence, feasibility, rolemap
+from schemalyser import audit, browser, describe, evidence, feasibility, rolemap, roleshadow
 from test_describe import DATE, DICTIONARY, TABLES, tables_result
 from test_feasibility import CONFIRMED
 
@@ -58,7 +58,7 @@ def confirmed():
 @pytest.fixture(scope="module")
 def saved(tmp_path_factory):
     path = tmp_path_factory.mktemp("schema") / "hospital-schema.schemalyser.zip"
-    path.write_bytes(confirmed().save_zip(DATE))
+    path.write_bytes(roleshadow.save_zip(confirmed(), DATE))
     return path
 
 
@@ -141,7 +141,7 @@ def _coverage_request(s):
 
 def test_invariant_4_a_figure_measured_over_one_period_is_never_reported_for_another(tmp_path):
     s = fresh()
-    s.save(DATE)
+    roleshadow.save(s, DATE)
     result = ("part\tperiod_from\tperiod_to\tpathways_found\tpathways_mapped\tnote\n"
               "role_patient\t2024-01-01\t2024-12-31\t3\t3\t\n"
               "role_anaesthetic\t2024-01-01\t2024-12-31\t2\t2\t\n")
@@ -171,7 +171,7 @@ def test_invariant_4_a_changed_binding_leaves_the_evidence_that_rested_on_it_sta
     s.tables_query()
     s.read_tables(tables_result())
     s.confirm("role_anaesthetic.patient_key", "yes", date=DATE)
-    s.test(DATE)
+    roleshadow.test(s, DATE)
     s.confirm("role_anaesthetic.patient_key", "no", "THEATRE_CASE.PERSON_KEY", date=DATE)
     again = opened(s.folder_files(DATE))
     stale = {(e["subject"], e["dimension"]): e["reasons"] for e in again.stale_evidence()}
@@ -184,7 +184,7 @@ def test_invariant_4_a_changed_contract_part_leaves_the_evidence_of_that_part_al
     s = fresh()
     s.confirm("role_reading.value", "yes", date=DATE)
     s.confirm("role_patient.birth_date", "yes", date=DATE)
-    files = s.save(DATE)
+    files = roleshadow.save(s, DATE)
     changed = dict(rolemap.part_hashes(), role_reading="1" * 16)
     monkeypatch.setattr(rolemap, "part_hashes", lambda model=None: changed)
     again = opened(files)
@@ -258,7 +258,7 @@ def test_invariant_6_a_changed_mapping_voids_the_package_s_approval_and_review_w
     later = opened(describe._read_saved(saved))
     later.choose_codes("role_reading.kind", {"52": "map_arterial", "53": "map_cuff"}, DATE)
     remapped = tmp_path / "remapped.zip"
-    remapped.write_bytes(later.save_zip(DATE))
+    remapped.write_bytes(roleshadow.save_zip(later, DATE))
     found = audit.status(out, remapped)
     assert found["voided"] and found["changed"] == ["the hospital schema"]
     assert found["approval"] == "not approved" and found["plan_review"] == "voided"
@@ -420,14 +420,14 @@ def _defined(tree, function):
 
 def walk_calls():
     """The names of the calls that python -m schemalyser.describe walk takes, read from the walk's table of actions."""
-    walk = _defined(ast.parse((PACKAGE / "describe.py").read_text(encoding="utf-8")), "walk")
+    walk = _defined(ast.parse((PACKAGE / "describe" / "__main__.py").read_text(encoding="utf-8")), "walk")
     table = next(n.value for n in ast.walk(walk) if isinstance(n, ast.Assign)
                  and any(getattr(t, "id", None) == "actions" for t in n.targets))
     return {k.value for k in table.keys}
 
 
 def commands():
-    main = _defined(ast.parse((PACKAGE / "describe.py").read_text(encoding="utf-8")), "main")
+    main = _defined(ast.parse((PACKAGE / "describe" / "__main__.py").read_text(encoding="utf-8")), "main")
     return {n.args[0].value for n in ast.walk(main) if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "add_parser"}
 
 
@@ -502,7 +502,7 @@ RULES = {"window": "never attributes a row to an anaesthetic by a time window",
 
 @pytest.mark.parametrize("form", ["window", "clinical filter"])
 def test_invariant_10_a_saved_schema_whose_binding_holds_a_clinical_decision_is_refused_on_opening_with_the_rule_named(form, tmp_path):
-    files = _with_decision(fresh().save(DATE), form)
+    files = _with_decision(roleshadow.save(fresh(), DATE), form)
     s = describe.Describe()
     found = s.restore(files)
     assert not found["map"] and s.data is None
@@ -522,7 +522,7 @@ def test_invariant_10_a_saved_schema_whose_binding_holds_a_clinical_decision_is_
 
 
 def test_invariant_10_a_filter_that_interprets_the_vendor_s_storage_is_kept():
-    files = _with_decision(fresh().save(DATE), "storage filter")
+    files = _with_decision(roleshadow.save(fresh(), DATE), "storage filter")
     found = describe.Describe().restore(files)
     assert found["map"] and found["refused"] == ""
     assert feasibility.Schema(files).map["roles"]["role_drug"]["rows"]["binding"]["filter"][0]["column"] == "ACTION_CAT"

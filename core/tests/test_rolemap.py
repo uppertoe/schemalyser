@@ -15,7 +15,9 @@ from pathlib import Path
 import pytest
 import sqlglot
 
-from schemalyser import convert, harness, rolemap
+from schemalyser import convert, harness, rolemap, roleshadow
+from schemalyser.rolemap import __main__ as rolemap_main
+from schemalyser import compiler
 from schemalyser.translate import to_duckdb
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -61,7 +63,7 @@ def _target_detail(con, date_columns):
 
 
 def _role_detail(run):
-    return {_key(k): None if m is None else round(m, 6) for k, (m, _) in rolemap.per_anaesthetic(run).items()}
+    return {_key(k): None if m is None else round(m, 6) for k, (m, _) in roleshadow.per_anaesthetic(run).items()}
 
 
 def _bands(rows):
@@ -70,14 +72,14 @@ def _bands(rows):
 
 @pytest.fixture(scope="module")
 def role_runs():
-    return {label: rolemap.duckdb_runner(rolemap.role_shadow(seed=1, anaesthetics=400, with_planted=planted))
+    return {label: roleshadow.duckdb_runner(roleshadow.role_shadow(seed=1, anaesthetics=400, with_planted=planted))
             for label, planted in (("without", False), ("with", True))}
 
 
 @pytest.fixture(scope="module")
 def invented():
     roles_map = rolemap.read_map(MAP, CATALOGUE)
-    return rolemap.hospital_run(make_checks.WORLD, CONVERSION, roles_map, rows=500)
+    return roleshadow.hospital_run(make_checks.WORLD, CONVERSION, roles_map, rows=500)
 
 
 @pytest.fixture(scope="module")
@@ -85,7 +87,7 @@ def realistic():
     if not (REALISTIC / "map" / "map.json").exists():
         pytest.skip("the realistic world is private and is not present here")
     roles_map = rolemap.read_map(REALISTIC / "map", (REALISTIC / "catalogue.csv").read_text())
-    return rolemap.hospital_run(harness.World.from_folder(REALISTIC), REALISTIC_CONVERSION, roles_map, rows=50)
+    return roleshadow.hospital_run(harness.World.from_folder(REALISTIC), REALISTIC_CONVERSION, roles_map, rows=50)
 
 
 # The contract and the maps.
@@ -96,7 +98,7 @@ def test_the_contract_holds_three_role_views_and_the_kinds_of_mean_pressure():
         "role_anaesthetic": ["anaesthetic_key", "patient_key", "start_time", "stop_time"],
         "role_reading": ["anaesthetic_key", "kind", "reading_time", "value", "accepted", "reading_key", "value_text"]}
     assert {"map_arterial", "map_cuff"} <= set(rolemap.kinds())
-    rolemap.check_audit(rolemap.AUDIT.read_text())
+    compiler.check_audit(rolemap.AUDIT.read_text())
 
 
 def test_the_contract_is_version_one_and_marks_its_further_views_as_drafts():
@@ -117,12 +119,12 @@ def test_the_contract_is_version_one_and_marks_its_further_views_as_drafts():
 
 
 def test_the_count_of_empty_values_gives_each_reason_apart():
-    con = rolemap.role_shadow(seed=1, anaesthetics=0, with_planted=False, extra={"role_reading": [
+    con = roleshadow.role_shadow(seed=1, anaesthetics=0, with_planted=False, extra={"role_reading": [
         ["A1", "map_cuff", "2024-01-01 10:00:00", 50.0, 1, "R1", None],
         ["A1", "map_cuff", "2024-01-01 10:05:00", None, 1, "R2", None],
         ["A1", "map_cuff", "2024-01-01 10:05:00", None, 1, "R3", "cuff off"],
         ["A1", "map_cuff", "2024-01-01 10:10:00", 12.0, 0, "R4", None]]})
-    run = rolemap.duckdb_runner(con)
+    run = roleshadow.duckdb_runner(con)
     columns, rows = run(rolemap.count_queries(1, 1)["empty_values_by_reason"]["sql"])
     assert columns == ["kind", "readings", "not_held", "not_a_number", "not_accepted"]
     assert [tuple(row) for row in rows] == [("map_cuff", 4, 1, 1, 1)]
@@ -172,7 +174,7 @@ def test_a_role_view_that_breaks_a_rule_is_refused(view, sql, says):
 
 def test_the_compiled_audit_is_one_statement_with_the_role_views_read_without_locks():
     roles_map = rolemap.read_map(MAP, CATALOGUE)
-    compiled = rolemap.compile_query(rolemap.AUDIT.read_text(), roles_map, blank=True)
+    compiled = compiler.compile_query(rolemap.AUDIT.read_text(), roles_map, blank=True)
     trees = [tree for tree in sqlglot.parse(compiled, dialect="tsql") if tree is not None]
     assert len(trees) == 1 and isinstance(trees[0], sqlglot.exp.Select)
     names = [cte.alias for cte in trees[0].find_all(sqlglot.exp.CTE)]
@@ -182,14 +184,14 @@ def test_the_compiled_audit_is_one_statement_with_the_role_views_read_without_lo
     assert compiled.startswith("-- Among neonates") and "for use inside the hospital only" in compiled
     # Every count compiles in the same way, and no count can return a group that fewer than ten rows hold.
     for item in rolemap.count_queries().values():
-        assert "% 10" in rolemap.compile_query(item["sql"], roles_map)
+        assert "% 10" in compiler.compile_query(item["sql"], roles_map)
 
 
 # A. The role-level shadow, with no map at all.
 
 def test_the_audit_gives_each_planted_neonate_its_minutes_and_death_on_the_role_level_shadow(role_runs):
-    found = rolemap.per_anaesthetic(role_runs["with"])
-    for case in rolemap.planted()["expectations"]:
+    found = roleshadow.per_anaesthetic(role_runs["with"])
+    for case in roleshadow.planted()["expectations"]:
         if not case["counted"]:
             assert case["anaesthetic_key"] not in found
             continue
@@ -198,14 +200,14 @@ def test_the_audit_gives_each_planted_neonate_its_minutes_and_death_on_the_role_
 
 
 def test_the_planted_neonates_move_each_band_by_exactly_what_they_imply(role_runs):
-    before = rolemap.result(role_runs["without"])
-    after = rolemap.result(role_runs["with"])
+    before = roleshadow.result(role_runs["without"])
+    after = roleshadow.result(role_runs["with"])
     assert [row[0] for row in before["rows"]] == BANDS == [row[0] for row in after["rows"]]
     b, a = _bands(before["rows"]), _bands(after["rows"])
     assert {band: (a[band][0] - b[band][0], a[band][1] - b[band][1]) for band in BANDS} == IMPLIED
     # The implied moves follow from the expectations themselves.
     implied = {band: [0, 0] for band in BANDS}
-    for case in rolemap.planted()["expectations"]:
+    for case in roleshadow.planted()["expectations"]:
         if case["counted"]:
             implied[case["band"]][0] += 1
             implied[case["band"]][1] += case["died_within_90_days"]
@@ -239,7 +241,7 @@ def test_the_realistic_map_gives_the_target_s_answer_anaesthetic_by_anaesthetic(
 def test_each_map_reads_the_planted_source_rows_as_the_planted_role_rows(which, request):
     done = request.getfixturevalue(which)
     run = done["run"]
-    cases = rolemap.planted()
+    cases = roleshadow.planted()
     keys = sorted({row[0] for row in cases["role_anaesthetic"]["rows"]})
     for view, key_column in (("role_anaesthetic", "anaesthetic_key"), ("role_reading", "anaesthetic_key")):
         # A reading's own key and its text are the hospital's, so the planted rows are compared without them.
@@ -296,7 +298,7 @@ def test_a_map_that_stops_reaching_earlier_readings_is_caught_by_the_counts_and_
     (broken / "role_reading.sql").write_text(sql)
     roles_map = rolemap.read_map(broken, CATALOGUE)
     converted = invented["conversion"]
-    found = rolemap.result(rolemap.duckdb_runner(converted.con, converted.sandbox.date_columns, roles_map))
+    found = roleshadow.result(roleshadow.duckdb_runner(converted.con, converted.sandbox.date_columns, roles_map))
     healthy = invented["result"]
     # The audit runs, and its bands still add up to the same neonatal anaesthetics, but the children of 2023 and 2024
     # have moved silently into the band in which nothing was recorded.
@@ -320,9 +322,9 @@ def test_a_map_that_stops_reaching_earlier_readings_is_caught_by_the_counts_and_
 def test_the_command_line_checks_a_map_lists_its_open_items_and_compiles_the_audit():
     out = io.StringIO()
     with redirect_stdout(out):
-        rolemap.main(["check", str(MAP), "--catalogue", str(FIXTURES / "invented-catalogue.csv")])
-        rolemap.main(["open", str(MAP)])
-        rolemap.main(["compile", str(MAP)])
+        rolemap_main.main(["check", str(MAP), "--catalogue", str(FIXTURES / "invented-catalogue.csv")])
+        rolemap_main.main(["open", str(MAP)])
+        rolemap_main.main(["compile", str(MAP)])
     text = out.getvalue()
     assert "role_reading: one SELECT over OBS_READING, OBS_SHEET" in text and "The map has 80 open items." in text
     assert "kind map_cuff (proposed): Please confirm whether" in text and "WITH (NOLOCK)" in text
@@ -392,7 +394,7 @@ def test_the_scoreboard_counts_each_category_of_column_apart(tmp_path):
     saved.write_text(json.dumps(data), encoding="utf-8")
     out = io.StringIO()
     with redirect_stdout(out):
-        rolemap.main(["scoreboard", str(saved)])
+        rolemap_main.main(["scoreboard", str(saved)])
     # The command line also writes the counts alone beside the map, and says where.
     assert out.getvalue().startswith(rolemap.scoreboard(data)["text"])
     assert out.getvalue().endswith("Schemalyser has written the counts alone to scoreboard-summary.md, beside the saved "
@@ -431,7 +433,7 @@ def test_every_mapping_view_has_one_shape_and_every_open_code_is_a_local_key_of_
 
 
 def test_the_shadow_plants_a_mapped_an_unmapped_an_ambiguous_and_an_unlisted_drug():
-    con = rolemap.role_shadow(seed=1, anaesthetics=0)
+    con = roleshadow.role_shadow(seed=1, anaesthetics=0)
     rows = con.execute("SELECT d.drug_event_key, m.status, m.concept_id FROM role_drug d "
                        "LEFT JOIN map_drug_concept m ON m.local_key = d.drug "
                        "WHERE d.action = 'dose' ORDER BY d.drug_event_key, m.concept_id").fetchall()
@@ -492,7 +494,7 @@ def test_every_event_part_has_a_key_of_its_own_a_source_kind_and_its_documentati
 
 
 def test_two_events_that_share_their_anaesthetic_kind_and_time_are_both_kept():
-    con = rolemap.role_shadow(seed=1, anaesthetics=0, with_planted=False, extra={"role_event": [
+    con = roleshadow.role_shadow(seed=1, anaesthetics=0, with_planted=False, extra={"role_event": [
         ["E1", "A1", None, "induction", "2024-01-01 10:00:00", "procedure_log", None, None],
         ["E2", "A1", None, "induction", "2024-01-01 10:00:00", "charted_value", "2024-01-01 12:00:00", None]]})
     assert con.execute("SELECT COUNT(*), COUNT(DISTINCT event_key), COUNT(DISTINCT source_kind) FROM role_event").fetchone() == (2, 2, 2)
@@ -549,7 +551,7 @@ def test_a_map_s_concepts_and_pathways_are_checked_when_it_is_read(tmp_path):
     found = rolemap.read_map(folder, CATALOGUE)
     key = rolemap.concept_key("s", "map_diagnosis_concept", "1000000")
     assert key in found["views"]["map_diagnosis_concept"] and "1000000" not in found["views"]["map_diagnosis_concept"]
-    compiled = rolemap.compile_query("SELECT m.concept_id, COUNT(*) AS n FROM role_anaesthetic a JOIN map_diagnosis_concept m "
+    compiled = compiler.compile_query("SELECT m.concept_id, COUNT(*) AS n FROM role_anaesthetic a JOIN map_diagnosis_concept m "
                                      "ON m.local_key = a.anaesthetic_key GROUP BY m.concept_id", found)
     assert "map_diagnosis_concept AS (" in compiled and "map_drug_concept AS (" not in compiled
 
@@ -564,7 +566,7 @@ def test_the_invented_map_normalises_the_boundary_history_into_the_role_rows_tha
     from schemalyser import convert
     roles_map = rolemap.read_map(MAP, CATALOGUE)
     converted, _ = convert.run(make_checks.WORLD, CONVERSION, rows=40, scenarios=["infusion_boundary"])
-    run = rolemap.duckdb_runner(converted.con, converted.sandbox.date_columns, roles_map)
+    run = roleshadow.duckdb_runner(converted.con, converted.sandbox.date_columns, roles_map)
     _, rows = run("SELECT d.anaesthetic_key, d.order_key, d.action, d.amount, d.given_time, d.source_kind, "
                   "CASE WHEN d.amends_key IS NULL THEN 0 ELSE 1 END AS amends, COALESCE(m.status, 'unlisted') AS status, "
                   "d.documented_time FROM role_drug d "

@@ -1,5 +1,8 @@
 """The functions the page's worker calls: the bridge of the page Describe the record. They take and return plain values
-only, and each describe_ function hands its request to describe.Describe, which holds the sitting."""
+only, and each describe_ function hands its request to describe.Describe, which holds the sitting. The sitting records
+the test on made-up rows and never runs it, so the functions that need one (a correction's check and keep, the check of
+the map, the save and the evidence import) hand the sitting to the role shadow (roleshadow.py), which runs the test and
+gives the sitting what it found."""
 import io
 import json
 import re
@@ -180,8 +183,9 @@ def describe_schema_files():
 
 def describe_schema_zip():
     """Saves a new version of the hospital schema and gives the bytes of its one file, whose name, which carries the
-    version's schema_id, the model then gives as schema.file."""
-    return _describing().save_zip()
+    version's schema_id, the model then gives as schema.file. The test on made-up rows that the schema owes runs first."""
+    from . import roleshadow
+    return roleshadow.save_zip(_describing())
 
 
 def describe_check():
@@ -200,26 +204,32 @@ def describe_correction_preview(request):
 
 
 def describe_correction_check(request):
-    return _reply(lambda: {"report": _describing().correction_check(json.loads(request))})
+    from . import roleshadow
+    return _reply(lambda: {"report": roleshadow.correction_check(_describing(), json.loads(request))})
 
 
 def describe_model_check():
-    return _reply(lambda: {"report": _describing().check_model()})
+    from . import roleshadow
+    return _reply(lambda: {"report": roleshadow.check_model(_describing())})
 
 
 def describe_correction_keep(request):
+    from . import roleshadow
     r = json.loads(request)
-    return _reply(lambda: _describing().correction_keep(r["correction"], bool(r.get("although")), r.get("reason") or "",
-                                                        actor=r.get("actor")))
+    return _reply(lambda: roleshadow.correction_keep(_describing(), r["correction"], bool(r.get("although")),
+                                                     r.get("reason") or "", actor=r.get("actor")))
 
 
 def describe_import_evidence(request):
     """Imports the result of one of the feasibility report's evidence requests: request is {"request": the request as
     the report wrote it, "result": the text of its result or {query: text}, "actor", "provenance"}. The new version is
     saved in the worker, and the model gives its schema_id and file name."""
+    from . import roleshadow
     r = json.loads(request)
 
     def work():
+        # The import saves a new version, so the test on made-up rows that the schema owes, if any, is run first.
+        roleshadow.run_owed_test(_describing())
         found = _describing().import_evidence(r.get("request"), r.get("result") or "", r.get("actor"), r.get("provenance"))
         return {"imported": {"schema_id": found["schema_id"], "file": found["file"], "entry": found["entry"]["id"]}}
     return _reply(work)

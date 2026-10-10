@@ -18,7 +18,9 @@ from pathlib import Path
 
 import pytest
 
-from schemalyser import datadict, propose, rolemap
+from schemalyser import datadict, propose, rolemap, roleshadow
+from schemalyser.rolemap import __main__ as rolemap_main
+from schemalyser import compiler
 from schemalyser.catalogue import Catalogue
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -146,19 +148,19 @@ def test_a_map_may_supply_further_views_and_an_audit_may_read_them(drafted):
     assert set(rolemap.mapping_views()) <= set(found["views"])
     audit = "SELECT a.anaesthetic_key, s.admit_time FROM role_anaesthetic a JOIN role_anaesthetic_detail d ON " \
             "d.anaesthetic_key = a.anaesthetic_key JOIN role_stay s ON s.stay_key = d.stay_key"
-    compiled = rolemap.compile_query(audit, found)
+    compiled = compiler.compile_query(audit, found)
     assert "role_stay AS (" in compiled and "role_anaesthetic_detail AS (" in compiled and "role_drug AS (" not in compiled
     hand = rolemap.read_map(MAP, CATALOGUE_FILE.read_text())
     with pytest.raises(rolemap.MapError, match="does not supply"):
-        rolemap.compile_query(audit, hand)
+        compiler.compile_query(audit, hand)
     # The invented map supplies the staff, so an audit of whether a consultant anaesthetist was present compiles with it,
     # and it supplies no fluids, so an audit of transfusion is refused.
     consultant = "SELECT a.anaesthetic_key, MAX(CASE WHEN s.role = 'anaesthetist' AND s.grade = 'consultant' THEN 1 ELSE 0 END) " \
                  "AS consultant_present FROM role_anaesthetic a LEFT JOIN role_staff s ON s.anaesthetic_key = a.anaesthetic_key " \
                  "GROUP BY a.anaesthetic_key"
-    assert "role_staff AS (" in rolemap.compile_query(consultant, hand)
+    assert "role_staff AS (" in compiler.compile_query(consultant, hand)
     with pytest.raises(rolemap.MapError, match="role_fluid, which the map does not supply"):
-        rolemap.compile_query("SELECT f.anaesthetic_key FROM role_fluid f WHERE f.kind = 'red_cells'", hand)
+        compiler.compile_query("SELECT f.anaesthetic_key FROM role_fluid f WHERE f.kind = 'red_cells'", hand)
 
 
 # The loader.
@@ -316,7 +318,7 @@ def test_the_proposer_refuses_to_write_a_draft_from_a_real_dictionary_into_a_pub
 def test_the_command_line_proposes_and_prints_names_and_counts_but_no_description(tmp_path):
     out = io.StringIO()
     with redirect_stdout(out):
-        rolemap.main(["propose", str(DICTIONARY), "--tables", str(TABLES), "--catalogue", str(CATALOGUE_FILE),
+        rolemap_main.main(["propose", str(DICTIONARY), "--tables", str(TABLES), "--catalogue", str(CATALOGUE_FILE),
                       "--out", str(tmp_path / "draft"), "--world", "the invented world"])
     text = out.getvalue()
     assert "role_patient: PERSON_MASTER, with 4 of 4 columns proposed (4 high)." in text
@@ -324,7 +326,7 @@ def test_the_command_line_proposes_and_prints_names_and_counts_but_no_descriptio
     assert "every binding awaits a person's confirmation" in text
     assert not _leaks(text, _descriptions(DICTIONARY))
     with pytest.raises(SystemExit, match="--heading is written as NAME=VALUE"):
-        rolemap.main(["propose", str(DICTIONARY), "--catalogue", str(CATALOGUE_FILE), "--out", str(tmp_path / "other"),
+        rolemap_main.main(["propose", str(DICTIONARY), "--catalogue", str(CATALOGUE_FILE), "--out", str(tmp_path / "other"),
                       "--heading", "table"])
 
 
@@ -344,7 +346,7 @@ def test_confirmations_are_recorded_with_their_date_and_rewrite_the_views(drafte
         "role_stay.unplanned,no,,,\n")
     out = io.StringIO()
     with redirect_stdout(out):
-        rolemap.main(["confirm", str(folder), str(tmp_path / "answers.csv"), "--catalogue", str(CATALOGUE_FILE)])
+        rolemap_main.main(["confirm", str(folder), str(tmp_path / "answers.csv"), "--catalogue", str(CATALOGUE_FILE)])
     assert "Schemalyser recorded 7 answers (2 yes, 4 no, 1 not sure)." in out.getvalue()
     data = json.loads((folder / "map.json").read_text())
     birth = data["roles"]["role_patient"]["columns"]["birth_date"]
@@ -447,7 +449,7 @@ def test_a_proposal_that_rests_on_the_reference_records_its_provenance(reference
     out = tmp_path / "map"
     printed = io.StringIO()
     with redirect_stdout(printed):
-        rolemap.main(["propose", str(tmp_path / "thin.csv"), "--tables", str(TABLES), "--catalogue", str(CATALOGUE_FILE),
+        rolemap_main.main(["propose", str(tmp_path / "thin.csv"), "--tables", str(TABLES), "--catalogue", str(CATALOGUE_FILE),
                       "--out", str(out), "--reference", str(lineage)])
     data = json.loads((out / "map.json").read_text())
     item = data["roles"]["role_patient"]["columns"]["is_test"]
@@ -517,13 +519,13 @@ def rolemap_today():
 def test_once_a_person_confirms_the_codes_and_the_patient_s_route_the_draft_gives_the_hand_written_map_s_answer(drafted, tmp_path):
     sys.path.insert(0, str(FIXTURES))
     import make_checks
-    hand = rolemap.hospital_run(make_checks.WORLD, FIXTURES / "conversion", rolemap.read_map(MAP, CATALOGUE), rows=500)
+    hand = roleshadow.hospital_run(make_checks.WORLD, FIXTURES / "conversion", rolemap.read_map(MAP, CATALOGUE), rows=500)
     con, dates = hand["conversion"].con, hand["conversion"].sandbox.date_columns
     folder = tmp_path / "map"
     shutil.copytree(drafted["folder"], folder)
     (tmp_path / "codes.csv").write_text("attribute,answer,replacement\nkind map_arterial,no,52\nkind map_cuff,no,51\n")
     propose.confirm(folder, tmp_path / "codes.csv", CATALOGUE)
-    codes_only = rolemap.result(rolemap.duckdb_runner(con, dates, rolemap.read_map(folder, CATALOGUE)))["rows"]
+    codes_only = roleshadow.result(roleshadow.duckdb_runner(con, dates, rolemap.read_map(folder, CATALOGUE)))["rows"]
     # The proposer reaches the patient by the anaesthetic record's own visit, where the hand-written map follows the
     # conversion through the theatre case. The planted cases make the two routes differ, so the answer differs until a
     # person settles the route.
@@ -532,7 +534,7 @@ def test_once_a_person_confirms_the_codes_and_the_patient_s_route_the_draft_give
         "attribute,answer,replacement\nrole_anaesthetic.patient_key,no,VISIT.PERSON_KEY via ANAES_RECORD.CASE_KEY = "
         "THEATRE_CASE.CASE_KEY then THEATRE_CASE.VISIT_KEY = VISIT.VISIT_KEY\n")
     propose.confirm(folder, tmp_path / "route.csv", CATALOGUE)
-    settled = rolemap.result(rolemap.duckdb_runner(con, dates, rolemap.read_map(folder, CATALOGUE)))["rows"]
+    settled = roleshadow.result(roleshadow.duckdb_runner(con, dates, rolemap.read_map(folder, CATALOGUE)))["rows"]
     assert settled == hand["result"]["rows"]
 
 

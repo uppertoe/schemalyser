@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from schemalyser import corrections, describe, rolemap
+from schemalyser import corrections, describe, rolemap, roleshadow
 from schemalyser.translate import to_duckdb
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -120,7 +120,7 @@ def test_the_sentences_and_the_sql_say_what_each_form_does(proposed):
 
 @pytest.mark.parametrize("name", sorted(SOUND))
 def test_the_check_passes_a_sound_correction(proposed, name):
-    found = proposed.correction_check(SOUND[name])
+    found = roleshadow.correction_check(proposed, SOUND[name])
     assert found["passed"], found["problems"]
     assert not found["problems"]
     assert found["views"] == len(proposed.data["roles"])
@@ -129,13 +129,13 @@ def test_the_check_passes_a_sound_correction(proposed, name):
 def test_the_check_says_the_model_is_whole_when_nothing_is_wrong():
     s = sitting()
     for name in ("trim", "joined"):
-        s.correction_keep(SOUND[name], date=DATE)
+        roleshadow.correction_keep(s, SOUND[name], date=DATE)
     # role_operation reaches its anaesthetic from the theatre case's side, which repeats an operation wherever two
     # anaesthetics share one case, so the proposal's own fragile link is the one problem left.
-    now = s.check_model()
+    now = roleshadow.check_model(s)
     assert [p for p in now["problems"] if not p.startswith("In Procedures done under an anaesthetic, ")] == []
     s.data["roles"].pop("role_operation")
-    found = s.correction_check(LINK)
+    found = roleshadow.correction_check(s, LINK)
     assert found["passed"]
     assert found["sentence"].startswith("This change keeps the hospital schema whole: all 12 parts of the record run on made-up rows and give the rows "
                                         "they should, every identifying column is unique, every flag is filled, and the "
@@ -143,7 +143,7 @@ def test_the_check_says_the_model_is_whole_when_nothing_is_wrong():
 
 
 def test_the_check_catches_a_link_that_repeats_readings(proposed):
-    found = proposed.correction_check(DOUBLING)
+    found = roleshadow.correction_check(proposed, DOUBLING)
     assert not found["passed"]
     assert any(re.fullmatch(r"In Readings charted during an anaesthetic, [\d,]+ made-up readings appear twice, each linked to a "
                             r"second anaesthetic, so a reading no longer links to exactly one anaesthetic\.", p) for p in found["problems"])
@@ -155,7 +155,7 @@ def test_the_check_catches_a_link_that_repeats_readings(proposed):
 def test_a_broken_view_is_reported_by_name(proposed):
     trial = proposed._clone()
     trial.data["roles"]["role_anaesthetic"]["columns"]["patient_key"]["binding"]["path"] = []
-    found = corrections.run_check(trial)
+    found = roleshadow.run_check(trial)
     assert "In Anaesthetics, the dictionary does not hold the column PERSON_KEY of ANAES_RECORD." in found["problems"]
     assert found["about"]["In Anaesthetics, the dictionary does not hold the column PERSON_KEY of ANAES_RECORD."] == "role_anaesthetic rows"
     # The shadow makes every column that a binding names, so the view runs there, and the dictionary is what refuses it.
@@ -164,7 +164,7 @@ def test_a_broken_view_is_reported_by_name(proposed):
 def test_a_time_window_and_names_not_in_the_dictionary_are_refused(proposed):
     # Attributing a row to an anaesthetic by its time is a question's logic over the roles, and no form offers it.
     with pytest.raises(describe.DescribeError, match="does not know a correction of the kind window"):
-        proposed.correction_check(WINDOW)
+        roleshadow.correction_check(proposed, WINDOW)
     assert "window" not in corrections.FORMS
     with pytest.raises(describe.DescribeError, match="holds no column THEATRE_CASE.NO_SUCH"):
         proposed.correction_preview(dict(SOUND["flag"], column="NO_SUCH"))
@@ -182,12 +182,12 @@ def test_a_time_window_and_names_not_in_the_dictionary_are_refused(proposed):
 
 def test_a_failing_correction_is_kept_only_with_a_reason_and_the_saved_schema_records_and_reports_it():
     s = sitting()
-    s.correction_keep(LINK, date=DATE)
+    roleshadow.correction_keep(s, LINK, date=DATE)
     with pytest.raises(describe.DescribeError, match="Keep it although the test fails"):
-        s.correction_keep(DOUBLING, date=DATE)
+        roleshadow.correction_keep(s, DOUBLING, date=DATE)
     with pytest.raises(describe.DescribeError, match="Keep it although the test fails"):
-        s.correction_keep(DOUBLING, although=True, reason="  ", date=DATE)
-    kept = s.correction_keep(DOUBLING, although=True, reason="The team says that a visit holds one anaesthetic here.", date=DATE)
+        roleshadow.correction_keep(s, DOUBLING, although=True, reason="  ", date=DATE)
+    kept = roleshadow.correction_keep(s, DOUBLING, although=True, reason="The team says that a visit holds one anaesthetic here.", date=DATE)
     assert kept == {"kept": "role_reading.anaesthetic_key", "probe": "link"}
     item = s.data["roles"]["role_reading"]["columns"]["anaesthetic_key"]
     assert item["status"] == "person" and item["confirmation"]["check"].startswith("failed: In Readings charted during an anaesthetic, ")
@@ -221,7 +221,7 @@ def test_the_probes_run_on_the_invented_world_and_are_read_back(world):
     s = sitting()
     s.read_tables(tables_result({"OBS_READING": 25_000_000}), record=False)
     for correction in (LINK, SOUND["filter"], SOUND["flag"]):
-        s.correction_keep(correction, date=DATE)
+        roleshadow.correction_keep(s, correction, date=DATE)
     for about, kind, columns in (("role_reading.anaesthetic_key", "link", ["anaesthetics", "with_rows", "without_rows"]),
                                  ("role_anaesthetic rows", "filter", ["rows_read", "passing"]),
                                  ("role_anaesthetic_detail.is_emergency", "flag", ["ones", "zeros", "empty"])):
@@ -268,13 +268,13 @@ def test_an_alternative_column_or_table_is_checked_and_its_check_recorded_when_k
     preview = s.correction_preview(chosen)
     assert preview["sentence"].startswith("The patient's identifier in Anaesthetics is THEATRE_CASE.PERSON_KEY, reached by matching "
                                           "ANAES_RECORD.CASE_KEY to THEATRE_CASE.CASE_KEY")
-    assert s.correction_check(chosen)["passed"]
-    s.correction_keep(chosen, date=DATE)
+    assert roleshadow.correction_check(s, chosen)["passed"]
+    roleshadow.correction_keep(s, chosen, date=DATE)
     # A different table for the rows of a part proposes that part again, and is checked in the same way.
     table = s.data["roles"]["role_stay"]["rows"]["binding"]["table"]
     rows = {"form": "rows", "about": "role_stay rows", "table": table}
     assert s.correction_preview(rows)["sentence"].startswith(f"The rows of Hospital stays come from {table}, one row for each")
-    s.correction_keep(rows, date=DATE)
+    roleshadow.correction_keep(s, rows, date=DATE)
     assert s.data["roles"]["role_stay"]["rows"]["status"] == "person"
     files = s.folder_files(date=DATE)
     found = list(csv.DictReader(io.StringIO(files["confirmations.csv"].decode())))
@@ -311,7 +311,7 @@ def test_the_concepts_and_a_further_pathway_compile_check_save_and_restore():
     drug = s.view_sql("role_drug")
     assert drug.count("\nUNION ALL\n") == 1 and "'charted_value' AS source_kind" in drug and "CAST(t0.GIVEN_KEY AS varchar(254))" in drug
     rolemap.check_view(drug, "role_drug", s.dictionary)
-    checked = corrections.run_check(s)
+    checked = roleshadow.run_check(s)
     assert not [p for p in checked["problems"] if p.startswith("In Drugs given")], checked["problems"]
     # The evidence of each pathway is kept apart, and the translation has dimensions of its own.
     assert s.dimensions["bindings"]["role_drug@charted rows"]["confirmed"]["by"] == "the invented analyst"

@@ -53,16 +53,21 @@ HOME_PATH = re.compile(rb"(/Users/[A-Za-z0-9._-]+|/home/[a-z][a-z0-9._-]*/|[A-Za
 # The modules of the core that the feasibility report, the audit's package and the testbed import, with the role
 # policy and this module, so that an agent can check a question before handing it back.
 CORE_MODULES = (
-    "__init__", "audit", "blanking", "capability", "catalogue", "convert", "corrections", "datadict", "describe",
-    "evidence", "extract", "feasibility", "first_ask", "harness", "hospital", "mapping", "memo", "normalise", "plan",
-    "policy", "project", "propose", "realistic", "release", "rolemap", "rolepolicy", "roles", "routes", "rules",
-    "sample_vocabulary", "sandbox", "specification", "statements", "summaries", "testbed", "translate", "tuning",
-    "vocabulary", "workspace",
+    "__init__", "audit", "blanking", "capability", "catalogue", "compiler", "conversion", "convert", "corrections",
+    "datadict", "evidence", "extract", "feasibility", "first_ask", "harness", "hospital", "mapping", "memo", "normalise",
+    "plan", "policy", "project", "propose", "realistic", "release", "rolepolicy", "roles", "roleshadow", "routes",
+    "rules", "sample_vocabulary", "sandbox", "selects", "specification", "statements", "summaries", "testbed",
+    "translate", "tuning", "vocabulary", "workspace",
 )
+# The modules of the core that are packages, each a folder with its module in __init__.py and its command line in
+# __main__.py, which the same commands import.
+CORE_PACKAGES = ("describe", "rolemap")
 
 # Each entry is a file, or a folder whose files must all have one of its suffixes.
 ALLOWLIST = tuple(
-    [{"path": f"core/schemalyser/{m}.py", "why": "a public module of the core"} for m in CORE_MODULES] + [
+    [{"path": f"core/schemalyser/{m}.py", "why": "a public module of the core"} for m in CORE_MODULES] +
+    [{"path": f"core/schemalyser/{p}", "tree": True, "suffixes": (".py",), "why": "a public package of the core"}
+     for p in CORE_PACKAGES] + [
         {"path": "core/pyproject.toml", "why": "the core's version and its one dependency"},
         {"path": "core/schemalyser/rolemodel", "tree": True, "suffixes": (".json", ".md", ".sql"),
          "why": "the role contract, its description and the compiled neonatal audit"},
@@ -229,7 +234,9 @@ def invented_schema(repo, date):
     for about in CONFIRMED:
         sitting.confirm(about, "yes", date=date)
     sitting.choose_codes("role_reading.kind", dict(CODES), date)
-    return sitting.save_zip(date)
+    # The role shadow runs the test on made-up rows that the save owes, as the page's bridge does.
+    from . import roleshadow
+    return roleshadow.save_zip(sitting, date)
 
 
 def _contract_table():

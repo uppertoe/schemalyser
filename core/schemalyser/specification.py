@@ -53,7 +53,7 @@ from pathlib import Path
 
 import sqlglot
 
-from . import policy, rolemap, rolepolicy
+from . import compiler, policy, rolemap, rolepolicy
 
 FORMAT = "schemalyser-specification/1"
 FORMS = ("anaesthetic_keys", "patient_dates")
@@ -562,7 +562,7 @@ def _derived_statement(spec, item, capability, pseudonymised, aggregate, taken):
     if text is None:
         return None, None
     try:
-        tree = rolemap.check_audit(text, where=capability["name"]).copy()
+        tree = compiler.check_audit(text, where=capability["name"]).copy()
     except (rolemap.MapError, sqlglot.errors.SqlglotError):
         raise SpecificationError(WORDING["capability_sql"].format(capability=capability["name"])) from None
     key = "with_" if "with_" in tree.arg_types else "with"

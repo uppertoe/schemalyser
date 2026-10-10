@@ -18,7 +18,9 @@ from xml.sax.saxutils import escape
 import pytest
 import sqlglot
 
-from schemalyser import audit, corrections, describe, feasibility, plan, policy, propose, results, rolemap, specification
+from schemalyser import (audit, compiler, corrections, describe, feasibility, plan, policy, propose, results, rolemap,
+                         roleshadow, specification)
+from schemalyser.describe import __main__ as describe_main
 from schemalyser.translate import to_duckdb
 from test_describe import DATE, DICTIONARY, TABLES, tables_result
 from test_feasibility import CONFIRMED
@@ -40,7 +42,7 @@ def saved(tmp_path_factory):
         s.confirm(about, "yes", date=DATE)
     s.choose_codes("role_reading.kind", {"52": "map_arterial", "51": "map_cuff"}, DATE)
     path = tmp_path_factory.mktemp("schema") / "hospital-schema.schemalyser.zip"
-    path.write_bytes(s.save_zip(DATE))
+    path.write_bytes(roleshadow.save_zip(s, DATE))
     return path
 
 
@@ -72,9 +74,10 @@ def _failed(found):
 
 def test_the_neonatal_audit_builds_a_package_of_class_b_whose_policy_passes(package):
     out, manifest = package
-    assert sorted(p.name for p in out.iterdir()) == ["README.md", "decisions.json", "expected-output.json", "feasibility.json",
-                                                     "feasibility.md", "manifest.json", "query.sql", "question.sql",
-                                                     "safety-report.json", "specification.md"]
+    assert sorted(p.name for p in out.iterdir()) == ["README.md", "decisions.json", "evidence-requests.json",
+                                                     "expected-output.json", "feasibility.json", "feasibility.md",
+                                                     "manifest.json", "query.sql", "question.sql", "safety-report.json",
+                                                     "specification.md"]
     safety = json.loads((out / "safety-report.json").read_text(encoding="utf-8"))
     assert safety["execution_class"] == "B" and safety["outcome"] == "passed", [r for r in safety["rules"] if not r["passed"]]
     assert safety["large_tables"] == ["OBS_READING"]
@@ -118,9 +121,9 @@ def _shadow(schema):
         views[name] = propose.view_sql(name, role, data["kinds"], sitting.model, vocabularies[name])
     held = copy.copy(sitting)
     held.data = data
-    shadow = corrections.Shadow(held, views, data["kinds"], vocabularies)
+    shadow = roleshadow.Shadow(held, views, data["kinds"], vocabularies)
     shadow.register()
-    rows = corrections.role_rows(held)
+    rows = roleshadow.role_rows(held)
     for name in ["role_patient", "role_anaesthetic"] + [v for v in data["roles"] if v not in ("role_patient", "role_anaesthetic")]:
         for values in rows.get(name, []):
             shadow.place(name, values)
@@ -148,7 +151,7 @@ def test_the_two_part_script_gives_every_planted_case_its_answer_on_a_shadow_of_
     compiled = audit.compile_audit(schema, rolemap.AUDIT.read_text(encoding="utf-8"), dt.date(2024, 1, 1), dt.date(2024, 12, 31),
                                    final=PER_ANAESTHETIC)
     found = {str(k): (None if m is None else float(m), int(d)) for k, m, d in _two_parts(con, date_columns, compiled)}
-    assert found and corrections._neonates(found) == []
+    assert found and roleshadow._neonates(found) == []
 
 
 @pytest.mark.parametrize("final", [PER_ANAESTHETIC, None])
@@ -165,7 +168,7 @@ def test_the_two_part_script_gives_the_same_rows_as_the_audit_as_one_query_over_
             view = (f"SELECT * FROM ({view}) AS a WHERE a.start_time >= TIMESTAMP '2024-01-01' "
                     "AND a.start_time < TIMESTAMP '2025-01-01'")
         con.execute(f"CREATE VIEW {name} AS {view}")
-    tree = rolemap.check_audit(audit_sql)
+    tree = compiler.check_audit(audit_sql)
     if final is not None:
         tree = tree.copy()
         chosen = sqlglot.parse_one(final, dialect="tsql")
@@ -180,7 +183,7 @@ def test_the_expected_output_comes_from_made_up_rows_with_every_planted_case_mat
     out, _ = package
     expected = json.loads((out / "expected-output.json").read_text(encoding="utf-8"))
     assert expected["made_up"] is True and "made-up rows" in expected["says"]
-    assert expected["planted_match"] is True and len(expected["planted"]) == len(rolemap.planted()["expectations"])
+    assert expected["planted_match"] is True and len(expected["planted"]) == len(roleshadow.planted()["expectations"])
     assert [r[0] for r in expected["rows"]] == ["no mean pressure recorded", "none", "under 5 minutes", "5 to 14 minutes",
                                                 "15 minutes or more"]
 
@@ -588,3 +591,36 @@ def test_no_results_package_is_written_for_a_changed_or_unapproved_package_or_in
     with pytest.raises(results.ResultsError, match="has changed since it was built"):
         results.write(approved, output, tmp_path / "two")
     assert not (tmp_path / "one").exists() and not (tmp_path / "two").exists()
+
+
+# The evidence round trip: the plan obtained and the outcome of the production run enter the hospital schema through the
+# evidence import, from the requests that the package carries, as the feasibility report's requests do.
+
+def test_the_package_s_requests_take_the_plan_and_the_production_outcome_back_into_the_hospital_schema(package, saved, tmp_path):
+    out, manifest = package
+    held = json.loads((out / audit.REQUESTS).read_text(encoding="utf-8"))
+    assert held["schema_id"] == manifest["schema_file"]["schema_id"]
+    requests = {r["form"]: r for r in held["requests"]}
+    assert set(requests) == {"plan", "production outcome"}
+    for request in requests.values():
+        assert request["format"] == describe.REQUEST_FORMAT and request["request_id"] in request["says"]
+        assert "python -m schemalyser.describe import-evidence" in request["says"] and "!" not in request["says"]
+        assert "covers" not in request
+    schema_file = tmp_path / saved.name
+    schema_file.write_bytes(saved.read_bytes())
+    (tmp_path / "plan.sqlplan").write_text("<ShowPlanXML/>", encoding="utf-8")
+    assert describe_main.main(["import-evidence", str(schema_file), str(out / audit.REQUESTS), str(tmp_path / "plan.sqlplan"),
+                               "--id", requests["plan"]["request_id"], "--actor", "Dr D", "--out", str(tmp_path / "one")]) == 0
+    (first,) = (tmp_path / "one").glob("hospital-schema-*.schemalyser.zip")
+    s = describe.Describe()
+    s.restore(describe._read_saved(first))
+    kept = s.log.latest("evidence imported", form="plan")
+    assert kept["payload"]["request_id"] == requests["plan"]["request_id"] and s.texts[kept["payload"]["result"]].strip() == "<ShowPlanXML/>"
+    # The outcome is checked against the columns its request expects, and validates no part of the record.
+    with pytest.raises(describe.DescribeError, match="does not have the columns"):
+        s.import_evidence(requests["production outcome"], "rows\n12\n", "Dr D")
+    s.import_evidence(requests["production outcome"], "rows_returned\tseconds\toutcome\n12\t3.5\tcompleted\n", "Dr D")
+    outcome = s.log.latest("evidence imported", form="production outcome")
+    assert outcome["payload"]["figure"] == [{"rows_returned": 12, "seconds": 3.5, "outcome": "completed"}]
+    assert all(record.get("validated") is None for kind in ("bindings", "links", "translations")
+               for record in s.dimensions[kind].values())

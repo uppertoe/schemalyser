@@ -26,6 +26,7 @@ pytest.importorskip("httpx")
 from starlette.testclient import TestClient  # noqa: E402
 
 from schemalyser import audit, describe, rolemap  # noqa: E402
+from schemalyser import roleshadow
 from schemalyser.workbench import __main__ as workbench_main  # noqa: E402
 from schemalyser.workbench import jobs  # noqa: E402
 from schemalyser.workbench.app import PLANTED_WORDS, create_app  # noqa: E402
@@ -55,7 +56,7 @@ def saved(tmp_path_factory):
             s.read_count(query["name"], COUNTS[query["name"]], DATE)
             s.judge_count(query["name"], "yes", "", DATE)
     path = tmp_path_factory.mktemp("schema") / "hospital-schema.schemalyser.zip"
-    path.write_bytes(s.save_zip(DATE))
+    path.write_bytes(roleshadow.save_zip(s, DATE))
     return path
 
 

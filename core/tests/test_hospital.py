@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from schemalyser import browser, describe, hospital
+from schemalyser import browser, describe, hospital, roleshadow
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "fixtures"
@@ -91,7 +91,7 @@ def test_the_lists_of_codes_show_names_and_the_sex_list_reads_the_patients_own_t
     findings = s.findings("coverage_by_year")
     assert any("looks again at the patient's identifier in Anaesthetics at step 6." in f for f in findings)
     assert set(s.finding_about("coverage_by_year").values()) == {"role_anaesthetic.patient_key"}
-    s.correction_keep({"form": "column", "about": "role_anaesthetic.patient_key", "replacement": "THEATRE_CASE.PERSON_KEY"}, date=DATE)
+    roleshadow.correction_keep(s, {"form": "column", "about": "role_anaesthetic.patient_key", "replacement": "THEATRE_CASE.PERSON_KEY"}, date=DATE)
     found = s.charted_query("role_patient_detail.sex", 2025, "7")
     part = invented.parts(found["sql"])[1]
     # The sex list joins the patients' own table to #cohort directly, not through the table of further details.
@@ -106,8 +106,8 @@ def test_a_lookup_column_chosen_in_place_of_a_code_returns_its_names(invented):
     s.tables_query("5")
     s.run_invented(invented, "tables-and-columns", "tables")
     correction = {"form": "column", "about": "role_drug.route", "replacement": "LK_ROUTE.LABEL"}
-    assert s.correction_check(correction)["passed"]
-    s.correction_keep(correction, date=DATE)
+    assert roleshadow.correction_check(s, correction)["passed"]
+    roleshadow.correction_keep(s, correction, date=DATE)
     found = s.values_query("role_drug.route", "LK_ROUTE", "LABEL", 2025, "6. Confirm each column")
     values = s.run_invented(invented, found["name"], "values")["values"]
     assert {v["value"] for v in values} == {"Intravenous", "Oral", "Inhaled"}
@@ -141,7 +141,7 @@ def test_a_values_query_and_a_test_query_run_on_it(invented):
     found = s.values_query("role_anaesthetic rows", "THEATRE_CASE", "CASE_STATUS_CAT", 2024, "6. Confirm each column")
     assert s.run_invented(invented, found["name"], "values")["values"]
     # The time window form is gone; the reading's link through its sheet is kept as a path instead.
-    s.correction_keep({"form": "path", "about": "role_reading.anaesthetic_key", "column": "ANAES_KEY",
+    roleshadow.correction_keep(s, {"form": "path", "about": "role_reading.anaesthetic_key", "column": "ANAES_KEY",
                        "steps": [{"from": "SHEET_KEY", "table": "OBS_SHEET", "to": "SHEET_KEY"}]}, date=DATE)
     probe = s.probe_query("role_reading.anaesthetic_key", 2024, "6. Confirm each column")
     assert len(invented.parts(probe["sql"])) == 2

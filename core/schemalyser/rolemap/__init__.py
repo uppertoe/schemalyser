@@ -35,13 +35,15 @@ A binding is proposed when it is a reasoned guess, seen when the team's own quer
 confirmed when a person or a count has settled it. Every binding that is not confirmed is an open item, with its
 question, and the open items are the list that an Outline stage works through.
 
-The module compiles an audit with a map into one T-SQL statement, with the role views as common table expressions, so
-that the analytics team runs one query. It builds a role-level shadow, a DuckDB database that holds the three role
-views as tables filled with synthetic rows from a seed and the planted neonates, on which an audit can be rehearsed
-before any map exists. It writes the standard counts, each a query over the role views that works at any hospital
-once compiled with its map, and reads their results into plain findings. An audit's result always carries the
-coverage by year, because the worst errors of a map do not fail: they move children silently into the band in which
-nothing was recorded.
+An audit compiled with a map is one T-SQL statement, with the role views as common table expressions, so that the
+analytics team runs one query; compiler.py compiles it. The role-level shadow, a DuckDB database that holds the three
+role views as tables filled with synthetic rows from a seed and the planted neonates, on which an audit can be
+rehearsed before any map exists, is roleshadow.py's. This module writes the standard counts, each a query over the role
+views that works at any hospital once compiled with its map, and reads their results into plain findings. An audit's
+result always carries the coverage by year, because the worst errors of a map do not fail: they move children silently
+into the band in which nothing was recorded.
+
+The command line, a surface of layer 5, is rolemap/__main__.py:
 
     python -m schemalyser.rolemap check MAP --catalogue CATALOGUE.csv
     python -m schemalyser.rolemap compile MAP [--audit AUDIT.sql] [--counts] [--exact]
@@ -62,22 +64,18 @@ folder where it was given one.
 
 propose and confirm are written in propose.py, and the dictionary is read by datadict.py.
 """
-import argparse
-import datetime as dt
 import json
-import random
 import re
-import sys
 from pathlib import Path
 
 import sqlglot
 from sqlglot import exp
 from sqlglot.optimizer.scope import traverse_scope
 
-from .catalogue import Catalogue
-from .extract import decode
+from ..catalogue import Catalogue
+from ..extract import decode
 
-MODEL = Path(__file__).parent / "rolemodel"
+MODEL = Path(__file__).parent.parent / "rolemodel"
 AUDIT = MODEL / "neonatal_low_mean_pressure.sql"
 PLANTED = MODEL / "planted_neonates.json"
 PLANTED_CONCEPTS = MODEL / "planted_concepts.json"
@@ -371,7 +369,7 @@ def read_map_json(folder):
         raise MapError(WORDING["map_shape"].format(where=MAP_FILE, problem="the map holds world, description, roles, kinds and, "
                                                                            "optionally, eras, questions, normalisations and concepts"))
     # A binding that names a normalisation is read back into its route, so that what follows checks the route itself.
-    from .normalise import resolve
+    from ..normalise import resolve
     data = resolve(data)
     _sentence(data["description"], MAP_FILE, "the description")
     required, wanted = views(), all_views()
@@ -424,7 +422,7 @@ PATHWAY_NAME = re.compile(r"[a-z][a-z0-9_]{0,30}")
 def _pathway(view, role, columns, where):
     """Checks one pathway to a part: the evidence of its rows and of every column, and its source kind, which only a
     part that records events carries and which is a kind of the source kind vocabulary."""
-    from .corrections import check_shape
+    from ..corrections import check_shape
     _evidence(role["rows"], f"{where}, rows")
     check_shape(role["rows"].get("binding"), f"{where}, rows")
     if not isinstance(role["columns"], dict) or set(role["columns"]) != set(columns):
@@ -518,7 +516,7 @@ def mapping_rows(data, mapping):
 
 
 def _single_select(sql, where):
-    from .release import Refused, _single_select as release_single_select
+    from ..selects import Refused, _single_select as release_single_select
     try:
         return release_single_select(sql, where)
     except Refused as error:
@@ -630,67 +628,7 @@ def open_items(roles_map):
     return items
 
 
-# Compiling an audit with a map.
-
-def check_audit(sql, where="audit"):
-    """Raises MapError unless sql is one SELECT that reads only the role views and its own common table expressions."""
-    tree = _single_select(sql, where)
-    named = {cte.alias.lower() for cte in tree.find_all(exp.CTE)}
-    for table in tree.find_all(exp.Table):
-        if table.db or table.catalog or table.name.lower() not in set(public_views()) | named:
-            raise MapError(WORDING["audit_reads"].format(where=where, table=table.sql(dialect="tsql")))
-    return tree
-
-
-def _with_token(sql):
-    """The text of a query split at its first WITH, as (what comes before, what follows WITH), or None without one."""
-    for token in sqlglot.tokenize(sql, dialect="tsql"):
-        if token.text.upper() == "WITH" and token.token_type.name == "WITH":
-            return sql[:token.start], sql[token.end + 1:]
-        if token.token_type.name == "SELECT":
-            return None
-    return None
-
-
-def _header(sql):
-    """The comment lines at the head of a query, and the rest."""
-    lines = sql.splitlines()
-    count = 0
-    while count < len(lines) and (lines[count].strip().startswith("--") or not lines[count].strip()):
-        count += 1
-    return "\n".join(lines[:count]).rstrip(), "\n".join(lines[count:])
-
-
-def _final_select_at(sql):
-    """Where the final SELECT of a query that begins with common table expressions starts in its text, or None."""
-    depth, seen_with = 0, False
-    for token in sqlglot.tokenize(sql, dialect="tsql"):
-        name = token.token_type.name
-        if name == "WITH" and depth == 0:
-            seen_with = True
-        elif name == "L_PAREN":
-            depth += 1
-        elif name == "R_PAREN":
-            depth -= 1
-        elif name == "SELECT" and depth == 0 and seen_with:
-            return token.start
-    return None
-
-
-def _blanked(body, tree):
-    """The audit with its final SELECT read as result by an outer SELECT that leaves blank any count from 1 to 4, using
-    the project's own rule for which columns are counts. The audit's common table expressions keep their own text."""
-    from .blanking import blanking, count_columns
-    counts = count_columns(tree)
-    at = _final_select_at(body)
-    if not counts or at is None:
-        return body
-    final = tree.copy()
-    final.set("with_" if "with_" in final.arg_types else "with", None)
-    inner, outer = blanking(final, counts)
-    indented = "\n".join("    " + line for line in inner.splitlines())
-    return body[:at].rstrip() + ",\nresult AS (\n" + indented + "\n)\n" + WORDING["blank"] + "\n" + outer
-
+# The SQL of a role view as a compiled query carries it. The compilation itself is compiler.py's.
 
 def view_sql(sql, nolock=True):
     """A role view as T-SQL, with each source table read WITH (NOLOCK)."""
@@ -699,41 +637,6 @@ def view_sql(sql, nolock=True):
         for table in tree.find_all(exp.Table):
             table.set("hints", [exp.WithTableHint(expressions=[exp.Var(this="NOLOCK")])])
     return tree.sql(dialect="tsql", pretty=True).replace("   WITH (NOLOCK)", " WITH (NOLOCK)")
-
-
-def compile_query(sql, roles_map, blank=False, nolock=True):
-    """One T-SQL statement: the role views of a map as common table expressions, then a query over the role views.
-
-    sql is an audit or a count, one SELECT that reads only the role views. With blank, the final SELECT leaves blank
-    any count from 1 to 4, as the project's generated queries do. The audit's own header comment is kept at the top.
-    """
-    tree = check_audit(sql)
-    header, body = _header(sql)
-    if blank:
-        body = _blanked(body, tree)
-    data = roles_map["data"]
-    # The three views that every map supplies come always, and a further view only where the query reads it.
-    read = {table.name.lower() for table in tree.find_all(exp.Table)}
-    chosen = [view for view in all_views() if view in views() or view in read]
-    missing = [view for view in chosen if view not in roles_map["views"]]
-    if missing:
-        raise MapError(WORDING["map_shape"].format(where="the query", problem=f"it reads {', '.join(missing)}, which the map does not supply"))
-    parts = []
-    for view in chosen:
-        text = view_sql(roles_map["views"][view], nolock)
-        indented = "\n".join("  " + line for line in text.splitlines())
-        parts.append((WORDING["view"].format(view=view, says=data["roles"][view]["rows"]["says"]), f"{view} AS (\n{indented}\n)"))
-    for view in [name for name in mapping_views() if name in read]:
-        text = roles_map["views"].get(view) or mapping_sql(view, mapping_rows(data, view))
-        indented = "\n".join("  " + line for line in text.splitlines())
-        parts.append((WORDING["mapping"].format(view=view), f"{view} AS (\n{indented}\n)"))
-    ctes = parts[0][0] + "\nWITH " + parts[0][1] + "".join(f",\n{comment}\n{text}" for comment, text in parts[1:])
-    split = _with_token(body)
-    head = [line for line in (header, WORDING["compiled"].format(world=data["world"]), WORDING["names"]) if line]
-    if split is None:
-        return "\n".join(head) + "\n" + ctes + "\n" + body.strip() + "\n"
-    before, after = split
-    return "\n".join(head) + "\n" + before.strip() + ("\n" if before.strip() else "") + ctes + ",\n" + after.strip() + "\n"
 
 
 # The standard counts. Each is one SELECT over the role views, rounded down to ten, leaving out any group that fewer
@@ -1135,7 +1038,7 @@ def scoreboard(data):
 def read_saved_map(path):
     """map.json from a saved hospital schema: the one file that the page saves, its folder, or map.json itself."""
     import zipfile
-    from .normalise import resolve
+    from ..normalise import resolve
     path = Path(path)
     try:
         if path.is_dir():
@@ -1151,385 +1054,3 @@ def read_saved_map(path):
     # A binding that names a normalisation is read back into its route.
     return resolve(data, path.name) if isinstance(data, dict) else data
 
-
-# Running queries over the role views.
-
-def duckdb_runner(con, date_columns=frozenset(), roles_map=None):
-    """A function that runs a T-SQL query over the role views in DuckDB and returns (columns, rows).
-
-    With a map, the query is first compiled with it, so that it runs over a hospital-shaped shadow's source tables;
-    without one, the role views are the tables of a role-level shadow."""
-    from .translate import to_duckdb
-
-    def run(sql):
-        text = compile_query(sql, roles_map) if roles_map is not None else sql
-        statements = to_duckdb(text, date_columns)
-        if len(statements) != 1:
-            raise MapError("the query did not translate to one statement")
-        cursor = con.execute(statements[0])
-        rows = cursor.fetchall()
-        return [d[0] for d in cursor.description], rows
-    return run
-
-
-def run_counts(run, least=MINIMUM_COUNT, step=MINIMUM_COUNT):
-    """Runs every standard count with run, which takes a query over the role views. Returns {name: (columns, rows)}."""
-    return {name: run(item["sql"]) for name, item in count_queries(least, step).items()}
-
-
-def band_years_query(audit_sql):
-    """The audit's own rows of the band in which nothing was recorded, counted by the year of the anaesthetic's start.
-
-    The audit must have a common table expression named banded, with the columns band and start_year, as the neonatal
-    audit has. The query keeps the audit's common table expressions and replaces its final SELECT."""
-    tree = check_audit(audit_sql)
-    names = {cte.alias.lower(): cte for cte in tree.find_all(exp.CTE)}
-    if "banded" not in names or not {"band", "start_year"} <= {n.lower() for n in names["banded"].this.named_selects}:
-        raise MapError("the audit has no banded common table expression with the columns band and start_year")
-    final = sqlglot.parse_one(f"SELECT x.start_year, COUNT(*) AS anaesthetics FROM banded x WHERE x.band = {NOTHING_BAND} "
-                              f"GROUP BY x.start_year ORDER BY x.start_year", dialect="tsql")
-    final.set("with_" if "with_" in final.arg_types else "with", (tree.args.get("with_") or tree.args.get("with")).copy())
-    return final.sql(dialect="tsql", pretty=True)
-
-
-def result(run, audit_sql=None, least=MINIMUM_COUNT, step=MINIMUM_COUNT, blank=False):
-    """The audit's answer, which always carries its coverage by year.
-
-    Returns {"columns", "rows", "coverage", "findings", "flagged_years", "counts", "notes": {band: sentence}}. The
-    sentence beside the band in which nothing was recorded says how many of its anaesthetics come from years that the
-    counts flag. With blank, a year with one to four such anaesthetics is left blank, as in the audit's own result.
-    """
-    audit_sql = audit_sql if audit_sql is not None else AUDIT.read_text(encoding="utf-8")
-    columns, rows = run(audit_sql)
-    counts = run_counts(run, least, step)
-    read = read_counts(counts, step)
-    _, by_year = run(band_years_query(audit_sql))
-    flagged_years = read["flagged_years"]
-    nothing = next((row for row in rows if row[0] == "no mean pressure recorded"), None)
-    notes = {}
-    if nothing is not None:
-        total = int(nothing[1] or 0)
-        shown = [(year, int(n)) for year, n in by_year if year in flagged_years]
-        if blank:
-            shown = [(year, n) for year, n in shown if n > 4]
-        flagged = sum(n for _, n in shown)
-        years = sorted({year for year, _ in shown} | ({y for y, _ in by_year if y in flagged_years}))
-        if not total:
-            notes[nothing[0]] = WORDING["nothing_empty"]
-        elif not years:
-            notes[nothing[0]] = WORDING["nothing_clear" if total > 1 else "nothing_clear_one"].format(count=total)
-        else:
-            notes[nothing[0]] = WORDING["nothing_blank" if blank else "nothing_flagged"].format(
-                count=total, flagged=flagged, verb="comes" if flagged == 1 else "come", years=_years_text(years),
-                band_words=f"the {total} anaesthetics" if total > 1 else "the one anaesthetic")
-    return {"columns": columns, "rows": rows, "coverage": read["coverage"], "findings": read["findings"],
-            "flagged_years": flagged_years, "counts": counts, "notes": notes, "band_years": by_year}
-
-
-# The role-level shadow.
-
-ROLE_TYPES = {"key": "VARCHAR", "local_key": "VARCHAR", "date": "DATE", "datetime": "TIMESTAMP", "number": "DOUBLE", "whole": "INTEGER", "flag": "INTEGER",
-              "flag_or_empty": "INTEGER", "kind": "VARCHAR", "text": "VARCHAR"}
-
-
-def planted():
-    """The planted neonates, written once as rows of the three role views, with their expectations."""
-    return json.loads(PLANTED.read_text(encoding="utf-8"))
-
-
-def planted_concepts():
-    """The planted rows of the mapping views, with the drug events that name them: a key mapped, one unmapped, one
-    ambiguous between two concepts, and one that the view does not list."""
-    return json.loads(PLANTED_CONCEPTS.read_text(encoding="utf-8"))
-
-
-def generated_rows(seed=1, anaesthetics=400, first_year=2019, last_year=2025):
-    """Plausible synthetic rows of the three views of the contract, from a seed: {view: [row, ...]}.
-
-    A share of the anaesthetics are neonatal; every anaesthetic has a cuff mean every three to five minutes, and some
-    have an arterial mean every minute; a few readings were not accepted, a few anaesthetics have no stop, and a few
-    patients are test patients. Nothing here comes from any hospital."""
-    rng = random.Random(seed)
-    patients, rows_a, rows_r = [], [], []
-    span = (dt.date(last_year, 12, 31) - dt.date(first_year, 1, 1)).days
-    previous = None
-    for number in range(1, anaesthetics + 1):
-        day = dt.date(first_year, 1, 1) + dt.timedelta(days=rng.randrange(span))
-        start = dt.datetime.combine(day, dt.time(rng.randrange(7, 18), rng.choice((0, 15, 30, 45))))
-        if previous is not None and rng.random() < 0.08:
-            patient, birth = previous
-            start = max(start, dt.datetime.combine(birth, dt.time(8)) + dt.timedelta(days=1))
-        else:
-            neonate = rng.random() < 0.15
-            age = rng.randrange(0, 28) if neonate else rng.randrange(28, 16 * 365)
-            birth = start.date() - dt.timedelta(days=age)
-            patient = f"P{number:06d}"
-            age_days = (start.date() - birth).days
-            death = None
-            if rng.random() < (0.08 if age_days < 28 else 0.01):
-                death = start.date() + dt.timedelta(days=rng.randrange(0, 150))
-            patients.append([patient, birth.isoformat(), death.isoformat() if death else None, 1 if rng.random() < 0.02 else 0])
-        previous = (patient, birth)
-        key = f"A{number:06d}"
-        minutes = rng.choice((30, 45, 60, 75, 90, 120, 150, 180, 240))
-        stop = start + dt.timedelta(minutes=minutes)
-        recorded_stop = None if rng.random() < 0.03 else (start - dt.timedelta(minutes=60) if rng.random() < 0.01 else stop)
-        rows_a.append([key, patient, start.isoformat(sep=" "), recorded_stop.isoformat(sep=" ") if recorded_stop else None])
-        age_days = (start.date() - birth).days
-        level = rng.gauss(40, 6) if age_days < 28 else rng.gauss(55 + min(age_days / 365, 14) * 2, 8)
-        cuff_every = rng.choice((3, 4, 5))
-        moment = start - dt.timedelta(minutes=5 if rng.random() < 0.3 else 0)
-        while moment <= stop:
-            accepted = 0 if rng.random() < 0.02 else 1
-            value = round(max(15, min(120, rng.gauss(level, 5))), 1) if accepted else round(rng.uniform(0, 20), 1)
-            rows_r.append([key, "map_cuff", moment.isoformat(sep=" "), value, accepted])
-            moment += dt.timedelta(minutes=cuff_every)
-        if rng.random() < (0.4 if age_days < 28 else 0.15):
-            moment = start + dt.timedelta(minutes=rng.randrange(5, 15))
-            while moment <= stop:
-                rows_r.append([key, "map_arterial", moment.isoformat(sep=" "), round(max(15, min(120, rng.gauss(level, 4))), 1), 1])
-                moment += dt.timedelta(minutes=1)
-        moment = start
-        while moment <= stop:
-            rows_r.append([key, "other", moment.isoformat(sep=" "), float(rng.randrange(80, 170)), 1])
-            moment += dt.timedelta(minutes=5)
-    # Each reading has its own key, as the hospital's own identifier of a charted value would be, and every value
-    # here is a number, so none keeps its text.
-    rows_r = [row + [f"R{number:07d}", None] for number, row in enumerate(rows_r, 1)]
-    return {"role_patient": patients, "role_anaesthetic": rows_a, "role_reading": rows_r}
-
-
-def role_shadow(seed=1, anaesthetics=400, with_planted=True, extra=None):
-    """A DuckDB database that holds the role views and the mapping views as tables, the three that every map supplies
-    filled from a seed and, with_planted, with the planted neonates and the planted rows of the mapping views and the
-    drug events that name them, and the further views otherwise empty. extra, when given, is
-    {view: [row, ...]} of further rows for any view. Returns the connection."""
-    import duckdb
-    con = duckdb.connect()
-    model = contract()
-    shape = {view["name"]: view["columns"] for view in model["views"] + model.get("mapping_views", [])}
-    for name, columns in shape.items():
-        con.execute(f"CREATE TABLE {name} (" + ", ".join(f"{c['name']} {ROLE_TYPES[c['type']]}" for c in columns) + ")")
-    rows = {name: [] for name in shape}
-    if anaesthetics:
-        rows.update(generated_rows(seed, anaesthetics))
-    if with_planted:
-        for cases in (planted(), planted_concepts()):
-            for name in shape:
-                if name in cases:
-                    rows[name] = rows[name] + cases[name]["rows"]
-    for name, more in (extra or {}).items():
-        rows[name] = rows[name] + more
-    for name, columns in shape.items():
-        kinds_of = [ROLE_TYPES[c["type"]] for c in columns]
-        for first in range(0, len(rows[name]), 2000):
-            values = ",\n".join("(" + ", ".join(_literal(v, k) for v, k in zip(row, kinds_of)) + ")"
-                                for row in rows[name][first:first + 2000])
-            con.execute(f"INSERT INTO {name} VALUES {values}")
-    return con
-
-
-def _literal(value, kind):
-    """A value of the role-level shadow as a DuckDB literal. The values are the module's own synthetic rows and the
-    planted rows, and text is quoted with any quote doubled."""
-    if value is None:
-        return "NULL"
-    if kind in ("INTEGER", "DOUBLE"):
-        return repr(float(value)) if kind == "DOUBLE" else str(int(value))
-    text = "'" + str(value).replace("'", "''") + "'"
-    return f"CAST({text} AS {kind})" if kind in ("DATE", "TIMESTAMP") else text
-
-
-def per_anaesthetic(run, audit_sql=None):
-    """Each anaesthetic that the audit counts, with its minutes below 40 and whether the child died within 90 days,
-    as {anaesthetic_key: (minutes, died)}. It reads the audit's banded common table expression, for checking the
-    planted cases on synthetic rows."""
-    tree = check_audit(audit_sql if audit_sql is not None else AUDIT.read_text(encoding="utf-8"))
-    final = sqlglot.parse_one("SELECT x.anaesthetic_key, x.minutes_below_40, x.died FROM banded x", dialect="tsql")
-    final.set("with_" if "with_" in final.arg_types else "with", (tree.args.get("with_") or tree.args.get("with")).copy())
-    _, rows = run(final.sql(dialect="tsql"))
-    return {str(key): (None if minutes is None else float(minutes), int(died)) for key, minutes, died in rows}
-
-
-# The hospital-shaped shadow of a world.
-
-def hospital_run(world, conversion, roles_map, audit_sql=None, rows=500, scenarios=None):
-    """Builds a world's hospital-shaped shadow with its planted scenarios, as convert.run does, and runs the audit and
-    the counts through the map. The conversion's own report and its OMOP tables come back with the run, so that a
-    caller can set the answer of an OMOP query on the same rows beside the audit's. Returns {"result", "report", "run",
-    "conversion"}."""
-    from . import convert
-    converted, report = convert.run(world, conversion, rows, scenarios=scenarios)
-    run = duckdb_runner(converted.con, converted.sandbox.date_columns, roles_map)
-    return {"result": result(run, audit_sql), "report": report, "run": run, "conversion": converted}
-
-
-# The command line.
-
-def _table(columns, rows):
-    lines = ["\t".join(columns)]
-    lines += ["\t".join("" if v is None else str(_number(v) if isinstance(v, (int, float)) else v) for v in row) for row in rows]
-    return "\n".join(lines)
-
-
-def _show(found):
-    print(_table(found["columns"], found["rows"]))
-    for band, note in found["notes"].items():
-        print(f"{band}: {note}")
-    print("")
-    print("Coverage by year of the anaesthetic's start:")
-    columns = ["start_year", "anaesthetics", *FIGURES]
-    print(_table(columns, [[r[c] for c in columns] for r in found["coverage"]]))
-    print("")
-    for finding in found["findings"]:
-        print(finding)
-
-
-def main(argv=None):
-    parser = argparse.ArgumentParser(prog="schemalyser.rolemap", description=__doc__.split("\n\n")[0])
-    commands = parser.add_subparsers(dest="command", required=True)
-    check = commands.add_parser("check", help="check a map against a world's catalogue")
-    check.add_argument("map", type=Path)
-    check.add_argument("--catalogue", type=Path, required=True)
-    build = commands.add_parser("compile", help="compile an audit, or the standard counts, with a map into T-SQL")
-    build.add_argument("map", type=Path)
-    build.add_argument("--audit", type=Path, default=AUDIT)
-    build.add_argument("--counts", action="store_true", help="compile the standard counts instead of the audit")
-    build.add_argument("--exact", action="store_true", help="leave out the blanking of counts from 1 to 4")
-    rehearse = commands.add_parser("rehearse", help="run an audit on the role-level shadow, with no map")
-    rehearse.add_argument("--audit", type=Path, default=AUDIT)
-    rehearse.add_argument("--seed", type=int, default=1)
-    rehearse.add_argument("--anaesthetics", type=int, default=400)
-    rehearse.add_argument("--no-planted", action="store_true")
-    shadow = commands.add_parser("shadow", help="run an audit and the counts through a map on a world's hospital-shaped shadow")
-    shadow.add_argument("world", type=Path)
-    shadow.add_argument("conversion", type=Path)
-    shadow.add_argument("map", type=Path)
-    shadow.add_argument("--audit", type=Path, default=AUDIT)
-    shadow.add_argument("--rows", type=int, default=500)
-    listing = commands.add_parser("open", help="list a map's open items")
-    listing.add_argument("map", type=Path)
-    scoring = commands.add_parser("scoreboard", help="say how the proposals of a saved hospital schema fared, as counts only")
-    scoring.add_argument("file", type=Path, help="the saved hospital schema, its folder, or its map.json")
-    proposing = commands.add_parser(
-        "propose", help="propose a draft map from a data dictionary, a catalogue and the role model",
-        description="Schemalyser reads the data dictionary, keeps only the tables and columns that the catalogue holds, and "
-                    "proposes for each role the table and column that play it. It writes the draft map to the folder that "
-                    "you name, where every binding awaits a person's confirmation. The draft quotes the dictionary, so "
-                    "Schemalyser writes it only to a private folder, and it prints names and counts only.")
-    proposing.add_argument("dictionary", type=Path, help="the data dictionary, as a CSV or tab-separated file with headings")
-    proposing.add_argument("--catalogue", type=Path, required=True, help="the catalogue of the hospital's database")
-    proposing.add_argument("--out", type=Path, required=True, help="the private folder for the draft map")
-    proposing.add_argument("--tables", type=Path, help="a second file that gives each table's description and primary key")
-    proposing.add_argument("--model", type=Path, help="a role model other than the one in rolemodel/contract.json")
-    proposing.add_argument("--heading", action="append", default=[], metavar="FIELD=HEADING",
-                           help="the dictionary's own heading for a field: table, column, description, data_type or key")
-    proposing.add_argument("--base", action="append", default=[], metavar="VIEW=TABLE",
-                           help="the table whose rows a person has chosen for a view")
-    proposing.add_argument("--world", default="the hospital", help="the name of the hospital or world, for map.json")
-    proposing.add_argument("--reference", type=Path, help="a reference conversion's lineage, as python -m schemalyser.compare "
-                                                         "reference writes it, whose routes become candidates beside the dictionary's")
-    proposing.add_argument("--invented", action="store_true",
-                           help="say that the dictionary is invented, so that its draft may be written into a published folder")
-    confirming = commands.add_parser(
-        "confirm", help="apply a person's answers to a draft map",
-        description="Each row of the file of confirmations names a binding, such as role_patient.birth_date, role_patient "
-                    "rows or kind map_cuff, and gives the answer yes, no or not sure. With no, the row may give the "
-                    "replacement as TABLE.COLUMN, with its link as via TABLE.COLUMN = TABLE.COLUMN where the view does not "
-                    "already reach that table, or the local codes of a kind. Schemalyser records each answer with its "
-                    "date and writes the views that changed again.")
-    confirming.add_argument("map", type=Path)
-    confirming.add_argument("confirmations", type=Path, help="a CSV or tab-separated file with the headings attribute and "
-                                                             "answer, and optionally replacement, by, date and note")
-    confirming.add_argument("--catalogue", type=Path, help="the catalogue, against which the map is checked again")
-    confirming.add_argument("--dictionary", type=Path, help="the data dictionary, to find the link to a replacement and quote it")
-    confirming.add_argument("--tables", type=Path)
-    confirming.add_argument("--heading", action="append", default=[], metavar="FIELD=HEADING")
-    args = parser.parse_args(argv)
-    try:
-        if args.command == "check":
-            found = read_map(args.map, decode(args.catalogue.read_bytes()))
-            for view, tables in found["tables"].items():
-                print(f"{view}: one SELECT over {', '.join(tables)}, with the contract's columns, each in the catalogue.")
-            print(f"The map has {len(open_items(found))} open items.")
-        elif args.command == "compile":
-            found = read_map(args.map)
-            if args.counts:
-                for name, item in count_queries().items():
-                    print(f"-- {name}: {item['says']}")
-                    print(compile_query(item["sql"], found, nolock=True).rstrip() + ";\n")
-            else:
-                print(compile_query(decode(args.audit.read_bytes()), found, blank=not args.exact), end="")
-        elif args.command == "rehearse":
-            con = role_shadow(args.seed, args.anaesthetics, not args.no_planted)
-            _show(result(duckdb_runner(con), decode(args.audit.read_bytes())))
-        elif args.command == "shadow":
-            from . import harness
-            found = read_map(args.map)
-            done = hospital_run(harness.World.from_folder(args.world), args.conversion, found, decode(args.audit.read_bytes()),
-                                args.rows)
-            _show(done["result"])
-        elif args.command == "scoreboard":
-            from . import summaries
-            board = scoreboard(read_saved_map(args.file))
-            print(board["text"], end="")
-            beside = args.file if args.file.is_dir() else args.file.parent
-            written = summaries.write_scoreboard(board, beside)
-            print(f"Schemalyser has written the counts alone to {written[1].name}, beside the saved schema. Once you have "
-                  "read that file, you may show it to the developer's model.")
-        elif args.command == "open":
-            for item in open_items(read_map(args.map)):
-                print(f"{item['about']} ({item['status']}): {item['question']}")
-        elif args.command in ("propose", "confirm"):
-            _propose_or_confirm(args)
-    except MapError as error:
-        raise SystemExit(f"schemalyser.rolemap: {error}")
-    return 0
-
-
-def _pairs(items, what):
-    pairs = {}
-    for item in items:
-        name, _, value = item.partition("=")
-        if not name or not value:
-            raise SystemExit(f"schemalyser.rolemap: {what} is written as NAME=VALUE, and not {item}.")
-        pairs[name.strip()] = value.strip()
-    return pairs
-
-
-def _propose_or_confirm(args):
-    from . import datadict, propose
-    try:
-        headings = _pairs(args.heading, "--heading")
-        catalogue = Catalogue.from_csv(decode(args.catalogue.read_bytes())) if args.catalogue else None
-        if args.command == "propose":
-            model = json.loads(decode(args.model.read_bytes())) if args.model else None
-            dictionary = datadict.load(args.dictionary, args.tables, headings)
-            reference = propose.read_reference(args.reference.read_bytes()) if args.reference else None
-            proposal, found, missing = propose.propose_map(dictionary, catalogue, args.out, model, world=args.world,
-                                                           bases=_pairs(args.base, "--base"), invented=args.invented,
-                                                           reference=reference)
-            if missing:
-                print(propose.WORDING["missing"].format(count=missing))
-            for view, item in proposal.items():
-                if item is None:
-                    print(propose.WORDING["summary_none"].format(view=view))
-                    continue
-                levels = [c["confidence"] for c in item["columns"].values()]
-                shown = ", ".join(f"{levels.count(level)} {level}" for level in ("high", "medium", "low") if levels.count(level))
-                none = levels.count("none")
-                shown += (", and " if shown else "") + f"{none} with nothing that fits" if none else ""
-                print(propose.WORDING["summary"].format(view=view, table=item["rows"]["table"], bound=len(levels) - none,
-                                                        total=len(levels), confidence=shown or "none"))
-            print(propose.WORDING["written"].format(folder=args.out, items=len(open_items(found))))
-        else:
-            dictionary = datadict.load(args.dictionary, args.tables, headings) if args.dictionary else None
-            counts, found = propose.confirm(args.map, args.confirmations, catalogue, dictionary)
-            detail = ", ".join(f"{counts[a]} {a}" for a in ("yes", "no", "not sure") if counts[a]) or "none"
-            print(propose.WORDING["answers"].format(count=sum(counts.values()), detail=detail, items=len(open_items(found))))
-    except (datadict.DictionaryError, propose.ProposeError) as error:
-        raise SystemExit(f"schemalyser.rolemap: {error}")
-
-
-if __name__ == "__main__":
-    sys.exit(main())

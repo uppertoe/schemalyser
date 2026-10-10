@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from schemalyser import audit, describe, rolemap, rolepolicy, workspace
+from schemalyser import audit, describe, rolemap, rolepolicy, roleshadow, workspace
 
 ROOT = workspace.ROOT
 DATE = "2026-10-07"
@@ -108,12 +108,16 @@ def test_the_export_holds_the_allowlisted_sources_and_a_manifest_of_every_file(e
 
 def test_the_core_modules_of_the_allowlist_cover_everything_that_they_import():
     package = ROOT / "core" / "schemalyser"
-    held = set(workspace.CORE_MODULES)
-    modules = {p.stem for p in package.glob("*.py")}
-    for module in workspace.CORE_MODULES:
-        tree = ast.parse((package / f"{module}.py").read_text(encoding="utf-8"))
+    held = set(workspace.CORE_MODULES) | set(workspace.CORE_PACKAGES)
+    modules = {p.stem for p in package.glob("*.py")} | {p.parent.name for p in package.glob("*/__init__.py")}
+    # A module of the core is a file of the package, and a package of the core is a folder whose files import the
+    # core from one level further up.
+    files = [(module, package / f"{module}.py", 1) for module in workspace.CORE_MODULES]
+    files += [(name, path, 2) for name in workspace.CORE_PACKAGES for path in sorted((package / name).glob("*.py"))]
+    for module, path, level in files:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.level == 1:
+            if isinstance(node, ast.ImportFrom) and node.level == level:
                 names = [node.module.split(".")[0]] if node.module else [a.name for a in node.names]
                 for name in names:
                     if name in modules:
@@ -385,7 +389,7 @@ def _schema_without_the_readings_link(path):
         if not about.startswith("role_reading"):
             sitting.confirm(about, "yes", date=DATE)
     sitting.data["roles"]["role_reading"]["columns"]["anaesthetic_key"]["binding"] = None
-    path.write_bytes(sitting.save_zip(DATE))
+    path.write_bytes(roleshadow.save_zip(sitting, DATE))
     return path
 
 
@@ -542,12 +546,12 @@ def planted_private_schema():
     for about in workspace.CONFIRMED:
         s.confirm(about, "yes", note="PLANTED_PRIVATE_NOTE" if about == "role_reading.value" else "", date=DATE)
     s.choose_codes("role_reading.kind", dict(workspace.CODES), DATE)
-    s.correction_keep({"form": "path", "about": "role_anaesthetic.patient_key", "column": "PERSON_KEY",
+    roleshadow.correction_keep(s, {"form": "path", "about": "role_anaesthetic.patient_key", "column": "PERSON_KEY",
                        "steps": [{"from": "CASE_KEY", "table": "THEATRE_CASE", "to": "CASE_KEY"},
                                  {"from": "VISIT_KEY", "table": "PLANTED_PRIVATE_VISIT", "to": "VISIT_KEY"}]}, date=DATE)
     s.translate_concepts("map_drug_concept", [{"code": "PLANTED_PRIVATE_CODE", "description": "PLANTED_PRIVATE_DESCRIPTION",
                                                "concept_id": 1, "status": "mapped", "provenance": "a person"}], DATE)
-    return s.save_zip(DATE)
+    return roleshadow.save_zip(s, DATE)
 
 
 def _planted_in(data):

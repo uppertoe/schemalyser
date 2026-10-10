@@ -22,7 +22,7 @@ The format is `schemalyser-scoreboard-summary`, version 1, written as `scoreboar
 
 Each group of how the proposals fared holds six counts: `proposals`, `as_proposed`, `listed`, `unlisted`, `not_sure` and `unanswered`. The summary holds one such group under `overall`, one under `reference` for the proposals that rested on a reference conversion, one for each part under `parts`, and one for each category of column under `categories`. A part is named only by its role view, such as `role_patient`, from the views of `contract.json`, and a category only by one of `keys`, `links`, `timestamps`, `codes` and `descriptive`. Under `levels`, each of `high`, `medium` and `low` holds `answered` and `corrected`. Under `nothing`, `count` and `chosen` give the columns for which the page proposed nothing and those for which a person has since chosen one.
 
-The `scoreboard` command of `rolemap.py` writes this summary beside the saved schema or the `map.json` that it was given, or inside the folder where it was given one. The workbench does not yet call `summaries.write_scoreboard`.
+The `scoreboard` command of `python -m schemalyser.rolemap` (`rolemap/__main__.py`) writes this summary beside the saved schema or the `map.json` that it was given, or inside the folder where it was given one. The workbench does not yet call `summaries.write_scoreboard`.
 
 ## The comparison summary
 

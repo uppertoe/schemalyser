@@ -14,7 +14,8 @@ import io
 
 import pytest
 
-from schemalyser import browser, describe, evidence, feasibility, normalise, rolemap
+from schemalyser import browser, describe, evidence, feasibility, normalise, rolemap, roleshadow
+from schemalyser.describe import __main__ as describe_main
 from test_describe import DATE, DICTIONARY, TABLES, tables_result
 
 PATH = {"form": "path", "about": "role_anaesthetic.patient_key", "column": "PERSON_KEY",
@@ -44,7 +45,7 @@ def opened(files):
 
 def test_each_save_is_a_new_version_that_names_its_parent_the_time_and_the_contract_it_was_made_against():
     s = fresh()
-    first = s.save(DATE)
+    first = roleshadow.save(s, DATE)
     settings = json.loads(first["settings.json"])
     assert settings["schema_id"] == evidence.content_id(first)[:16] == settings["content_sha256"][:16]
     assert settings["parent_id"] is None and settings["lineage"] == [] and settings["saved"]
@@ -52,14 +53,14 @@ def test_each_save_is_a_new_version_that_names_its_parent_the_time_and_the_contr
     # The file's name carries the version, so that no save reuses the name of another.
     assert s.file_name() == f"hospital-schema-{settings['schema_id']}.schemalyser.zip"
     s.confirm("role_patient.birth_date", "yes", date=DATE)
-    second = json.loads(s.save(DATE)["settings.json"])
+    second = json.loads(roleshadow.save(s, DATE)["settings.json"])
     assert second["schema_id"] != settings["schema_id"] and second["parent_id"] == settings["schema_id"]
     assert second["lineage"] == [settings["schema_id"]]
     # A sitting opened from a version carries on from it, and its next save names it as the parent.
     again = opened(s.folder_files(DATE))
     assert again.identity["schema_id"] == second["schema_id"]
     again.confirm("role_patient.death_date", "not sure", date=DATE)
-    third = json.loads(again.save(DATE)["settings.json"])
+    third = json.loads(roleshadow.save(again, DATE)["settings.json"])
     assert third["parent_id"] == second["schema_id"] and third["lineage"] == [settings["schema_id"], second["schema_id"]]
 
 
@@ -102,7 +103,7 @@ def test_a_withdrawn_confirmation_stays_in_the_journal_and_the_entry_that_withdr
     s = fresh()
     s.confirm("role_patient.is_test", "yes", date=DATE)
     yes = s.log.latest("answer", about="role_patient.is_test")
-    s.correction_keep({"form": "derived", "about": "role_patient.is_test", "table": "PERSON_MASTER",
+    roleshadow.correction_keep(s, {"form": "derived", "about": "role_patient.is_test", "table": "PERSON_MASTER",
                        "column": "TEST_PERSON_FLAG", "derive": {"form": "flag", "values": ["Y"]}}, date=DATE)
     kept = s.log.latest("correction kept", about="role_patient.is_test")
     assert kept["supersedes"] == yes["id"] and s.log.get(yes["id"]) == yes
@@ -134,7 +135,7 @@ def test_each_binding_carries_five_dimensions_each_set_only_by_what_establishes_
     present = s.dimensions["bindings"]["role_patient.birth_date"]["present"]
     assert s.log.get(present["entry"])["payload"]["name"] == "tables-and-columns"
     # Tested is set by a test run on made-up rows, with its run id.
-    run = s.test(DATE)
+    run = roleshadow.test(s, DATE)
     tested = s.dimensions["bindings"]["role_patient.birth_date"]["tested"]
     assert tested["entry"] == run["id"] and tested["run"] == run["payload"]["run"] and tested["outcome"] == "passed"
     assert s.dimensions["links"][PATIENT_LINK]["tested"]["outcome"] == "passed"
@@ -151,7 +152,7 @@ def test_a_changed_binding_makes_its_own_evidence_and_its_link_stale_and_leaves_
     s.read_tables(tables_result())
     s.confirm("role_patient.birth_date", "yes", date=DATE)
     s.confirm("role_anaesthetic.patient_key", "yes", date=DATE)
-    s.test(DATE)
+    roleshadow.test(s, DATE)
     assert not s.stale_evidence()
     s.confirm("role_anaesthetic.patient_key", "no", "THEATRE_CASE.PERSON_KEY", date=DATE)
     stale = {(e["subject"], e["dimension"]): e["reasons"] for e in s.stale_evidence()}
@@ -182,7 +183,7 @@ def test_the_actor_the_page_passes_is_recorded_and_none_passed_is_recorded_as_no
 def test_a_change_to_the_contract_marks_the_evidence_of_the_changed_part_stale(monkeypatch):
     s = fresh()
     s.confirm("role_patient.birth_date", "yes", date=DATE)
-    files = s.save(DATE)
+    files = roleshadow.save(s, DATE)
     changed = dict(rolemap.part_hashes(), role_patient="0" * 16)
     monkeypatch.setattr(rolemap, "part_hashes", lambda model=None: changed)
     again = opened(files)
@@ -198,9 +199,9 @@ def test_a_change_to_the_contract_marks_the_evidence_of_the_changed_part_stale(m
 
 def test_a_route_through_several_tables_and_rows_joined_into_one_text_are_saved_as_named_normalisations():
     s = fresh()
-    s.correction_keep(PATH, date=DATE)
-    s.correction_keep(JOINED, date=DATE)
-    files = s.save(DATE)
+    roleshadow.correction_keep(s, PATH, date=DATE)
+    roleshadow.correction_keep(s, JOINED, date=DATE)
+    files = roleshadow.save(s, DATE)
     data = json.loads(files["map/map.json"])
     binding = data["roles"]["role_anaesthetic"]["columns"]["patient_key"]["binding"]
     assert binding["normalisation"] == "anaesthetic.patient_key" and "path" not in binding
@@ -241,7 +242,7 @@ def saved():
     for about in ("role_patient rows", "role_patient.patient_key", "role_anaesthetic rows", "role_anaesthetic.anaesthetic_key",
                   "role_anaesthetic.patient_key", "role_anaesthetic.start_time"):
         s.confirm(about, "yes", date=DATE)
-    return s.save_zip(DATE)
+    return roleshadow.save_zip(s, DATE)
 
 
 def _files(data):
@@ -305,7 +306,7 @@ def test_an_imported_probe_reconciles_its_link_and_saves_a_new_version_that_a_la
     schema_file.write_bytes(saved)
     (tmp_path / "request.json").write_text(json.dumps(request))
     (tmp_path / "result.tsv").write_text("anaesthetics\twith_rows\twithout_rows\n1200\t1100\t100\n")
-    assert describe.main(["import-evidence", str(schema_file), str(tmp_path / "request.json"), str(tmp_path / "result.tsv"),
+    assert describe_main.main(["import-evidence", str(schema_file), str(tmp_path / "request.json"), str(tmp_path / "result.tsv"),
                           "--actor", "Dr C", "--provenance", "complete data", "--out", str(tmp_path / "out")]) == 0
     written = list((tmp_path / "out").glob("hospital-schema-*.schemalyser.zip"))
     assert len(written) == 1 and opened(_files(written[0].read_bytes())).dimensions["links"][PATIENT_LINK]["reconciled"]

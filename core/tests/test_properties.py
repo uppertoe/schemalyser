@@ -18,7 +18,7 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from schemalyser import capability, convert, rolemap
+from schemalyser import capability, convert, rolemap, roleshadow
 from schemalyser.translate import to_duckdb
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
@@ -38,7 +38,7 @@ def _time(minutes):
 @pytest.fixture(scope="module")
 def shadow():
     """One role shadow for the module, emptied before each history, with the one OMOP table that the step reads."""
-    con = rolemap.role_shadow(seed=1, anaesthetics=0, with_planted=False)
+    con = roleshadow.role_shadow(seed=1, anaesthetics=0, with_planted=False)
     con.execute(f"CREATE SCHEMA {convert.OMOP_SCHEMA}")
     fields = convert.cdm_fields()["visit_detail"]
     con.execute(f"CREATE TABLE {convert.OMOP_SCHEMA}.visit_detail (" + ", ".join(f'"{n}" {k}' for n, _, k in fields) + ")")
