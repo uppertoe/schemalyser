@@ -20,6 +20,10 @@ What the testbed adds is the account of the run:
 - the inputs for the Data Quality Dashboard, and in the full profile its results, with each failure set against
   the world's dqd-expectations.json;
 - the release equivalence check, which reads the SQL Server harness's summary.json;
+- with --package FOLDER, the package equivalence check: the SQL Server harness has run the execution package's query.sql
+  byte for byte on the synthetic database built from the world and written sqlserver-result.json into the package, and
+  the testbed runs DuckDB's translated form of the same text on the same rows and compares the two result set by result
+  set, naming every rewrite in between, as invariant 6 asks;
 - the route of each step, over the roles or directly from the source tables, with the share of the steps on each and
   every step whose route record the release would refuse, and whether the conversion is a draft;
 - the role scenarios: each step over the roles is run on the role-level shadow with a scenario's planted rows of the
@@ -76,7 +80,7 @@ HARNESS = ROOT / "tools" / "sqlserver" / "harness.py"
 EXPECTATIONS = "testbed.json"
 DQD_EXPECTATIONS = "dqd-expectations.json"
 SECTIONS = ("versions", "world", "engines", "build", "steps", "routes", "scenarios", "roles", "reconciliation", "release",
-            "translation", "dqd", "checks", "summary")
+            "package", "translation", "dqd", "checks", "summary")
 CDM_VERSION = "5.4"
 # The schema into which load_postgresql.sql loads the testbed's tables, apart from the OMOP database's own cdm schema.
 POSTGRESQL_SCHEMA = "testbed"
@@ -1037,6 +1041,68 @@ def _equivalence_from_text(sqlserver):
                         f"{scenarios[1]} expectations of the planted scenarios were met on both engines."))
 
 
+def package_equivalence(world, conversion_folder, package):
+    """The package equivalence check. The SQL Server harness ran the package's query.sql byte for byte on the synthetic
+    database built from the world and wrote what it returned to the package's sqlserver-result.json; here DuckDB runs
+    the translated form of the same text on the same rows, built again from the same world, row count and scenarios, and
+    the two are compared result set by result set. The check names every rewrite between the two texts. It fails where
+    the harness ran another text than query.sql now holds, where the manifest does not record the result file, where
+    DuckDB's rows are not the ones the harness loaded, or where any result set differs."""
+    from .translate import REWRITES
+    check = {"check": "package equivalence"}
+    if package is None:
+        return dict(check, state="not run", passed=None,
+                    detail="No execution package was named, so the testbed has compared no package's script.")
+    package = Path(package)
+    result_file = package / harness.PACKAGE_RESULT
+    if not result_file.is_file():
+        return dict(check, state="not run on SQL Server", passed=None, package=package.name,
+                    detail=f"The SQL Server harness has not run the query.sql of {package.name}. tools/sqlserver/harness.py "
+                           "with --package runs it byte for byte and writes its result into the package.")
+    data = result_file.read_bytes()
+    held = json.loads(data)
+    script = (package / "query.sql").read_bytes()
+    sql_sha = hashlib.sha256(script).hexdigest()
+    manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
+    problems = []
+    if held.get("sql_sha256") != sql_sha or held.get("executed_sha256") != sql_sha or manifest.get("sql_sha256") != sql_sha:
+        problems.append("the harness executed another text than the package's query.sql now holds")
+    if (manifest.get("sqlserver_run") or {}).get("sha256") != hashlib.sha256(data).hexdigest():
+        problems.append(f"the manifest does not record this {harness.PACKAGE_RESULT} by its hash")
+    if held.get("error"):
+        problems.append(f"SQL Server stopped the script: {held['error']}")
+    unplanted = [name for name, error in (held.get("planted_on_sqlserver") or {}).items() if error]
+    if unplanted:
+        problems.append(f"{len(unplanted)} scenarios could not be planted on SQL Server ({', '.join(unplanted)})")
+    conversion, _ = convert.run(world, conversion_folder, held.get("rows") or 50, None, scenarios=held.get("scenarios") or [])
+    if harness.sandbox_digest(conversion.con, conversion.sandbox.tables) != held.get("sandbox_sha256"):
+        problems.append("DuckDB's source rows are not the rows that the harness loaded into SQL Server")
+    duck, compared = None, None
+    try:
+        duck = harness.package_on_duckdb(conversion.con, script.decode("utf-8"), conversion.sandbox.date_columns,
+                                         conversion.sandbox.whole_columns)
+    except ValueError as error:
+        problems.append(f"DuckDB could not run the translated form ({error})")
+    if duck is not None:
+        compared = harness.compare_package(held.get("result_sets") or [], duck["result_sets"])
+        for item in compared["differ"]:
+            problems.append(f"result set {item['set']} ({', '.join(item['columns'])}) holds {item['sqlserver_rows']} rows on "
+                            f"SQL Server and {item['duckdb_rows']} in DuckDB, or the same number with other values")
+    rewrites = [{"name": name, "what": REWRITES.get(name) or harness.PACKAGE_REWRITES.get(name, "")}
+                for name in (duck or {}).get("rewrites", [])]
+    found = dict(check, package=package.name, sql_sha256=sql_sha, result_file=harness.PACKAGE_RESULT,
+                 result_sha256=hashlib.sha256(data).hexdigest(), sqlserver=held.get("sqlserver"), rows=held.get("rows"),
+                 scenarios=len(held.get("scenarios") or []), seconds_on_sqlserver=held.get("seconds"),
+                 result_sets=compared["sets"] if compared else None, rewrites=rewrites,
+                 differ=compared["differ"] if compared else None)
+    if problems:
+        return dict(found, state="failed", passed=False, detail=_sentence(problems))
+    return dict(found, state="passed", passed=True,
+                detail=(f"SQL Server ran the package's query.sql byte for byte, and DuckDB's translated form of the same "
+                        f"text gave the same {compared['sets']} result sets on the same rows, through "
+                        f"{len(rewrites)} named {'rewrite' if len(rewrites) == 1 else 'rewrites'}."))
+
+
 def judge(checks, profile):
     """The run's outcome: passed, or failed with each reason. The full profile requires the dashboard and release equivalence."""
     reasons = []
@@ -1051,6 +1117,9 @@ def judge(checks, profile):
         elif name == "the Data Quality Dashboard ran":
             if profile == "full" and not check["passed"]:
                 reasons.append("the Data Quality Dashboard did not run")
+        elif name == "package equivalence":
+            if check["state"] == "failed":
+                reasons.append("the package's script gave other results on SQL Server than on DuckDB")
         elif name == "release equivalence":
             if check["state"] == "failed":
                 reasons.append("release equivalence failed on SQL Server")
@@ -1079,10 +1148,12 @@ def _versions(vocabulary, athena=None):
 
 
 def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, profile="fast", dqd_expectations=None,
-        vocabulary_choice=None):
+        vocabulary_choice=None, package=None):
     """Runs every stage and writes report.json and report.md to out. Returns the report.
 
     vocabulary_choice is athena or sample; when left out, the fast profile takes the sample and the full profile Athena.
+    package, when given, is an execution package whose query.sql the SQL Server harness has run, which the package
+    equivalence check compares with DuckDB's translated form.
     """
     started = time.monotonic()
     choice = choose_vocabulary(profile, vocabulary_choice)
@@ -1143,6 +1214,7 @@ def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, prof
                            if dqd_path else None)
     sqlserver = run_sqlserver(world_folder, folder, rows, out, vocabulary if athena else None) if engine == "sqlserver" else None
     equivalence = release_equivalence(sqlserver)
+    packaged = package_equivalence(world, folder, package)
 
     failures = convert.failures(report)
     coverage_ = reconciliation["coverage"]
@@ -1168,6 +1240,7 @@ def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, prof
          "passed": dqd["unexpected_failures"] == 0 if dqd["status"] == "ran" else None,
          "detail": [_failure_name(f) for f in dqd.get("failures", []) if not f["expected"]]},
         equivalence,
+        packaged,
     ]
     if sqlserver is not None:
         checks.append({"check": "SQL Server agrees with DuckDB", "passed": sqlserver.get("exit_code") == 0, "detail": sqlserver.get("summary")})
@@ -1212,6 +1285,7 @@ def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, prof
              f"{sum(1 for c in report['counts'] if c['error'] is None)} of {len(report['counts'])} counts ran."),
             dqd_sentence,
             equivalence_sentence,
+            *([f"Package equivalence {packaged['state']}. {packaged['detail']}"] if package is not None else []),
         ],
     }
     result = {
@@ -1241,6 +1315,7 @@ def run(world_name, out, rows=200, engine="duckdb", conversion_folder=None, prof
         "roles": roles,
         "reconciliation": reconciliation,
         "release": released,
+        "package": packaged,
         "translation": translation,
         "dqd": dqd,
         "checks": checks,
@@ -1381,6 +1456,11 @@ def markdown(report):
     eq = next(check for check in report["checks"] if check["check"] == "release equivalence")
     said = {"passed": "The check passed.", "failed": "The check failed.", "not run on SQL Server": "The check has not been run on SQL Server."}
     lines += ["## Release equivalence", "", f"{said[eq['state']]} {eq['detail']}", ""]
+    packaged = report.get("package") or {}
+    if packaged.get("state") not in (None, "not run"):
+        lines += ["## Package equivalence", "", packaged["detail"], ""]
+        lines += [f"- `{r['name']}`: {r['what']}" for r in packaged.get("rewrites") or []]
+        lines += [""] if packaged.get("rewrites") else []
     if report["engines"]["sqlserver"]:
         lines += ["## SQL Server", "", f"The harness reports: {report['engines']['sqlserver']['status']}.", ""]
         lines += [f"- {line}" for line in report["engines"]["sqlserver"].get("summary", [])]
@@ -1401,13 +1481,16 @@ def main():
                         help="the dashboard failures that are permitted; the world's dqd-expectations.json when left out")
     runner.add_argument("--profile", choices=("fast", "full"), default="fast",
                         help="full also runs the Data Quality Dashboard and requires it and release equivalence to pass")
+    runner.add_argument("--package", type=Path,
+                        help="an execution package whose query.sql the SQL Server harness has run with --package, to "
+                             "compare with DuckDB's translated form")
     runner.add_argument("--vocabulary", choices=VOCABULARIES,
                         help="athena reads the Athena download in reference/athena, or in the folder that SCHEMALYSER_ATHENA names; "
                              "sample uses five public concepts. The fast profile takes the sample and the full profile Athena")
     args = parser.parse_args()
     try:
         report = run(args.world, args.out, args.rows, args.engine, args.conversion, args.profile, args.dqd_expectations,
-                     args.vocabulary)
+                     args.vocabulary, args.package)
     except (convert.ScenarioError, ValueError, FileNotFoundError) as error:
         raise SystemExit(f"schemalyser.testbed: {error}")
     for sentence in report["summary"]["sentences"]:

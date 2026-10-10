@@ -624,3 +624,38 @@ def test_the_package_s_requests_take_the_plan_and_the_production_outcome_back_in
     assert outcome["payload"]["figure"] == [{"rows_returned": 12, "seconds": 3.5, "outcome": "completed"}]
     assert all(record.get("validated") is None for kind in ("bindings", "links", "translations")
                for record in s.dimensions[kind].values())
+    # The outcome is evidence on the package, under the hash of its query.sql, and the saved file keeps it.
+    (record,) = s.dimensions["packages"][manifest["sql_sha256"]]["production outcome"]
+    assert record["figure"] == outcome["payload"]["figure"] and record["by"] == "Dr D" and record["entry"] == outcome["id"]
+    again = describe.Describe()
+    again.restore(s.folder_files())
+    assert again.dimensions["packages"] == s.dimensions["packages"]
+
+
+def test_a_production_outcome_never_validates_and_reconciles_only_what_holds_no_current_reconciliation(package, saved):
+    # Only a clinical reconciliation of a sample against the clinical record, by a person, sets clinically validated. A
+    # production outcome whose request covers parts records on them, where nothing reconciles them yet, that the run
+    # measured them against the database, with its figure and no judgement.
+    out, manifest = package
+    held = json.loads((out / audit.REQUESTS).read_text(encoding="utf-8"))
+    request = next(r for r in held["requests"] if r["form"] == "production outcome")
+    s = describe.Describe()
+    s.restore(describe._read_saved(saved))
+    parts = ["role_patient", "role_anaesthetic", "role_reading"]
+    request = dict(request, covers=s.covered(parts))
+    before = {(kind, subject): (s.dimensions[kind].get(subject) or {}).get("reconciled")
+              for kind, subject, _ in s._subjects() if request["covers"].get(subject) == s._current(kind, subject)}
+    found = s.import_evidence(request, "rows_returned\tseconds\toutcome\n12\t3.5\tcompleted\n", "Dr D")
+    assert all(record.get("validated") is None for kind in ("bindings", "links", "translations")
+               for record in s.dimensions[kind].values())
+    assert all(part["reached"] != describe.VALIDATED for part in s.readiness()["parts"].values())
+    changed = 0
+    for (kind, subject), earlier in before.items():
+        now = (s.dimensions[kind].get(subject) or {}).get("reconciled")
+        if earlier and not describe.evidence.stale(earlier, s._current(kind, subject)):
+            assert now == earlier
+        else:
+            changed += 1
+            assert now["form"] == "production outcome" and now["judgement"] == describe.NOT_RECORDED
+            assert now["entry"] == found["entry"]["id"] and now["figure"][0]["rows_returned"] == 12
+    assert changed

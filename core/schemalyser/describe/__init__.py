@@ -12,7 +12,9 @@ they settle is written to the hospital folder:
     map/role_*.sql                  one SQL view for each role, written from the bindings and the codes
     journal.json                    the append-only journal of every query offered, every result returned, every
                                     answer, choice of codes, judgement, test run and import of evidence (evidence.py)
-    dimensions.json                 the five dimensions of evidence of every binding, link and code translation
+    dimensions.json                 the five dimensions of evidence of every binding, link and code translation, the
+                                    assessments of each part's recording pathways, and the outcome of each production
+                                    run of an execution package, by the hash of the package's query.sql
     queries/, results/              the text of each query offered and each result returned, named in the journal
     codes/VIEW.COLUMN.json          the codes chosen for each kind of a vocabulary, with the list they were chosen from
     counts/judgements.json          whether each count looked right, with a note, its date and the measured figure
@@ -262,6 +264,39 @@ WORDING = {
     "walk_unreadable": "Schemalyser could not read the file of calls. It is a JSON file holding a list under calls.",
     "walk_saved": "Schemalyser made the hospital schema from the calls and saved it as {file}.",
     "walk_refused": "Schemalyser has not taken call {number}, just as the page does not, and has gone on with the rest. {why}",
+    # The command line (describe/__main__.py), whose every command reads the saved hospital schema and writes a new
+    # version of it, and nothing else.
+    "cli_saved": "Schemalyser has saved the new version {schema_id} of the hospital schema as {file}.",
+    "cli_unchanged": "Nothing has changed since the version {schema_id}, which is already saved as {file}, so Schemalyser has written nothing new.",
+    "cli_other_version": "{file} already holds another version, so Schemalyser has not overwritten it.",
+    "cli_owed": "The hospital schema has changed since its last test on made-up rows, and the new version says that the test is owed. Schemalyser runs the test when the command save, or the evidence import, saves the next version.",
+    "cli_unreadable": "Schemalyser could not read a hospital schema in {name}. Name the file that Schemalyser saved, or the folder that holds it.",
+    "cli_refused": "Schemalyser has not opened the hospital schema in {name}, because the file breaks a rule of the hospital schema. {rule}",
+    "cli_needs_dictionary": "The hospital schema in {name} holds no copy of the dictionary, and the command line opens only a hospital schema that holds one.",
+    "cli_no_schema": "The folder {folder} holds no hospital schema that Schemalyser saved.",
+    "cli_several": "The folder {folder} holds {count} versions of the hospital schema from which no other version there was made, so Schemalyser cannot tell which is the latest. Name the file of the version you mean.",
+    "cli_started_already": "The folder {folder} already holds a hospital schema. If you mean to start another, name an empty folder.",
+    "cli_unreadable_file": "Schemalyser could not read the file {name}.",
+    "cli_dictionary": "Schemalyser has read the dictionary {file}, which holds {tables} tables and {columns} columns, of which {described} are described.",
+    "cli_reference": "Schemalyser has read the reference conversion's lineage {file}, which names {targets} targets, and the proposer reads it beside the dictionary.",
+    "cli_vendor": "Schemalyser has added the vendor's descriptions from {file}: {matched} columns matched those of the database, and {gained} of them gained a description.",
+    "cli_settings": "The hospital schema records the database as {database}, the year of the lists as {year}, and the time zone of the database's clocks as {time_zone}.",
+    "cli_offered": "Schemalyser has written the query {name} and recorded it in the journal. The database analyst runs it on the hospital's database, then pastes the result with the command paste.",
+    "cli_read": "Schemalyser has read the result of {name}, which holds {rows}.",
+    "cli_answered": "Schemalyser has recorded the answer {answer} for {about}, given by {actor}.",
+    "cli_codes": "Schemalyser has recorded {count} for {key}, chosen by {actor}.",
+    "cli_concepts": "Schemalyser has recorded the translation of {mapping}: {mapped} mapped, {unmapped} unmapped and {ambiguous} ambiguous.",
+    "cli_judged": "Schemalyser has recorded the clinician's judgement of {name} as {looks_right}, given by {actor}.",
+    "cli_kept": "Schemalyser has kept the change to {about}, and the journal records its test on made-up rows.",
+    "cli_discarded": "Schemalyser has not kept the change to {about}. The trial of a change records nothing, so the hospital schema is as it was before the trial.",
+    "cli_concepts_file": "Each row of the file of a translation has the headings code, description, concept_id, status and provenance, as a CSV or tab-separated file.",
+    "cli_correction_file": "Schemalyser could not read {name} as a change. It is a JSON file holding one correction, as the page's form gives it.",
+    "cli_pair": "Each code is given as CODE=KIND, such as 52=map_arterial, and not as {item}.",
+    "cli_heading": "Each heading is given as FIELD=HEADING, such as table=TABLE_NAME, and not as {item}.",
+    "cli_journal": "The journal holds {count}, the latest first:",
+    "cli_stale": "This evidence rests on something that has changed since it was established:",
+    "cli_scoreboard": "Schemalyser has written the counts alone to {file}, beside the saved schema. Once you have read that file, you may show it to the developer's model.",
+    "cli_none_stale": "No evidence that the hospital schema holds rests on anything that has changed since.",
 }
 # Where a result came from when it was not pasted: the journal records it beside the result.
 INVENTED_HOSPITAL = "invented hospital"
@@ -314,6 +349,7 @@ PRODUCTION_COLUMNS = (("rows_returned", WHOLE), ("seconds", NUMBER), ("outcome",
 COVERAGE_ASSESSED = "pathway coverage assessed"
 COVERAGE_COLUMNS = (("part", TEXT), ("period_from", TEXT), ("period_to", TEXT), ("pathways_found", WHOLE),
                     ("pathways_mapped", WHOLE))
+PRODUCTION_OUTCOME = "production outcome"
 IMPORTS = {"counts": "count", "test query": "probe", "code list": "list", "values": "values", "counting query": "values",
            "plan": "plan", "production outcome": "production outcome", "reconciliation": "clinical reconciliation",
            "pathway coverage": COVERAGE_ASSESSED}
@@ -487,9 +523,10 @@ class Describe:
         # The current text of each query and result, by the query's name, as the journal's latest entries give them.
         self.queries = {}
         self.results = {}
-        # The five dimensions of evidence of every binding, link and code translation (evidence.py), and the
-        # assessments of each part's recording pathways, {part: {COVERAGE_ASSESSED: [record]}}.
-        self.dimensions = {"bindings": {}, "links": {}, "translations": {}, "parts": {}}
+        # The five dimensions of evidence of every binding, link and code translation (evidence.py), the
+        # assessments of each part's recording pathways, {part: {COVERAGE_ASSESSED: [record]}}, and the outcomes of
+        # the production runs of each execution package, {the hash of its query.sql: {PRODUCTION_OUTCOME: [record]}}.
+        self.dimensions = {"bindings": {}, "links": {}, "translations": {}, "parts": {}, "packages": {}}
         # The identity of the version this sitting was restored from or last saved as, its ancestors, and the contract
         # that a restored file was made against.
         self.identity = {"schema_id": None, "parent_id": None, "lineage": []}
@@ -731,7 +768,8 @@ class Describe:
         # Every binding is new, so no evidence of an earlier proposal is carried over to it; the result of the tables
         # and columns query, where one has been read, shows which of the new bindings are present.
         self.dimensions = {"bindings": {}, "links": {}, "translations": dict(self.dimensions["translations"]),
-                           "parts": dict(self.dimensions.get("parts") or {})}
+                           "parts": dict(self.dimensions.get("parts") or {}),
+                           "packages": dict(self.dimensions.get("packages") or {})}
         self._refresh_present(self._catalogue_entry(), date)
         self.settings["made"] = self.settings["made"] or date
         self.settings["updated"] = date
@@ -1754,7 +1792,9 @@ class Describe:
         date = date or _today()
         # A code chosen as other is kept as chosen, so that the page shows it as chosen, and is translated as any code
         # left unchosen is.
-        chosen = {str(code): kind for code, kind in chosen.items() if kind in entry["kinds"]}
+        # The codes are kept in the order of their text, as the journal keeps them, so that the saved file does not
+        # depend on the order in which they were chosen.
+        chosen = {code: kind for code, kind in sorted((str(c), k) for c, k in chosen.items()) if kind in entry["kinds"]}
         held = self.codes.setdefault(key, {})
         names = {r["code"]: r["name"] for r in held.get("rows", [])}
         held.update({"chosen": chosen, "names": {c: names.get(c, "") for c in chosen}, "date": date,
@@ -2454,6 +2494,9 @@ ORDER  BY g.kind;"""
         reasons, as [{"kind", "subject", "dimension", "reasons"}]."""
         found = []
         for kind, held in self.dimensions.items():
+            if kind == "packages":
+                # A package's production outcome rests on its query.sql, which the package's own status rechecks.
+                continue
             for subject, record in sorted(held.items()):
                 current = self._current(kind, subject)
                 if kind == "parts":
@@ -2783,7 +2826,7 @@ ORDER  BY g.kind;"""
         self.codes, self.counts = {}, {}
         self.queries, self.results, self.values, self.probes = {}, {}, {}, {}
         self.log, self.texts, self._journal_cache = evidence.Journal(), {}, None
-        self.dimensions = {"bindings": {}, "links": {}, "translations": {}, "parts": {}}
+        self.dimensions = {"bindings": {}, "links": {}, "translations": {}, "parts": {}, "packages": {}}
         self._checked, self._after, self._baseline, self._tested, self._saved = {}, {}, None, None, None
         held = _json_of(files.get("settings.json"))
         for key in ("made", "updated", "database", "year", "time_zone", "time_zone_from", "daylight_saving", "hospital"):
@@ -3025,8 +3068,9 @@ ORDER  BY g.kind;"""
                 **{k: state[k] for k in ("year", "about", "key", "probe", "table", "column") if k in state}}
 
     def covered(self, parts):
-        """What a clinical reconciliation or a production outcome of the given parts would validate, as {subject:
-        hashes}, which a request carries so that the import validates nothing that has changed since."""
+        """What a clinical reconciliation of the given parts would validate, or a production outcome of them would
+        reconcile, as {subject: hashes}, which a request carries so that the import moves nothing that has changed
+        since."""
         return {subject: self._current(kind, subject) for kind, subject, view in self._subjects()
                 if (view in parts if kind != "links" else view[0] in parts and view[1] in parts)}
 
@@ -3059,8 +3103,12 @@ ORDER  BY g.kind;"""
 
         A count or a test query sets reconciled, with its figure, for each binding and link that has not changed since
         the query was written; the clinician's judgement of a count is recorded as before, at step 8. A plan is kept
-        as a journal entry for the execution package. A production outcome and a clinical reconciliation set
-        validated for the parts they cover. A person's assessment of the recording pathways is recorded on each part
+        as a journal entry for the execution package. Only a clinical reconciliation sets validated, for the parts it
+        covers, because the contract reserves that dimension for a sample reconciled against the clinical record by a
+        person. A production outcome is kept as a journal entry and as evidence on its package, by the hash of the
+        package's query.sql, with its measured figure; and on each binding, link and code translation that its request
+        covers and that holds no current reconciliation, it records reconciled against the database with that figure
+        and no judgement, so that a count the clinician judged is never replaced by it. A person's assessment of the recording pathways is recorded on each part
         it names, with its period, its figures, the person and the date; it needs the person's name."""
         date = date or _today()
         if not isinstance(request, dict) or request.get("format") != REQUEST_FORMAT or not request.get("request_id") \
@@ -3110,12 +3158,25 @@ ORDER  BY g.kind;"""
             entry = self._append("evidence imported", {"request_id": request["request_id"], "request": _request_summary(request),
                                                        "form": form, "result": path, "figure": figure, "date": date},
                                  actor, provenance or (METADATA if form == "plan" else PERSON))
-            if form != "plan":
-                held = request.get("covers") or {}
+            held = request.get("covers") or {}
+            if form == "clinical reconciliation":
                 for kind, subject, _ in list(self._subjects()):
                     if held.get(subject) == self._current(kind, subject):
                         self._set(kind, subject, "validated", evidence.record(date, self._current(kind, subject), by=entry["actor"],
                                                                               entry=entry["id"], figure=figure, form=form))
+            elif form == PRODUCTION_OUTCOME:
+                package = request.get("sql_sha256") or request["request_id"]
+                record = evidence.record(date, {"sql": package}, by=entry["actor"], entry=entry["id"], figure=figure, form=form,
+                                         request=request["request_id"])
+                self.dimensions["packages"].setdefault(package, {}).setdefault(PRODUCTION_OUTCOME, []).append(record)
+                for kind, subject, _ in list(self._subjects()):
+                    if held.get(subject) != self._current(kind, subject):
+                        continue
+                    standing = (self.dimensions[kind].get(subject) or {}).get("reconciled")
+                    if standing and not evidence.stale(standing, self._current(kind, subject)):
+                        continue
+                    self._set(kind, subject, "reconciled", evidence.record(date, self._current(kind, subject), entry=entry["id"],
+                                                                           figure=figure, judgement=NOT_RECORDED, form=form))
         files = self.save(date)
         return {"schema_id": self.identity["schema_id"], "file": self.file_name(), "files": files, "entry": entry}
 
@@ -3639,7 +3700,8 @@ README_FILES = [
                         "confirmed, present, tested on made-up rows, reconciled against the database and clinically "
                         "validated. Each gives its date, the person or the journal entry that established it, any figure "
                         "it measured, and a hash of what it rested on, so that a later change shows which evidence it "
-                        "leaves out of date."),
+                        "leaves out of date. It also keeps the outcome of each production run of an execution package, "
+                        "under the hash of the package's script, which validates no part of the record."),
     ("confirmations.csv", "Every answer that the database analyst gave that still stands, in order, one row for each answer: the part and column, "
                           "the answer (yes, no or not sure), the replacement where the answer was no or where a Yes carried "
                           "a translation of the column's codes, the date and any note. For a correction "

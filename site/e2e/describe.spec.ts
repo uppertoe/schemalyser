@@ -131,8 +131,9 @@ function walkOf(recorded: { call: string; args: unknown[] }[], files: Record<str
 }
 
 // The files inside a saved hospital schema, with what differs between two saves of the same calls made as text that
-// cannot differ: the identifiers of entries and test runs, the version's identifier and hash, the times, and how many
-// seconds a test took.
+// cannot differ: the identifiers of entries and test runs, the version's identifier and hash, the times, how many
+// seconds a test took, and the versions from which entries were made and that came before, since each command of the
+// command line saves a version and the page saves only at the end.
 function savedFiles(zip: string): Record<string, string> {
   const held = JSON.parse(execFileSync('python3', ['-c', [
     'import json, sys, zipfile',
@@ -140,7 +141,8 @@ function savedFiles(zip: string): Record<string, string> {
     'print(json.dumps({n: archive.read(n).decode("utf-8", "replace") for n in archive.namelist()}))',
   ].join('\n'), zip], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })) as Record<string, string>;
   const steady = (text: string) => text.replace(/\b[jr][0-9a-f]{12}\b/g, 'ID').replace(/\b[0-9a-f]{64}\b/g, 'HASH')
-    .replace(/\b[0-9a-f]{16}\b/g, 'SCHEMA').replace(/\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d)?/g, 'TIME').replace(/"seconds": [\d.]+/g, '"seconds": N');
+    .replace(/\b[0-9a-f]{16}\b/g, 'SCHEMA').replace(/\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d)?/g, 'TIME').replace(/"seconds": [\d.]+/g, '"seconds": N')
+    .replace(/"(schema_id|parent_id)": (null|"SCHEMA")/g, '"$1": "SCHEMA"').replace(/"lineage": \[[^\]]*\]/g, '"lineage": []');
   return Object.fromEntries(Object.entries(held).map(([name, text]) => [name, steady(text)]));
 }
 
@@ -381,7 +383,8 @@ test('the record is described, saved as a hospital schema and opened again', asy
   expect(readme).toContain('## Queries to run again on production');
   expect(readFileSync(join(unzipped, 'confirmations.csv'), 'utf8')).toMatch(/role_anaesthetic\.patient_key,no,"?THEATRE_CASE\.PERSON_KEY[^\n]*,passed(: broke nothing new; [^,]+)?,/);
   // The command line, given the calls that the page made of its bridge and the same files, saves the same hospital
-  // schema, file by file.
+  // schema, file by file: the walk gives each call to the command that carries it, one command at a time over the
+  // saved file.
   const recorded = await page.evaluate(() => (window as unknown as { describeCalls: { call: string; args: unknown[] }[] }).describeCalls);
   const walk = walkOf(recorded, { 'invented-dictionary.csv': fixtures + 'dictionary/invented-dictionary.csv',
     'invented-tables.csv': fixtures + 'dictionary/invented-tables.csv' });

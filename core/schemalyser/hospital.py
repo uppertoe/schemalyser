@@ -44,6 +44,12 @@ class InventedHospital:
         sandbox.date_columns = frozenset(manifest["date_columns"])
         sandbox.whole_columns = frozenset(manifest["whole_columns"])
         sandbox.con = duckdb.connect()
+        # One thread, as in the page's worker, so that rows which tie in a query's ORDER BY come back in the same order
+        # on every run, and two runs of the same query give the same result. It is set before the settings are locked.
+        try:
+            sandbox.con.execute("SET threads TO 1")
+        except duckdb.Error:
+            pass  # a build of DuckDB without threads runs on one already
         for setting in LOCKED_DOWN:
             sandbox.con.execute(f"SET {setting}")
         for table in manifest["tables"]:

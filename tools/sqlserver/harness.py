@@ -41,6 +41,13 @@ are, in the anaesthesia schema and through their published views.
 A date that either engine takes from the clock, such as the release date in CDM_SOURCE, is
 compared as "today", because the container keeps UTC and DuckDB keeps the local time zone.
 
+With --package FOLDER, the harness runs an audit's execution package instead of the conversion: once
+clarity_shadow holds the world's rows and its planted scenarios, it runs the package's query.sql byte for byte
+with sqlcmd, both parts in order in one session, writes every result set, the hash of the text that sqlcmd read
+inside the container and the version of SQL Server into the package's sqlserver-result.json, records that file
+and its hash in the package's manifest (audit.record_sqlserver_run), and compares the result with DuckDB's
+translated form of the same text on the same rows, naming the rewrites in between.
+
 The password for the sa login is read from reference/mssql-password.txt, or from the file that
 SCHEMALYSER_MSSQL_PASSWORD_FILE names. It is passed to sqlcmd through the environment and never printed.
 """
@@ -56,6 +63,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from collections import Counter
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -64,7 +72,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "core"))
 sys.path.insert(0, str(ROOT / "fixtures"))
 
-from schemalyser import convert, harness, release, sample_vocabulary  # noqa: E402
+from schemalyser import audit, convert, harness, release, sample_vocabulary  # noqa: E402
 from schemalyser.catalogue import QUERY_ORDER  # noqa: E402
 from schemalyser.sandbox import LAYOUT, Checks, ChecksError  # noqa: E402
 from schemalyser.extract import decode  # noqa: E402
@@ -154,6 +162,21 @@ class Server:
         if result.returncode:
             raise SqlError(_first_error(result.stdout + "\n" + result.stderr))
         return result.stdout
+
+    def run_exact(self, data, database, name):
+        """Runs a script exactly as its bytes are, with sqlcmd, substituting no variable, with a header above each result
+        set and the fields separated by SEPARATOR, and the messages sent to standard error. Returns its standard output
+        and the SHA-256 of the file that sqlcmd read inside the container. Raises SqlError if sqlcmd reports an error."""
+        local = self.local / name
+        local.write_bytes(data)
+        self._docker("cp", str(local), f"{self.container}:{WORK}/{name}")
+        held = self._docker("exec", self.container, "sha256sum", f"{WORK}/{name}").stdout.split()[0]
+        result = self._docker("exec", "-e", "SQLCMDPASSWORD", "-e", "GODEBUG", self.container, self.sqlcmd,
+                              "-S", "localhost", "-U", "sa", "-C", "-b", "-d", database, "-i", f"{WORK}/{name}", "-x",
+                              "-W", "-w", "65535", "-s", SEPARATOR, "-r", "1", check=False)
+        if result.returncode:
+            raise SqlError(_first_error(result.stdout + "\n" + result.stderr))
+        return result.stdout, held
 
     def bulk(self, table, text, database):
         """Loads a table from a bulk file, which is far quicker than INSERT statements over wide tables."""
@@ -944,6 +967,9 @@ def main():
     parser.add_argument("--scenarios", help="the planted scenarios to plant on both engines, separated by commas; "
                                             "every scenario that does not exist to make a gate fail when left out")
     parser.add_argument("--no-scenarios", action="store_true", help="plant no scenario")
+    parser.add_argument("--package", type=Path, action="append",
+                        help="an execution package whose query.sql to run byte for byte on clarity_shadow, instead of the "
+                             "conversion; its result goes into the package's sqlserver-result.json")
     args = parser.parse_args()
 
     password_file = Path(os.environ.get("SCHEMALYSER_MSSQL_PASSWORD_FILE", PASSWORD_FILE))
@@ -966,6 +992,8 @@ def main():
     version = server.scalar("SELECT CONCAT(CAST(SERVERPROPERTY('Edition') AS nvarchar(200)), N', version ', "
                             "CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(50)));")
     print(f"SQL Server: {version}")
+    if args.package:
+        return package_main(args, server, world, version)
     TODAY.update({dt.date.today(), dt.datetime.now(dt.timezone.utc).date(),
                   dt.date.fromisoformat(server.scalar("SELECT CONVERT(varchar(10), GETDATE(), 23);"))})
 
@@ -1194,6 +1222,99 @@ def main():
     })
     print("The same summary, with a checksum for each table, is in summary.json beside the release script.")
     print(f"The scripts that were run are in {server.local}, and the release script and check results in {workspace}.")
+    server.clean()
+    return exit_code
+
+
+# An execution package's script, run byte for byte.
+
+def result_sets(text):
+    """The result sets that sqlcmd printed with run_exact, in order, as [{"columns", "rows"}], each value as text or
+    None. A result set begins with its header, which the line of dashes below it marks."""
+    lines = [line for line in text.split("\n") if line != ""]
+    found, number = [], 0
+    while number < len(lines):
+        fields = lines[number].split(SEPARATOR)
+        below = lines[number + 1].split(SEPARATOR) if number + 1 < len(lines) else None
+        if below is not None and len(below) == len(fields) and all(f and set(f) == {"-"} for f in below):
+            found.append({"columns": fields, "rows": []})
+            number += 2
+            continue
+        if found:
+            found[-1]["rows"].append([None if value == "NULL" else value for value in fields])
+        number += 1
+    return found
+
+
+def run_package(server, package, version, world_name, rows, scenarios, planted, digest):
+    """Runs a package's query.sql byte for byte, both parts in order, in clarity_shadow, and writes what it returned to
+    the package's sqlserver-result.json. Returns what was written."""
+    package = Path(package)
+    data = (package / "query.sql").read_bytes()
+    began = dt.datetime.now(dt.timezone.utc)
+    clock = time.monotonic()
+    error = None
+    try:
+        out, executed = server.run_exact(data, SOURCE_DATABASE, "package_query.sql")
+        sets = result_sets(out)
+    except SqlError as failure:
+        executed, sets, error = None, [], str(failure)
+    found = {"format": harness.PACKAGE_RESULT_FORMAT, "file": "query.sql",
+             "sql_sha256": hashlib.sha256(data).hexdigest(), "executed_sha256": executed,
+             "sqlserver": version, "database": SOURCE_DATABASE, "world": world_name, "rows": rows,
+             "scenarios": [s["name"] for s in scenarios], "planted_on_sqlserver": planted, "sandbox_sha256": digest,
+             "ran": began.isoformat(timespec="seconds"), "seconds": round(time.monotonic() - clock, 1),
+             "error": error, "result_sets": sets}
+    (package / harness.PACKAGE_RESULT).write_text(json.dumps(found, indent=2) + "\n", encoding="utf-8")
+    return found
+
+
+def package_main(args, server, world, version):
+    """The run of an execution package's query.sql on the synthetic SQL Server database built from the world, with
+    its scenarios planted on both engines, compared with DuckDB's translated form on the same rows. Returns the exit
+    code."""
+    started = time.monotonic()
+    folder = args.conversion.resolve()
+    names = [] if args.no_scenarios else [n.strip() for n in args.scenarios.split(",") if n.strip()] if args.scenarios else None
+    scenarios = convert.chosen_scenarios(folder, names)
+    conversion, report = convert.run(world, folder, args.rows, None, scenarios=[s["name"] for s in scenarios])
+    con = conversion.con
+    key = source_key(con, world.catalogue_text(), conversion.sandbox.tables, conversion.planted_from)
+    restored = None if args.fresh_load else server.restore_source(key)
+    if restored:
+        findings, loaded = restored
+        print("clarity_shadow was restored from the copy that an earlier run over the same rows kept.")
+    else:
+        findings, loaded = load_source(server, con, world.catalogue_text(), conversion.sandbox.tables, conversion.planted_from)
+        server.keep_source(key, findings, loaded)
+    planted = plant_scenarios(server, scenarios)
+    print(f"clarity_shadow holds {len(conversion.sandbox.tables)} tables and {loaded:,} rows, and "
+          f"{sum(1 for e in planted.values() if e is None)} of {len(scenarios)} scenarios were planted on SQL Server.")
+    digest = harness.sandbox_digest(con, conversion.sandbox.tables)
+    exit_code = 0
+    for package in args.package:
+        found = run_package(server, package, version, args.world.resolve().name if args.world else "fixtures", args.rows,
+                            scenarios, planted, digest)
+        recorded = audit.record_sqlserver_run(package)
+        print(f"{Path(package).name}: query.sql ran on SQL Server in {found['seconds']} seconds"
+              + (f", and failed: {found['error']}" if found["error"] else f", with {len(found['result_sets'])} result sets")
+              + f". The result is in {harness.PACKAGE_RESULT}, which the manifest records with the hash "
+              f"{recorded['sha256'][:16]}.")
+        text = (Path(package) / "query.sql").read_text(encoding="utf-8")
+        try:
+            duck = harness.package_on_duckdb(con, text, conversion.sandbox.date_columns, conversion.sandbox.whole_columns)
+        except ValueError as error:
+            print(f"  DuckDB could not run the translated form: {error}")
+            exit_code = 1
+            continue
+        compared = harness.compare_package(found["result_sets"], duck["result_sets"])
+        exit_code |= 0 if compared["same"] and not found["error"] and found["executed_sha256"] == found["sql_sha256"] else 1
+        print(f"  {'the same on both engines' if compared['same'] else 'DIFFERENT'}: {compared['sets']} result sets, through "
+              f"the rewrites {', '.join(duck['rewrites'])}.")
+        for item in compared["differ"]:
+            print(f"  result set {item['set']} ({', '.join(item['columns'])}): {item['sqlserver_rows']} rows on SQL Server "
+                  f"and {item['duckdb_rows']} in DuckDB")
+    print(f"The whole run took {round(time.monotonic() - started, 1)} seconds.")
     server.clean()
     return exit_code
 

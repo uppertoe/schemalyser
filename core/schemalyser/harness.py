@@ -25,6 +25,7 @@ distribution that the check results asked for and the one that the sandbox built
 import argparse
 import csv
 import io
+import re
 import zipfile
 from collections import Counter, defaultdict
 from dataclasses import dataclass
@@ -721,6 +722,118 @@ def scorecard(world, rows=600, include_spans=False, include_fanout=False):
     for value in leaked:
         say(f"  LEAKED: {value}")
     return "\n".join(lines) + "\n"
+
+
+# An execution package's script on the synthetic world. The SQL Server harness (tools/sqlserver/harness.py) runs a
+# package's query.sql byte for byte on the synthetic SQL Server database built from a world, and records what it
+# returned in the package's sqlserver-result.json. DuckDB runs a translated form of the same text on the same rows,
+# and the two are compared result set by result set, with every rewrite between them named, as invariant 6 asks.
+
+PACKAGE_RESULT = "sqlserver-result.json"
+PACKAGE_RESULT_FORMAT = 1
+# The rewrites that the translated form of a package's script needs beyond those of translate.REWRITES, by name.
+PACKAGE_REWRITES = {
+    "cohort_key_without_isnull": "ISNULL(key, 0), by which SQL Server makes the key of #cohort fit for a primary key, "
+                                 "becomes the plain key, because DuckDB will not mix a text key with 0 and the cohort "
+                                 "holds no empty key.",
+    "cohort_primary_key_dropped": "ALTER TABLE #cohort ADD PRIMARY KEY is removed, because DuckDB cannot add a key to a "
+                                  "table once it is made, and the cohort's key is unique as part 1 chooses it.",
+}
+SESSION_SETTING = re.compile(r"\s*SET\s+(NOCOUNT|TRANSACTION\s+ISOLATION\s+LEVEL|LOCK_TIMEOUT|DEADLOCK_PRIORITY|XACT_ABORT|ARITHABORT|ANSI_\w+)\b", re.I)
+COHORT_KEY = re.compile(r"ISNULL\((\w+\.anaesthetic_key), 0\)")
+
+
+def sandbox_digest(con, tables):
+    """A fingerprint of the rows of the source tables of a sandbox, so that a later run can show that it ran on the same
+    rows. Each table's rows are sorted as text before they are hashed."""
+    import hashlib
+    found = hashlib.sha256()
+    for table in sorted(tables, key=str.upper):
+        rows = con.execute(f'SELECT * FROM "{table}"').fetchall()
+        found.update(table.upper().encode("utf-8"))
+        for row in sorted(repr(tuple("" if v is None else str(v) for v in row)) for row in rows):
+            found.update(row.encode("utf-8"))
+    return found.hexdigest()
+
+
+def package_on_duckdb(con, text, date_columns=frozenset(), whole_columns=None):
+    """Runs the translated form of a package's script on DuckDB, both parts in order, and returns {"result_sets":
+    [{"columns", "rows"}], each value as text or None, "rewrites": the names of every rewrite applied, in the order
+    first applied, "statements": how many statements ran}. Raises ValueError, naming the statement, where one cannot
+    be translated or run."""
+    from .policy import split
+    statements, _ = split(text)
+    found, rewrites, ran = [], [], 0
+
+    def applied(name):
+        if name not in rewrites:
+            rewrites.append(name)
+    try:
+        for number, statement in enumerate(statements, 1):
+            if SESSION_SETTING.match(statement):
+                # translate.REWRITES names this rewrite, which sqlglot cannot read for every setting of the script.
+                applied("session_setting_dropped")
+                continue
+            if re.match(r"\s*ALTER\s+TABLE\s+#cohort\s+ADD\s+PRIMARY\s+KEY", statement, re.I):
+                applied("cohort_primary_key_dropped")
+                continue
+            plain = COHORT_KEY.sub(r"\1", statement)
+            if plain != statement:
+                applied("cohort_key_without_isnull")
+            try:
+                translated = to_duckdb(plain, date_columns, whole_columns)
+            except (Unreadable, Unsupported):
+                raise ValueError(f"statement {number} could not be translated for DuckDB") from None
+            for name in translated.rewrites:
+                applied(name)
+            for one in translated:
+                cursor = con.execute(one)
+                ran += 1
+                if cursor.description and one.lstrip().upper().startswith(("SELECT", "WITH", "(")):
+                    found.append({"columns": [d[0] for d in cursor.description],
+                                  "rows": [[None if v is None else str(v) for v in row] for row in cursor.fetchall()]})
+    except duckdb.Error as error:
+        raise ValueError(f"statement {number} failed on DuckDB: {str(error).splitlines()[0]}") from None
+    finally:
+        con.execute("DROP TABLE IF EXISTS temp_cohort")
+    return {"result_sets": found, "rewrites": rewrites, "statements": ran}
+
+
+def _canonical(value):
+    """A value as both engines' text can be compared: NULL as None, a number by its value, and anything else as it is
+    once the spaces at either end are removed."""
+    if value is None or value == "NULL":
+        return None
+    text = str(value).strip()
+    moment = re.fullmatch(r"(\d{4}-\d\d-\d\d)[ T](\d\d:\d\d:\d\d)(\.\d*)?", text)
+    if moment:
+        fraction = (moment.group(3) or "").rstrip("0").rstrip(".")
+        return f"{moment.group(1)} {moment.group(2)}{fraction}"
+    try:
+        number = float(text)
+    except ValueError:
+        return text
+    return round(number, 6) if number == number else text
+
+
+def compare_package(server_sets, duck_sets):
+    """Compares the result sets of a package's script on SQL Server with those of its translated form on DuckDB, in
+    order. Returns {"same", "sets", "differ": [{"set", "columns", "sqlserver_rows", "duckdb_rows"}]}."""
+    differ = []
+    for number in range(max(len(server_sets), len(duck_sets))):
+        ours = server_sets[number] if number < len(server_sets) else None
+        theirs = duck_sets[number] if number < len(duck_sets) else None
+        if ours is None or theirs is None:
+            differ.append({"set": number + 1, "columns": (ours or theirs)["columns"],
+                           "sqlserver_rows": None if ours is None else len(ours["rows"]),
+                           "duckdb_rows": None if theirs is None else len(theirs["rows"])})
+            continue
+        same_columns = [c.lower() for c in ours["columns"]] == [c.lower() for c in theirs["columns"]]
+        rows = lambda held: Counter(tuple(_canonical(v) for v in row) for row in held["rows"])  # noqa: E731
+        if not same_columns or rows(ours) != rows(theirs):
+            differ.append({"set": number + 1, "columns": ours["columns"], "sqlserver_rows": len(ours["rows"]),
+                           "duckdb_rows": len(theirs["rows"])})
+    return {"same": not differ, "sets": max(len(server_sets), len(duck_sets)), "differ": differ}
 
 
 def main():

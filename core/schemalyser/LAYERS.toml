@@ -45,7 +45,7 @@
 "schemalyser.testbed" = { layer = "4" }
 "schemalyser.convert" = { layer = "4", note = "It runs a conversion over the synthetic database and checks what it writes. The conversion folder's format is conversion.py's, which it reads by the same names as before." }
 "schemalyser.roleshadow" = { layer = "4", note = "The role-level shadow with its planted cases, the map's shadow on which a hospital schema and a correction are tested, the hospital run of a world, and the correctness report of an execution package. It runs the test that a sitting of screen 1 owes and hands the result back to the sitting as data." }
-"schemalyser.harness" = { layer = "4", note = "The synthetic world: the analysis of its requests, the checks that its stand-in database answers and the script that writes them, which the conversion's run and the SQL Server harness both use." }
+"schemalyser.harness" = { layer = "4", note = "The synthetic world: the analysis of its requests, the checks that its stand-in database answers and the script that writes them, which the conversion's run and the SQL Server harness both use, and the translated form of an execution package's script on DuckDB, which the testbed compares with the SQL Server harness's run of it." }
 "schemalyser.sample_vocabulary" = { layer = "4", note = "A few public concepts for the fast profile, which the testbed and the SQL Server harness both write." }
 "schemalyser.hospital" = { layer = "4" }
 "schemalyser.sandbox" = { layer = "4", note = "The synthetic database, with the reader of the check results from which it builds its values." }
@@ -62,7 +62,7 @@
 "schemalyser.results" = { layer = "orchestration", note = "The results package, written from an execution package and a production run's output; it stays inside the hospital." }
 
 "schemalyser.browser" = { layer = "5" }
-"schemalyser.describe.__main__" = { layer = "5", note = "The command line of the hospital schema, which python -m schemalyser.describe runs, with the walk of the page's calls." }
+"schemalyser.describe.__main__" = { layer = "5", note = "The command line of the hospital schema, which python -m schemalyser.describe runs: a command for each operation of the page, and the walk of the page's calls through those commands." }
 "schemalyser.rolemap.__main__" = { layer = "5", note = "The command line of the roles and the maps, which python -m schemalyser.rolemap runs." }
 "schemalyser.workbench" = { layer = "5" }
 "schemalyser.workbench.__main__" = { layer = "5" }

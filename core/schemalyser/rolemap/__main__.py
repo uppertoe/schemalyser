@@ -2,6 +2,10 @@
 each command; this module, a surface of layer 5, reads the files and calls the layers that do the work: the map's own
 checks (rolemap), the compilation of a query through a map (compiler.py), the role shadow (roleshadow.py), and the
 proposer (propose.py).
+
+The commands propose and confirm are for development only, and they produce no schema of record: they write a map
+folder directly, which no journal records. The hospital schema of record is made and answered with python -m
+schemalyser.describe, whose every command is journalled.
 """
 import argparse
 import json
@@ -59,8 +63,10 @@ def main(argv=None):
     scoring = commands.add_parser("scoreboard", help="say how the proposals of a saved hospital schema fared, as counts only")
     scoring.add_argument("file", type=Path, help="the saved hospital schema, its folder, or its map.json")
     proposing = commands.add_parser(
-        "propose", help="propose a draft map from a data dictionary, a catalogue and the role model",
-        description="Schemalyser reads the data dictionary, keeps only the tables and columns that the catalogue holds, and "
+        "propose", help="for development only: propose a draft map folder, which is no schema of record",
+        description="This command is for development only, and it produces no schema of record: it writes a map folder "
+                    "directly, which no journal records. The hospital schema of record is made with python -m "
+                    "schemalyser.describe start and propose. Schemalyser reads the data dictionary, keeps only the tables and columns that the catalogue holds, and "
                     "proposes for each role the table and column that play it. It writes the draft map to the folder that "
                     "you name, where every binding awaits a person's confirmation. The draft quotes the dictionary, so "
                     "Schemalyser writes it only to a private folder, and it prints names and counts only.")
@@ -79,8 +85,10 @@ def main(argv=None):
     proposing.add_argument("--invented", action="store_true",
                            help="say that the dictionary is invented, so that its draft may be written into a published folder")
     confirming = commands.add_parser(
-        "confirm", help="apply a person's answers to a draft map",
-        description="Each row of the file of confirmations names a binding, such as role_patient.birth_date, role_patient "
+        "confirm", help="for development only: apply a person's answers to a draft map folder, which is no schema of record",
+        description="This command is for development only, and it produces no schema of record: it rewrites a map folder "
+                    "directly, which no journal records. A person's answers to the hospital schema of record are given "
+                    "with python -m schemalyser.describe answer. Each row of the file of confirmations names a binding, such as role_patient.birth_date, role_patient "
                     "rows or kind map_cuff, and gives the answer yes, no or not sure. With no, the row may give the "
                     "replacement as TABLE.COLUMN, with its link as via TABLE.COLUMN = TABLE.COLUMN where the view does not "
                     "already reach that table, or the local codes of a kind. Schemalyser records each answer with its "

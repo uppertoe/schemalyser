@@ -75,6 +75,17 @@ The harness plants the conversion's scenarios on both engines. It loads `clarity
 
 The harness prints what it found and exits with 1 if any table, gate, count, safeguard or check row differs, or if the DuckDB run itself was not clean. Beside the release script, it writes `summary.json`, which holds the same findings for a machine: each OMOP object's row counts and a checksum of its rows on both engines, each scenario's outcome on each engine, each gate's outcome, and the versions used. The OMOP testbed reads that file. A difference is a finding to be explained, not a fault in the harness. The scripts are removed from the container at the end of a run, and the two databases stay until the next run.
 
+## Running an execution package's script
+
+With `--package FOLDER`, the harness runs an audit's execution package instead of the conversion. It builds the invented world's sandbox in DuckDB with its planted scenarios, restores or loads `clarity_shadow` as above and plants the scenarios on SQL Server, then copies the package's `query.sql` into the container byte for byte and runs it with `sqlcmd` in one session, both parts in order, substituting no variable, as the database analyst would. It writes `sqlserver-result.json` into the package, with every result set, the SHA-256 of `query.sql` and of the file that `sqlcmd` read inside the container, the version of SQL Server, and a fingerprint of the source rows, and records that file and its hash in the package's manifest. It then compares the result with DuckDB's translated form of the same text on the same rows and prints the rewrites in between. The testbed makes the same comparison with `--package FOLDER`, as `docs/testbed.md` says. A small row count is enough, since the planted scenarios are loaded in full at any size:
+
+```sh
+cd core
+uv run --with sqlglot==30.21.0 --with duckdb==1.5.1 python ../tools/sqlserver/harness.py --package FOLDER --rows 50
+```
+
+The run takes no safeguards, target queries or check script, so `--skip-safeguards` is not needed. `--package` may be given more than once.
+
 ## Exporting the published schema for OHDSI
 
 Once the harness has run, `omop_shadow` holds what the release script published: a complete CDM as views in `anaes_pub`, with the views of the custom tables. `export_published.py` reads every one of those views that holds rows, apart from the vocabulary tables, and writes one CSV file for each, with `counts.csv` and a psql script, `load_postgresql.sql`, that loads them into a PostgreSQL schema that WebAPI reads. Run it from the `core` folder, as the harness is run:

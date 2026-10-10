@@ -1423,7 +1423,8 @@ def _public(folder):
 
 def write(data, folder, date, invented=False, model=None):
     """Writes map.json and one SQL file for each role of the draft. Refuses a published folder unless the dictionary
-    is invented."""
+    is invented. A map folder written here is for development only, and it is no schema of record: no journal records
+    it. The hospital schema of record is written by describe.Describe."""
     folder = Path(folder)
     if _public(folder) and not invented:
         raise ProposeError(WORDING["public"].format(folder=folder))
@@ -1514,7 +1515,9 @@ def _known_paths(role):
 
 def confirm(folder, confirmations, catalogue=None, dictionary=None, today=None, model=None):
     """Applies a file of confirmations to a map folder, rewrites map.json and the SQL of every view that changed, and
-    checks the result. Returns {"yes", "no", "not sure"} counts and the checked map."""
+    checks the result. Returns {"yes", "no", "not sure"} counts and the checked map. describe.Describe.confirm applies a
+    person's answer through this function to a working copy of its own map, and journals it; applied directly to a map
+    folder, as python -m schemalyser.rolemap confirm does, it is for development only and produces no schema of record."""
     folder = Path(folder)
     data = rolemap.read_map_json(folder)
     today = today or dt.date.today().isoformat()

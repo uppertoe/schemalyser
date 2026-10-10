@@ -46,15 +46,18 @@ Playwright starts the preview server itself, or uses one already listening on po
     uv run --with sqlglot==30.21.0 --with duckdb==1.5.1 python ../tools/sqlserver/harness.py --sample-vocabulary \
         --rows 50 --skip-safeguards
 
+An audit's execution package is run the same way, with `--package FOLDER` in place of the conversion, as `tools/sqlserver/README.md` describes; the run writes `sqlserver-result.json` into the package, and `python -m schemalyser.testbed run --world fixtures --out OUT --package FOLDER` compares it with DuckDB's translated form. `core/tests/test_package_on_sqlserver.py` tests the record and the comparison on DuckDB, and its last test runs the harness on the neonatal package where `SCHEMALYSER_MSSQL_PASSWORD_FILE` names the password file; that test carries the slow marker, and is skipped without the variable.
+
 The harness is worth running only when a change touches the T-SQL that Schemalyser writes, because the core tests already cover everything else on DuckDB. A run at full size, or with the safeguards, is worth its time only when the question is how long a step takes on many rows, or whether the release script's guards still hold.
 
 ## Measured times
 
-The times below were measured on 10 October 2026 on the developer's Mac. Another agent's suites ran beside the fast suite for part of its run, so its time is an upper bound; the full suite and the page specs ran on a quiet machine. Much of the fast suite's time goes to the testbed's run over the invented world and to the saved schemas that several files build for themselves, which is why the slow marker saves less than its share of tests suggests.
+The times below were measured on 10 October 2026 on the developer's Mac, on a quiet machine, after the command line of the hospital schema and the package's run on SQL Server were added. Much of the fast suite's time goes to the testbed's run over the invented world and to the saved schemas that several files build for themselves, which is why the slow marker saves less than its share of tests suggests.
 
 | Suite | Command | Tests | Time |
 | --- | --- | --- | --- |
-| The fast core suite | `python -m pytest -q -m "not slow"` | 775 passed, 7 deselected | 12 minutes 22 seconds |
-| The full core suite | `python -m pytest -q` | 782 passed | 16 minutes 51 seconds |
-| The page specs in Chromium | `npx playwright test --project=chromium` | 8 passed | 3 minutes 43 seconds |
+| The fast core suite | `python -m pytest -q -m "not slow"` | 788 passed, 1 expected failure, 8 deselected | 14 minutes 6 seconds |
+| The full core suite, with `SCHEMALYSER_MSSQL_PASSWORD_FILE` named | `python -m pytest -q` | 796 run as expected and 1 failure, of a test of the workspace's imports, which the next change mended and the fast suite then passed | 18 minutes 20 seconds |
+| The page specs in Chromium | `npx playwright test --project=chromium` | 8 passed | 5 minutes 48 seconds |
 | The SQL Server harness, small | as above | not run in this round | not measured, since no change in this round touched the T-SQL |
+| The SQL Server harness on the neonatal package | `harness.py --package FOLDER --rows 50` | 4 result sets, the same on both engines | 52 seconds when it loaded `clarity_shadow`, and 14 seconds once a kept copy was restored; `query.sql` itself ran in 0.7 to 0.8 seconds |

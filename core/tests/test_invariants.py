@@ -403,47 +403,39 @@ def test_invariant_7_the_workbench_reaches_no_other_computer_while_it_builds_a_p
     assert attempts == []
 
 
-# Invariant 9. A surface owns no logic: every operation of the page's bridge has a command-line route.
+# Invariant 9. A surface owns no logic: every operation of the page's bridge is carried by a command of the command line,
+# over the same saved file. test_describe_command.py compares the hospital schema that the page saves with the one that
+# the commands save from the same calls, one command at a time.
 
-# The operations that read the sitting and change nothing that the saved hospital schema holds, which the command line
-# has no need to repeat (site/e2e/describe.spec.ts names the same set). The test shows that each changes nothing.
+# The operations that read the sitting and change nothing that the saved hospital schema holds (site/e2e/describe.spec.ts
+# names the same set). Each has a command, and the test below shows that none changes anything.
 READS = {"model", "check", "compare", "dictionary_query", "names", "columns", "joins", "schema_files"}
-# The operations that the walk performs itself: it takes the version, and it saves the hospital schema at its end.
-PERFORMED = {"begin": "the walk's version", "schema_zip": "the walk saves the hospital schema at its end"}
-# The operations that a command of their own carries.
-COMMANDS = {"import_evidence": "import-evidence"}
-
-
-def _defined(tree, function):
-    return next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == function)
-
-
-def walk_calls():
-    """The names of the calls that python -m schemalyser.describe walk takes, read from the walk's table of actions."""
-    walk = _defined(ast.parse((PACKAGE / "describe" / "__main__.py").read_text(encoding="utf-8")), "walk")
-    table = next(n.value for n in ast.walk(walk) if isinstance(n, ast.Assign)
-                 and any(getattr(t, "id", None) == "actions" for t in n.targets))
-    return {k.value for k in table.keys}
 
 
 def commands():
-    main = _defined(ast.parse((PACKAGE / "describe" / "__main__.py").read_text(encoding="utf-8")), "main")
-    return {n.args[0].value for n in ast.walk(main) if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "add_parser"}
+    """The commands of python -m schemalyser.describe, read from its parser."""
+    from schemalyser.describe import __main__ as describe_main
+    found = next(a for a in describe_main.parser()._actions if a.__class__.__name__ == "_SubParsersAction")
+    return set(found.choices)
 
 
 def bridge_operations():
     return {name.removeprefix("describe_") for name in dir(browser) if name.startswith("describe_") and callable(getattr(browser, name))}
 
 
-def test_invariant_9_every_operation_of_the_page_s_bridge_has_a_route_on_the_command_line():
-    bridge, walked, subcommands = bridge_operations(), walk_calls(), commands()
-    assert len(bridge) > 30 and "walk" in subcommands
-    assert set(COMMANDS.values()) <= subcommands
-    routed = walked | READS | set(PERFORMED) | set(COMMANDS)
-    assert sorted(bridge - routed) == []
-    # Nothing is listed for an operation that the bridge does not have.
-    assert sorted(routed - bridge) == []
-    assert not (walked & READS), "an operation that changes the schema is not a read"
+def test_invariant_9_every_operation_of_the_page_s_bridge_has_a_command_on_the_command_line():
+    from schemalyser.describe import __main__ as describe_main
+    bridge, carried, subcommands = bridge_operations(), describe_main.BRIDGE, commands()
+    assert len(bridge) > 30
+    # Every operation of the bridge names a command, and nothing is named for an operation the bridge does not have.
+    assert sorted(bridge - set(carried)) == [] and sorted(set(carried) - bridge) == []
+    assert sorted(set(carried.values()) - subcommands) == []
+    # Each command is one that the command line implements, and the walk is a convenience beside them.
+    assert all(callable(getattr(describe_main, "cmd_" + name.replace("-", "_"), None)) for name in subcommands)
+    assert "walk" in subcommands and "walk" not in carried.values()
+    # A read and an operation that changes the schema are never carried by the same command.
+    changing = {carried[name] for name in bridge - READS - {"schema_open"}}
+    assert not changing & {carried[name] for name in READS}, "an operation that changes the schema is not a read"
 
 
 def test_invariant_9_each_operation_left_to_the_page_alone_changes_nothing_that_the_saved_schema_holds():

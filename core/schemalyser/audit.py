@@ -24,6 +24,10 @@ with the script itself and what describes it:
     README.md            what the package is and what each person does with it
     evidence-requests.json  the evidence requests by which the plan obtained and the outcome of the production run
                          enter the hospital schema, through python -m schemalyser.describe import-evidence
+    sqlserver-result.json  once the SQL Server harness (tools/sqlserver/harness.py --package) has run query.sql byte
+                         for byte on the synthetic database built from the invented world, what it returned, with the
+                         hash of the text it executed and the version of SQL Server; record_sqlserver_run records the
+                         file and its hash in the manifest, so that status() rechecks it as a hashed input
 
 The two-part script and its specification are compiled by compiler.py, which is layer 3's; this module assembles the
 package from what the layers above it write.
@@ -78,6 +82,8 @@ WORDING = {
     "approver": "An approval or a refusal names the person who gives it, with --by.",
     "class_d": "The script is of class D, which is not to be run, so Schemalyser cannot record an approval of it. A refusal can still be recorded.",
     "exported": "Schemalyser wrote the export to {folder}, with a package for each of its {count} sections that the role policy let through.",
+    "sqlserver_other": "The SQL Server harness ran another text of query.sql than the package holds, so Schemalyser has not recorded its result. Run the harness on the package again.",
+    "sqlserver_unreadable": "Schemalyser could not read the SQL Server harness's result in {name}.",
 }
 
 README_WORDING = {
@@ -193,6 +199,9 @@ NOT_RECORDED = "not recorded"
 HASHED = ("query.sql", "question.sql", "decisions.json", "feasibility.json", "expected-output.json", "safety-report.json",
           "specification.md")
 PLAN_FILE = "plan.sqlplan"
+# The SQL Server harness's run of query.sql, which joins the hashed files once it is recorded. harness.PACKAGE_RESULT
+# names the same file; it is not imported here, because the harness loads DuckDB, which the package's import does not.
+SQLSERVER_RESULT = "sqlserver-result.json"
 CORRECTNESS = "expected-output.json"
 # The evidence requests by which the estimated plan and the outcome of the production run enter the hospital schema,
 # through its evidence import, as the feasibility report's requests do.
@@ -217,6 +226,9 @@ MANIFEST_WORDING = {
     "approval": "No one has yet recorded approval or refusal. The database analyst records either with the command below.",
     "voided": "A change to {changed} after the package was built has returned the approval to not approved and voided the plan review.",
     "approved": "{by} approved the package on {date}.",
+    "sqlserver_not_run": "The SQL Server harness has not run this script. tools/sqlserver/harness.py with --package runs it byte for byte on the synthetic database built from the invented world, and the manifest then records the result file and its hash.",
+    "sqlserver_ran": "The SQL Server harness ran query.sql byte for byte on {server}, on the synthetic database built from the invented world, on {date}. The result is in sqlserver-result.json, whose hash the manifest records. It shows how SQL Server executes the script on made-up rows, and it gives no permission to run the script on the hospital's database.",
+    "sqlserver_failed": "The SQL Server harness ran query.sql byte for byte on {server}, on the synthetic database built from the invented world, on {date}, and SQL Server stopped it with an error, which sqlserver-result.json gives.",
     "refused": "{by} refused the package on {date}.",
 }
 
@@ -352,6 +364,7 @@ def build(schema_path, query_path, out, period=None, decisions_path=None, large=
                       "lock_timeout_ms": 10000, "deadlock_priority": "low", "time_limit": MANIFEST_WORDING["time_limit"],
                       "assumes": MANIFEST_WORDING["assumes"]},
         "plan_review": {"state": NOT_REVIEWED, "plan_sha256": None},
+        "sqlserver_run": {"file": None, "sha256": None, "says": MANIFEST_WORDING["sqlserver_not_run"]},
         "correctness_report": {"file": CORRECTNESS, "sha256": inputs["files"][CORRECTNESS],
                                "planted_match": expected["planted_match"]},
         "inputs": inputs, "approval": _approval(out.name),
@@ -430,6 +443,39 @@ def review_plan(folder, plan_path, date=None):
     return review
 
 
+def record_sqlserver_run(folder):
+    """Records in the manifest the SQL Server harness's run of the package's query.sql: the result file, its hash, the
+    hash of the text that SQL Server executed and the server's version. The file then joins the hashed inputs, so that
+    status() rechecks it and a change to it voids the reviews. A recorded run returns the approval to not approved,
+    because the approval was given for what the package then held. Returns the manifest's record of the run."""
+    folder = Path(folder)
+    manifest = json.loads((folder / MANIFEST).read_text(encoding="utf-8"))
+    # The result file itself is the one change allowed, since it is what is being recorded.
+    changed, _ = _changes(folder, manifest)
+    if set(changed) - {SQLSERVER_RESULT}:
+        raise AuditError(WORDING["changed"])
+    try:
+        data = (folder / SQLSERVER_RESULT).read_bytes()
+        held = json.loads(data)
+    except (OSError, ValueError):
+        raise AuditError(WORDING["sqlserver_unreadable"].format(name=SQLSERVER_RESULT)) from None
+    if held.get("sql_sha256") != manifest["sql_sha256"]:
+        raise AuditError(WORDING["sqlserver_other"])
+    ran = (held.get("ran") or "")[:10] or None
+    says = MANIFEST_WORDING["sqlserver_failed" if held.get("error") else "sqlserver_ran"].format(
+        server=held.get("sqlserver") or NOT_RECORDED, date=_day(ran) if ran else NOT_RECORDED)
+    manifest["sqlserver_run"] = {"file": SQLSERVER_RESULT, "sha256": sha256(data), "sql_sha256": held["sql_sha256"],
+                                 "executed_sha256": held.get("executed_sha256"), "sqlserver": held.get("sqlserver"),
+                                 "ran": held.get("ran"), "outcome": "failed" if held.get("error") else "ran",
+                                 "result_sets": len(held.get("result_sets") or []), "says": says}
+    if "inputs" in manifest:
+        manifest["inputs"]["files"][SQLSERVER_RESULT] = manifest["sqlserver_run"]["sha256"]
+    manifest["approval"] = _approval(folder.name)
+    (folder / MANIFEST).write_text(_json(manifest), encoding="utf-8")
+    _rewrite_readme(folder, manifest)
+    return manifest["sqlserver_run"]
+
+
 def _changes(folder, manifest, schema_path=None):
     """What has changed since the package was built, as a list of the names of the inputs whose hashes differ."""
     inputs = manifest.get("inputs")
@@ -444,6 +490,8 @@ def _changes(folder, manifest, schema_path=None):
     changed += [name for name in files if now[name] != files[name]]
     if (folder / PLAN_FILE).is_file() and PLAN_FILE not in files:
         changed.append(PLAN_FILE)
+    if (folder / SQLSERVER_RESULT).is_file() and SQLSERVER_RESULT not in files:
+        changed.append(SQLSERVER_RESULT)
     if current != manifest["sql_sha256"] and "query.sql" not in changed:
         changed.append("query.sql")
     recorded = inputs.get("contract") or {}
