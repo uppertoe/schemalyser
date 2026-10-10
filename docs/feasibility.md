@@ -5,6 +5,10 @@
     python -m schemalyser.feasibility report hospital-schema.schemalyser.zip QUESTION.sql [--period FROM TO] --out report.md
     python -m schemalyser.feasibility programme hospital-schema.schemalyser.zip QUESTIONS/ [--period FROM TO] --out programme.md
 
+    python -m schemalyser.feasibility sections hospital-schema.schemalyser.zip [--period FROM TO] [--out sections.md]
+
+`sections` says what the hospital schema supports of each section of an export as the export compiles it, and of each measure of the catalogue: the part's own state, the lowest state of what the section needs, its readiness in three states, and the smallest piece of work for a section that falls short. The export screen opens with it. The choices that the screen offers and the specification that it writes are `python -m schemalyser.specification choices`, which prints the parts of the record, their kinds, windows and flags and the catalogue's measures from the role contract and the catalogue alone, and `python -m schemalyser.specification write FIELDS.json --out SPEC.json`, which writes a specification from the fields of the screen's form and names any rule it breaks (`docs/specification.md`).
+
 An output whose name ends in `.json` holds the same report as data. Without `--period`, the question's period is the year that the hospital schema records, as the audit's package takes it.
 
 ## Two claims, kept apart

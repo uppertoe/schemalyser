@@ -46,7 +46,7 @@ The format is `schemalyser-reference-run-summary`, version 1, written beside the
 
 ## The run summary of the transplant command
 
-The format is `schemalyser-transplant-run-summary`, version 1, written as `transplant-run-summary.json` and `transplant-run-summary.md` in the conversion folder. It holds the `date` of the run and, under `counts`, the same eleven counts as `transplant-report.json`: `written`, `complete`, `incomplete`, `not_written`, `skipped`, `placeholders`, `fields_mapped`, `fields_left_empty`, `fields_awaiting_a_decision`, `filters_held_back` and `not_in_dictionary`.
+The format is `schemalyser-transplant-run-summary`, version 1, written as `transplant-run-summary.json` and `transplant-run-summary.md` in the conversion folder. It holds the `date` of the run and, under `counts`, the same eleven counts as `transplant-report.json`: `written`, `written_in_full`, `incomplete`, `not_written`, `skipped`, `placeholders`, `fields_mapped`, `fields_left_empty`, `fields_awaiting_a_decision`, `filters_held_back` and `not_in_dictionary`.
 
 ## How the exporters are tested
 

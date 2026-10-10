@@ -10,6 +10,11 @@
 
 Without `--period`, the package covers the year that the hospital schema records. The decisions file lists the clinicians' decisions.
 
+    python -m schemalyser.audit export-status FOLDER [--schema SCHEMA.zip] [--specification SPEC.json] [--episodes EPISODES.csv]
+    python -m schemalyser.results show FOLDER
+
+`export-status` prints, as JSON, what became of each section of an export that `export` wrote: its outcome, its output class and whether it may leave, and, for a section with a package, the execution class with the policy's outcome, the feasibility report's verdict with its two claims kept apart, the series after each step of which the database analyst can stop, the evidence requests by which the plan and the outcome return, and the package's standing under `status`, so that a change that has voided the approval shows; given the specification and the episode list, it also says whether either has changed since the export was compiled. `results show` prints, as JSON, what a results package holds: its record, the output's shape against the columns that the package expected, and, for the section that resolves patient and date pairs, the share of pairs resolved to exactly one anaesthetic. The export screen of the workbench shows both.
+
 ## The package
 
 The package keeps three reports apart. The feasibility report (`feasibility.md`) says whether the hospital schema can answer the question. If the question needs parts that the role model does not describe, Schemalyser stops and writes no script. The answer on made-up rows (`expected-output.json`), with the planted cases, shows only the answer's shape. The role shadow (`roleshadow.py`) runs the question's planted cases and writes that report into the package, and the package reads it from there, so that the correctness report is layer 4's and the package only carries it. The safety report (`safety-report.json`, then `plan-review.json`) says what the script may do to the database.

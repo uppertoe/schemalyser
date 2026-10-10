@@ -12,6 +12,10 @@
                             returned/ (the files that the database analyst returned) and results/ (the results
                             packages written from them)
       specifications/       the specifications saved for reuse, which hold no hospital material
+      omop/releases/NAME/   one release script of the anaesthesia layer: record.json, log.txt, and release.sql,
+                            source_manifest.csv and step_classes.json, which python -m schemalyser.release wrote
+      omop/equivalence/     the place where the comparison of each question's answer over the parts of the record, from
+                            the source and from OMOP, will record its result; nothing writes it yet
       .tmp/                 temporary files of the core, kept inside the project so that nothing leaves it
 """
 import datetime as dt
@@ -20,11 +24,19 @@ import re
 import shutil
 from pathlib import Path
 
-from . import audit, feasibility, specification
+from . import audit, feasibility, release, specification
+from .catalogue import Catalogue
 from .vocabulary import EXPORT_SCREEN as EXPORT_WORDING  # noqa: F401 - the export screen reads its wording from here
+from .vocabulary import OMOP_SCREEN as OMOP_WORDING  # noqa: F401 - the OMOP layer screen reads its wording from here
 
 SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
-FOLDERS = ("schemas", "questions", "audits", "runs", "exports", "specifications")
+FOLDERS = ("schemas", "questions", "audits", "runs", "exports", "specifications", "omop")
+RELEASES = "omop/releases"
+RELEASE_RECORD = "record.json"
+EQUIVALENCE = "omop/equivalence"
+# What the equivalence of a question's answer, over the parts of the record from the source and from OMOP, is until a
+# comparison has shown it. It is never assumed from the conversion passing its tests.
+NOT_YET_SHOWN = "not yet shown"
 EXPORT_RECORD = "request.json"
 EPISODES = "episodes.csv"
 SPECIFICATION = "specification.json"
@@ -402,6 +414,74 @@ class Project:
         return found
 
 
+    # The OMOP layer: the release scripts of the anaesthesia layer, and the equivalence of each question.
+
+    def releases(self):
+        (self.root / RELEASES).mkdir(parents=True, exist_ok=True)
+        return self._records(RELEASES, RELEASE_RECORD)
+
+    def new_release(self, schema_name, world):
+        """A new release of the anaesthesia layer, compiled through a saved hospital schema of the project, for a world.
+        Returns its name; its folder is omop/releases/NAME."""
+        self.schema_path(schema_name)
+        (self.root / RELEASES).mkdir(parents=True, exist_ok=True)
+        name = self.unique(RELEASES, f"release_{dt.datetime.now():%Y-%m-%d_%H%M%S}")
+        folder = self.root / RELEASES / name
+        folder.mkdir()
+        _write_json(folder / RELEASE_RECORD, {"schema": schema_name, "world": str(world), "created": dt.date.today().isoformat()})
+        return name
+
+    def release(self, name):
+        """(folder, record) of a release."""
+        folder = self.root / RELEASES / safe_name(name)
+        record = _read_json(folder / RELEASE_RECORD) if folder.is_dir() else None
+        if record is None:
+            raise ProjectError(f"The project holds no release named {name}.")
+        return folder, record
+
+    def release_command(self, name, conversion, catalogue):
+        """The arguments of the command that writes a release script: python -m schemalyser.release, compiled through the
+        release's saved hospital schema, with its output in the release's own folder."""
+        folder, record = self.release(name)
+        return [conversion, "--catalogue", catalogue, "--out", folder, "--schema", self.schema_path(record["schema"])]
+
+    def record_release(self, name, code, printed):
+        """Records the end of a release's command: its exit code and what it printed, in record.json and log.txt."""
+        folder, record = self.release(name)
+        (folder / "log.txt").write_text(printed + "\n", encoding="utf-8")
+        record.update(exit_code=code, printed=printed.splitlines())
+        _write_json(folder / RELEASE_RECORD, record)
+        return record
+
+    def conversion_report(self, conversion, catalogue, schema_name=None):
+        """release.conversion_report() of a world's conversion, read with the world's catalogue, its steps over the roles
+        compiled through a saved hospital schema of the project where one is named. Raises ProjectError when the
+        conversion cannot be read at all."""
+        try:
+            held = Catalogue.from_csv(Path(catalogue).read_text(encoding="utf-8")) if Path(catalogue).is_file() else None
+            return release.conversion_report(conversion, self.schema_path(schema_name) if schema_name else None, held)
+        except (OSError, ValueError, release.Refused) as error:
+            raise ProjectError(str(error)) from None
+
+    def equivalence(self):
+        """question_equivalence() of this project."""
+        return question_equivalence(self.root)
+
+
+def question_equivalence(root):
+    """Each question of a project with whether its answer over the parts of the record, from the source and from OMOP,
+    has been shown equivalent: [{"name", "title", "state", "result", "result_file"}]. The comparison that would show it
+    is not built yet, so every state is "not yet shown" and every result None; result_file names where the comparison
+    will record its result. Equivalence is never assumed from the conversion passing its tests. It writes nothing, and
+    python -m schemalyser.project equivalence PROJECT prints it as JSON."""
+    found = []
+    for path in sorted((Path(root) / "questions").glob("*.sql")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        found.append({"name": path.name, "title": feasibility.question_text(text) or path.stem.replace("_", " "),
+                      "state": NOT_YET_SHOWN, "result": None, "result_file": f"{EQUIVALENCE}/{path.stem}.json"})
+    return found
+
+
 def read_json(path):
     return _read_json(path)
 
@@ -413,3 +493,23 @@ def _write_json(path, value):
 def export_choices():
     """What the export screen offers, from the role contract and the catalogue alone (specification.choices)."""
     return specification.choices()
+
+
+def main(argv=None):
+    import argparse
+    import sys
+    parser = argparse.ArgumentParser(prog="schemalyser.project", description="Reports over a project folder.")
+    commands = parser.add_subparsers(dest="command", required=True)
+    one = commands.add_parser("equivalence", help="Say, as JSON, whether each question's answer over the parts of the "
+                                                  "record has been shown equivalent from the source and from OMOP.")
+    one.add_argument("project", type=Path)
+    args = parser.parse_args(argv)
+    if not (args.project / "questions").is_dir():
+        print(f"{args.project} holds no questions.", file=sys.stderr)
+        return 1
+    print(json.dumps(question_equivalence(args.project), indent=1, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

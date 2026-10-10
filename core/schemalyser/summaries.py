@@ -87,7 +87,7 @@ REFERENCE_RUN = {
 }
 TRANSPLANT_RUN = {
     "date": DATE_VALUE,
-    "counts": {"written": COUNT, "complete": COUNT, "incomplete": COUNT, "not_written": COUNT, "skipped": COUNT,
+    "counts": {"written": COUNT, "written_in_full": COUNT, "incomplete": COUNT, "not_written": COUNT, "skipped": COUNT,
                "placeholders": COUNT, "fields_mapped": COUNT, "fields_left_empty": COUNT,
                "fields_awaiting_a_decision": COUNT, "filters_held_back": COUNT, "not_in_dictionary": COUNT},
 }

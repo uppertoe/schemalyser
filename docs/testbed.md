@@ -106,3 +106,7 @@ Anyone can reproduce the run with this command from `core/`:
 uv run --with sqlglot==30.21.0 --with duckdb==1.5.1 python -m schemalyser.testbed run --world fixtures --rows 50 \
   --profile full --engine sqlserver --out ../../testbed-out
 ```
+
+## On the OMOP layer screen
+
+The workbench's OMOP layer screen (`docs/workbench.md`) starts a run with one action, in the fast or the full profile, on the invented hospital or a world of the project, with the vocabulary and the engine chosen beside it, and shows its `report.json` by section: every planted scenario against its held-out rows, the scenarios over the roles, the reconciliation's four groups by name, the dashboard's findings with the failures that `dqd-expectations.json` permits, the translation's rewrites by name, release equivalence and package equivalence. It reads each section by name and judges nothing of its own.

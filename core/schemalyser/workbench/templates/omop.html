@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+{% block title %}{{ w.title }}{% endblock %}
+{% macro inline(label) %}{{ label[:1].lower() ~ label[1:] if label.startswith("The ") else label }}{% endmacro %}
+{% macro verb(n) %}{{ "is" if n == 1 else "are" }}{% endmacro %}
+{% macro klass(c) %}{% if c %}<span class="state">{{ w.class.format(grade=c.execution_class) }}</span>
+  {% if c.failed_rules %}<span class="note">{{ w.class_rules.format(rules=c.failed_rules | join(", ")) }}</span>{% endif %}
+  {% if c.recorded %}<span class="note">{{ w.class_recorded }}</span><blockquote class="recorded">{{ c.recorded.reason }}</blockquote>{% endif %}
+{% else %}{{ w.class_unread }}{% endif %}{% endmacro %}
+{% macro route(r) %}{% if r.route == "roles" %}{{ w.route_roles }}
+{% elif r.route == "direct" %}{{ w.route_direct }}
+  {% if r.reference %}<span class="note">{{ w.reference }}</span><blockquote class="recorded">{{ r.reference }}</blockquote>{% endif %}
+  {% if r.reason %}<span class="note">{{ w.reason }}</span><blockquote class="recorded">{{ r.reason }}</blockquote>{% endif %}
+  {% if r.review %}<span class="note">{{ w.reviewed.format(by=r.review.by, on=r.review.on | day) | capital }}</span>
+    {% if r.review.note %}<span class="note">{{ w.review_note }}</span><blockquote class="recorded">{{ r.review.note }}</blockquote>{% endif %}
+  {% else %}<span class="note">{{ w.not_reviewed }}</span>{% endif %}
+{% else %}{{ w.route_none }}{% endif %}{% endmacro %}
+{% block main %}
+<h1>{{ w.title }}</h1>
+<p class="lede">{{ w.lede }}</p>
+
+<section id="choose">
+  <h2>{{ w.choose_heading }}</h2>
+  <form class="grid" method="get" action="/omop">
+    <label>{{ w.world_label }}
+      <select name="world">{% for value, label in worlds %}<option value="{{ value }}" {{ "selected" if value == world }}>{{ label }}</option>{% endfor %}</select>
+      <span class="note">{{ w.world_note }}</span></label>
+    <label>{{ w.schema_label }}
+      {% if schemas %}<select name="schema">{% for s in schemas %}<option value="{{ s }}" {{ "selected" if s == schema }}>{{ s }}</option>{% endfor %}</select>{% endif %}
+      <span class="note">{{ w.schema_note }}</span></label>
+    <button type="submit">{{ w.choose_button }}</button>
+  </form>
+  {% if not schemas %}<p>{{ w.schema_none }}</p>{% endif %}
+</section>
+
+{# 1. The conversion. #}
+<section id="conversion">
+  <h2>{{ w.step1 }}</h2>
+  <p class="who">{{ w.who }} {{ w.step1_who }}</p>
+  {% if report_problem %}
+  <p>{{ w.classes_problem }}</p><blockquote class="recorded">{{ report_problem }}</blockquote>
+  {% elif report %}
+  {% set s = report.shares %}{% set r = report.release_shares %}
+  <p>{{ w.shares.format(world=inline(world_label), count=s.steps, roles=s.roles, roles_verb=verb(s.roles), direct=s.direct, direct_verb=verb(s.direct)) }}
+     {{ w.release_shares.format(count=r.steps, roles=r.roles, roles_verb=verb(r.roles), direct=r.direct, direct_verb=verb(r.direct)) }}
+     {% if s.unrecorded %}{{ w.unrecorded.format(count=s.unrecorded, verb="records" if s.unrecorded == 1 else "record") }}{% endif %}</p>
+  {% if report.draft is not none %}
+  <h3>{{ w.draft_heading }}</h3><blockquote class="recorded">{{ report.draft_sentence }}</blockquote>
+  {% else %}<p>{{ w.not_draft }}</p>{% endif %}
+  {% if report.problems %}
+  <p>{{ w.problems }}</p>
+  {% for line in report.problems %}<blockquote class="recorded">{{ line }}</blockquote>{% endfor %}
+  {% endif %}
+  {% if report.classes_problem %}
+  <p>{{ w.classes_problem }}</p><blockquote class="recorded">{{ report.classes_problem }}</blockquote>
+  {% endif %}
+  <table class="steps">
+    <thead><tr><th>{{ w.col_step }}</th><th>{{ w.col_writes }}</th><th>{{ w.col_route }}</th><th>{{ w.col_class }}</th></tr></thead>
+    <tbody>
+    {% for step in report.steps %}
+    <tr id="step-{{ step.file }}">
+      <td><code>{{ step.file }}</code></td>
+      <td>{{ step.table }}<span class="note">{{ w.layers.get(step.layer, step.layer) }}</span></td>
+      <td>{% if step.layer == "derived" %}{{ w.route_derived }}{% else %}{{ route(step) }}{% endif %}
+        {% for alt in step.alternatives %}
+        <div class="alternative"><span class="note">{{ w.alternative }}</span> <code>{{ alt.file }}</code>
+          {% if step.layer != "derived" %}{{ route(alt) }}{% endif %} {{ klass(alt.class) }}</div>
+        {% endfor %}
+        {% if step.roles_step %}
+        <div class="alternative"><span class="note">{{ w.roles_step }}</span> <code>{{ step.roles_step.file }}</code> {{ klass(step.roles_step.class) }}</div>
+        {% endif %}
+      </td>
+      <td>{{ klass(step.class) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if report.gates %}
+  <h3>{{ w.gates_heading }}</h3>
+  <p>{{ w.gates.format(count=report.gates | length) }}</p>
+  <ul>{% for g in report.gates %}<li><code>{{ g.file }}</code>: {{ klass(g.class) }}</li>{% endfor %}</ul>
+  {% endif %}
+  {% endif %}
+</section>
+
+{# 2. The test on made-up rows. #}
+<section id="test">
+  <h2>{{ w.step2 }}</h2>
+  <p class="who">{{ w.who }} {{ w.step2_who }}</p>
+  <p>{{ w.test_note }}</p>
+  <form class="grid" method="post" action="/omop/test">
+    <input type="hidden" name="world" value="{{ world }}">
+    {% if schema %}<input type="hidden" name="schema" value="{{ schema }}">{% endif %}
+    <label>{{ w.rows_label }}
+      <input type="number" name="rows" value="200" min="10" max="100000">
+      <span class="note">{{ w.rows_note }}</span></label>
+    <label>{{ w.profile_label }}
+      <select name="profile">{% for value, label in w.profiles.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
+      <span class="note">{{ w.profile_note }}</span></label>
+    <label>{{ w.engine_label }}
+      <select name="engine">{% for value, label in w.engines.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
+      <span class="note">{{ w.engine_note }}</span></label>
+    <label>{{ w.vocabulary_label }}
+      <select name="vocabulary">{% for value, label in w.vocabularies.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
+      <span class="note">{{ w.vocabulary_note }}</span></label>
+    <button type="submit">{{ w.test_button }}</button>
+  </form>
+
+  {% if not run %}
+  <p>{{ w.test_none }}</p>
+  {% else %}
+  {% set rec = run.record %}
+  <p>{{ w.test_of.format(name=run.name, world=inline(worlds_label.get(rec.world, rec.world)), rows=rec.rows | number, profile=rec.profile, engine=w.engines.get(rec.engine, rec.engine)) }}
+    <a href="/runs/{{ run.name }}">{{ w.test_open }}</a></p>
+  {% if run.state == "running" %}
+    {% with job = run, url = "/omop/progress?run=" ~ run.name %}{% include "progress.html" %}{% endwith %}
+  {% elif not run.report %}
+    <p>{{ w.test_no_report }} {{ state_words[run.state] }}</p>
+    <pre class="log">{{ run.log }}</pre>
+  {% else %}
+  {% set report_ = run.report %}{% set sm = report_.summary %}
+  <p class="verdict {{ 'answered' if sm.outcome == 'passed' else 'not_yet' }}">{{ w.outcome.format(profile=sm.profile, outcome=w.outcome_words.get(sm.outcome, sm.outcome), seconds=sm.seconds) }}</p>
+
+  <h3>{{ w.scenarios_heading }}</h3>
+  <p>{{ w.scenarios_note }} {{ w.scenarios_count.format(passed=sm.scenarios_passed, count=sm.scenarios) }}</p>
+  <table>
+    <thead><tr><th>{{ w.col_scenario }}</th><th>{{ w.col_outcome }}</th><th>{{ w.col_steps }}</th></tr></thead>
+    <tbody>
+    {% for sc in report_.scenarios %}
+    <tr class="{{ 'failed' if sc.outcome != 'passed' }}">
+      <td x-data="{ open: {{ 'true' if sc.outcome != 'passed' else 'false' }} }">
+        <button type="button" class="fold" @click="open = !open">{{ sc.name | replace("_", " ") }}</button>
+        <div x-show="open" x-cloak>
+          <p>{{ sc.description }}</p>
+          <ul>{% for e in sc.expectations %}<li><span class="outcome {{ 'good' if e.met else 'bad' }}">{{ w.met if e.met else w.not_met }}</span> {{ e.says }}{% if not e.met %} {{ w.expected_found.format(expected=e.expected, found=e.found or e.error) }}{% endif %}</li>{% endfor %}</ul>
+          {% if sc.reason %}<p>{{ sc.reason }}</p>{% endif %}
+        </div>
+      </td>
+      <td><span class="outcome {{ 'good' if sc.outcome == 'passed' else 'bad' }}">{{ sc.outcome }}</span></td>
+      <td>{% for f in sc.steps or [] %}<a href="/runs/{{ run.name }}/steps/{{ f }}">{{ f }}</a>{{ ", " if not loop.last }}{% endfor %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  <h3>{{ w.roles_heading }}</h3>
+  {% if report_.roles %}
+  <p>{{ w.roles_note }}</p>
+  <table>
+    <thead><tr><th>{{ w.col_scenario }}</th><th>{{ w.col_outcome }}</th><th>{{ w.col_steps }}</th></tr></thead>
+    <tbody>
+    {% for sc in report_.roles %}
+    <tr class="{{ 'failed' if sc.outcome != 'passed' }}">
+      <td x-data="{ open: {{ 'true' if sc.outcome != 'passed' else 'false' }} }">
+        <button type="button" class="fold" @click="open = !open">{{ sc.name | replace("_", " ") }}</button>
+        <div x-show="open" x-cloak>
+          <p>{{ sc.description }}</p>
+          <p>{{ sc.says }}</p>
+          <p>{{ w.roles_rows.format(expected=sc.expected_rows, found=sc.found_rows, missing=(sc.missing or []) | length, unexpected=(sc.unexpected or []) | length) }}</p>
+          {% if sc.error %}<p>{{ w.roles_error }}</p><blockquote class="recorded">{{ sc.error }}</blockquote>{% endif %}
+        </div>
+      </td>
+      <td><span class="outcome {{ 'good' if sc.outcome == 'passed' else 'bad' }}">{{ sc.outcome }}</span></td>
+      <td>{{ sc.step }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p>{{ w.roles_none }}</p>{% endif %}
+
+  {% set cov = report_.reconciliation.coverage %}
+  <h3>{{ w.reconciliation_heading }}</h3>
+  <p>{{ w.reconciliation_note.format(traced=cov.traced, steps=cov.steps) }}</p>
+  <div class="groups">
+    <div class="group"><h4>{{ w.groups.accounted }}: {{ cov.accounted.count }}</h4>
+      <ul>{% for f in cov.accounted.steps %}<li><a href="/runs/{{ run.name }}/steps/{{ f }}">{{ f }}</a></li>{% endfor %}</ul></div>
+    <div class="group"><h4>{{ w.groups.fan_out_confirmed }}: {{ cov.fan_out_confirmed.count }}</h4>
+      <ul>{% for f in cov.fan_out_confirmed.steps %}<li><a href="/runs/{{ run.name }}/steps/{{ f.step }}">{{ f.step }}</a>: {{ f.expected }}</li>{% endfor %}</ul></div>
+    <div class="group"><h4>{{ w.groups.not_traced }}: {{ cov.not_traced.count }}</h4>
+      <ul>{% for f in cov.not_traced.steps %}<li><a href="/runs/{{ run.name }}/steps/{{ f.step }}">{{ f.step }}</a>: {{ f.reason }}</li>{% endfor %}</ul></div>
+    <div class="group {{ 'bad' if cov.unexplained.count }}"><h4>{{ w.groups.unexplained }}: {{ cov.unexplained.count }}</h4>
+      <ul>{% for u in cov.unexplained["items"] %}<li>{{ u.step or u.table }}: {{ u.reason }}</li>{% endfor %}</ul></div>
+  </div>
+
+  {% set d = report_.dqd %}
+  <h3>{{ w.dqd_heading }}</h3>
+  {% if d.status != "ran" %}
+  <p>{{ w.dqd_not_run.format(reason=d.reason) }}{% if d.expectations %} {{ w.dqd_permitted.format(count=d.expectations.entries) }}{% endif %}</p>
+  {% else %}
+  <p>{{ w.dqd_ran.format(checks=d.checks | number, passed=d.passed | number, failed=d.failed | number, could_not_run=d.could_not_run | number, did_not_finish=d.did_not_finish | number, not_applicable=d.not_applicable | number, expected=d.expected_failures | number, unexpected=d.unexpected_failures | number) }}</p>
+  {% set unexpected = d.failures | rejectattr("expected") | list %}
+  {% if unexpected %}
+  <p>{{ w.dqd_unexpected }}</p>
+  <ul>{% for f in unexpected %}<li>{{ f.check }}, {{ f.table }}{% if f.field %}.{{ f.field }}{% endif %} ({{ f.outcome }})</li>{% endfor %}</ul>
+  {% else %}<p>{{ w.dqd_none_unexpected }}</p>{% endif %}
+  <details x-data><summary>{{ w.dqd_expected }}</summary>
+    {% for reason, items in d.failures | selectattr("expected") | groupby("reason") %}
+    <blockquote class="recorded">{{ reason }}</blockquote><ul>{% for f in items %}<li>{{ f.check }}, {{ f.table }}{% if f.field %}.{{ f.field }}{% endif %}</li>{% endfor %}</ul>
+    {% endfor %}
+  </details>
+  {% endif %}
+
+  {% set tr = report_.translation %}
+  <h3>{{ w.rewrites_heading }}</h3>
+  {% if tr and tr.applied %}
+  <p>{{ w.rewrites_note }}</p>
+  <ul>{% for rw in tr.applied %}<li><code>{{ rw.name }}</code>: {{ rw.what }} {{ w.rewrites_steps.format(steps=rw.steps | join(", ")) }}</li>{% endfor %}</ul>
+  {% else %}<p>{{ w.rewrites_none }}</p>{% endif %}
+
+  <h3>{{ w.release_eq_heading }}</h3>
+  <p>{{ w.release_eq_note }}</p>
+  {% set eq = run.checks.get("release equivalence") %}
+  {% if eq %}<p><span class="outcome {{ 'good' if eq.passed else ('bad' if eq.passed is false else '') }}">{{ w.states.get(eq.state, eq.state) if eq.state else (w.states.passed if eq.passed else w.states.failed) }}</span></p>
+  {% if eq.detail is string %}<blockquote class="recorded">{{ eq.detail }}</blockquote>{% endif %}{% endif %}
+  {% if report_.engines.sqlserver and report_.engines.sqlserver.summary %}
+  <ul>{% for line in report_.engines.sqlserver.summary %}<li>{{ line }}</li>{% endfor %}</ul>
+  {% endif %}
+
+  {% set pk = report_.package %}
+  {% if pk %}
+  <h3>{{ w.package_eq_heading }}</h3>
+  <p>{{ w.package_eq_note }}</p>
+  <p><span class="outcome {{ 'good' if pk.passed else ('bad' if pk.passed is false else '') }}">{{ w.states.get(pk.state, pk.state) }}</span></p>
+  {% if pk.detail is string %}<blockquote class="recorded">{{ pk.detail }}</blockquote>{% endif %}
+  {% endif %}
+  {% endif %}
+  {% endif %}
+</section>
+
+{# 3. The release. #}
+<section id="release">
+  <h2>{{ w.step3 }}</h2>
+  <p class="who">{{ w.who }} {{ w.step3_who }}</p>
+  <p>{{ w.release_note }}</p>
+  {% if schema %}
+  <form method="post" action="/omop/release">
+    <input type="hidden" name="world" value="{{ world }}">
+    <input type="hidden" name="schema" value="{{ schema }}">
+    <button type="submit">{{ w.release_button }}</button>
+  </form>
+  {% else %}<p>{{ w.release_needs }}</p>{% endif %}
+  {% if not written %}
+  <p>{{ w.release_none }}</p>
+  {% elif written.script %}
+  {% set rec = written.record %}
+  <p>{{ w.release_written.format(date=rec.created | day, world=inline(worlds_label.get(rec.world, rec.world)), schema=rec.schema, path=written.path) }}</p>
+  <p>{{ w.header_heading }}</p>
+  <pre class="header">{{ written.header }}</pre>
+  <p>{{ w.printed_heading }}</p>
+  <pre class="log">{{ rec.printed | join("\n") }}</pre>
+  <p>{{ w.manifest }}</p>
+  <div x-data class="code">
+    <button type="button" class="copy" @click="navigator.clipboard.writeText($refs.sql.innerText)">{{ w.script_copy }}</button>
+    <details><summary>{{ w.script_show.format(lines=written.script.splitlines() | length) }}</summary>
+      <pre x-ref="sql">{{ written.script }}</pre>
+    </details>
+  </div>
+  {% else %}
+  {% set rec = written.record %}
+  <p class="verdict not_yet">{{ w.release_refused.format(world=inline(worlds_label.get(rec.world, rec.world)), schema=rec.schema) }}</p>
+  {% for line in rec.printed or [] %}<blockquote class="recorded refusal">{{ line }}</blockquote>{% endfor %}
+  {% endif %}
+</section>
+
+{# 4. Equivalence per question. #}
+<section id="equivalence">
+  <h2>{{ w.step4 }}</h2>
+  <p class="who">{{ w.who }} {{ w.step4_who }}</p>
+  <p>{{ w.equivalence_says }}</p>
+  {% if equivalence %}
+  <table>
+    <thead><tr><th>{{ w.col_question }}</th><th>{{ w.col_equivalence }}</th></tr></thead>
+    <tbody>{% for q in equivalence %}<tr><td><a href="/questions/{{ q.name }}">{{ q.title }}</a></td><td><span class="state">{{ w.equivalence_states.get(q.state, q.state) }}</span></td></tr>{% endfor %}</tbody>
+  </table>
+  {% else %}<p>{{ w.equivalence_none }}</p>{% endif %}
+</section>
+{% endblock %}

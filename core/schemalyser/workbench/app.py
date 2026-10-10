@@ -21,7 +21,7 @@ from starlette.staticfiles import StaticFiles
 
 from .. import audit, feasibility, rolemap, testbed
 from . import jobs
-from ..project import EXPORT_WORDING, Project, ProjectError, export_choices, read_json, safe_name
+from ..project import EXPORT_WORDING, OMOP_WORDING, Project, ProjectError, export_choices, read_json, safe_name
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
@@ -308,15 +308,23 @@ def create_app(project_folder, hosts=None, describe_folder=None):
         if not await same_origin(request):
             return PlainTextResponse("The workbench accepts a form only from its own pages.", status_code=403)
         form = await request.form()
+        started = _new_run(form)
+        if not isinstance(started, str):
+            return problem(request, started[0], "/runs")
+        return go(f"/runs/{started}")
+
+    def _new_run(form):
+        """Starts the test on made-up rows from a form's fields. Returns the run's name, or (the problem,) when a field
+        is not one that the form offers."""
         world = form.get("world") or "fixtures"
         if world not in {w for w, _ in worlds(project)}:
-            return problem(request, "Choose one of the worlds that the form offers.", "/runs")
+            return ("Choose one of the worlds that the form offers.",)
         try:
             rows = int(form.get("rows") or 200)
         except ValueError:
             rows = 0
         if not 10 <= rows <= 100_000:
-            return problem(request, "The number of rows is a whole number from 10 to 100,000.", "/runs")
+            return ("The number of rows is a whole number from 10 to 100,000.",)
         profile = form.get("profile") if form.get("profile") in ("fast", "full") else "fast"
         engine = form.get("engine") if form.get("engine") in ("duckdb", "sqlserver") else "duckdb"
         vocabulary = form.get("vocabulary") if form.get("vocabulary") in testbed.VOCABULARIES else None
@@ -336,7 +344,7 @@ def create_app(project_folder, hosts=None, describe_folder=None):
         if testbed.athena_release(download) is not None and not download.resolve().is_relative_to(project.root.resolve()):
             env["SCHEMALYSER_ATHENA"] = str(jobs.athena_inside(project, download))
         jobs.start(project, folder, "run.json", command, env=env)
-        return go(f"/runs/{name}")
+        return name
 
     def _run(name):
         folder = project.record_folder("runs", name)
@@ -566,6 +574,101 @@ def create_app(project_folder, hosts=None, describe_folder=None):
             return problem(request, error, f"/exports/{name}")
         return _said(name, " ".join(s for s in said if s), f"section-{section}")
 
+    # The OMOP layer, screen 3 of docs/screens.md. Each step draws on a report or command of the core: the conversion's
+    # steps, routes, classes and draft marker (release.conversion_report, read through project.py, also python -m
+    # schemalyser.release CONVERSION --report), the test on made-up rows (python -m schemalyser.testbed run, whose
+    # report.json the page reads by section), the release script (python -m schemalyser.release, compiled through a
+    # saved hospital schema of the project) and the equivalence of each question (project.question_equivalence, also
+    # python -m schemalyser.project equivalence). The project folder keeps every file.
+
+    def _omop_choice(params):
+        world = params.get("world") or "fixtures"
+        if world not in {w for w, _ in worlds(project)}:
+            world = "fixtures"
+        schemas = project.schemas()
+        schema = params.get("schema") if params.get("schema") in schemas else (schemas[:1] or [None])[0]
+        return world, schema
+
+    def _world_conversion(world):
+        found, _, conversion = testbed.resolve_world(world)
+        return conversion, found.catalogue_path
+
+    def _omop_url(world, schema, **more):
+        query = {"world": world, **({"schema": schema} if schema else {}), **{k: v for k, v in more.items() if v}}
+        return "/omop?" + "&".join(f"{k}={quote(str(v))}" for k, v in query.items())
+
+    def omop_page(request: Request):
+        world, schema = _omop_choice(request.query_params)
+        conversion, catalogue = _world_conversion(world)
+        labels = dict(worlds(project))
+        try:
+            report, report_problem = project.conversion_report(conversion, catalogue, schema), None
+        except ProjectError as error:
+            report, report_problem = None, str(error)
+        runs = project.runs()
+        chosen_run = request.query_params.get("run") or (runs[0]["name"] if runs else None)
+        run = None
+        if chosen_run:
+            try:
+                run = _run(chosen_run)
+            except ProjectError:
+                run = None
+        if run is not None:
+            run["checks"] = {c["check"]: c for c in (run["report"] or {}).get("checks", [])}
+        releases = project.releases()
+        chosen_release = request.query_params.get("release") or (releases[0]["name"] if releases else None)
+        written = None
+        if chosen_release:
+            try:
+                folder, record = project.release(chosen_release)
+                script = folder / "release.sql"
+                text = script.read_text(encoding="utf-8") if script.is_file() and record.get("exit_code") == 0 else None
+                written = {"name": chosen_release, "record": record, "script": text,
+                           "path": f"{project_relative(folder, project)}/release.sql",
+                           "header": text.split("\n--\n", 1)[0] if text else None}
+            except ProjectError:
+                written = None
+        return page(request, "omop.html", w=OMOP_WORDING, world=world, world_label=labels.get(world, world), schema=schema,
+                    worlds=worlds(project), schemas=project.schemas(), report=report, report_problem=report_problem,
+                    run=run, written=written, equivalence=project.equivalence(), state_words=STATE_WORDS,
+                    vocabularies=testbed.VOCABULARIES, worlds_label=labels)
+
+    async def omop_test(request: Request):
+        if not await same_origin(request):
+            return PlainTextResponse("The workbench accepts a form only from its own pages.", status_code=403)
+        form = await request.form()
+        world, schema = _omop_choice(form)
+        started = _new_run(form)
+        if not isinstance(started, str):
+            return problem(request, started[0], _omop_url(world, schema))
+        return go(_omop_url(world, schema, run=started) + "#test")
+
+    def omop_progress(request: Request):
+        try:
+            found = _run(request.query_params.get("run", ""))
+        except ProjectError as error:
+            return problem(request, error, "/omop")
+        if found["state"] != "running":
+            return Response(status_code=200, headers={"HX-Refresh": "true"})
+        return page(request, "progress.html", job=found, url=f"/omop/progress?run={quote(found['name'])}",
+                    state_words=STATE_WORDS)
+
+    async def omop_release(request: Request):
+        if not await same_origin(request):
+            return PlainTextResponse("The workbench accepts a form only from its own pages.", status_code=403)
+        form = await request.form()
+        world, schema = _omop_choice(form)
+        if not schema:
+            return problem(request, OMOP_WORDING["release_needs"], _omop_url(world, schema))
+        conversion, catalogue = _world_conversion(world)
+        try:
+            name = project.new_release(schema, world)
+            code, printed = jobs.run_now(project, jobs.module("release", *project.release_command(name, conversion, catalogue)))
+            project.record_release(name, code, printed.replace(str(project.root), "."))
+        except ProjectError as error:
+            return problem(request, error, _omop_url(world, schema))
+        return go(_omop_url(world, schema, release=name) + "#release")
+
     routes = [
         Route("/", overview),
         Route("/schemas", add_schema, methods=["POST"]),
@@ -594,6 +697,10 @@ def create_app(project_folder, hosts=None, describe_folder=None):
         Route("/exports/{name}/package", export_package, methods=["POST"]),
         Route("/exports/{name}/sections/{section}/approve", export_approve, methods=["POST"]),
         Route("/exports/{name}/sections/{section}/returned", export_returned, methods=["POST"]),
+        Route("/omop", omop_page),
+        Route("/omop/test", omop_test, methods=["POST"]),
+        Route("/omop/progress", omop_progress),
+        Route("/omop/release", omop_release, methods=["POST"]),
         Mount("/static", StaticFiles(directory=HERE / "static"), name="static"),
     ]
     if has_describe:
@@ -619,6 +726,11 @@ def scoreboard_line(board, name):
         if found:
             return found
     return ""
+
+
+def project_relative(path, project):
+    """A path inside the project as the project names it, from its own root."""
+    return Path(path).resolve().relative_to(project.root).as_posix()
 
 
 def safe_ok(name):

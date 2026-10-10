@@ -3192,7 +3192,7 @@
         "says": "The number of further anaesthetics that the anaesthesia layer has left out because it found no hospital visit for them in the core, for example where an anaesthetic has no theatre case or belongs to a test patient, is 2."
       }
     ],
-    "run_with": "sqlcmd -S SERVER -d DATABASE -b -i release.sql -v OmopSchemaName=\"dbo\" AnaesSchemaName=\"anaes_cdm\" AnaesPubSchemaName=\"anaes_pub\" SourcePrefix=\"clarity_stage.\""
+    "run_with": "sqlcmd -S SERVER -d DATABASE -b -i release.sql -v OmopSchemaName=\"dbo\" AnaesSchemaName=\"anaes_cdm\" AnaesPubSchemaName=\"anaes_pub\" SourcePrefix=\"staging.\""
   },
   "dqd": {
     "status": "ran",

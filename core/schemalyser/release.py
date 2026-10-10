@@ -6,11 +6,14 @@ publishes one view for each of those tables that joins the core's rows to its ow
 of the core's own rows for every other table of CDM 5.4, so that the published schema is a whole
 CDM that OHDSI tools can read. It changes no core table.
 
-    python -m schemalyser.release CONVERSION --catalogue CATALOGUE.csv --out FOLDER
+    python -m schemalyser.release CONVERSION --catalogue CATALOGUE.csv --out FOLDER [--schema HOSPITAL-SCHEMA]
+    python -m schemalyser.release CONVERSION --catalogue CATALOGUE.csv --report [--schema HOSPITAL-SCHEMA]
 
 The folder receives release.sql, which is run with sqlcmd, and source_manifest.csv, which lists
 the source tables and columns that the anaesthesia steps read. The command prints the sqlcmd line
-that runs the script, and exits with 1 when it refuses a step, a gate, a mapping row or a setting.
+that runs the script, and exits with 1 when it refuses a step, a gate, a mapping row or a setting. With --report it
+writes nothing and prints conversion_report as JSON: each step with its route and class, the share of the steps on each
+route, and whether the folder is a draft.
 
 What is assumed about the real database is held in settings, so that each assumption can change
 without the steps changing: where the core tables are, where the source tables are reached, how
@@ -39,8 +42,8 @@ A step over the roles reads the role views and the mapping views, which the scri
 schema as the audit path compiles a question (compile_roles_step): each view that the step reads becomes a common table
 expression ahead of the step's own, written from the schema's SELECT over the hospital's tables or from its translation
 of the local codes, and the script carries the result as the step's text, so that the same artefact runs on the
-testbed and on SQL Server. The hospital schema is given with --schema, or is the map folder beside the conversion
-folder (conversion.hospital_schema). Without one, the script refuses a step over the roles by name. A step over the roles
+testbed and on SQL Server. The hospital schema is given with --schema, as the saved hospital schema itself or as its
+map folder, or is the map folder beside the conversion folder (conversion.hospital_schema). Without one, the script refuses a step over the roles by name. A step over the roles
 that waits beside a direct step as its roles_step, or is offered as an alternative, is checked for what it reads and
 what it writes.
 
@@ -78,7 +81,7 @@ SETTINGS = {
     "omop_schema": "dbo",                    # the schema that holds the core OMOP tables
     "anaesthesia_schema": "anaes_cdm",       # the schema for the anaesthesia tables
     "published_schema": "anaes_pub",         # the schema for the views that join the two
-    "source_prefix": "clarity_stage.",       # what is written before the name of a source table
+    "source_prefix": "staging.",       # what is written before the name of a source table
     "identifier_type": "BIGINT",             # INT or BIGINT, for the identifiers of the anaesthesia tables
     "identifier_offset": IDENTIFIER_OFFSET,  # the anaesthesia layer numbers its rows from just above this
     "on_failure": "keep",                    # keep: a failed gate leaves the previous rows; empty: it leaves none
@@ -255,9 +258,10 @@ def _custom(folder):
 def read_schema(folder, schema=None, catalogue=None):
     """The hospital schema through which the steps over the roles are compiled, as rolemap.read_map gives it, or None.
 
-    schema is a map folder, or a map already read; without one, the map folder beside the conversion folder is used
-    where there is one (conversion.hospital_schema). catalogue, when given, is a Catalogue or its text, and every table and
-    column that a role view names must be in it. Raises Refused when the map breaks a rule of the contract."""
+    schema is a map folder, the saved hospital schema itself (the one file that Describe the record saves, whose map/
+    it reads), or a map already read; without one, the map folder beside the conversion folder is used where there is
+    one (conversion.hospital_schema). catalogue, when given, is a Catalogue or its text, and every table and column that
+    a role view names must be in it. Raises Refused when the map breaks a rule of the contract."""
     from . import rolemap
     if isinstance(schema, dict):
         return schema
@@ -265,9 +269,28 @@ def read_schema(folder, schema=None, catalogue=None):
     if chosen is None:
         return None
     try:
+        if chosen.is_file():
+            return _read_saved_schema(chosen, catalogue)
         return rolemap.read_map(chosen, catalogue)
     except rolemap.MapError as error:
         raise Refused(f"the hospital schema: {error}") from None
+
+
+def _read_saved_schema(path, catalogue=None):
+    """The map of a saved hospital schema, read from its map/ inside a temporary folder as rolemap.read_map reads a map
+    folder. Only the plain file names of map/ are taken out of the file."""
+    import tempfile
+    import zipfile
+    from . import rolemap
+    if not zipfile.is_zipfile(path):
+        raise Refused(f"the hospital schema: {path.name} is not a saved hospital schema")
+    with zipfile.ZipFile(path) as archive, tempfile.TemporaryDirectory(prefix="schemalyser-release-") as held:
+        for name in archive.namelist():
+            inner = name[len("map/"):] if name.startswith("map/") else None
+            if inner and FILE_NAME.fullmatch(inner) and set(inner) != {"."}:
+                (Path(held) / inner).write_bytes(archive.read(name))
+        found = rolemap.read_map(held, catalogue)
+    return dict(found, folder=path)
 
 
 def compile_roles_step(sql, schema, where="step"):
@@ -644,6 +667,59 @@ def route_summary(folder):
     return route_shares(steps, layers=(LAYERS[1],))
 
 
+def _route_record(entry, inherited=None):
+    """What a step, or an alternative given as an entry, records of its route, as conversion.json holds it."""
+    record = entry if "route" in entry else (inherited or {})
+    review = record.get("review") if record.get("route") == "direct" else None
+    return {"route": record.get("route"), "reference": record.get("reference") if record.get("route") == "direct" else None,
+            "reason": record.get("reason") if record.get("route") == "direct" else None,
+            "review": review if isinstance(review, dict) else None}
+
+
+def conversion_report(folder, schema=None, catalogue=None):
+    """The state of a conversion folder, as the OMOP layer screen shows it and as python -m schemalyser.release
+    CONVERSION --catalogue CATALOGUE.csv --report prints it, writing nothing.
+
+    Returns {"conversion", "steps", "gates", "shares", "release_shares", "problems", "draft", "draft_sentence",
+    "classes_problem"}. Each step gives its file, table and layer, whether the release script carries it, its route with
+    the reference, reason and review that a direct step records, its class under the conversion purpose with the class
+    and reason that conversion.json records (step_classes), its alternatives and its step over the roles, each with its
+    own route and class. shares are the core and anaesthesia steps on each route, and release_shares the anaesthesia
+    steps alone, which the release script carries (conversion.route_shares). problems are the route records that the
+    release would refuse (conversion.route_problems). draft is draft.json, with the sentence that names the reference
+    it was transplanted from. Where the policy's classes cannot be read, as when a step over the roles cannot be
+    compiled through the hospital schema, classes_problem says why in the release's own words and no step has a class.
+    schema and catalogue are as step_classes takes them."""
+    from .conversion import route_shares
+    folder = Path(folder)
+    steps = json.loads((folder / "conversion.json").read_text())
+    draft = read_draft(folder)
+    try:
+        classes, problem = step_classes(folder, schema, catalogue), None
+    except (Refused, OSError) as error:
+        classes, problem = [], str(error)
+    held = {(entry["file"], entry["what"]): {key: entry[key] for key in ("execution_class", "policy_version", "failed_rules",
+                                                                           "recorded")} for entry in classes}
+    found = []
+    for step in steps:
+        derived = step.get("layer") == LAYERS[2]
+        item = {"file": step.get("file"), "table": step.get("table"), "layer": step.get("layer"),
+                "carried": step.get("layer") in LAYERS[1:], **(_route_record({}) if derived else _route_record(step)),
+                "class": held.get((step.get("file"), "step")), "alternatives": [], "roles_step": None}
+        for entry in step.get("alternatives") or []:
+            name = entry.get("file") if isinstance(entry, dict) else entry
+            record = _route_record(entry, step) if isinstance(entry, dict) and "route" in entry else _route_record(step)
+            item["alternatives"].append({"file": name, **({} if derived else record),
+                                         "class": held.get((name, "alternative"))})
+        if step.get(ROLES_STEP):
+            item["roles_step"] = {"file": step[ROLES_STEP], "route": "roles", "class": held.get((step[ROLES_STEP], "roles step"))}
+        found.append(item)
+    gates = [{"file": entry["file"], "class": held[(entry["file"], "gate")]} for entry in classes if entry["what"] == "gate"]
+    return {"conversion": folder.name, "steps": found, "gates": gates, "shares": route_shares(steps),
+            "release_shares": route_shares(steps, layers=(LAYERS[1],)), "problems": route_problems(steps), "draft": draft,
+            "draft_sentence": draft_sentence(draft) if draft is not None else None, "classes_problem": problem}
+
+
 def script(folder, settings=None, mappings=None, schema=None, catalogue=None):
     """The whole release script for the anaesthesia steps of a conversion folder.
 
@@ -825,12 +901,21 @@ def main():
     parser = argparse.ArgumentParser(prog="schemalyser.release")
     parser.add_argument("conversion", type=Path)
     parser.add_argument("--catalogue", type=Path, required=True)
-    parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--schema", type=Path, help="the hospital schema's map folder, through which a step over the roles "
-                                                     "is compiled; by default the map folder beside the conversion folder")
+    parser.add_argument("--out", type=Path)
+    parser.add_argument("--schema", type=Path, help="the saved hospital schema, or its map folder, through which a step over "
+                                                     "the roles is compiled; by default the map folder beside the conversion "
+                                                     "folder")
+    parser.add_argument("--report", action="store_true", help="print, as JSON, each step with its route and class, the share "
+                                                               "of steps on each route and whether the folder is a draft, "
+                                                               "and write nothing")
     args = parser.parse_args()
+    if not args.report and args.out is None:
+        parser.error("the release script is written to the folder that --out names")
     try:
         catalogue = Catalogue.from_csv(decode(args.catalogue.read_bytes()))
+        if args.report:
+            print(json.dumps(conversion_report(args.conversion, args.schema, catalogue), indent=1, default=str))
+            return 0
         schema = read_schema(args.conversion, args.schema, catalogue)
         text = script(args.conversion, schema=schema, catalogue=catalogue)
         manifest = source_manifest(args.conversion, catalogue, schema)

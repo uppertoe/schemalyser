@@ -618,3 +618,41 @@ def test_the_command_writes_the_class_of_every_step_beside_the_script(tmp_path, 
     written = json.loads((tmp_path / "out" / "step_classes.json").read_text())
     assert {e["file"]: e["execution_class"] for e in written}["drug_exposure_infusion_roles.sql"] == "C"
     assert all(set(e["report"]) >= {"policy_version", "rules", "execution_class"} for e in written)
+
+def test_a_step_over_the_roles_is_compiled_through_a_saved_hospital_schema_given_as_its_one_file(tmp_path):
+    import zipfile
+    saved = tmp_path / "hospital-schema.schemalyser.zip"
+    with zipfile.ZipFile(saved, "w") as archive:
+        for path in (FIXTURES / "map").iterdir():
+            archive.write(path, f"map/{path.name}")
+        archive.writestr("map/../outside.sql", "SELECT 1")
+    text = release.script(CONVERSION, schema=saved)
+    assert text == release.script(CONVERSION, schema=FIXTURES / "map")
+    assert not (tmp_path / "outside.sql").exists()
+    (tmp_path / "not-a-schema.zip").write_text("nothing")
+    with pytest.raises(Refused, match="not-a-schema.zip is not a saved hospital schema"):
+        release.script(CONVERSION, schema=tmp_path / "not-a-schema.zip")
+
+
+def test_the_conversion_report_gives_each_step_s_route_review_and_class_and_writes_nothing(tmp_path, monkeypatch, capsys):
+    report = release.conversion_report(CONVERSION)
+    steps = {s["file"]: s for s in report["steps"]}
+    assert (report["shares"]["roles"], report["shares"]["direct"]) == (1, 19)
+    assert (report["release_shares"]["roles"], report["release_shares"]["direct"]) == (1, 9)
+    assert steps["measurement.sql"]["review"]["by"] == "the owner" and steps["measurement.sql"]["class"]["execution_class"] == "C"
+    assert steps["cdm_source.sql"]["class"]["recorded"]["class"] == "D" and not steps["cdm_source.sql"]["carried"]
+    infusion = steps["drug_exposure_infusion_roles.sql"]
+    assert infusion["route"] == "roles" and infusion["alternatives"][0]["route"] == "direct"
+    assert steps["anaesthetic.sql"]["route"] is None and report["draft"] is None and report["problems"] == []
+    # A step that records no route is named among the problems, and a class that cannot be read is said, not guessed.
+    folder = _folder(tmp_path)
+    (folder / "conversion.json").write_text(json.dumps([{"table": "measurement", "file": "step.sql", "layer": "anaesthesia",
+                                                         "policy_class": "D"}]))
+    found = release.conversion_report(folder)
+    assert found["problems"] and "records no route" in found["problems"][0]
+    assert found["classes_problem"].startswith("step.sql: policy_class is") and found["steps"][0]["class"] is None
+    monkeypatch.setattr(sys, "argv", ["release", str(CONVERSION), "--catalogue", str(FIXTURES / "invented-catalogue.csv"),
+                                      "--report"])
+    assert release.main() == 0
+    assert json.loads(capsys.readouterr().out)["release_shares"] == report["release_shares"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["conversion"]
