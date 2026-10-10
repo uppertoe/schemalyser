@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}{{ w.title }}{% endblock %}
+{% block main %}
+<h1>{{ w.title }}</h1>
+<p class="lede">{{ w.list_lede }}</p>
+
+<section>
+  <h2>{{ w.start_heading }}</h2>
+  {% if schemas %}
+  <form class="grid" method="post" action="/exports">
+    <label>{{ w.start_label }}
+      <select name="schema">{% for s in schemas %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select>
+      <span class="note">{{ w.start_note }}</span></label>
+    <button type="submit">{{ w.start_button }}</button>
+  </form>
+  {% else %}
+  <p>{{ w.start_none }}</p>
+  {% endif %}
+</section>
+
+<section>
+  <h2>{{ w.list_heading }}</h2>
+  {% if exports %}
+  <ul>{% for x in exports %}<li><a href="/exports/{{ x.name }}">{{ x.name }}</a>: {{ x.schema }}</li>{% endfor %}</ul>
+  {% else %}
+  <p>{{ w.list_none }}</p>
+  {% endif %}
+</section>
+{% endblock %}

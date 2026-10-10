@@ -1,0 +1,15 @@
+{# The evidence requests of a report, each naming who acts, with any question and SQL ready to copy. #}
+<ol class="requests">
+  {% for r in requests %}
+  <li>
+    <p><strong>{{ w.for_role.format(role=r.role) }}</strong> {{ r.says }}</p>
+    {% if r.question %}<blockquote>{{ r.question }}</blockquote>{% endif %}
+    {% if r.sql %}
+    <div x-data class="code">
+      <button type="button" class="copy" @click="navigator.clipboard.writeText($refs.sql.innerText)">Copy the SQL</button>
+      <pre x-ref="sql">{{ r.sql }}</pre>
+    </div>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ol>

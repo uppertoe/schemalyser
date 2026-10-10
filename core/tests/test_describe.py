@@ -1053,3 +1053,70 @@ def test_the_command_line_walks_the_page_s_calls_and_goes_on_past_a_refused_one(
     assert [c["answer"] for c in restored.confirmations if c["attribute"] == "role_patient.birth_date"] == ["yes"]
     (tmp_path / "bad.json").write_text(json.dumps({"calls": [{"call": "describe_nothing"}]}))
     assert describe_main.main(["walk", str(tmp_path / "bad.json")]) == 1
+
+
+# Phase 7a: what the page asks for and shows of the evidence.
+
+def test_the_hospital_s_name_and_the_person_who_gave_the_time_zone_are_recorded_and_not_recorded_until_given():
+    s = fresh()
+    assert s.view()["settings"]["hospital_recorded"] == "not recorded"
+    files = s.folder_files(DATE)
+    assert "The name of the hospital that it describes is not recorded." in files["README.md"].decode()
+    assert "hospital" not in json.loads(files["settings.json"])
+    s.set_settings(hospital="  The   Invented Hospital ")
+    s.confirm("role_patient.birth_date", "yes", date=DATE, actor="Dr A")
+    assert s.view()["settings"]["hospital_recorded"] == "The Invented Hospital"
+    assert s.log.entries()[-1]["scope"]["hospital"] == "The Invented Hospital"
+    assert s.log.entries()[-1]["actor"] == "Dr A"
+    # A zone proposed from this computer was given by no one; once a person confirms it, the name is recorded, and a
+    # save that sends the same zone again leaves the name as it was.
+    s.set_settings(time_zone="Australia/Sydney", daylight_saving=True, time_zone_from="proposed from this computer", actor="Dr A")
+    assert s.view()["settings"]["time_zone_by"] is None
+    s.set_settings(time_zone="Australia/Sydney", daylight_saving=True, time_zone_from="a person", actor="Dr B")
+    s.set_settings(time_zone="Australia/Sydney", daylight_saving=True, time_zone_from="a person", actor="Dr C")
+    assert s.view()["settings"]["time_zone_by"] == "Dr B"
+    again = describe.Describe()
+    again.restore(roleshadow.save(s, DATE))
+    assert again.settings["time_zone_by"] == "Dr B" and again.settings["hospital"] == "The Invented Hospital"
+    assert "It describes The Invented Hospital." in again.folder_files(DATE)["README.md"].decode()
+    s.set_settings(hospital="")
+    assert s.view()["settings"]["hospital_recorded"] == "not recorded"
+
+
+def test_a_list_of_codes_with_its_concepts_is_read_and_the_view_gives_its_counts_by_status_and_no_code():
+    s = fresh()
+    text = ("code,description,concept_id,status,provenance\nCEPHAZOLIN,an invented description,9100001,mapped,a person\n"
+            "FLUCLOXACILLIN,,9100002,ambiguous,a person\nFLUCLOXACILLIN,,9100003,ambiguous,a person\nOXYGEN,,0,unmapped,a person\n")
+    with pytest.raises(describe.DescribeError, match="headings"):
+        s.read_concepts("map_drug_concept", "code,concept\nX,1\n")
+    with pytest.raises(describe.DescribeError, match="no rows"):
+        s.read_concepts("map_drug_concept", "code,concept_id,status\n")
+    with pytest.raises(describe.DescribeError, match="lists that the page offers"):
+        s.read_concepts("map_nothing", text)
+    s.read_concepts("map_drug_concept", text, actor="Dr A")
+    held = {c["mapping"]: c for c in s.view()["concepts"]}
+    assert set(held) == set(rolemap.mapping_views())
+    assert held["map_drug_concept"]["statuses"] == {"mapped": 1, "unmapped": 1, "ambiguous": 1}
+    assert held["map_drug_concept"]["codes"] == 3 and held["map_drug_concept"]["by"] == "Dr A"
+    assert held["map_drug_concept"]["dimensions"]["confirmed"]["by"] == "Dr A"
+    assert held["map_unit_concept"]["statuses"] is None
+    assert "CEPHAZOLIN" not in json.dumps(s.view()["concepts"])
+
+
+def test_each_pathway_of_a_part_shows_its_kind_of_record_its_table_and_its_own_evidence():
+    s = fresh()
+    drug = next(r for r in s.view()["roles"] if r["name"] == "role_drug")
+    (first,) = drug["pathways"]
+    assert first["source_kind"] == "administration" and first["source_kind_status"] == "proposed"
+    kind = next(i for i in drug["items"] if i.get("source_kind"))
+    assert kind["source_kind"] == {"about": "role_drug", "kind": "administration"} and kind["forms"] == []
+    s.add_pathway("role_drug", "OBS_READING", "charted_value", actor="Dr B", date=DATE)
+    s.add_pathway("role_drug", "OBS_READING", "charted_value", actor="Dr B", date=DATE)
+    s.choose_source_kind("role_drug", "order", actor="Dr B", date=DATE)
+    drug = next(r for r in s.view()["roles"] if r["name"] == "role_drug")
+    assert [(p["name"], p["source_kind"], p["table"]) for p in drug["pathways"]] == [
+        (None, "order", "DRUG_GIVEN"), ("charted_value", "charted_value", "OBS_READING"), ("charted_value_2", "charted_value", "OBS_READING")]
+    assert drug["pathways"][0]["source_kind_status"] == "person"
+    assert drug["pathways"][1]["dimensions"]["confirmed"]["by"] == "Dr B"
+    assert drug["pathways"][1]["columns"] and drug["coverage"] == []
+    assert not [r for r in s.view()["roles"] if r["name"] == "role_patient"][0].get("pathways")

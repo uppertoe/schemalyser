@@ -8,17 +8,20 @@ the version's schema_id. It reads and writes nothing else, so that the saved fil
 reads the version that this one wrote. Where a command is given a folder in place of a file, it reads the latest version
 in the folder, which is the one from which no other version there was made.
 
-    start FOLDER DICTIONARY [--tables FILE] [--reference FILE] [--heading FIELD=HEADING] [--invented]
+    start FOLDER DICTIONARY [--tables FILE] [--reference FILE] [--heading FIELD=HEADING] [--invented] [--hospital NAME]
     add-descriptions SCHEMA VENDOR [--tables FILE] [--heading FIELD=HEADING]
     dictionary-query
     propose SCHEMA
-    settings SCHEMA [--database NAME] [--year YEAR] [--time-zone ZONE] [--daylight-saving yes|no]
+    settings SCHEMA [--database NAME] [--year YEAR] [--hospital NAME] [--time-zone ZONE] [--daylight-saving yes|no]
+             [--time-zone-from SOURCE] [--actor NAME]
     query SCHEMA tables|codes|counts|values|probe [--key KEY] [--year YEAR] [--about ABOUT] [--table T] [--column C]
     paste SCHEMA tables|codes|count|values|probe RESULT [--key KEY] [--year YEAR] [--name NAME] [--about ABOUT]
     invented-run SCHEMA QUERY tables|codes|count|values|probe [--key KEY] [--year YEAR] [--name NAME] [--about ABOUT]
     answer SCHEMA ABOUT yes|no|not-sure [--replacement TABLE.COLUMN] [--note TEXT] [--actor NAME]
     translate-codes SCHEMA KEY CODE=KIND ... [--actor NAME]
     translate-concepts SCHEMA MAPPING ROWS [--actor NAME]
+    add-pathway SCHEMA PART TABLE KIND [--name NAME] [--actor NAME]
+    source-kind SCHEMA PART KIND [--actor NAME]
     judge SCHEMA COUNT yes|no [--note TEXT] [--actor NAME]
     correction-preview SCHEMA CORRECTION.json
     correction-check SCHEMA CORRECTION.json
@@ -73,7 +76,8 @@ BRIDGE = {
     "tables_query": "query", "charted_query": "query", "counts": "query", "values_query": "query", "probe_query": "query",
     "tables_read": "paste", "charted_read": "paste", "count_read": "paste", "values_read": "paste", "probe_read": "paste",
     "hospital_build": "invented-run", "hospital_run": "invented-run",
-    "confirm": "answer", "codes": "translate-codes", "count_judge": "judge",
+    "confirm": "answer", "codes": "translate-codes", "count_judge": "judge", "concepts": "translate-concepts",
+    "pathway": "add-pathway", "source_kind": "source-kind",
     "correction_preview": "correction-preview", "correction_check": "correction-check", "correction_keep": "correction-keep",
     "model_check": "test", "schema_zip": "save",
     "check": "check", "compare": "compare", "names": "lookup", "columns": "lookup", "joins": "lookup",
@@ -230,6 +234,8 @@ def cmd_start(args, version):
         raise Refused(WORDING["cli_started_already"].format(folder=folder))
     sitting = Describe()
     sitting.version = version
+    if args.hospital is not None:
+        sitting.set_settings(hospital=args.hospital)
     headings = _pairs(args.heading, WORDING["cli_heading"])
     data, tables = _bytes(args.dictionary), _bytes(args.tables) if args.tables else None
     name, tables_name = Path(args.dictionary).name, Path(args.tables).name if args.tables else "tables.csv"
@@ -273,7 +279,8 @@ def cmd_propose(args, version):
 def cmd_settings(args, version):
     sitting, path = _open(args.schema, version)
     daylight = None if args.daylight_saving is None else args.daylight_saving == "yes"
-    sitting.set_settings(args.database, args.year, args.time_zone, daylight, args.time_zone_from)
+    sitting.set_settings(args.database, args.year, args.time_zone, daylight, args.time_zone_from, hospital=args.hospital,
+                         actor=args.actor)
     held = sitting.settings
     print(WORDING["cli_settings"].format(**{k: held.get(k) if held.get(k) is not None else NOT_RECORDED
                                             for k in ("database", "year", "time_zone")}))
@@ -379,14 +386,23 @@ def cmd_translate_codes(args, version):
 
 def cmd_translate_concepts(args, version):
     sitting, path = _open(args.schema, version)
-    text = _text(args.rows)
-    first = text.split("\n", 1)[0]
-    reader = csv.DictReader(io.StringIO(text), delimiter="\t" if first.count("\t") > first.count(",") else ",")
-    if not {"code", "concept_id", "status"} <= {(f or "").strip().lower() for f in reader.fieldnames or []}:
-        raise Refused(WORDING["cli_concepts_file"], 2)
-    rows = [{(k or "").strip().lower(): (v or "").strip() for k, v in row.items()} for row in reader]
-    found = sitting.translate_concepts(args.mapping, rows, actor=args.actor)
+    found = sitting.read_concepts(args.mapping, _text(args.rows), actor=args.actor)
     print(WORDING["cli_concepts"].format(mapping=found["mapping"], **{k: f"{v:,}" for k, v in found["statuses"].items()}))
+    _write(sitting, args.out or path.parent)
+
+
+def cmd_add_pathway(args, version):
+    sitting, path = _open(args.schema, version)
+    added = sitting.add_pathway(args.part, args.table, args.kind, args.name, actor=args.actor)
+    print(WORDING["cli_pathway"].format(part=args.part, name=added["name"], table=args.table, kind=args.kind,
+                                        actor=args.actor or NOT_RECORDED))
+    _write(sitting, args.out or path.parent)
+
+
+def cmd_source_kind(args, version):
+    sitting, path = _open(args.schema, version)
+    sitting.choose_source_kind(args.part, args.kind, actor=args.actor)
+    print(WORDING["cli_source_kind"].format(part=args.part, kind=args.kind, actor=args.actor or NOT_RECORDED))
     _write(sitting, args.out or path.parent)
 
 
@@ -568,6 +584,7 @@ def _argv(call, r, base, work, scratch, held):
     if call == "settings":
         daylight = r.get("daylightSaving")
         return ["settings", s, *opt("--database", r.get("database")), *opt("--year", r.get("year")),
+                *(["--hospital", str(r["hospital"])] if r.get("hospital") is not None else []), *opt("--actor", r.get("actor")),
                 *(["--time-zone", str(r["timeZone"])] if r.get("timeZone") is not None else []),
                 *opt("--daylight-saving", None if daylight is None else "yes" if daylight else "no"),
                 *opt("--time-zone-from", r.get("timeZoneFrom"))]
@@ -596,6 +613,13 @@ def _argv(call, r, base, work, scratch, held):
         return ["query", s, "counts", *opt("--year", r.get("year")), *step]
     if call == "count_read":
         return ["paste", s, "count", text("count.tsv"), "--name", r["name"]]
+    if call == "concepts":
+        return ["translate-concepts", s, r.get("mapping") or "", text("concepts.txt"), *opt("--actor", r.get("actor"))]
+    if call == "pathway":
+        return ["add-pathway", s, r.get("view") or "", r.get("table") or "", r.get("sourceKind") or "",
+                *opt("--name", r.get("name")), *opt("--actor", r.get("actor"))]
+    if call == "source_kind":
+        return ["source-kind", s, r.get("about") or "", r.get("kind") or "", *opt("--actor", r.get("actor"))]
     if call == "count_judge":
         return ["judge", s, r["name"], r["looksRight"], *opt("--note", r.get("note")), *opt("--actor", r.get("actor"))]
     if call == "values_query":
@@ -641,13 +665,30 @@ def walk(calls, base=".", version="", out=None):
         work, scratch = Path(temporary) / "schema", Path(temporary) / "calls"
         work.mkdir()
         scratch.mkdir()
-        for number, given in enumerate(calls, 1):
+        # The page may record the hospital's name before a dictionary is loaded, when no saved schema exists yet for a
+        # command to read; such a call waits until the first version is saved. Settings are not journalled, so the order
+        # does not change what is saved.
+        waiting = []
+        queue = [(number, given) for number, given in enumerate(calls, 1)]
+        while queue:
+            number, given = queue.pop(0)
             call = str(given.get("call", "")).removeprefix("describe_")
             if call not in BRIDGE:
                 raise Refused(WORDING["walk_unknown"].format(number=number, call=given.get("call")))
+            if call == "settings" and not any(work.glob(SAVED)):
+                waiting.append((number, given))
+                continue
+            if waiting and any(work.glob(SAVED)):
+                queue = waiting + [(number, given)] + queue
+                waiting = []
+                continue
             argv = _argv(call, given.get("request") or {}, base, work, scratch, held)
             if argv is None:
                 continue
+            named = [w["request"]["hospital"] for _, w in waiting if (w.get("request") or {}).get("hospital") is not None]
+            if argv[0] == "start" and named:
+                # The hospital named before the dictionary was loaded is in the scope of the first entry, as on the page.
+                argv += ["--hospital", str(named[-1])]
             said = io.StringIO()
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(said):
                 try:
@@ -657,6 +698,7 @@ def walk(calls, base=".", version="", out=None):
                     code = stopped.code or 2
             if code:
                 refused.append((number, said.getvalue().strip()))
+        refused.sort()
         with contextlib.redirect_stdout(io.StringIO()):
             code = main(["save", str(work), "--tool-version", version])
         if code:
@@ -713,18 +755,22 @@ def parser():
     one.add_argument("--heading", action="append", default=[], metavar="FIELD=HEADING",
                      help="the dictionary's own heading for a field: table, column, description, data_type or key")
     one.add_argument("--invented", action="store_true", help="say that the dictionary is the invented one")
+    one.add_argument("--hospital", help="the name of the hospital that the hospital schema describes")
     one = add("add-descriptions", "add the vendor's descriptions to a dictionary made from the database", [writes])
     one.add_argument("vendor")
     one.add_argument("--tables")
     one.add_argument("--heading", action="append", default=[], metavar="FIELD=HEADING")
     add("dictionary-query", "print the data dictionary query, which is the same for every hospital", [common, step])
     add("propose", "propose where the hospital's database keeps each part of the record", [writes])
-    one = add("settings", "record the database, the year of the lists, or the time zone of the database's clocks", [writes])
+    one = add("settings", "record the database, the year of the lists, the hospital's name, or the time zone of the "
+                          "database's clocks", [writes, actor])
     one.add_argument("--database", help="production, training or unsure")
     one.add_argument("--year")
     one.add_argument("--time-zone", help="a name such as Australia/Sydney or UTC")
     one.add_argument("--daylight-saving", choices=("yes", "no"))
     one.add_argument("--time-zone-from", help="a person, or proposed from this computer")
+    one.add_argument("--hospital", help="the name of the hospital that the hospital schema describes; an empty name takes "
+                                        "back one given earlier")
     one = add("query", "write a query for the database analyst to run, and record it in the journal", [writes, step])
     one.add_argument("what", choices=("tables", "codes", "counts", "values", "probe"))
     one.add_argument("--key", help="for codes, the column of a kind, such as role_reading.kind")
@@ -762,6 +808,15 @@ def parser():
     one.add_argument("mapping", help="the mapping view")
     one.add_argument("rows", help="a CSV or tab-separated file with the headings code, description, concept_id, status "
                                   "and provenance")
+    one = add("add-pathway", "add a further pathway to a part that records events: another table with its kind of record",
+              [writes, actor])
+    one.add_argument("part", help="the part, such as role_drug")
+    one.add_argument("table", help="the table whose rows are the further pathway")
+    one.add_argument("kind", help="the kind of record, one of the source kinds, such as order or administration")
+    one.add_argument("--name", help="the pathway's name, in lower-case letters; by default, its kind of record")
+    one = add("source-kind", "record the kind of record of a pathway, named as role_x or role_x@name", [writes, actor])
+    one.add_argument("part", help="the pathway, such as role_drug or role_drug@order")
+    one.add_argument("kind", help="the kind of record, one of the source kinds")
     one = add("judge", "record the clinician's judgement of a count", [writes, actor])
     one.add_argument("count", help="the count's name, such as coverage_by_year")
     one.add_argument("looks_right", help="yes or no")

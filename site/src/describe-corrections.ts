@@ -60,6 +60,10 @@ export interface Deps {
   // Whether the invented hospital answers the page's queries, and the running of one there, read as a paste would be.
   invented(): boolean;
   runInvented(request: Record<string, unknown>): Promise<Reply>;
+  // The name of the person answering at this sitting, which every answer carries, or undefined until one is given.
+  actor(): string | undefined;
+  // The kinds of record that a table's rows may be, in plain words, as the core lists them.
+  sourceKinds(): { kind: string; meaning: string }[];
 }
 
 const drafts = new Map<string, Draft>();
@@ -86,6 +90,7 @@ export function forget() {
   probeRan.clear();
   valuesKept.clear();
   tables = null;
+  added.clear();
 }
 
 const id = (about: string, key: string) => `c-${about.replace(/[^\w]/g, '-')}-${key}`;
@@ -627,6 +632,14 @@ export function panel(item: CorrectionItem, plain: () => HTMLElement, translate 
     document.body.append(list);
   }
   const fields = deps.el('div', undefined, 'fields');
+  // A further table that records the part is added with its kind of record; the test on made-up rows runs on it when
+  // the hospital schema is next tested or saved.
+  if (draft.form === 'pathway') {
+    pathwayFields(item, fields);
+    box.append(fields);
+    if (draft.problem) box.append(deps.el('p', `${c.problemLabel} ${draft.problem}`, 'status problem problem-note'));
+    return box;
+  }
   if (draft.form === 'column' || draft.form === 'rows') fields.append(plain());
   else formFields(item, fields);
   box.append(fields);
@@ -670,6 +683,47 @@ export function panel(item: CorrectionItem, plain: () => HTMLElement, translate 
   if (draft.report) box.append(reportBox(draft.report, item, correction));
   return box;
 }
+
+// The table that also records a part, and the kind of record that its rows are, chosen from the core's kinds.
+function pathwayFields(item: CorrectionItem, box: HTMLElement) {
+  const draft = draftOf(item);
+  const f = draft.f;
+  box.append(tableField(item, 'pathway_table', d.pathways.tableLabel));
+  const kind = deps.el('select', undefined, 'pathway-kind');
+  const none = deps.el('option', c.chooseKind);
+  none.value = '';
+  kind.append(none);
+  for (const k of deps.sourceKinds()) kind.append(Object.assign(deps.el('option', d.kindOption(k.kind, k.meaning)), { value: k.kind }));
+  kind.value = f.pathway_kind ?? '';
+  kind.addEventListener('change', () => { f.pathway_kind = kind.value; });
+  box.append(labelled(item.about, 'pathway_kind', d.pathways.kindLabel, kind));
+  const actions = deps.el('div', undefined, 'actions');
+  actions.append(deps.button(d.pathways.add, async () => {
+    const table = (f.pathway_table ?? '').trim();
+    if (!table || !f.pathway_kind) {
+      draft.problem = c.pathwayIncomplete;
+      deps.render();
+      return;
+    }
+    deps.setBusy(true);
+    try {
+      const reply = await deps.ask('describe_pathway', [JSON.stringify({ view: view(item.about), table, sourceKind: f.pathway_kind, actor: deps.actor() })]);
+      if (reply.ok) {
+        drafts.delete(item.about);
+        deps.close(item.about);
+        added.set(view(item.about), d.pathways.added(table));
+      } else draft.problem = reply.problem ?? d.failed;
+    } catch {
+      draft.problem = d.failed;
+    }
+    deps.setBusy(false);
+    deps.render();
+  }, 'pathway-add'));
+  box.append(actions);
+}
+
+// The receipt of a table added to a part, which the part's tables show until the page is drawn for another part.
+export const added = new Map<string, string>();
 
 // The choice of the kind of change, with a sentence on when each suits.
 function kindOfChange(item: CorrectionItem, draft: Draft, forms: string[]): HTMLElement[] {
@@ -769,7 +823,7 @@ function reportBox(report: Report, item: CorrectionItem, correction: Record<stri
   if (report.passed || draft.although) actions.append(deps.button(report.passed ? c.keep : c.keepAlthough, async () => {
     deps.setBusy(true);
     try {
-      const reply = await deps.ask('describe_correction_keep', [JSON.stringify({ correction, although: draft.although, reason: draft.reason })]);
+      const reply = await deps.ask('describe_correction_keep', [JSON.stringify({ correction, although: draft.although, reason: draft.reason, actor: deps.actor() })]);
       if (reply.ok) {
         if (draft.valueRows.length) valuesKept.set(item.about, draft.valueRows);
         else valuesKept.delete(item.about);

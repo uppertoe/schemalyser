@@ -23,7 +23,7 @@ const describeVendor = (v: { matched: number; gained: number }) =>
 const databaseReceipt = (r: { tables: number; columns: number; described: number; saved?: boolean; vendor?: { matched: number; gained: number } | null }) =>
   [
     r.saved
-      ? `The page has read the data dictionary from the saved schema. It was made from the database and holds ${plural(r.columns, 'column', 'columns')} in ${plural(r.tables, 'table', 'tables')}, with descriptions for ${r.described.toLocaleString('en-AU')} of them.`
+      ? `The page has read the data dictionary from the saved hospital schema. It was made from the database and holds ${plural(r.columns, 'column', 'columns')} in ${plural(r.tables, 'table', 'tables')}, with descriptions for ${r.described.toLocaleString('en-AU')} of them.`
       : `The page has made the data dictionary from the database: ${plural(r.columns, 'column', 'columns')} in ${plural(r.tables, 'table', 'tables')}, with descriptions for ${r.described.toLocaleString('en-AU')} of them.`,
     r.vendor ? describeVendor(r.vendor) : '',
     r.described * 4 < r.columns
@@ -128,7 +128,7 @@ export const describeStrings = {
     'Once the query has finished, bring the result here in whichever of these two ways suits its size. A result of more than about 20,000 rows is easier to save as a file than to paste.',
   databaseSmall: 'For a small database, copy the result with headers and paste it here.',
   databaseSmallHow:
-    'In SQL Server Management Studio, the database analyst clicks the empty square at the top left of the results grid, then right-clicks it and chooses Copy with Headers. The analyst pastes the result into the box below and choose Read the result.',
+    'In SQL Server Management Studio, the database analyst clicks the empty square at the top left of the results grid, then right-clicks it and chooses Copy with Headers. The analyst pastes the result into the box below and chooses Read the result.',
   databasePasteLabel: 'The result, copied with its headers:',
   databaseRead: 'Read the result',
   databaseLarge: 'For a large one, save the result as a file, then choose it here.',
@@ -183,7 +183,7 @@ export const describeStrings = {
   dictionaryReceipt: (r: { tables: number; columns: number; described: number; keyed: number; skipped: number; source?: string | null; saved?: boolean; vendor?: { matched: number; gained: number } | null }) =>
     r.source === 'database'
       ? databaseReceipt(r)
-      : `The page has read ${r.source === 'invented' ? 'the invented dictionary' : r.source === 'saved' ? 'the dictionary from the saved schema' : 'the dictionary'}: ${plural(r.columns, 'column', 'columns')} in ${plural(r.tables, 'table', 'tables')}.${
+      : `The page has read ${r.source === 'invented' ? 'the invented dictionary' : r.source === 'saved' ? 'the dictionary from the saved hospital schema' : 'the dictionary'}: ${plural(r.columns, 'column', 'columns')} in ${plural(r.tables, 'table', 'tables')}.${
         r.described === r.columns ? '' : ` ${plural(r.described, 'column has', 'columns have')} a description.`
       }${r.skipped ? ` The page left out ${rows(r.skipped)} whose names are not plain table and column names.` : ''}`,
   dictionaryFailed: 'The page could not read this file as a dictionary. Make sure that it is the CSV export, then choose it again.',
@@ -209,15 +209,15 @@ export const describeStrings = {
   folderFailed: 'The page could not read this file as a saved hospital schema. Make sure that it is the file that the page saved at step 9, then open it again.',
 
   // The check of a saved hospital schema against the database.
-  checkHeading: 'Check a saved schema against the database',
+  checkHeading: 'Check a saved hospital schema against the database',
   checkWhat:
     "After a change to the database or a new release of the vendor's system, the clinician chooses Check against the database. The page proposes the hospital schema again from the dictionary and the recorded answers, compares it with the saved schema, and lists each earlier query for the database analyst to run again.",
   checkButton: 'Check against the database',
-  checkSame: 'The schema proposed again is the same as the saved schema.',
-  checkDiffers: (n: number) => `The schema proposed again differs from the saved schema in ${plural(n, 'place', 'places')}:`,
+  checkSame: 'The hospital schema proposed again is the same as the saved hospital schema.',
+  checkDiffers: (n: number) => `The hospital schema proposed again differs from the saved hospital schema in ${plural(n, 'place', 'places')}:`,
   checkNoDictionary:
     'Without the dictionary, the page has compared only the queries. Load the dictionary at step 2, then choose Check against the database again to compare the hospital schema as well.',
-  checkNoQueries: 'The saved schema records no queries yet.',
+  checkNoQueries: 'The saved hospital schema records no queries yet.',
   checkQuery: (number: number, file: string, step: string) => {
     const at = step.match(/^(\d+)\.\s*(.+)$/);
     return at ? `Query ${number}, saved as ${file}, from step ${at[1]} (${at[2]})` : `Query ${number}, saved as ${file}`;
@@ -440,7 +440,11 @@ export const describeStrings = {
   vocabulariesWaiting: 'The page cannot yet write a list for these columns:',
   vocabularyWaiting: (title: string, reason: string) => `${title}: ${reason}`,
   codesFromRow: 'Go to this list in step 7',
-  underTen: 'under 10',
+  // A count that its query left blank is shown as blank, and the reason that the core gives is said once beneath.
+  blankCell: 'blank',
+  suppressedNote: {
+    under_ten: 'A figure shown as blank is one that the query left blank on purpose. The query leaves out any figure under ten, so that a small group cannot be picked out.',
+  } as Record<string, string>,
   codesNoneSaved: 'No codes are saved for this list yet.',
   kindMeaning: (kind: string, meaning: string) => `${kind}: ${meaning}`,
 
@@ -451,7 +455,7 @@ export const describeStrings = {
     'The invented hospital answers these. The clinician chooses Write the counts, then for each count chooses Run on the invented hospital and then Save whether these look right.',
   countsAboutSummary: 'What the counts are for',
   countsAbout:
-    "The counts show whether the hospital schema reaches the record in every year. Each count is rounded down to ten. A year or a group with fewer than ten is left out, and a figure under ten within a group shows as under 10. The rounding and the leaving out reduce what a count can disclose, but they do not make the results anonymous, and repeated counts over slightly different groups can reveal more than one count does. The results are therefore for use inside the hospital until the hospital's own rules say otherwise.",
+    "The counts show whether the hospital schema reaches the record in every year. Each count is rounded down to ten. A year or a group with fewer than ten is left out, and a figure under ten within a group is left blank. The rounding and the leaving out reduce what a count can disclose, but they do not make the results anonymous, and repeated counts over slightly different groups can reveal more than one count does. The results are therefore for use inside the hospital until the hospital's own rules say otherwise.",
   // Beside the figures of a count or a list that reads the anaesthetics of one year in #cohort.
   fromSample: (year: number | string, limit: string) =>
     `These figures are from a sample: the anaesthetics of ${year}, at most ${limit} of them. They show what is charted, but not how much the whole record holds.`,
@@ -470,7 +474,7 @@ export const describeStrings = {
   } as Record<string, string>,
   countTablesSummary: 'Which tables this count reads',
   countSafe: 'This count reads no table of readings, so it is safe to run on production.',
-  countTraining: 'Run on the training database. The database analyst runs it again on production before the figures are used.',
+  countTraining: 'The SQL window is connected to the training database, so the database analyst runs this count again on production before its figures are used.',
   countTrainingNote: 'The SQL window is connected to a training database, whose patients are fictional, so these figures show only that the query runs.',
   countScript: (limit: string) =>
     `This count reads the readings, so it runs in two parts. Part 1 first fills #cohort, a temporary table of the chosen anaesthetics, at most ${limit} of the year. Part 2 then reads only their readings.`,
@@ -526,11 +530,16 @@ export const describeStrings = {
     "The hospital schema gives each time as the database holds it, without converting it, so the saved file records the time zone that the database's clocks follow. If the database analyst knows that the database keeps another, such as UTC, the clinician changes it here before saving.",
   // Where the time zone in the box came from. The page never records this computer's zone as if a person had given it.
   timeZoneProposed:
-    "The page has proposed this computer's own time zone and daylight saving. If you save them unchanged, the saved file records that the page proposed them from this computer, rather than that a person gave them.",
+    "The page has proposed this computer's own time zone and daylight saving, and no person has confirmed them. If the database analyst confirms that the database's clocks follow this zone, the clinician chooses Confirm this time zone. If they follow another, such as UTC, the clinician types it into the box. If the zone is saved unchanged, the saved file records that the page proposed it from this computer.",
   timeZoneRecorded: {
     'a person': 'The hospital schema records this time zone as given by a person.',
-    'proposed from this computer': "The hospital schema records this time zone as proposed from this computer, because it was saved unchanged. If the database analyst confirms the zone, type it into the box again, and the next save records it as given by a person.",
+    'proposed from this computer': "The hospital schema records this time zone as proposed from this computer, because no person has confirmed it. If the database analyst confirms the zone, the clinician chooses Confirm this time zone.",
   } as Record<string, string>,
+  timeZoneBy: (by: string) =>
+    by === 'not recorded'
+      ? 'The hospital schema records this time zone as given by a person whose name is not recorded.'
+      : `The hospital schema records this time zone as given by ${by}.`,
+  timeZoneConfirm: 'Confirm this time zone',
   timeZoneLabel: 'The time zone, as a name such as Australia/Sydney or UTC:',
   daylightLabel: "The database's clocks change with daylight saving",
   // How the proposals fared, under step 9.
@@ -560,6 +569,7 @@ export const describeStrings = {
       pair: 'A link that matches on two columns',
       joined: 'Several rows joined into one text',
       codes: 'A translation of the local codes',
+      pathway: 'Another table that also records this part',
     } as Record<string, string>,
     formWhat: {
       column: 'Use this when a different column holds this value.',
@@ -573,6 +583,8 @@ export const describeStrings = {
       pair: 'Use this when the next table can be matched only on two columns at once, such as a case number and a line number.',
       joined: 'Use this when the text is spread over several rows, such as the lines of a note.',
       codes: "Use this when the column holds the hospital's own codes. Step 7 offers the same choice from the codes actually in use.",
+      pathway:
+        "Use this when the hospital's database records this part in a second table as well, such as orders beside administrations. The page proposes the part's columns again from that table, and every row from it carries the kind of record chosen here, so that the rows of the two tables are kept apart.",
     } as Record<string, string>,
     tableLabel: 'Take the value from the table',
     columnLabel: 'and its column',
@@ -596,7 +608,7 @@ export const describeStrings = {
     probeRan: 'The page has read the result of the test query.',
     // A value with its rows. The core marks a count that its query left empty because it was under ten.
     valueRows: (value: string, rows: number | null, suppressed?: string | null) => `${value || '(empty)'}${rows !== null
-      ? `, in about ${rows.toLocaleString('en-AU')} rows` : suppressed === 'under_ten' ? ', in fewer than ten rows' : ''}`,
+      ? `, in about ${rows.toLocaleString('en-AU')} rows` : suppressed === 'under_ten' ? ', with its number of rows left blank by the query' : ''}`,
     factorLabel: 'then multiply it by',
     offsetLabel: 'and add this, which is usually 0',
     stepHeading: (n: number) => `Link ${n}`,
@@ -664,6 +676,8 @@ export const describeStrings = {
     probeNone: 'There is no test query for this kind of change, so the test on made-up rows is its only test.',
     valuesKept: (n: number) => `Before the database analyst kept this change, the query of values showed that the column holds ${plural(n, 'value', 'values')}:`,
     problemLabel: 'The page cannot use the form yet:',
+    chooseKind: 'Choose the kind of record',
+    pathwayIncomplete: 'Write the name of the table and choose the kind of record, then choose Add this table.',
   },
 
   // The invented hospital, which answers every query on the page when the invented dictionary is in use.
@@ -675,6 +689,126 @@ export const describeStrings = {
     failed: 'The invented hospital could not run this query. Please try again.',
     unavailable:
       'The page has not been able to fetch the invented hospital, so its queries cannot be run here. If the tab is still online, reload the page and load the invented dictionary again.',
+  },
+
+  // Who is answering, and for which hospital, asked once at the start of a sitting.
+  who: {
+    heading: 'Who is answering, and for which hospital',
+    what: 'Before the first answer of this sitting, the clinician writes the name of the person answering and the name of the hospital.',
+    nameLabel: 'The name of the person answering at this sitting:',
+    nameAbout:
+      'The saved file records this name beside every answer, judgement and choice of codes made at this sitting, so that it shows who established each fact. If the clinician and the database analyst answer together, write both names. The page keeps the name in this tab only.',
+    nameNone: 'No name has been given yet, so the saved file will record the person who answered as "not recorded".',
+    nameGiven: (name: string) => `The saved file will record each answer made from now on as given by ${name}.`,
+    hospitalLabel: "The hospital's name:",
+    hospitalAbout: 'The saved file records which hospital it describes, and every query, result and answer in it carries this name.',
+    hospitalNone: 'No hospital has been named yet, so the saved file will record the hospital as "not recorded".',
+    hospitalGiven: (name: string) => `The saved file will record that it describes ${name}.`,
+    hospitalInvented: 'The invented dictionary is in use, so the saved file records the hospital as the invented hospital.',
+  },
+
+  // The translation of the hospital's other codes into standard concepts, at step 7 beside the codes of the readings.
+  concepts: {
+    heading: "The hospital's codes of drugs, units, procedures, diagnoses and laboratory tests",
+    steps: [
+      "The clinician asks the team that looks after the hospital's OMOP database for the list of one kind of the hospital's codes, with the standard concept that each code means. If that team has no such list, the database analyst may know who keeps one.",
+      'The clinician chooses below which kind of code the list holds, then pastes the list or chooses its file.',
+      'The clinician chooses Read the list of codes, and the page records each code as mapped, unmapped or ambiguous.',
+    ],
+    aboutSummary: 'What this list is, and what the page does with it',
+    about:
+      "The list is a table with a row of headings and one row for each code: code, description, concept_id, status and, where it is known, provenance. A status of mapped means that the code stands for one standard concept. Unmapped means that no concept has been chosen for it, and its concept_id is 0. Ambiguous means that the code may stand for more than one concept, and the list then has a row for each. The provenance says who chose the concept: a person, the hospital's own conversion, a reference conversion or an inference; where it is left out, the page records a person. The list usually comes from the hospital's own conversion to OMOP, which has already mapped these codes. Schemalyser uses it so that a query can name a drug or a unit by its standard concept, which is the same at every hospital. The codes and their descriptions stay in this tab and in the saved hospital schema. The parts of the record that an audit reads give each code as an opaque key in its place, so that no query written over them names a code.",
+    kindLabel: 'The kind of code that the list holds:',
+    pasteLabel: 'The list, copied with its headings:',
+    fileLabel: 'Or choose the file of the list:',
+    fileChoose: 'Choose the file',
+    read: 'Read the list of codes',
+    reading: 'The page is reading the list of codes.',
+    receipt: (title: string, codes: number, s: { mapped: number; unmapped: number; ambiguous: number }) =>
+      `The page has recorded the list of ${title.toLowerCase()}. Of its ${plural(codes, 'code', 'codes')}, ${s.mapped.toLocaleString('en-AU')} ${s.mapped === 1 ? 'is' : 'are'} mapped, ${s.unmapped.toLocaleString('en-AU')} unmapped and ${s.ambiguous.toLocaleString('en-AU')} ambiguous.`,
+    held: (title: string, codes: number, s: { mapped: number; unmapped: number; ambiguous: number }, by: string | null, date: string | null) =>
+      `The list of ${title.toLowerCase()} holds ${plural(codes, 'code', 'codes')}: ${s.mapped.toLocaleString('en-AU')} mapped, ${s.unmapped.toLocaleString('en-AU')} unmapped and ${s.ambiguous.toLocaleString('en-AU')} ambiguous. ${
+        !by || by === 'not recorded' ? 'A person whose name is not recorded' : by} recorded it on ${day(date ?? '')}.`,
+    none: (title: string) => `No list of ${title.toLowerCase()} is recorded yet.`,
+    failed: 'The page could not read this as a list of codes. Make sure that it has its row of headings, then paste it or choose the file again.',
+  },
+
+  // The tables that record a part of the record, each with the kind of record that its rows are.
+  pathways: {
+    heading: 'The tables that record this part',
+    what: "The hospital's database may record this part in more than one table. Each table is shown with the kind of record that its rows are, and with its own evidence. To add another, the database analyst chooses Choose another table on the row of the part's table, then Another table that also records this part.",
+    from: (table: string, meaning: string, kind: string) =>
+      `The rows from ${table} are ${meaning ? meaning[0].toLowerCase() + meaning.slice(1).replace(/[.\s]+$/, '') : 'of a kind not yet named'}${kind ? ` (${kind})` : ''}.`,
+    kindProposed: 'The page proposed this kind of record, and no person has confirmed it yet.',
+    kindConfirmed: (by: string, date: string) =>
+      by === 'not recorded' ? `A person whose name is not recorded confirmed this kind of record on ${date}.` : `${by} confirmed this kind of record on ${date}.`,
+    kindLabel: 'The kind of record that each row of this table is:',
+    kindWhat:
+      'The database analyst chooses the kind of record that the rows of this table are, then chooses Confirm this kind of record. Every row of the part from this table carries it, so that an audit can tell an order from an administration.',
+    kindConfirm: 'Confirm this kind of record',
+    columns: 'See the columns proposed from this table',
+    coverageNone:
+      'No person has yet assessed whether these are all the tables that record this part. That assessment comes back to the hospital schema through the evidence import, which this page does not do.',
+    coverage: (r: { by: string; date: string; period: { from: string; to: string }; figure: { pathways_found: number; pathways_mapped: number } }) =>
+      `${r.by === 'not recorded' ? 'A person whose name is not recorded' : r.by} assessed on ${day(r.date)} the tables that recorded this part from ${day(r.period.from)} to ${day(r.period.to)}, and found ${plural(r.figure.pathways_found, 'table', 'tables')}, of which ${r.figure.pathways_mapped.toLocaleString('en-AU')} ${r.figure.pathways_mapped === 1 ? 'is' : 'are'} in the hospital schema.`,
+    tableLabel: 'The table that also records this part:',
+    add: 'Add this table',
+    added: (table: string) =>
+      `The page has added ${table} as a further table for this part, with its columns proposed from it. The test on made-up rows runs on it when the hospital schema is next tested or saved.`,
+  },
+
+  // What the evidence for each answer rests on: the five dimensions, each as recorded.
+  evidence: {
+    summary: 'What the evidence for this rests on',
+    labels: {
+      confirmed: 'Confirmed by a person',
+      present: 'Present in the database',
+      tested: 'Tested on made-up rows',
+      reconciled: 'Checked against the database',
+      validated: 'Clinically validated',
+    } as Record<string, string>,
+    confirmed: (by: string, date: string) =>
+      by === 'not recorded' ? `A person whose name is not recorded answered for this on ${date}.` : `${by} answered for this on ${date}.`,
+    confirmedNone: 'No person has answered for this yet.',
+    present: (date: string) => `The result of the query of tables and columns, returned on ${date}, shows it.`,
+    presentNone: 'No result of the query of tables and columns shows it yet.',
+    tested: (passed: boolean, date: string) => (passed ? `It passed the test on made-up rows on ${date}.` : `It failed the test on made-up rows on ${date}.`),
+    testedNone: 'It has not yet been tested on made-up rows.',
+    reconciled: (judgement: string, by: string | null, date: string) =>
+      judgement === 'not recorded'
+        ? `A test query run on the hospital's database measured it on ${date}, and no judgement of the result is recorded.`
+        : `Counts run on the hospital's database were judged ${judgement === 'looks right' ? 'to look right' : 'not to look right'} by ${
+          !by || by === 'not recorded' ? 'a person whose name is not recorded' : by} on ${date}.`,
+    reconciledNone: "It has not yet been checked against the hospital's database.",
+    validated: (by: string, date: string) =>
+      `${by === 'not recorded' ? 'A person whose name is not recorded' : by} reconciled it against the clinical record on ${date}.`,
+    validatedNone: 'It has not been clinically validated.',
+    staleWhy: {
+      binding: 'the place where the database keeps it has changed',
+      link: 'the link has changed',
+      codes: "the hospital's codes have changed",
+      contract: "Schemalyser's description of this part of the record has changed",
+      pathways: 'the tables that record this part have changed',
+    } as Record<string, string>,
+    stale: (why: string[]) => `This no longer holds, because ${why.length > 1 ? `${why.slice(0, -1).join(', ')} and ${why[why.length - 1]}` : why[0]} since it was recorded.`,
+  },
+
+  // The version of the saved file, on the save step.
+  versionInfo: {
+    unsaved: 'The hospital schema has not been saved yet. Each save makes a new version, and the page shows its identifier here once it is saved.',
+    id: (id: string) => `The saved file is version ${id} of the hospital schema.`,
+    parent: (parent: string | null) => (parent ? `It was made from version ${parent}.` : 'It is the first version.'),
+    contract: (version: string) => `It was made against version ${version} of Schemalyser's description of the anaesthetic record.`,
+    changed: (parts: string[]) =>
+      `Schemalyser's description of ${parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0]} has changed since this version was saved, so the evidence that rests on ${parts.length === 1 ? 'that part' : 'those parts'} is shown as stale until it is established again.`,
+  },
+
+  // How far each part has been checked, in the three states, as the core derives them.
+  readinessTable: {
+    heading: 'How far each part has been checked',
+    columns: ['Part of the record', 'Runs on made-up rows', 'Checked against the database', 'Clinically validated'],
+    reached: (date: string) => `Reached on ${day(date)}`,
+    notYet: 'Not yet',
   },
 
   failed: 'The page could not finish that. Everything settled before it is kept.',

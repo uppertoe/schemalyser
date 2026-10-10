@@ -37,11 +37,13 @@ package from what the layers above it write.
     python -m schemalyser.audit status FOLDER [--schema SCHEMA.zip]
     python -m schemalyser.audit approve FOLDER --by NAME [--refuse] [--note TEXT] [--date YYYY-MM-DD]
     python -m schemalyser.audit export SCHEMA.zip SPECIFICATION.json --episodes EPISODES.csv --out FOLDER [--period FROM TO]
+    python -m schemalyser.audit export-status FOLDER [--schema SCHEMA.zip] [--specification SPEC.json] [--episodes EPISODES.csv]
 
 status prints, as JSON, whether the package still stands as it was built: it rechecks every hashed input, and a change
 to any of them voids the class and the plan review and returns the approval to not approved. approve records the
 database analyst's approval or refusal with their name and the date. export compiles a specification
-(specification.py) and builds a package for each of its sections.
+(specification.py) and builds a package for each of its sections, and export-status prints, as JSON, what became of
+each section: its package, its class, the feasibility report's two claims, the series, and its approval's standing.
 
 decisions.json is {"decisions": [{"about": "...", "decision": "...", "by": "...", "date": "..."}],
 "exact_small_numbers": false}; with exact_small_numbers true, the audit's result keeps counts from 1 to 4, which only
@@ -84,6 +86,7 @@ WORDING = {
     "exported": "Schemalyser wrote the export to {folder}, with a package for each of its {count} sections that the role policy let through.",
     "sqlserver_other": "The SQL Server harness ran another text of query.sql than the package holds, so Schemalyser has not recorded its result. Run the harness on the package again.",
     "sqlserver_unreadable": "Schemalyser could not read the SQL Server harness's result in {name}.",
+    "no_export": "{folder} holds no export that Schemalyser wrote, so there is nothing to report.",
 }
 
 README_WORDING = {
@@ -626,6 +629,82 @@ def build_export(schema_path, spec_path, episodes_path, out, period=None, decisi
     return found
 
 
+def _read(path):
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def series_steps(folder):
+    """The steps of a package's script after each of which the database analyst can stop, as the safety report
+    found them: [{"step", "statement", "sql"}], in order, with the text of each step's statement. Empty where the
+    script reads no large table and so runs as one step."""
+    folder = Path(folder)
+    safety = _read(folder / "safety-report.json") or {}
+    steps = ((safety.get("series") or {}).get("steps")) or []
+    try:
+        statements, _ = policy.split((folder / "query.sql").read_text(encoding="utf-8"))
+    except (OSError, sqlglot.errors.SqlglotError):
+        statements = []
+    found = []
+    for step in steps:
+        n = step.get("statement")
+        text = statements[n - 1] if isinstance(n, int) and 0 < n <= len(statements) else ""
+        found.append({"step": step.get("step"), "statement": n, "sql": text.strip()})
+    return found
+
+
+def export_status(out, schema_path=None, spec_path=None, episodes_path=None):
+    """What became of each section of an export that build_export wrote to out, as the export screen shows it and as
+    python -m schemalyser.audit export-status prints it. For each section, its outcome, its output class and whether
+    it may leave; for one that has a package, the folder, the execution class with the policy's outcome, the
+    feasibility report's verdict with its two claims kept apart, the series after each step of which the analyst can
+    stop, the evidence requests by which the plan and the outcome return, and the package's standing under status(),
+    so that a change that has voided the approval shows. With spec_path and episodes_path, it also says whether either
+    has changed since the export was compiled. Returns {"export", "stale", "sections"}, or None where out holds no
+    export."""
+    out = Path(out)
+    record = _read(out / EXPORT)
+    if record is None:
+        return None
+    stale = []
+    if spec_path is not None and Path(spec_path).is_file() and \
+            sha256(Path(spec_path).read_bytes()) != (record.get("specification") or {}).get("sha256"):
+        stale.append("specification")
+    if episodes_path is not None and Path(episodes_path).is_file() and \
+            sha256(Path(episodes_path).read_bytes()) != (record.get("episodes") or {}).get("sha256"):
+        stale.append("episodes")
+    compiled = {s["name"]: s for s in ((_read(out / "compiled" / "compiled.json") or {}).get("sections") or [])}
+    sections = []
+    for entry in record.get("sections", []):
+        found = dict(entry, describes=(compiled.get(entry["name"]) or {}).get("says"))
+        roles = out / "compiled" / "sections" / f"{entry['name']}.sql"
+        found["roles_sql"] = roles.read_text(encoding="utf-8") if roles.is_file() else None
+        folder = out / "sections" / entry["name"]
+        feasible = _read(folder / "feasibility.json")
+        if feasible is not None:
+            found["feasibility"] = {"verdict": feasible.get("verdict"), "verdict_text": feasible.get("verdict_text"),
+                                    "claims": feasible.get("claims"),
+                                    "coverage": (feasible.get("coverage") or {}).get("says"),
+                                    "requests": feasible.get("requests") or []}
+        if entry.get("outcome") == "packaged" and (folder / MANIFEST).is_file():
+            standing = status(folder, schema_path)
+            manifest = json.loads((folder / MANIFEST).read_text(encoding="utf-8"))
+            safety = _read(folder / "safety-report.json") or {}
+            requests = (_read(folder / REQUESTS) or {}).get("requests") or []
+            found.update(
+                path=f"{out.name}/sections/{entry['name']}", status=standing,
+                execution_class=manifest.get("execution_class"), class_says=policy.CLASSES.get(manifest.get("execution_class")),
+                policy_outcome=manifest.get("policy_outcome"),
+                rules_failed=[r["rule"] for r in safety.get("rules", []) if not r.get("passed")],
+                series=series_steps(folder), approval=manifest.get("approval"), manifest=manifest,
+                requests={r["form"]: {"request_id": r["request_id"], "says": r["says"]} for r in requests})
+        sections.append(found)
+    return {"export": {k: record.get(k) for k in ("date", "specification", "episodes", "schema_file", "period")},
+            "stale": stale, "sections": sections}
+
+
 # The form that a question needs for the two-part script, judged from its text and the public contract alone.
 
 PUBLIC_FORM = {
@@ -708,6 +787,11 @@ def main(argv=None):
     five.add_argument("--out", required=True)
     five.add_argument("--period", nargs=2, metavar=("FROM", "TO"))
     five.add_argument("--decisions")
+    six = commands.add_parser("export-status", help="Say, as JSON, what became of each section of an export.")
+    six.add_argument("folder")
+    six.add_argument("--schema", help="the saved hospital schema, whose hash each package rechecks")
+    six.add_argument("--specification", help="the specification, to say whether it has changed since the export")
+    six.add_argument("--episodes", help="the episode list, to say whether it has changed since the export")
     args = parser.parse_args(argv)
     try:
         if args.command == "build":
@@ -719,6 +803,11 @@ def main(argv=None):
         elif args.command == "approve":
             found = approve(args.folder, args.by, args.refuse, args.note, args.date, args.schema)
             print(found["says"])
+        elif args.command == "export-status":
+            found = export_status(args.folder, args.schema, args.specification, args.episodes)
+            if found is None:
+                raise AuditError(WORDING["no_export"].format(folder=Path(args.folder).name))
+            print(_json(found), end="")
         elif args.command == "export":
             found = build_export(args.schema, args.specification, args.episodes, args.out, args.period, args.decisions)
             print(WORDING["exported"].format(folder=Path(args.out).name, count=len(found["sections"])))

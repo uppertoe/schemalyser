@@ -73,3 +73,29 @@ def test_the_bridge_and_a_sitting_through_it_open_no_network_module():
                           env={**os.environ, "PYTHONPATH": str(ROOT / "core")}, timeout=300)
     assert done.returncode == 0, done.stderr
     assert done.stdout.strip().splitlines()[-1] == "[]"
+
+
+def test_the_bridge_carries_the_person_s_name_and_the_hospital_s_into_every_entry_it_makes():
+    browser.describe_begin("test")
+    try:
+        assert json.loads(browser.describe_settings(json.dumps({"hospital": "The Invented Hospital"})))["ok"]
+        reply = json.loads(browser.describe_dictionary_upload(DICTIONARY.read_bytes(), TABLES.read_bytes(), "{}",
+                                                              "invented-dictionary.csv", "invented-tables.csv", "2"))
+        assert reply["ok"] and reply["model"]["settings"]["hospital_recorded"] == "The Invented Hospital"
+        assert json.loads(browser.describe_propose(lambda done, total: None))["ok"]
+        browser.describe_confirm(json.dumps({"about": "role_patient.birth_date", "answer": "yes", "actor": "Dr A"}))
+        found = json.loads(browser.describe_concepts(json.dumps({"mapping": "map_unit_concept", "actor": "Dr A",
+                                                                 "text": "code\tconcept_id\tstatus\nMMHG\t8876\tmapped\n"})))
+        assert found["ok"] and found["translated"]["statuses"]["mapped"] == 1
+        added = json.loads(browser.describe_pathway(json.dumps({"view": "role_drug", "table": "OBS_READING",
+                                                                "sourceKind": "charted_value", "actor": "Dr B"})))
+        assert added["ok"] and added["pathway"] == "charted_value"
+        kind = json.loads(browser.describe_source_kind(json.dumps({"about": "role_drug@charted_value", "kind": "result", "actor": "Dr B"})))
+        assert kind["ok"]
+        refused = json.loads(browser.describe_source_kind(json.dumps({"about": "role_drug", "kind": "nothing"})))
+        assert not refused["ok"] and "contract" not in refused["problem"]
+        entries = browser._describe.log.entries()
+        assert {e["scope"]["hospital"] for e in entries} == {"The Invented Hospital"}
+        assert [e["actor"] for e in entries if e["kind"] in ("answer", "concepts translated")][-4:] == ["Dr A", "Dr A", "Dr B", "Dr B"]
+    finally:
+        browser.describe_begin("test")

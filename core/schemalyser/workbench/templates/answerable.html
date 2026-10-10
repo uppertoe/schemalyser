@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Can this be answered{% endblock %}
+{% block title %}What a question needs{% endblock %}
 {% block main %}
-<h1>Can this be answered</h1>
-<p class="lede">This page reads a question against a saved hospital schema and shows whether the schema can answer it, the state of each thing the question needs, and the smallest piece of work that would move each one. With no question chosen, it shows every question of the project together.</p>
+<h1>What a question needs</h1>
+<p class="lede">This page reads a question against a saved hospital schema and shows the state of each thing the question needs, as the hospital schema records it, with the smallest piece of work that would move each one. The verdict states two claims apart: whether every requirement is mapped and checked against the database, and whether the coverage of the recording pathways has been assessed. Neither says that the answer is right. With no question chosen, the page shows every question of the project together.</p>
 
 <form class="grid" method="get" action="/answerable" hx-get="/answerable" hx-target="#report" hx-select="#report" hx-swap="outerHTML" hx-push-url="true">
   <label>The saved hospital schema:

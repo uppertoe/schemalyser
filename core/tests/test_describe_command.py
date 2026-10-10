@@ -80,6 +80,10 @@ def steady(data):
         text = re.sub(r"\b[0-9a-f]{16}\b", "SCHEMA", text)
         text = re.sub(r"\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d)?(\.\d+)?(Z|[+-]\d\d:\d\d)?", "TIME", text)
         text = re.sub(r'"seconds": [\d.]+', '"seconds": N', text)
+        # The salt of the concept translations is drawn at random for each hospital schema, so that a local code's key
+        # cannot be turned back into the code without the schema; the keys made with it differ with it.
+        text = re.sub(r'"salt": "[0-9a-f]{32}"', '"salt": "SALT"', text)
+        text = re.sub(r"\bk[0-9a-f]{15}\b", "KEY", text)
         # The version from which an entry was made, and the versions before this one: the commands save a version
         # after each operation, and the page saves only at the end.
         text = re.sub(r'"(schema_id|parent_id)": (null|"SCHEMA")', r'"\1": "SCHEMA"', text)
@@ -109,6 +113,8 @@ def pasted_calls():
     confirm = [{"call": "confirm", "request": {"about": about, "answer": "yes", "actor": "Dr A"}} for about in CONFIRMED
                if about != "role_anaesthetic.patient_key"]
     return [
+        # The page asks for the hospital's name at the start of a sitting, before any dictionary is loaded.
+        {"call": "settings", "request": {"hospital": "The Invented Hospital"}},
         {"call": "dictionary_upload", "request": {"file": str(DICTIONARY), "tables": str(TABLES), "step": "2"}},
         {"call": "propose", "request": {}},
         {"call": "settings", "request": {"database": "production"}},
@@ -125,6 +131,11 @@ def pasted_calls():
         {"call": "charted_read", "request": {"key": "role_reading.kind", "year": 2024, "text": CHARTED}},
         {"call": "codes", "request": {"key": "role_reading.kind", "chosen": {"52": "map_arterial", "51": "map_cuff", "10": "spo2"},
                                       "actor": "Dr A"}},
+        {"call": "concepts", "request": {"mapping": "map_drug_concept", "text": CONCEPTS, "actor": "Dr A"}},
+        {"call": "concepts", "request": {"mapping": "map_drug_concept", "text": "code,concept\nX,1\n"}},
+        {"call": "pathway", "request": {"view": "role_drug", "table": "OBS_READING", "sourceKind": "charted_value", "actor": "Dr B"}},
+        {"call": "source_kind", "request": {"about": "role_drug", "kind": "order", "actor": "Dr B"}},
+        {"call": "source_kind", "request": {"about": "role_drug@charted_value", "kind": "DRUG_GIVEN"}},
         {"call": "counts", "request": {"year": 2024, "step": "8"}},
         {"call": "count_read", "request": {"name": "coverage_by_year", "text": COUNTS["coverage_by_year"]}},
         {"call": "count_read", "request": {"name": "repeated_keys", "text": COUNTS["repeated_keys"]}},
@@ -133,13 +144,32 @@ def pasted_calls():
         {"call": "probe_query", "request": {"about": "role_anaesthetic.patient_key", "year": 2024}},
         {"call": "probe_read", "request": {"about": "role_anaesthetic.patient_key", "text": LINK_PROBE}},
         {"call": "model_check", "request": {}},
-        {"call": "settings", "request": {"timeZone": "Australia/Sydney", "daylightSaving": True, "timeZoneFrom": "a person"}},
+        {"call": "settings", "request": {"timeZone": "Australia/Sydney", "daylightSaving": True, "timeZoneFrom": "a person",
+                                         "actor": "Dr B"}},
     ]
+
+
+CONCEPTS = ("code\tdescription\tconcept_id\tstatus\tprovenance\nCEPHAZOLIN\tan invented description\t9100001\tmapped\ta person\n"
+            "FLUCLOXACILLIN\t\t9100002\tambiguous\ta person\nFLUCLOXACILLIN\t\t9100003\tambiguous\ta person\n"
+            "OXYGEN\t\t0\tunmapped\ta person\n")
 
 
 def test_the_commands_save_the_hospital_schema_that_the_page_saves_from_the_same_pasted_results(tmp_path):
     calls = pasted_calls()
-    assert_same(by_page(calls), by_commands(calls, Path("."), tmp_path))
+    page, commands = by_page(calls), by_commands(calls, Path("."), tmp_path)
+    assert_same(page, commands)
+    # Beside the column that the dictionary does not hold, a list of codes without its headings and a kind of record
+    # that is not one are refused.
+    assert len(page[1]) == 3
+    with zipfile.ZipFile(__import__("io").BytesIO(page[0])) as archive:
+        held = {n: archive.read(n).decode("utf-8") for n in archive.namelist()}
+    settings = json.loads(held["settings.json"])
+    assert settings["hospital"] == "The Invented Hospital" and settings["time_zone_by"] == "Dr B"
+    entries = json.loads(held["journal.json"])["entries"]
+    assert {e["scope"]["hospital"] for e in entries} == {"The Invented Hospital"}
+    assert {e["actor"] for e in entries if e["kind"] == "concepts translated"} == {"Dr A"}
+    assert "It describes The Invented Hospital." in held["README.md"]
+    assert json.loads(held["map/map.json"])["roles"]["role_drug"]["pathways"][0]["name"] == "charted_value"
 
 
 def invented_calls():

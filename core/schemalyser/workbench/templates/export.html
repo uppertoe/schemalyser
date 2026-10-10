@@ -1,0 +1,369 @@
+{% extends "base.html" %}
+{% block title %}{{ w.title }}{% endblock %}
+{% block main %}
+{% set chosen = e.spec.chosen %}
+<h1>{{ w.title }}</h1>
+<p class="lede">{{ w.lede }}</p>
+{% if message %}<p class="notice">{{ message }}</p>{% endif %}
+
+{# 1. The hospital schema. #}
+<section id="schema">
+  <h2>{{ w.step1 }}</h2>
+  <p class="who">{{ w.who }} {{ w.step1_who }}</p>
+  <p>{{ w.step1_says.format(name=e.record.schema, date=e.support.updated | day) }} {{ w.step1_period.format(start=e.support.period["from"] | day, end=e.support.period["to"] | day) }}</p>
+  <table class="support">
+    <thead><tr><th>{{ w.col_section }}</th><th>{{ w.col_state }}</th><th>{{ w.col_readiness }}</th><th>{{ w.col_work }}</th></tr></thead>
+    <tbody>
+    {% for g in e.support.groups %}{% for p in g.parts %}
+    <tr>
+      <td><strong>{{ g.title }}</strong>{% if g.parts | length > 1 or g.title != p.title %}<br>{{ p.title }}{% endif %}</td>
+      <td>{% if p.part_state %}<span class="state s-{{ p.part_state | replace(' ', '-') | replace(',', '') }}">{{ p.part_state }}</span>
+        {% if p.state and p.state != p.part_state %}<span class="note">{{ w.lowest.format(state=p.state) }}</span>{% endif %}
+        {% else %}{{ w.not_linked_state }}{% endif %}</td>
+      <td><ul class="plain">
+        <li>{{ w.readiness_runs }} {{ (p.readiness.runs | day) if p.readiness.runs else w.not_reached }}</li>
+        <li>{{ w.readiness_checked }} {{ (p.readiness.checked | day) if p.readiness.checked else w.not_reached }}</li>
+        <li>{{ w.readiness_validated }} {{ (p.readiness.validated | day) if p.readiness.validated else w.not_reached }}</li>
+      </ul></td>
+      <td>{% if p.reason == "not_linked" %}{{ w.not_linked }}{% elif p.smallest %}
+        {% with requests = [p.smallest] %}{% include "_requests.html" %}{% endwith %}
+        {% if p.requests | length > 1 %}<details x-data><summary>Every piece of work for this section, {{ p.requests | length }} in all</summary>{% with requests = p.requests %}{% include "_requests.html" %}{% endwith %}</details>{% endif %}
+      {% else %}{{ w.nothing_to_do }}{% endif %}</td>
+    </tr>
+    {% endfor %}{% endfor %}
+    </tbody>
+  </table>
+  <details x-data><summary>{{ w.states_heading }}</summary>
+    <dl>{% for state in states %}<dt>{{ state[:1] | upper }}{{ state[1:] }}</dt><dd>{{ w.states[state] }}</dd>{% endfor %}</dl>
+  </details>
+</section>
+
+{# 2. The episodes. #}
+<section id="episodes">
+  <h2>{{ w.step2 }}</h2>
+  <p class="who">{{ w.who }} {{ w.step2_who }}</p>
+  {% if e.record.episodes %}
+  <p>{{ w.episodes_held.format(count=e.record.episodes.count | number, form=w.forms_inline[e.record.episodes.form], sha=e.record.episodes.sha256[:12]) }}
+  {% if e.record.episode_rule and e.record.episode_rule.form == "patient_dates" %}{{ w.episodes_rule.format(hours=e.record.episode_rule.window_hours, rule=w.several[e.record.episode_rule.several]) }}{% endif %}</p>
+  {% else %}
+  <p>{{ w.episodes_none }}</p>
+  {% endif %}
+  {% if e.record.episodes and e.record.episodes.form == "patient_dates" %}
+    {% if e.resolution %}
+      {% if e.resolution.blank %}
+      <p>{{ w.resolution_blank.format(what=e.resolution.blank | words(w.resolution_words)) }}</p>
+      {% else %}
+      <p>{{ w.resolution.format(pairs=e.resolution.pairs | number, one=e.resolution.resolved_to_one | number, share=e.resolution.share, ambiguous=e.resolution.ambiguous | number, none=e.resolution.resolved_to_none | number) }}</p>
+      {% endif %}
+    {% else %}
+    <p>{{ w.resolution_none }}</p>
+    {% endif %}
+  {% endif %}
+  <form class="grid" method="post" action="/exports/{{ e.name }}/episodes" enctype="multipart/form-data">
+    <label class="wide">{{ w.episodes_file_label }}
+      <input type="file" name="file" accept=".csv,text/csv" required>
+      <span class="note">{{ w.episodes_note }}</span></label>
+    <label>{{ w.episodes_form_label }}
+      <select name="form">{% for f in choices.forms %}<option value="{{ f }}" {{ "selected" if (e.record.episode_rule or chosen.episodes).form == f }}>{{ w.forms[f] }}</option>{% endfor %}</select></label>
+    <label>{{ w.window_label }}
+      <input type="number" name="window_hours" min="0" max="168" value="{{ (e.record.episode_rule or chosen.episodes).window_hours or '' }}">
+      <span class="note">{{ w.window_note }}</span></label>
+    <label>{{ w.several_label }}
+      <select name="several">{% for s in choices.several %}<option value="{{ s }}" {{ "selected" if (e.record.episode_rule or chosen.episodes).several == s }}>{{ w.several[s] }}</option>{% endfor %}</select></label>
+    <button type="submit">{{ w.episodes_button }}</button>
+  </form>
+</section>
+
+<form method="post" action="/exports/{{ e.name }}/specification" id="choices">
+{% set rule = e.record.episode_rule or chosen.episodes %}
+<input type="hidden" name="episodes.form" value="{{ rule.form }}">
+{% if rule.form == "patient_dates" %}<input type="hidden" name="episodes.window_hours" value="{{ rule.window_hours }}"><input type="hidden" name="episodes.several" value="{{ rule.several }}">{% endif %}
+
+{# 3. The sections. #}
+<section id="sections">
+  <h2>{{ w.step3 }}</h2>
+  <p class="who">{{ w.who }} {{ w.step3_who }}</p>
+  <p class="note">{{ w.sections_note }}</p>
+  {% for g in choices.groups %}
+  <h3>{{ g.title }}</h3>
+  {% for p in g.parts %}
+  {% set s = parts[p.part] %}{% set c = chosen.sections.get(p.part) %}
+  <div class="choice {{ '' if s.choosable else 'unavailable' }}" id="part-{{ p.name }}">
+    {% if s.choosable %}
+    <label class="check"><input type="checkbox" name="section" value="{{ p.part }}" {{ "checked" if c }}> {{ w.choose }}: <strong>{{ p.title }}</strong>
+      {% if s.part_state %}<span class="state s-{{ s.part_state | replace(' ', '-') | replace(',', '') }}">{{ s.part_state }}</span>{% endif %}</label>
+    {% if c and c.name %}<input type="hidden" name="name.{{ p.part }}" value="{{ c.name }}">{% endif %}
+    {% if p.one_row_per %}<p class="note">{{ w.grain.format(what=p.one_row_per) }}</p>{% endif %}
+    {% if p.kinds %}
+    <fieldset><legend>{{ w.kinds_label }}</legend>
+      <div class="kinds">
+      {% for k in s.kinds %}
+        {% if k.choosable %}
+        <label class="check"><input type="checkbox" name="kinds.{{ p.part }}" value="{{ k.kind }}" {{ "checked" if c and k.kind in (c.kinds or []) }}> {{ k.meaning or k.kind }}</label>
+        {% else %}
+        <span class="kind unavailable">{{ k.meaning or k.kind }} <span class="muted">({{ w.kind_cannot }})</span></span>
+        {% endif %}
+      {% endfor %}
+      </div>
+    </fieldset>
+    {% endif %}
+    {% if p.episode %}<p class="note">{{ w.window_none }}</p>
+    {% elif not p.window %}<p class="note">{{ w.window_unavailable }}</p>
+    {% else %}
+    {% set win = (c.window if c else None) or {} %}
+    <div class="window">
+      <label class="check"><input type="checkbox" name="window.{{ p.part }}" value="1" {{ "checked" if c and c.window }}> {{ w.window_on }}</label>
+      <label>{{ w.window_from }}
+        <select name="window.{{ p.part }}.from">{% for a in choices.anchors %}<option value="{{ a }}" {{ "selected" if (win["from"] or "start") == a }}>{{ w.anchors[a] }}</option>{% endfor %}</select></label>
+      <label><input type="number" name="window.{{ p.part }}.from_minutes" value="{{ win.from_minutes or 0 }}"> {{ w.minutes_label }}</label>
+      <label>{{ w.window_to }}
+        <select name="window.{{ p.part }}.to">{% for a in choices.anchors %}<option value="{{ a }}" {{ "selected" if (win.to or "stop") == a }}>{{ w.anchors[a] }}</option>{% endfor %}</select></label>
+      <label><input type="number" name="window.{{ p.part }}.to_minutes" value="{{ win.to_minutes or 0 }}"> {{ w.minutes_label }}</label>
+    </div>
+    {% endif %}
+    {% if p.flags %}
+    <fieldset><legend>{{ w.flags_label }}</legend>
+      {% for f in p.flags %}
+      {% set held = ((c.flags or {}).get(f.name) if c else None) %}
+      <label>{{ f.title[:1] | upper }}{{ f.title[1:] }}: <span class="note">{{ f.meaning }}</span>
+        <select name="flag.{{ p.part }}.{{ f.name }}">{% for value, label in w.flag_values.items() %}<option value="{{ value }}" {{ "selected" if (held is none and value == "") or (held is not none and value == held | string) }}>{{ label }}</option>{% endfor %}</select></label>
+      {% endfor %}
+    </fieldset>
+    {% endif %}
+    {% else %}
+    <p><strong>{{ p.title }}</strong>
+      {% if s.part_state %}<span class="state s-{{ s.part_state | replace(' ', '-') | replace(',', '') }}">{{ s.part_state }}</span>{% endif %}</p>
+    <p class="note">{{ w.cannot_choose }} {{ w.not_linked if s.reason == "not_linked" else (w.model_gap if s.reason == "model_gap" else "") }}</p>
+    {% if s.smallest %}{% with requests = [s.smallest] %}{% include "_requests.html" %}{% endwith %}{% endif %}
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% endfor %}
+</section>
+
+{# 4. The derived sections. #}
+<section id="derived">
+  <h2>{{ w.step4 }}</h2>
+  <p class="who">{{ w.who }} {{ w.step4_who }}</p>
+  <p class="note">{{ w.derived_note }}</p>
+  {% for cap in choices.capabilities %}
+  {% set s = caps[cap.name] %}{% set d = chosen.derived.get(cap.name) %}
+  <details class="choice {{ '' if s.choosable else 'unavailable' }}" id="measure-{{ cap.name }}" {{ "open" if d }}>
+    <summary>{{ cap.meaning }}</summary>
+    <p class="note">{{ (w.measure_of.format(grain=cap.grain | capital, unit=cap.unit) if cap.unit else w.measure_of_no_unit.format(grain=cap.grain | capital)) }}</p>
+    {% if s.choosable %}
+    <label class="check"><input type="checkbox" name="derived" value="{{ cap.name }}" {{ "checked" if d }}> {{ w.derived_choose }}</label>
+    {% if d and d.name %}<input type="hidden" name="dname.{{ cap.name }}" value="{{ d.name }}">{% endif %}
+    {% for prm in cap.parameters %}
+    {% set key = "param." ~ cap.name ~ "." ~ prm.name %}
+    {% set value = (d.parameters.get(prm.name) if d and d.parameters else (prm.default if prm.has_default else none)) %}
+    <div class="parameter">
+      <p><strong>{{ prm.meaning }}</strong>{% if prm.unit %} {{ w.unit.format(unit=prm.unit) }}{% endif %}
+        <span class="note">{{ w.default.format(value=prm.default) if prm.has_default else w.no_default }}</span></p>
+      {% if prm.type == "choice" %}
+      <select name="{{ key }}"><option value=""></option>{% for o in prm.choices %}<option value="{{ o }}" {{ "selected" if value == o }}>{{ o }}</option>{% endfor %}</select>
+      {% elif prm.type == "kind" %}
+      <select name="{{ key }}"><option value=""></option>{% for k in choices.kinds %}<option value="{{ k.kind }}" {{ "selected" if value == k.kind }}>{{ k.meaning or k.kind }}</option>{% endfor %}</select>
+      {% elif prm.type == "kinds" %}
+      <select name="{{ key }}" multiple size="6">{% for k in choices.kinds %}<option value="{{ k.kind }}" {{ "selected" if value and k.kind in value }}>{{ k.meaning or k.kind }}</option>{% endfor %}</select>
+      <span class="note">{{ w.kinds_multiple }}</span>
+      {% elif prm.type == "concepts" %}
+      <input type="text" name="{{ key }}" value="{{ value | join(', ') if value else '' }}"><span class="note">{{ w.concepts_note }}</span>
+      {% elif prm.type == "table" %}
+      <table class="parameter-table">
+        <thead><tr>{% for col in prm.columns %}<th>{{ col.title }}</th>{% endfor %}</tr></thead>
+        <tbody>
+        {% set rows = value or [] %}
+        {% for r in range((rows | length) + 3) %}
+        <tr>{% for col in prm.columns %}{% set cell = rows[r][loop.index0] if r < (rows | length) else none %}
+          <td>{% if col.type == "kind" %}<select name="{{ key }}.{{ r }}.{{ loop.index0 }}"><option value=""></option>{% for k in choices.kinds if k.vocabulary == "reading" %}<option value="{{ k.kind }}" {{ "selected" if cell == k.kind }}>{{ k.meaning or k.kind }}</option>{% endfor %}</select>
+          {% else %}<input type="text" inputmode="decimal" name="{{ key }}.{{ r }}.{{ loop.index0 }}" value="{{ '' if cell is none else cell }}">{% endif %}</td>
+        {% endfor %}</tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <span class="note">{{ w.table_note }}</span>
+      {% else %}
+      <input type="text" {{ 'inputmode="decimal"' | safe if prm.type in ("number", "whole", "whole_or_empty") }} name="{{ key }}" value="{{ '' if value is none else value }}">
+      {% if prm.type == "whole_or_empty" %}<span class="note">{{ w.empty_note }}</span>{% endif %}
+      {% endif %}
+    </div>
+    {% endfor %}
+    {% elif not s.supported %}
+    <p class="note"><span class="state">{{ not_supported }}</span> {{ w.not_supported }}</p>
+    {% if s.smallest %}{% with requests = [s.smallest] %}{% include "_requests.html" %}{% endwith %}{% endif %}
+    {% else %}
+    <p class="note">{{ w.declared }}</p>
+    {% endif %}
+  </details>
+  {% endfor %}
+</section>
+
+{# 5. The output. #}
+<section id="output">
+  <h2>{{ w.step5 }}</h2>
+  <p class="who">{{ w.who }} {{ w.step5_who }}</p>
+  <fieldset><legend>{{ w.class_label }}</legend>
+    {% for k in choices.classes %}<label class="check"><input type="radio" name="output.class" value="{{ k }}" {{ "checked" if (chosen.output.get("class") or "rows") == k }}> {{ w.classes[k] }}</label>{% endfor %}
+  </fieldset>
+  <fieldset><legend>{{ w.keys_label }}</legend>
+    {% for k in choices["keys"] %}<label class="check"><input type="radio" name="output.keys" value="{{ k }}" {{ "checked" if (chosen.output.get("keys") or "pseudonymised") == k }}> {{ w["keys"][k] }}</label>{% endfor %}
+  </fieldset>
+  <fieldset><legend>{{ w.leaving_label }}</legend>
+    <p class="note">{{ w.leaving_note }}</p>
+    <div class="kinds">
+    {% for g in choices.groups %}{% for p in g.parts if parts[p.part].choosable %}
+    <label class="check"><input type="checkbox" name="leave" value="{{ p.part }}" {{ "checked" if p.part in chosen.leave }}> {{ p.title }}</label>
+    {% endfor %}{% endfor %}
+    {% for cap in choices.capabilities if caps[cap.name].choosable %}
+    <label class="check"><input type="checkbox" name="leave" value="{{ cap.name }}" {{ "checked" if cap.name in chosen.leave }}> {{ cap.meaning }}</label>
+    {% endfor %}
+    </div>
+  </fieldset>
+  <p class="notice">{{ w.identifiable }}</p>
+</section>
+
+{# 6. The specification. #}
+<section id="specification">
+  <h2>{{ w.step6 }}</h2>
+  <p class="who">{{ w.who }} {{ w.step6_who }}</p>
+  <p class="note">{{ w.spec_note }}</p>
+  <label>{{ w.title_label }}
+    <input type="text" name="title" maxlength="200" value="{{ chosen.title }}"><span class="note">{{ w.title_note }}</span></label>
+  <button type="submit">{{ w.write_button }}</button>
+</section>
+</form>
+
+<section class="continued">
+  {% if not e.spec.spec %}
+  <p>{{ w.spec_none }}</p>
+  {% elif e.spec.reasons %}
+  <p class="notice bad">{{ w.spec_refused }}</p>
+  <ul>{% for r in e.spec.reasons %}<li>{{ e.spec.rules[r.rule] }} {{ r.says[:1] | upper }}{{ r.says[1:] }}.</li>{% endfor %}</ul>
+  {% else %}
+  <p class="notice good">{{ w.spec_ok }}</p>
+  {% endif %}
+  {% if e.spec.form_differs %}<p class="notice bad">{{ w.form_differs.format(wanted=w.forms_inline[e.spec.form_differs.wanted], held=w.forms_inline[e.spec.form_differs.held]) }}</p>{% endif %}
+  {% if e.spec.spec %}
+  <details x-data><summary>{{ w.spec_show }}</summary><pre>{{ e.spec.spec | tojson_pretty }}</pre></details>
+  {% if not e.spec.reasons %}
+  <form method="post" action="/exports/{{ e.name }}/specification/save" class="inline">
+    <button type="submit">{{ w.save_button }}</button><span class="note">{{ w.save_note }}</span>
+  </form>
+  {% endif %}
+  {% endif %}
+  <form class="grid" method="post" action="/exports/{{ e.name }}/specification/load" enctype="multipart/form-data">
+    <label>{{ w.load_label }}
+      {% if saved %}<select name="saved">{% for s in saved %}<option value="{{ s.name }}">{{ s.title or s.name }}</option>{% endfor %}</select>
+      {% else %}<span class="note">{{ w.load_none }}</span>{% endif %}</label>
+    <label>{{ w.load_file_label }}
+      <input type="file" name="file" accept=".json,application/json"><span class="note">{{ w.load_note }}</span></label>
+    <button type="submit">{{ w.load_button }}</button>
+  </form>
+</section>
+
+{# 7. The package. #}
+<section id="package">
+  <h2>{{ w.step7 }}</h2>
+  <p class="who">{{ w.who }} {{ w.step7_who }}</p>
+  <p class="note">{{ w.package_note }}</p>
+  {% if e.state == "running" %}
+    {% with job = e, url = "/exports/" ~ e.name ~ "/progress" %}{% include "progress.html" %}{% endwith %}
+  {% else %}
+    {% if e.can_compile %}
+    <form method="post" action="/exports/{{ e.name }}/package" class="inline"><button type="submit">{{ w.package_button }}</button></form>
+    {% else %}
+    <p>{{ w.package_needs }}</p>
+    {% endif %}
+    {% if e.state in ("failed", "interrupted") %}<p class="notice bad">{{ state_words[e.state] }}</p><pre class="log">{{ e.log }}</pre>{% endif %}
+    {% if not e.package %}
+    <p>{{ w.package_none }}</p>
+    {% else %}
+    {% set x = e.package.export %}
+    <p>{{ w.package_built.format(date=x.date | day, schema=x.schema_file.name, count=x.episodes.count | number, form=w.forms_inline[x.episodes.form]) }}</p>
+    {% if e.package.stale %}<p class="notice bad">{{ w.package_stale }}</p>{% endif %}
+    {% for sec in e.package.sections %}
+    <article class="section-package" id="section-{{ sec.name }}">
+      <h3>{{ sec.describes | capital }} <span class="muted">({{ sec.name }})</span></h3>
+      <p>{{ w.outcomes[sec.outcome] }} {% if sec.outcome != "packaged" and sec.says %}{{ sec.says }}{% endif %}{% if sec.rules_failed and sec.outcome != "packaged" %} {{ sec.rules_failed | join("; ") }}{% endif %}
+        {{ w.leaves if sec.leaves else w.stays }}</p>
+      {% if sec.feasibility %}
+      <h4>{{ w.claims_heading }}</h4>
+      <p class="verdict {{ sec.feasibility.verdict }}">{{ sec.feasibility.verdict_text }}</p>
+      <ul class="plain">
+        <li>{{ w.claim_requirements }} <span class="state">{{ w.claim_holds if sec.feasibility.claims.requirements_checked else w.claim_not }}</span></li>
+        <li>{{ w.claim_coverage }} <span class="state">{{ w.claim_holds if sec.feasibility.claims.pathway_coverage_assessed else w.claim_not }}</span> {{ sec.feasibility.coverage }}</li>
+      </ul>
+      {% if sec.feasibility.requests %}<details x-data><summary>{{ w.requests_heading }}, {{ sec.feasibility.requests | length }}</summary>{% with requests = sec.feasibility.requests %}{% include "_requests.html" %}{% endwith %}</details>{% endif %}
+      {% endif %}
+      {% if sec.roles_sql %}<details x-data><summary>{{ w.roles_sql }}</summary><pre>{{ sec.roles_sql }}</pre></details>{% endif %}
+      {% if sec.outcome == "packaged" %}
+      <h4>{{ w.series_heading }}</h4>
+      {% if sec.series %}
+      <ol>{% for step in sec.series %}<li>{{ w.series[step.step] }}{% if step.sql %}<details x-data><summary>The statement</summary><pre>{{ step.sql }}</pre></details>{% endif %}</li>{% endfor %}</ol>
+      {% else %}<p>{{ w.series_none }}</p>{% endif %}
+      <h4>{{ w.safety_heading }}</h4>
+      <p class="class class-{{ sec.execution_class }}">{{ sec.class_says }}</p>
+      <p>{{ w.safety_says.format(outcome=sec.policy_outcome) }}{% if sec.rules_failed %} {{ sec.rules_failed | join("; ") }}{% endif %}</p>
+      <h4>{{ w.manifest_heading }}</h4>
+      <p>{{ w.manifest_where.format(path="exports/" ~ e.name ~ "/" ~ sec.path) }}</p>
+      <details x-data><summary>The manifest</summary><pre>{{ sec.manifest | tojson_pretty }}</pre></details>
+      <h4>{{ w.approval_heading }}</h4>
+      {% if sec.status.voided %}<p class="notice bad"><strong>{{ w.voided }}</strong> {{ (sec.approval.voided or {}).says or sec.status.says }}</p>{% endif %}
+      <p>{{ sec.approval.says if sec.approval.state != "not approved" else w.approval_none }}</p>
+      <form class="grid" method="post" action="/exports/{{ e.name }}/sections/{{ sec.name }}/approve">
+        <label>{{ w.by_label }}<input type="text" name="by" maxlength="100" autocomplete="name" required></label>
+        <label>{{ w.approval_note_label }}<input type="text" name="note" maxlength="500"></label>
+        <span class="note">{{ w.approval_note }}</span>
+        <button type="submit" name="decision" value="approve">{{ w.approve_button }}</button>
+        <button type="submit" name="decision" value="refuse" class="copy">{{ w.refuse_button }}</button>
+      </form>
+      {% endif %}
+    </article>
+    {% endfor %}
+    {% endif %}
+  {% endif %}
+</section>
+
+{# 8. The results. #}
+<section id="results">
+  <h2>{{ w.step8 }}</h2>
+  <p class="who">{{ w.who }} {{ w.step8_who }}</p>
+  <p class="note">{{ w.returned_note }}</p>
+  {% if e.record.evidence_schema %}<p>{{ w.evidence_schema.format(file=e.record.evidence_schema, schema=e.record.schema) }}</p>{% endif %}
+  {% if e.package %}
+  {% for sec in e.package.sections if sec.outcome == "packaged" %}
+  {% set got = e.results.get(sec.name) %}
+  <article class="section-results" id="results-{{ sec.name }}">
+    <h3>{{ sec.describes | capital }} <span class="muted">({{ sec.name }})</span></h3>
+    {% if got %}
+    {% set rec = got.record %}
+    <p>{{ w.results_written.format(date=rec.date | day, by=rec.ran_by) }}</p>
+    {% if got.shape %}
+    <p>{{ w.shape.format(rows=got.shape.rows | number, row_word="row" if got.shape.rows == 1 else "rows", columns=got.shape.columns | length, column_word="column" if got.shape.columns | length == 1 else "columns") }}
+      {% if got.shape.same %}{{ w.shape_same }}{% elif got.shape.same is not none %}{{ w.shape_differs.format(expected=got.shape.expected | join(", ")) }}{% endif %}</p>
+    {% else %}<p>{{ w.shape_unread }}</p>{% endif %}
+    <h4>{{ w.coverage_heading }}</h4>
+    <p>{{ (rec.coverage.limitations or {}).says }}</p>
+    <h4>{{ w.disclosure_heading }}</h4>
+    <ul>{% for line in rec.disclosure.what_was_done %}<li>{{ line }}</li>{% endfor %}</ul>
+    <p>{{ w.protects }}</p><ul>{% for line in rec.disclosure.protects or [w.protects_nothing] %}<li>{{ line }}</li>{% endfor %}</ul>
+    <p>{{ w.not_protects }}</p><ul>{% for line in rec.disclosure.does_not_protect %}<li>{{ line }}</li>{% endfor %}</ul>
+    <p class="note">{{ rec.says }}</p>
+    {% else %}
+    <p>{{ w.results_none }}</p>
+    {% endif %}
+    <form class="grid" method="post" action="/exports/{{ e.name }}/sections/{{ sec.name }}/returned" enctype="multipart/form-data">
+      <label>{{ w.outcome_label }}<input type="file" name="outcome"><span class="note">{{ w.outcome_note }}</span></label>
+      <label>{{ w.plan_label }}<input type="file" name="plan" accept=".sqlplan,.xml"><span class="note">{{ w.plan_note }}</span></label>
+      <label>{{ w.result_label }}<input type="file" name="result"><span class="note">{{ w.result_note }}</span></label>
+      <label>{{ w.returned_by_label }}<input type="text" name="by" maxlength="100" autocomplete="name"></label>
+      <button type="submit">{{ w.returned_button }}</button>
+    </form>
+  </article>
+  {% endfor %}
+  {% else %}
+  <p>{{ w.package_none }}</p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -14,13 +14,20 @@ the public workspace, aggregated or not, so write() refuses to place one inside 
       README.md             what the package is and what it does not protect
 
     python -m schemalyser.results write PACKAGE OUTPUT --out FOLDER [--reconciliation FILE] [--by NAME] [--date YYYY-MM-DD]
+    python -m schemalyser.results show FOLDER
+
+show prints, as JSON, what the export screen shows of a results package: its record, the output's shape against the
+columns that the package expected, and, for the section that resolves patient and date pairs, the share of pairs
+resolved to exactly one anaesthetic.
 
 The execution package must still stand as it was built and carry an approval; otherwise no results package is
 written, because there would be no approved query for the output to be the result of.
 """
 import argparse
+import csv
 import datetime as dt
 import hashlib
+import io
 import json
 import shutil
 import sys
@@ -52,6 +59,7 @@ WORDING = {
     "not_rows": "Rows of a patient's record can identify the patient from their dates and values, whatever is done to the keys, so their release needs the hospital's own approval.",
     "not_exact": "Exact small numbers can point to a patient, which the approval accepted when it allowed them.",
     "not_linkage": "Nothing here prevents the result from being linked with other data that holds the same patients.",
+    "unreadable": "{folder} holds no results package that Schemalyser can read.",
 }
 
 
@@ -87,7 +95,9 @@ def disclosure(manifest):
     exact = bool(decisions.get("exact_small_numbers"))
     expected = manifest.get("expected_output") or {}
     counts = expected.get("counts") or []
-    rows = expected.get("counts_only") is False
+    # A section of an export whose output class is rows returns rows, whether or not the policy's rule on counts
+    # applied to its script.
+    rows = expected.get("counts_only") is False or (manifest.get("specification") or {}).get("output_class") == "rows"
     keys = ((manifest.get("specification") or {}).get("output") or {}).get("keys")
     done = [WORDING["exact"] if exact else WORDING["blanked"], WORDING["rounded"]] if counts else [WORDING["rounded"]]
     protects, not_protected = [], []
@@ -168,6 +178,60 @@ def write(package, output, out, reconciliation=None, ran_by=None, date=None):
     return record
 
 
+# What a results package holds, as the export screen shows it.
+
+RESOLUTION = ("pairs", "resolved_to_one", "ambiguous", "resolved_to_none")
+
+
+def _count(text):
+    text = (text or "").strip()
+    return int(text) if text.isdigit() else None
+
+
+def _shape(path, expected):
+    """The output's header and number of rows, read as CSV, or None where it cannot be read as CSV."""
+    try:
+        text = Path(path).read_bytes().decode("utf-8-sig")
+        rows = [r for r in csv.reader(io.StringIO(text)) if any(c.strip() for c in r)]
+    except (OSError, UnicodeDecodeError, csv.Error):
+        return None
+    if not rows:
+        return None
+    header = [c.strip() for c in rows[0]]
+    wanted = [c.lower() for c in expected or []]
+    return {"columns": header, "rows": len(rows) - 1, "data": rows[1:],
+            "expected": expected, "same": [c.lower() for c in header] == wanted if expected else None}
+
+
+def resolution(shape):
+    """The resolution of patient and date pairs that an episode_resolution section returned: {"pairs",
+    "resolved_to_one", "ambiguous", "resolved_to_none", "share", "blank"}. A count that the result leaves blank, as the
+    query leaves every count from 1 to 4, is None and named in blank, and the share is given only where the pairs and
+    those resolved to exactly one are both counts. None where the output is not that section's."""
+    if not shape or [c.lower() for c in shape["columns"]] != list(RESOLUTION) or len(shape["data"]) != 1:
+        return None
+    values = dict(zip(RESOLUTION, (_count(v) for v in shape["data"][0])))
+    blank = [name for name, value in values.items() if value is None]
+    share = None
+    if values["pairs"] and values["resolved_to_one"] is not None:
+        share = round(100 * values["resolved_to_one"] / values["pairs"], 1)
+    return dict(values, share=share, blank=blank)
+
+
+def summary(folder):
+    """A results package as the export screen shows it: its record, the output's shape against the columns that the
+    package expected, and, for the section that resolves patient and date pairs, the share resolved to exactly one.
+    Returns {"record", "shape", "resolution"}; shape is None where the output cannot be read as CSV."""
+    folder = Path(folder)
+    record = json.loads((folder / RESULTS).read_text(encoding="utf-8"))
+    output = record.get("output") or {}
+    shape = _shape(folder / output.get("file", ""), output.get("expected_columns"))
+    found = {"record": record, "shape": None, "resolution": resolution(shape)}
+    if shape is not None:
+        found["shape"] = {k: v for k, v in shape.items() if k != "data"}
+    return found
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="python -m schemalyser.results",
                                      description="Write the results package of a production run, inside the hospital.")
@@ -179,7 +243,16 @@ def main(argv=None):
     one.add_argument("--reconciliation")
     one.add_argument("--by")
     one.add_argument("--date")
+    two = commands.add_parser("show", help="Say, as JSON, what a results package holds.")
+    two.add_argument("folder")
     args = parser.parse_args(argv)
+    if args.command == "show":
+        try:
+            print(_json(summary(args.folder)), end="")
+        except (OSError, ValueError):
+            print(WORDING["unreadable"].format(folder=Path(args.folder).name), file=sys.stderr)
+            return 1
+        return 0
     try:
         write(args.package, args.output, args.out, args.reconciliation, args.by, args.date)
     except (ResultsError, audit.AuditError, OSError) as error:

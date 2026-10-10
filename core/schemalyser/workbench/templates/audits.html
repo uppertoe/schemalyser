@@ -17,7 +17,8 @@
     <label>The last day of the period:
       <input type="date" name="to"></label>
     <label class="wide">The clinicians' decisions, one on each line, which the package records:
-      <textarea name="decisions" rows="3"></textarea></label>
+      <textarea name="decisions" rows="3"></textarea>
+      <span class="note">A decision is a clinical choice that the question leaves open, such as the period or which anaesthetics count, written in words by the clinicians who made it. The package records each one in its manifest, so that the database analyst and any later reader see what was decided and by whom.</span></label>
     <label>The name of the clinician who made the decisions, which the package records beside each one. If you leave it empty, the package records the name as not recorded:
       <input type="text" name="by" maxlength="100" autocomplete="name"></label>
     <label class="wide check"><input type="checkbox" name="exact" value="1"> The audit's approval allows exact small numbers, so the result keeps counts from 1 to 4.</label>

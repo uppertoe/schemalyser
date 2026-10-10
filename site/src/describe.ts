@@ -19,11 +19,36 @@ interface Item {
   coding: { form: string; translated: boolean; assumed: string; values: string[]; list?: boolean } | null;
   // How the core counts the answer in the tally, and the correction forms it offers for this row.
   answered_as?: 'confirmed' | 'corrected' | 'not_sure' | 'untranslated' | null; forms?: string[];
+  // The five dimensions of the evidence of this binding, each as recorded, and the kind of record of a part's first
+  // table, which a person names rather than binds.
+  dimensions?: Dimensions | null; source_kind?: { about: string; kind: string | null };
+}
+// One dimension of evidence as the core records it: its date, the person or the entry that established it, what it
+// measured, and the reasons it no longer holds.
+interface DimensionHeld {
+  date: string; by: string | null; entry: string | null; figure: unknown; outcome?: string; judgement?: string;
+  stale: string[]; stale_on: string[];
+}
+type Dimensions = Record<'confirmed' | 'present' | 'tested' | 'reconciled' | 'validated', DimensionHeld | null>;
+interface Pathway {
+  name: string | null; about: string; rows: string; table: string | null; source_kind: string | null; source_kind_meaning: string;
+  source_kind_status: string | null; source_kind_confirmation: { answer: string; date: string; by: string } | null;
+  columns: { column: string; title: string; from: string }[]; dimensions: Dimensions | null;
+}
+interface Coverage {
+  date: string; by: string; figure: { pathways_found: number; pathways_mapped: number }; period: { from: string; to: string };
+  note: string | null; stale: string[];
+}
+interface ConceptsHeld {
+  mapping: string; title: string; description: string; codes: number | null;
+  statuses: { mapped: number; unmapped: number; ambiguous: number } | null; date: string | null; by: string | null;
 }
 interface Role {
   name: string; title: string; description: string; required: boolean; drafted: boolean; items: Item[];
   // How many of the part's rows the core counts as answered, and the forms a part with no table offers.
   answered: number; forms: string[];
+  // For a part that records events, the tables that record it and the assessments of whether they are all of them.
+  pathways?: Pathway[]; coverage?: Coverage[];
 }
 // Why the core shows a cell as it is not, such as a count that its query left empty because it is under ten.
 type Suppressed = 'under_ten' | null;
@@ -64,15 +89,23 @@ interface Model {
   catalogue_source: 'database' | 'query' | null; vocabularies: Vocabulary[]; counts: Record<string, CountHeld>;
   settings: {
     made: string | null; updated: string | null; database: string | null; year: number | null; time_zone?: string | null;
-    time_zone_from?: string | null; daylight_saving?: boolean | null;
+    time_zone_from?: string | null; time_zone_by?: string | null; daylight_saving?: boolean | null;
+    // The hospital's name as given, and as the journal records it: the name, the invented hospital, or not recorded.
+    hospital?: string | null; hospital_recorded?: string;
   };
+  source_kinds?: { kind: string; meaning: string }[]; concepts?: ConceptsHeld[];
   steps: Record<string, StepHeld>; current_step: string | null; answered_share: number; answered_any: boolean;
   restored: Record<string, unknown> | null;
   // The state of readiness that the core derives from the evidence, the lines of how the proposals fared, and where the
   // result of each query came from (a sample, complete data or metadata).
-  readiness?: { reached: string | null } | null; scoreboard?: string[]; provenance?: Record<string, string>;
-  // The version the sitting carries on from, and the name of its saved file, which carries the version's schema_id.
-  schema?: { schema_id: string | null; parent_id: string | null; file: string };
+  readiness?: {
+    reached: string | null;
+    parts?: Record<string, { status: string; reached: string | null; runs: string | null; 'checked against the database': string | null; 'clinically validated': string | null }>;
+  } | null;
+  scoreboard?: string[]; provenance?: Record<string, string>;
+  // The version the sitting carries on from, the name of its saved file, which carries the version's schema_id, and the
+  // version of the description of the record that it was made against.
+  schema?: { schema_id: string | null; parent_id: string | null; file: string; contract?: { version: string; changed: string[]; made_against: string | null } };
   values: Record<string, { value: string; rows: number | null; suppressed: Suppressed }[]>; anaesthetic_table: string | null; bases: Record<string, string>;
 }
 interface CountQuery { name: string; safe: boolean; sql: string; tables: [string, number | null][] }
@@ -140,6 +173,12 @@ function status(id: string, value: string, kind: '' | 'good' | 'problem' = '') {
   node.hidden = !value;
   node.textContent = value;
   node.className = `status ${kind}`.trim();
+}
+
+// The name of the person answering at this sitting, which every answer, judgement and choice of codes carries to the
+// core, or undefined until one is given, when the core records "not recorded".
+function actor(): string | undefined {
+  return $<HTMLInputElement>('who-name').value.trim() || undefined;
 }
 
 // Whether the invented hospital answers the page's queries: the invented dictionary is in use and the worker holds it.
@@ -470,6 +509,12 @@ function show() {
       input.disabled = state !== 'ready' || busy;
       continue;
     }
+    // The names of the person answering and of the hospital may be given once the page is ready, before the tab is
+    // offline, since they hold nothing of the hospital's database; they stay in this tab.
+    if (input.id === 'who-name' || input.id === 'who-hospital') {
+      input.disabled = state !== 'ready';
+      continue;
+    }
     // The data dictionary query names nothing of the hospital's, so it may be copied while the tab is online.
     if (input.id === 'database-copy') {
       input.disabled = state !== 'ready' || !dictionarySql;
@@ -533,7 +578,198 @@ function render() {
   text('model-check', d.corrections.modelCheck);
   renderDraft();
   renderSaving();
+  renderWho();
+  renderConcepts();
+  renderVersion();
+  renderReadiness();
   show();
+}
+
+// Who is answering, and for which hospital: what the saved file will record for each, as the core records the
+// hospital and as the person has typed their name.
+function renderWho() {
+  const name = actor();
+  status('t-who-name-recorded', name ? d.who.nameGiven(name) : d.who.nameNone, name ? 'good' : '');
+  const hospital = $<HTMLInputElement>('who-hospital');
+  const held = model?.settings.hospital ?? '';
+  // A saved hospital schema that names its hospital shows that name, unless the person is typing.
+  if (held && hospital.value.trim() !== held && document.activeElement !== hospital) hospital.value = held;
+  const recorded = model?.settings.hospital_recorded ?? (hospital.value.trim() || 'not recorded');
+  const said = recorded === 'the invented hospital' ? d.who.hospitalInvented : recorded === 'not recorded' ? d.who.hospitalNone : d.who.hospitalGiven(recorded);
+  status('t-who-hospital-recorded', said, recorded === 'not recorded' ? '' : 'good');
+}
+
+// The lists of the hospital's other codes, each with what the hospital schema holds of it, at step 7.
+function renderConcepts() {
+  const box = $('b-concepts');
+  box.hidden = !model?.proposed;
+  const held = model?.concepts ?? [];
+  const select = $<HTMLSelectElement>('concepts-mapping');
+  const chosen = select.value;
+  if (select.options.length !== held.length) {
+    select.replaceChildren(...held.map((c) => Object.assign(el('option', c.title), { value: c.mapping })));
+    if (chosen) select.value = chosen;
+  }
+  $('concepts-held').replaceChildren(...held.map((c) => {
+    const line = el('li', c.statuses && c.codes !== null ? d.concepts.held(c.title, c.codes, c.statuses, c.by, c.date) : d.concepts.none(c.title));
+    line.dataset.mapping = c.mapping;
+    return line;
+  }));
+}
+
+// The version of the saved file, its parent, and the version of the description of the record it was made against.
+function renderVersion() {
+  const box = $('t-version-info');
+  const schema = model?.schema;
+  if (!model?.proposed || !schema) {
+    box.replaceChildren();
+    return;
+  }
+  const lines = schema.schema_id
+    ? [d.versionInfo.id(schema.schema_id), d.versionInfo.parent(schema.parent_id),
+      schema.contract?.made_against ? d.versionInfo.contract(schema.contract.made_against) : '']
+    : [d.versionInfo.unsaved];
+  const changed = schema.contract?.changed ?? [];
+  const titles = new Map((model.roles ?? []).map((r) => [r.name, r.title || r.name]));
+  if (changed.length) lines.push(d.versionInfo.changed(changed.map((v) => titles.get(v) ?? v)));
+  box.replaceChildren(...lines.filter(Boolean).map((line) => el('p', line, 'note')));
+}
+
+// How far each part has been checked, in the three states, as the core derives them from the evidence.
+function renderReadiness() {
+  const parts = model?.proposed ? model.readiness?.parts ?? {} : {};
+  const names = Object.keys(parts);
+  $('b-readiness').hidden = !names.length;
+  if (!names.length) return;
+  const titles = new Map((model?.roles ?? []).map((r) => [r.name, r.title || r.name]));
+  const state = (date: string | null) => (date ? d.readinessTable.reached(date) : d.readinessTable.notYet);
+  const rows = names.map((name) => [titles.get(name) ?? name, state(parts[name].runs), state(parts[name]['checked against the database']),
+    state(parts[name]['clinically validated'])]);
+  $('readiness-table').replaceChildren(grid(d.readinessTable.columns, rows));
+}
+
+// What the evidence of a binding rests on: each of the five dimensions as the core records it, with the date and the
+// person or result that established it, and why it no longer holds where the core says it is stale.
+function evidenceBox(dimensions: Dimensions) {
+  const box = el('details', undefined, 'evidence');
+  box.append(el('summary', d.evidence.summary));
+  const list = el('dl');
+  const e = d.evidence;
+  for (const dimension of ['confirmed', 'present', 'tested', 'reconciled', 'validated'] as const) {
+    const held = dimensions[dimension];
+    const date = d.day(held?.date ?? '');
+    let words = '';
+    if (!held) words = { confirmed: e.confirmedNone, present: e.presentNone, tested: e.testedNone, reconciled: e.reconciledNone, validated: e.validatedNone }[dimension];
+    else if (dimension === 'confirmed') words = e.confirmed(held.by ?? 'not recorded', date);
+    else if (dimension === 'present') words = e.present(date);
+    else if (dimension === 'tested') words = e.tested(held.outcome === 'passed', date);
+    else if (dimension === 'reconciled') words = e.reconciled(held.judgement ?? 'not recorded', held.by, date);
+    else words = e.validated(held.by ?? 'not recorded', date);
+    const value = el('dd', words, held ? '' : 'none');
+    value.dataset.dimension = dimension;
+    if (held?.stale_on?.length) value.append(el('span', ` ${e.stale(held.stale_on.map((part) => e.staleWhy[part] ?? part))}`, 'stale'));
+    list.append(el('dt', e.labels[dimension]), value);
+  }
+  box.append(list);
+  return box;
+}
+
+// The kinds of record, in plain words with the code after each, as a list to choose from.
+function kindSelect(chosen: string | null) {
+  const select = el('select', undefined, 'source-kind');
+  for (const k of model?.source_kinds ?? []) select.append(Object.assign(el('option', d.kindOption(k.kind, k.meaning)), { value: k.kind }));
+  if (chosen) select.value = chosen;
+  return select;
+}
+
+async function chooseKind(about: string, kind: string) {
+  setBusy(true);
+  try {
+    const reply = await ask('describe_source_kind', [JSON.stringify({ about, kind, actor: actor() })]);
+    if (!reply.ok) problems.set(about, reply.problem ?? d.confirmFailed);
+    else problems.delete(about);
+  } catch {
+    problems.set(about, d.confirmFailed);
+  }
+  setBusy(false);
+  render();
+}
+
+// The kind of record of a part's first table, in step 6: what is proposed or confirmed, and the choice of kinds.
+function sourceKindRow(item: Item, entry: HTMLElement) {
+  const held = item.source_kind!;
+  const meaning = model?.source_kinds?.find((k) => k.kind === held.kind)?.meaning;
+  const line = el('p', undefined, 'proposed');
+  line.append(el('span', `${item.answer === 'yes' ? d.confirmedLabel : d.proposedLabel} `, 'label'),
+    document.createTextNode(held.kind ? d.kindOption(held.kind, meaning) : ''));
+  entry.append(line);
+  const said = answeredNode(item);
+  if (said) entry.append(said);
+  entry.append(el('p', d.pathways.kindWhat, 'note'));
+  const select = kindSelect(held.kind);
+  const id = `kind-${held.about.replace(/[^\w]/g, '-')}`;
+  select.id = id;
+  const label = el('label', d.pathways.kindLabel);
+  label.htmlFor = id;
+  const actions = el('div', undefined, 'actions');
+  actions.append(button(d.pathways.kindConfirm, () => void chooseKind(held.about, select.value), item.answer === 'yes' ? 'secondary kind-confirm' : 'kind-confirm'));
+  // Not sure lists the kind as a question for the database team, as on every other row.
+  const unsure = button(d.notSure, () => void answer(item.about, 'not sure', ''), 'secondary answer-unsure');
+  unsure.setAttribute('aria-pressed', String(item.answer === 'not sure'));
+  actions.append(unsure);
+  entry.append(label, select, actions);
+}
+
+// The tables that record a part, each with its kind of record, its own evidence and the columns proposed from it, and
+// the assessments of whether they are all the tables that record it.
+function pathwaysBlock(role: Role) {
+  const box = el('section', undefined, 'pathways');
+  box.dataset.role = role.name;
+  box.append(el('h4', d.pathways.heading), el('p', d.pathways.what, 'note'));
+  const done = corrections.added.get(role.name);
+  if (done) box.append(el('p', done, 'status good pathway-added'));
+  const list = el('ul');
+  for (const pathway of role.pathways ?? []) {
+    const item = el('li', undefined, 'pathway');
+    item.dataset.pathway = pathway.about;
+    item.append(el('p', d.pathways.from(pathway.table ?? '', pathway.source_kind_meaning, pathway.source_kind ?? ''), 'pathway-from'));
+    const confirmed = pathway.source_kind_confirmation;
+    item.append(el('p', pathway.source_kind_status === 'person' && confirmed
+      ? d.pathways.kindConfirmed(confirmed.by, d.day(confirmed.date)) : d.pathways.kindProposed, 'note'));
+    // The kind of a further table is chosen here; the first table's is chosen on its own row above.
+    if (pathway.name) {
+      const select = kindSelect(pathway.source_kind);
+      select.setAttribute('aria-label', d.pathways.kindLabel);
+      const actions = el('div', undefined, 'actions');
+      actions.append(button(d.pathways.kindConfirm, () => void chooseKind(pathway.about, select.value), 'secondary kind-confirm'));
+      item.append(select, actions);
+      const problem = problems.get(pathway.about);
+      if (problem) item.append(el('p', problem, 'status problem problem-note'));
+    }
+    if (pathway.dimensions) item.append(evidenceBox(pathway.dimensions));
+    if (pathway.columns.length) {
+      const columns = el('details', undefined, 'pathway-columns');
+      columns.append(el('summary', d.pathways.columns));
+      const names = el('ul');
+      for (const column of pathway.columns) {
+        const one = el('li');
+        one.append(document.createTextNode(`${capital(column.title)}: `), fromNode(column.from));
+        names.append(one);
+      }
+      columns.append(names);
+      item.append(columns);
+    }
+    list.append(item);
+  }
+  box.append(list);
+  const coverage = role.coverage ?? [];
+  if (!coverage.length) box.append(el('p', d.pathways.coverageNone, 'note coverage'));
+  for (const assessed of coverage) {
+    const line = el('p', d.pathways.coverage(assessed), 'note coverage');
+    if (assessed.stale.length) line.append(el('span', ` ${d.evidence.stale([d.evidence.staleWhy.pathways])}`, 'stale'));
+    box.append(line);
+  }
+  return box;
 }
 
 // Step 9 asks once for the time zone of the database's clocks, and shows how the proposals fared. A zone that the
@@ -570,8 +806,11 @@ function renderZoneNote() {
   const zone = $<HTMLInputElement>('time-zone').value.trim();
   const recorded = held?.time_zone && zone === held.time_zone && from === held.time_zone_from ? d.timeZoneRecorded[from] ?? '' : '';
   const note = zoneNote();
-  note.textContent = recorded || (from === 'proposed from this computer' ? d.timeZoneProposed : '');
+  // A zone that a person gave or confirmed names that person, as the core records it.
+  const by = recorded && from === 'a person' && held?.time_zone_by ? d.timeZoneBy(held.time_zone_by) : '';
+  note.textContent = by || recorded || (from === 'proposed from this computer' ? d.timeZoneProposed : '');
   note.hidden = !note.textContent;
+  $('time-zone-confirm').hidden = from !== 'proposed from this computer';
 }
 
 function renderSaving() {
@@ -784,7 +1023,7 @@ function answeredNode(item: Item) {
 async function answer(about: string, value: string, replacement = '', from?: HTMLElement) {
   setBusy(true);
   try {
-    const reply = await ask('describe_confirm', [JSON.stringify({ about, answer: value, replacement })]);
+    const reply = await ask('describe_confirm', [JSON.stringify({ about, answer: value, replacement, actor: actor() })]);
     if (!reply.ok) {
       problems.set(about, reply.problem ?? d.confirmFailed);
     } else {
@@ -931,6 +1170,14 @@ function renderConfirm() {
       entry.dataset.answer = item.answer ?? '';
       entry.append(el('p', attributeName(item), item.attribute === 'rows' ? 'attribute rows' : 'attribute'));
       if (item.attribute !== 'rows' && item.meaning) entry.append(el('p', item.meaning, 'meaning'));
+      // The kind of record of the part's first table is chosen from the kinds, not bound to a column.
+      if (item.source_kind) {
+        sourceKindRow(item, entry);
+        const problem = problems.get(item.source_kind.about);
+        if (problem) entry.append(el('p', problem, 'status problem problem-note'));
+        list.append(entry);
+        continue;
+      }
       const said = answeredNode(item);
       // A corrected column shows what it was corrected to, and no longer the proposal with its confidence.
       if (!(said && item.answer === 'no')) entry.append(proposedLine(item));
@@ -976,6 +1223,7 @@ function renderConfirm() {
       if (found) entry.append(el('p', found.from === 'count' ? d.landedCount(found.text) : d.landed(found.text), 'status problem landed'));
       if (!role.drafted) entry.append(el('p', d.roleUndrafted, 'note'));
       if (role.drafted && item.bound) entry.append(presenceNode(item.presence, item.attribute === 'rows'));
+      if (role.drafted && item.bound && item.dimensions) entry.append(evidenceBox(item.dimensions));
       const correction = corrections.kept(item);
       if (correction) entry.append(correction);
       entry.append(answerButtons(item, role.drafted));
@@ -986,6 +1234,7 @@ function renderConfirm() {
       list.append(entry);
     }
     section.append(list);
+    if (role.drafted && role.pathways?.length) section.append(pathwaysBlock(role));
     box.append(section);
   }
 }
@@ -1075,6 +1324,7 @@ function queryBlock(sql: string, copyLabel: string, after?: HTMLElement, run?: (
 // its query left empty, such as one under ten; an empty cell that the core does not mark stays empty.
 function grid(columns: string[], rows: (string | number | null)[][], cells?: Cells) {
   const counted = cells?.counted ?? [];
+  const reasons = new Set<string>();
   const frame = el('div', undefined, 'table-frame');
   const table = el('table');
   const head = el('tr');
@@ -1086,9 +1336,9 @@ function grid(columns: string[], rows: (string | number | null)[][], cells?: Cel
       let value = cell === null || cell === undefined ? '' : String(cell);
       // A count takes a thousands separator; a year or a code is shown as it is.
       if (counted.includes(at) && /^-?\d+$/.test(value)) value = Number(value).toLocaleString('en-AU');
-      const suppressed = cells?.suppressed[r]?.[at];
-      if (!value && suppressed === 'under_ten') value = d.underTen;
-      line.append(el('td', value, /^-?[\d,]+(\.\d+)?$/.test(value) || (!!suppressed && !cell) ? 'number' : ''));
+      const suppressed = !value ? cells?.suppressed[r]?.[at] ?? null : null;
+      if (suppressed) reasons.add(suppressed);
+      line.append(el('td', suppressed ? d.blankCell : value, suppressed ? 'number suppressed' : /^-?[\d,]+(\.\d+)?$/.test(value) ? 'number' : ''));
     });
     body.append(line);
   });
@@ -1096,6 +1346,8 @@ function grid(columns: string[], rows: (string | number | null)[][], cells?: Cel
   thead.append(head);
   table.append(thead, body);
   frame.append(table);
+  // The reason that the core gives for each blank, once beneath the table.
+  for (const reason of reasons) frame.append(el('p', d.suppressedNote[reason] ?? '', 'note suppressed-note'));
   return frame;
 }
 
@@ -1230,7 +1482,7 @@ function renderVocabularies() {
         for (const select of section.querySelectorAll<HTMLSelectElement>('select[data-code]')) if (select.value) chosen[select.dataset.code!] = select.value;
         setBusy(true);
         try {
-          await ask('describe_codes', [JSON.stringify({ key: vocabulary.key, chosen })]);
+          await ask('describe_codes', [JSON.stringify({ key: vocabulary.key, chosen, actor: actor() })]);
         } catch { /* kept */ }
         setBusy(false);
         render();
@@ -1403,7 +1655,7 @@ function renderCounts() {
         if (!chosen) return;
         setBusy(true);
         try {
-          const reply = await ask('describe_count_judge', [JSON.stringify({ name: query.name, looksRight: chosen.value, note: note.value })]);
+          const reply = await ask('describe_count_judge', [JSON.stringify({ name: query.name, looksRight: chosen.value, note: note.value, actor: actor() })]);
           if (reply.ok) judging.delete(query.name);
         } catch { /* kept */ }
         setBusy(false);
@@ -1687,6 +1939,52 @@ for (const [id, event] of [['time-zone', 'input'], ['daylight-saving', 'change']
   });
 }
 
+// A person confirms the zone that the page proposed from this computer, and the core records it as given by that person.
+$('time-zone-confirm').addEventListener('click', async () => {
+  setBusy(true);
+  try {
+    await ask('describe_settings', [JSON.stringify({ timeZone: $<HTMLInputElement>('time-zone').value, daylightSaving: $<HTMLInputElement>('daylight-saving').checked,
+      timeZoneFrom: 'a person', actor: actor() })]);
+  } catch { /* kept */ }
+  setBusy(false);
+  render();
+});
+
+// The name of the person answering stays in this tab; the hospital's name goes to the core, which records it.
+$('who-name').addEventListener('input', renderWho);
+$('who-hospital').addEventListener('change', async () => {
+  try {
+    await ask('describe_settings', [JSON.stringify({ hospital: $<HTMLInputElement>('who-hospital').value.trim() })]);
+  } catch { /* kept */ }
+  renderWho();
+});
+
+// The hospital's list of one kind of code with its standard concepts, pasted or chosen as a file, which the core reads.
+async function readConcepts(text: string) {
+  const mapping = $<HTMLSelectElement>('concepts-mapping').value;
+  if (!text.trim() || !mapping || !open()) return;
+  setBusy(true);
+  status('t-concepts-status', d.concepts.reading);
+  try {
+    const reply = await ask('describe_concepts', [JSON.stringify({ mapping, text, actor: actor() })]);
+    if (reply.ok) {
+      // The counts are of codes, as the core holds them for this list; an ambiguous code counts once.
+      const held = model?.concepts?.find((c) => c.mapping === mapping);
+      if (held?.statuses && held.codes !== null) status('t-concepts-status', d.concepts.receipt(held.title, held.codes, held.statuses), 'good');
+      $<HTMLTextAreaElement>('concepts-paste').value = '';
+    } else status('t-concepts-status', reply.problem ?? d.concepts.failed, 'problem');
+  } catch {
+    status('t-concepts-status', d.concepts.failed, 'problem');
+  }
+  $<HTMLInputElement>('concepts-file').value = '';
+  setBusy(false);
+}
+$('concepts-read').addEventListener('click', () => void readConcepts($<HTMLTextAreaElement>('concepts-paste').value));
+$('concepts-file').addEventListener('change', async () => {
+  const file = $<HTMLInputElement>('concepts-file').files?.[0];
+  if (file) void readConcepts(await file.text());
+});
+
 $('year').addEventListener('change', async () => {
   try {
     await ask('describe_settings', [JSON.stringify({ year: yearValue() })]);
@@ -1709,7 +2007,7 @@ $('write-save').addEventListener('click', async () => {
   try {
     // The time zone of the database's clocks goes into the saved file with everything else.
     await ask('describe_settings', [JSON.stringify({ timeZone: $<HTMLInputElement>('time-zone').value, daylightSaving: $<HTMLInputElement>('daylight-saving').checked,
-      timeZoneFrom: zoneFrom() })]);
+      timeZoneFrom: zoneFrom(), actor: actor() })]);
     const reply = await call('describe_schema_zip');
     const zip = reply.zip as Uint8Array<ArrayBuffer>;
     // Each save is a new version, and the core names its file with the version's schema_id.
@@ -1886,6 +2184,22 @@ const fixed: Record<string, string> = {
   'l-time-zone-name': d.timeZoneLabel,
   'l-daylight-saving': d.daylightLabel,
   'h-scoreboard': d.scoreboardHeading,
+  'h-who': d.who.heading,
+  't-who-what': d.who.what,
+  'l-who-name': d.who.nameLabel,
+  't-who-name-about': d.who.nameAbout,
+  'l-who-hospital': d.who.hospitalLabel,
+  't-who-hospital-about': d.who.hospitalAbout,
+  'time-zone-confirm': d.timeZoneConfirm,
+  'h-concepts': d.concepts.heading,
+  's-concepts-about': d.concepts.aboutSummary,
+  't-concepts-about': d.concepts.about,
+  'l-concepts-mapping': d.concepts.kindLabel,
+  'l-concepts-paste': d.concepts.pasteLabel,
+  'l-concepts-file': d.concepts.fileLabel,
+  'b-concepts-file': d.concepts.fileChoose,
+  'concepts-read': d.concepts.read,
+  'h-readiness': d.readinessTable.heading,
   't-scoreboard-what': d.scoreboardWhat,
   'scoreboard-copy': d.scoreboardCopy,
 };
@@ -1893,6 +2207,7 @@ for (const [id, value] of Object.entries(fixed)) text(id, value);
 d.steps.forEach((heading, i) => text(`h-step-${i + 1}`, heading));
 $('t-offline-how').replaceChildren(...d.offlineHow.map((sentence) => el('li', sentence)));
 $('t-tables-how').replaceChildren(...d.tablesHow.map((sentence) => el('li', sentence)));
+$('t-concepts-steps').replaceChildren(...d.concepts.steps.map((sentence) => el('li', sentence)));
 $('t-database-large-how').replaceChildren(...d.databaseLargeHow.map((sentence) => el('li', sentence)));
 $('headings').replaceChildren(...d.headingFields.map(([field, label]) => {
   const box = el('div', undefined, 'field');
@@ -1970,6 +2285,8 @@ corrections.setup({
   step: d.steps[5],
   invented: inventedRuns,
   runInvented,
+  actor,
+  sourceKinds: () => model?.source_kinds ?? [],
 });
 
 show();

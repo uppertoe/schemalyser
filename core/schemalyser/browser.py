@@ -139,11 +139,33 @@ def describe_confirm(request):
 
 
 def describe_settings(request):
-    """Records the database, the year, or the time zone of the database's clocks. timeZoneFrom says whether the zone is
-    the one the page proposed from this computer, which the core then records as proposed rather than as given."""
+    """Records the database, the year, the hospital's name, or the time zone of the database's clocks. timeZoneFrom says
+    whether the zone is the one the page proposed from this computer, which the core then records as proposed rather
+    than as given; a zone given or confirmed by a person records the name in actor."""
     r = json.loads(request)
     return _reply(lambda: _describing().set_settings(r.get("database"), r.get("year"), r.get("timeZone"), r.get("daylightSaving"),
-                                                     r.get("timeZoneFrom")))
+                                                     r.get("timeZoneFrom"), hospital=r.get("hospital"), actor=r.get("actor")))
+
+
+def describe_concepts(request):
+    """Records the hospital's list of one kind of local code with its standard concepts: request is {"mapping", "text"
+    (the list as a CSV or tab-separated file's text), "actor"}. The codes stay in the sitting and the saved schema."""
+    r = json.loads(request)
+    return _reply(lambda: {"translated": _describing().read_concepts(r.get("mapping") or "", r.get("text") or "",
+                                                                     actor=r.get("actor"))})
+
+
+def describe_pathway(request):
+    """Adds a further pathway to a part that records events: request is {"view", "table", "sourceKind", "name", "actor"}."""
+    r = json.loads(request)
+    return _reply(lambda: {"pathway": _describing().add_pathway(r.get("view") or "", r.get("table") or "", r.get("sourceKind") or "",
+                                                                r.get("name") or None, actor=r.get("actor"))["name"]})
+
+
+def describe_source_kind(request):
+    """Records the kind of record of a pathway, named as role_x or role_x@name: request is {"about", "kind", "actor"}."""
+    r = json.loads(request)
+    return _reply(lambda: _describing().choose_source_kind(r.get("about") or "", r.get("kind") or "", actor=r.get("actor")))
 
 
 def describe_charted_query(request):

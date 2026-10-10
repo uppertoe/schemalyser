@@ -1995,3 +1995,85 @@ html:has(body.describe) {
     margin-bottom: 0;
   }
 }
+
+/* Who is answering, and for which hospital, asked once above the steps. */
+.describe .answering {
+  margin-bottom: 1.5rem;
+}
+
+.describe .answering h2 {
+  margin: 0 0 0.4rem;
+  font-size: 1.1rem;
+}
+
+.describe .answering input[type='text'] {
+  width: min(100%, 28rem);
+}
+
+/* What the evidence of an answer rests on: the five dimensions, each as recorded. */
+.describe .evidence dl {
+  display: grid;
+  grid-template-columns: minmax(9rem, max-content) 1fr;
+  gap: 0.25rem 0.9rem;
+  margin: 0.4rem 0 0.2rem;
+  font-size: 0.9rem;
+}
+
+.describe .evidence dt {
+  font-weight: 600;
+}
+
+.describe .evidence dd {
+  margin: 0;
+}
+
+.describe .evidence dd.none {
+  color: var(--muted);
+}
+
+.describe .evidence .stale {
+  display: block;
+  color: var(--caution);
+}
+
+@media (max-width: 40rem) {
+  .describe .evidence dl {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* The tables that record a part, each with its kind of record and its own evidence. */
+.describe .pathways {
+  margin: 0.75rem 0 0.25rem;
+  padding: 0.6rem 0 0;
+  border-top: 1px dashed var(--line);
+}
+
+.describe .pathways h4 {
+  margin: 0 0 0.3rem;
+}
+
+.describe .pathways > ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.describe .pathway {
+  margin: 0.5rem 0;
+  padding-left: 0.6rem;
+  border-left: 2px solid var(--line);
+}
+
+.describe td.suppressed {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.describe .version-info p {
+  margin: 0.3rem 0;
+}
+
+.describe .concepts-held {
+  padding-left: 1.1rem;
+}

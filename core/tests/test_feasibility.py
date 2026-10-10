@@ -345,3 +345,50 @@ def test_an_assessment_is_read_for_the_question_s_period_and_says_what_it_found(
     stale = feasibility.assess(feasibility.Schema(roleshadow.save(s, DATE)), BIRTHS, "births.sql")
     assert stale["coverage"]["parts"][0]["state"] == feasibility.COVERAGE_STALE
     assert stale["coverage"]["parts"][0]["assessments"][0]["stale"] == ["the pathways changed"]
+
+
+# What the hospital supports of each section of an export (the export screen's first step).
+
+def test_each_section_of_an_export_is_assessed_with_its_own_part_and_its_smallest_piece_of_work(schema, saved, tmp_path, capsys):
+    found = feasibility.sections(schema)
+    parts = {p["part"]: p for g in found["groups"] for p in g["parts"]}
+    assert set(parts) == set(rolemap.all_views()) and found["groups"][0]["title"] == "The anaesthetic"
+    # Readings are mapped and can be chosen; the kinds whose codes the schema holds can be chosen, and no others.
+    readings = parts["role_reading"]
+    assert readings["mapped"] and readings["choosable"] and readings["part_state"] != feasibility.NOT_MAPPED
+    kinds = {k["kind"]: k for k in readings["kinds"]}
+    assert kinds["map_arterial"]["choosable"] and not kinds["spo2"]["choosable"]
+    assert kinds["spo2"]["state"] == feasibility.NOT_MAPPED
+    # The lowest state of what the section needs is the feasibility report's, and its smallest piece of work comes first.
+    one = feasibility.assess(schema, feasibility_section_sql("role_reading"), "reading.sql")
+    assert readings["state"] == min((r["state"] for r in one["states"]), key=feasibility.RANK.get)
+    assert readings["smallest"]["says"] == one["requests"][0]["says"] and readings["claims"] == one["claims"]
+    # A part that the schema does not map is not currently mapped, never unavailable, and cannot be chosen.
+    fluids = parts["role_fluid"]
+    assert fluids["part_state"] == feasibility.NOT_MAPPED and not fluids["choosable"] and fluids["reason"] == "not_mapped"
+    assert fluids["smallest"]["role"] in (feasibility.CLINICIAN, feasibility.ANALYST)
+    assert not parts["role_transfer"]["choosable"] and parts["role_transfer"]["reason"] == "not_linked"
+    # Readiness names its three states, each as the file records it.
+    assert set(readings["readiness"]) >= {"runs", "checked", "validated"} and readings["readiness"]["validated"] is None
+    # A measure that needs what the schema does not map is not currently supported, with the request that would move it.
+    capabilities = {c["name"]: c for c in found["capabilities"]}
+    transfusion = capabilities["transfusion"]
+    assert not transfusion["supported"] and not transfusion["choosable"] and transfusion["smallest"] is not None
+    assert any(r["id"] == "role_fluid" for r in transfusion["lacking"])
+    assert capabilities["hypotension_burden"]["choosable"]
+    states = {p["state"] for p in parts.values()} | {p["part_state"] for p in parts.values()} | \
+        {c["state"] for c in found["capabilities"]} | {k["state"] for k in readings["kinds"]}
+    assert states - {None} <= set(feasibility.STATES)
+    assert "unavailable" not in json.dumps([(p["smallest"] or {}).get("says") for p in parts.values()])
+    assert feasibility.main(["sections", str(saved), "--out", str(tmp_path / "sections.json")]) == 0
+    assert json.loads((tmp_path / "sections.json").read_text())["groups"][1]["parts"][0]["part"] == "role_reading"
+    assert feasibility.main(["sections", str(saved)]) == 0
+    assert "| Readings, by kind: Readings |" in capsys.readouterr().out
+
+
+def feasibility_section_sql(part):
+    from schemalyser import specification
+    spec = {"format": specification.FORMAT, "contract_version": rolemap.contract()["version"],
+            "episodes": {"form": "anaesthetic_keys"}, "sections": [{"name": specification.section_name(part), "part": part}],
+            "output": {"class": "rows", "keys": "as recorded", "leaving": []}}
+    return specification.compile(spec)["sections"][0]["sql"]

@@ -70,6 +70,9 @@ def start(project, folder, record_name, command, env=None):
     record = json.loads(record_path.read_text(encoding="utf-8"))
     # The record names the files of the command relative to the project folder, and the interpreter by its name.
     shown = ["python"] + [str(c).replace(str(project.root), ".") for c in command[1:]]
+    # A command started again in the same folder, as an export's package is, begins with no end of its own recorded.
+    record.pop("exit_code", None)
+    record.pop("finished", None)
     record.update(started=now(), command=shown)
     record_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     log = (folder / "log.txt").open("w", encoding="utf-8")

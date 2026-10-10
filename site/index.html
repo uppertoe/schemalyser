@@ -31,6 +31,24 @@
       </nav>
 
       <main>
+        <!-- Asked once at the start of a sitting: who is answering, whose name the saved file records beside every answer,
+             and the hospital that the saved file describes. -->
+        <section class="aside-block answering" id="b-who" aria-labelledby="h-who">
+          <h2 id="h-who"></h2>
+          <p id="t-who-what" class="do"></p>
+          <div class="field">
+            <label for="who-name" id="l-who-name"></label>
+            <input type="text" id="who-name" autocomplete="off" spellcheck="false" maxlength="100" />
+            <p id="t-who-name-about" class="note"></p>
+            <p id="t-who-name-recorded" class="status" role="status"></p>
+          </div>
+          <div class="field">
+            <label for="who-hospital" id="l-who-hospital"></label>
+            <input type="text" id="who-hospital" autocomplete="off" spellcheck="false" maxlength="120" />
+            <p id="t-who-hospital-about" class="note"></p>
+            <p id="t-who-hospital-recorded" class="status" role="status"></p>
+          </div>
+        </section>
         <ol class="steps">
           <li class="step" id="step-1">
             <div class="step-head"><h2 id="h-step-1"></h2><span class="state" id="state-1"></span></div>
@@ -296,6 +314,29 @@
                   <p id="t-codes-safe" class="note"></p>
                 </details>
                 <div id="vocabularies"></div>
+                <!-- The hospital's other codes and the standard concept of each, beside the codes of the readings. -->
+                <section class="add concepts" id="b-concepts" aria-labelledby="h-concepts">
+                  <h3 id="h-concepts"></h3>
+                  <ol id="t-concepts-steps" class="guide-steps"></ol>
+                  <details class="about">
+                    <summary id="s-concepts-about"></summary>
+                    <p id="t-concepts-about" class="note"></p>
+                  </details>
+                  <div class="field">
+                    <label for="concepts-mapping" id="l-concepts-mapping"></label>
+                    <select id="concepts-mapping"></select>
+                  </div>
+                  <label for="concepts-paste" id="l-concepts-paste"></label>
+                  <textarea id="concepts-paste" rows="5" spellcheck="false" autocomplete="off"></textarea>
+                  <div class="field">
+                    <p id="l-concepts-file" class="field-label"></p>
+                    <input type="file" id="concepts-file" class="visually-hidden" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain" />
+                    <label for="concepts-file" id="b-concepts-file" class="button-like secondary"></label>
+                  </div>
+                  <div class="actions"><button type="button" id="concepts-read"></button></div>
+                  <p id="t-concepts-status" class="status" hidden role="status"></p>
+                  <ul id="concepts-held" class="concepts-held"></ul>
+                </section>
               </div>
             </div>
           </li>
@@ -340,6 +381,7 @@
                     <input type="text" id="time-zone" autocomplete="off" spellcheck="false" />
                   </div>
                   <label class="option"><input type="checkbox" id="daylight-saving" /> <span id="l-daylight-saving"></span></label>
+                  <div class="actions"><button type="button" id="time-zone-confirm" class="secondary" hidden></button></div>
                 </fieldset>
                 <div class="actions"><button type="button" id="write-save"></button></div>
                 <p id="t-write-save-note" class="note"></p>
@@ -348,7 +390,14 @@
                   <p id="t-write-about" class="note"></p>
                 </details>
                 <p id="t-write-status" class="status" hidden role="status"></p>
+                <!-- The version of the saved file, its parent, and the version of the description of the record it was made against. -->
+                <div id="t-version-info" class="version-info"></div>
               </div>
+              <!-- How far each part has been checked, in the three states that the core derives from the evidence. -->
+              <section class="add readiness" id="b-readiness" hidden>
+                <h3 id="h-readiness"></h3>
+                <div id="readiness-table"></div>
+              </section>
               <section class="add scoreboard" id="b-scoreboard" hidden>
                 <h3 id="h-scoreboard"></h3>
                 <p id="t-scoreboard-what" class="note"></p>

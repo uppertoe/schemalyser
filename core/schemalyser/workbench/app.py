@@ -3,8 +3,10 @@ the core writes; every action is a link or a form on the page; htmx swaps one se
 runs, and Alpine.js folds sections and copies SQL. Nothing here judges, counts or decides: the core does that."""
 import datetime as dt
 import json
+import shutil
 import tempfile
 from pathlib import Path
+from urllib.parse import quote
 
 import markdown as markdown_lib
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -19,7 +21,7 @@ from starlette.staticfiles import StaticFiles
 
 from .. import audit, feasibility, rolemap, testbed
 from . import jobs
-from ..project import Project, ProjectError, read_json, safe_name
+from ..project import EXPORT_WORDING, Project, ProjectError, export_choices, read_json, safe_name
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
@@ -54,6 +56,12 @@ def _day(iso):
     return f"{day.day} {day:%B %Y}"
 
 
+def _words(names, plain):
+    """Names in their plain words, joined as a sentence joins them: "a", "a and b", "a, b and c"."""
+    said = [plain.get(n, n) for n in names]
+    return said[0] if len(said) == 1 else ", ".join(said[:-1]) + " and " + said[-1] if said else ""
+
+
 def worlds(project):
     """The worlds a run may use: the invented hospital, and any world folder that the project keeps in worlds/."""
     found = [("fixtures", "The invented hospital")]
@@ -68,7 +76,8 @@ def create_app(project_folder, hosts=None, describe_folder=None):
     # The core's own temporary files, such as those that reading a saved hospital schema makes, go inside the project.
     tempfile.tempdir = str(project.tmp)
     env = Environment(loader=FileSystemLoader(HERE / "templates"), autoescape=select_autoescape(["html"]))
-    env.filters.update(number=_number, day=_day, md=_markdown, tojson_pretty=lambda v: json.dumps(v, indent=2, ensure_ascii=False))
+    env.filters.update(number=_number, day=_day, md=_markdown, tojson_pretty=lambda v: json.dumps(v, indent=2, ensure_ascii=False),
+                       capital=lambda text: (text or "")[:1].upper() + (text or "")[1:], words=_words)
     describe_folder = Path(describe_folder) if describe_folder else ROOT / "site" / "dist"
     has_describe = (describe_folder / "index.html").is_file()
 
@@ -106,7 +115,8 @@ def create_app(project_folder, hosts=None, describe_folder=None):
                 schemas.append({"name": name, "problem": str(error), "parts": []})
         return page(request, "overview.html", schemas=schemas, questions=project.questions(),
                     audits=[dict(a, state=jobs.state(project.folder("audits") / a["name"], a)) for a in project.audits()],
-                    runs=[_run_summary(project, r) for r in project.runs()], worlds=worlds(project))
+                    runs=[_run_summary(project, r) for r in project.runs()], worlds=worlds(project),
+                    exports=project.exports())
 
     async def add_schema(request: Request):
         if not await same_origin(request):
@@ -372,6 +382,190 @@ def create_app(project_folder, hosts=None, describe_folder=None):
         return page(request, "step.html", r=found, step=step, traced=traced, scenarios=scenarios,
                     unexplained=unexplained, sql=sql)
 
+    # The anaesthesia record export, screen 2 of docs/screens.md. Each step draws on a report of the core: the
+    # feasibility report over every section (feasibility.sections), the choices that the contract and the catalogue
+    # offer (specification.choices), the specification written from the form (specification.from_form), the export's
+    # packages (audit.export_status), the approval (audit.approve), the evidence import of the hospital schema and the
+    # results package (results.summary). The project folder keeps every file.
+
+    def exports_page(request: Request):
+        return page(request, "exports.html", w=EXPORT_WORDING, exports=project.exports(), schemas=project.schemas())
+
+    async def start_export(request: Request):
+        if not await same_origin(request):
+            return PlainTextResponse("The workbench accepts a form only from its own pages.", status_code=403)
+        form = await request.form()
+        try:
+            name = project.new_export(form.get("schema", ""))
+        except ProjectError as error:
+            return problem(request, error, "/exports")
+        return go(f"/exports/{name}")
+
+    def _export(name):
+        folder, record = project.export(name)
+        found = {"name": name, "folder": folder, "record": record, "state": jobs.state(folder, record),
+                 "log": jobs.log_tail(folder)}
+        found["support"] = project.section_support(name)
+        found["spec"] = project.specification_of(name)
+        found["can_compile"] = project.can_compile(name)
+        found["package"] = project.export_status(name) if found["state"] != "running" else None
+        found["results"] = {}
+        for section, path in project.results_of(name).items():
+            code, printed = jobs.run_now(project, jobs.module("results", "show", path))
+            if not code:
+                found["results"][section] = json.loads(printed)
+        found["resolution"] = next((r["resolution"] for r in found["results"].values() if r.get("resolution")), None)
+        return found
+
+    def export_page(request: Request):
+        try:
+            found = _export(request.path_params["name"])
+        except (ProjectError, feasibility.FeasibilityError) as error:
+            return problem(request, error, "/exports")
+        parts = {p["part"]: p for g in found["support"]["groups"] for p in g["parts"]}
+        caps = {c["name"]: c for c in found["support"]["capabilities"]}
+        return page(request, "export.html", e=found, w=EXPORT_WORDING, choices=export_choices(), parts=parts, caps=caps,
+                    not_supported=feasibility.NOT_SUPPORTED,
+                    states=feasibility.STATES, saved=project.saved_specifications(), state_words=STATE_WORDS,
+                    message=request.query_params.get("said", ""))
+
+    def export_progress(request: Request):
+        try:
+            folder, record = project.export(request.path_params["name"])
+        except ProjectError as error:
+            return problem(request, error, "/exports")
+        job = {"state": jobs.state(folder, record), "log": jobs.log_tail(folder)}
+        if job["state"] != "running":
+            return Response(status_code=200, headers={"HX-Refresh": "true"})
+        return page(request, "progress.html", job=job, url=f"/exports/{request.path_params['name']}/progress",
+                    state_words=STATE_WORDS)
+
+    async def _export_form(request):
+        if not await same_origin(request):
+            return None
+        return await request.form()
+
+    def _said(name, sentence, anchor):
+        return go(f"/exports/{name}?said={quote(sentence)}#{anchor}")
+
+    async def export_episodes(request: Request):
+        name = request.path_params["name"]
+        form = await _export_form(request)
+        if form is None:
+            return PlainTextResponse("The workbench accepts a form only from its own pages.", status_code=403)
+        upload = form.get("file")
+        if upload is None or not getattr(upload, "filename", ""):
+            return problem(request, "Choose the episode list to keep.", f"/exports/{name}")
+        try:
+            project.add_episodes(name, await upload.read(), form.get("form", ""), form.get("window_hours", ""),
+                                 form.get("several", ""))
+        except ProjectError as error:
+            return problem(request, error, f"/exports/{name}")
+        return go(f"/exports/{name}#episodes")
+
+    async def export_specification(request: Request):
+        name = request.path_params["name"]
+        form = await _export_form(request)
+        if form is None:
+            return PlainTextResponse("The workbench accepts a form only from its own pages.", status_code=403)
+        fields = {key: form.getlist(key) for key in form.keys()}
+        try:
+            project.write_specification(name, fields)
+        except ProjectError as error:
+            return problem(request, error, f"/exports/{name}")
+        return go(f"/exports/{name}#specification")
+
+    async def export_save(request: Request):
+        name = request.path_params["name"]
+        if await _export_form(request) is None:
+            return PlainTextResponse("The workbench accepts a form only from its own pages.", status_code=403)
+        try:
+            saved = project.save_specification(name)
+        except ProjectError as error:
+            return problem(request, error, f"/exports/{name}")
+        return _said(name, EXPORT_WORDING["saved"].format(name=saved), "specification")
+
+    async def export_load(request: Request):
+        name = request.path_params["name"]
+        form = await _export_form(request)
+        if form is None:
+            return PlainTextResponse("The workbench accepts a form only from its own pages.", status_code=403)
+        upload = form.get("file")
+        data = await upload.read() if upload is not None and getattr(upload, "filename", "") else None
+        try:
+            project.load_specification(name, saved=None if data else form.get("saved"), data=data)
+        except ProjectError as error:
+            return problem(request, error, f"/exports/{name}")
+        return go(f"/exports/{name}#specification")
+
+    async def export_package(request: Request):
+        name = request.path_params["name"]
+        if await _export_form(request) is None:
+            return PlainTextResponse("The workbench accepts a form only from its own pages.", status_code=403)
+        try:
+            folder, record = project.export(name)
+            if not project.can_compile(name):
+                return problem(request, EXPORT_WORDING["package_needs"], f"/exports/{name}")
+            command = jobs.module("audit", *project.export_command(name))
+        except ProjectError as error:
+            return problem(request, error, f"/exports/{name}")
+        if jobs.state(folder, record) == "running":
+            return go(f"/exports/{name}#package")
+        # A package compiled again replaces the one before it, whose approvals bound to what it then held.
+        shutil.rmtree(folder / "package", ignore_errors=True)
+        jobs.start(project, folder, "request.json", command)
+        return go(f"/exports/{name}#package")
+
+    async def export_approve(request: Request):
+        name, section = request.path_params["name"], request.path_params["section"]
+        form = await _export_form(request)
+        if form is None:
+            return PlainTextResponse("The workbench accepts a form only from its own pages.", status_code=403)
+        by = (form.get("by") or "").strip()[:100]
+        if not by:
+            return problem(request, EXPORT_WORDING["approve_needs_name"], f"/exports/{name}")
+        try:
+            folder, record = project.export(name)
+            found = audit.approve(project.section_package(name, section), by, refuse=form.get("decision") == "refuse",
+                                  note=(form.get("note") or "").strip()[:500],
+                                  schema_path=project.schema_path(record["schema"]))
+        except (ProjectError, audit.AuditError) as error:
+            return problem(request, error, f"/exports/{name}")
+        return _said(name, found["says"], f"section-{section}")
+
+    async def export_returned(request: Request):
+        name, section = request.path_params["name"], request.path_params["section"]
+        form = await _export_form(request)
+        if form is None:
+            return PlainTextResponse("The workbench accepts a form only from its own pages.", status_code=403)
+        by = (form.get("by") or "").strip()[:100]
+        said = []
+        try:
+            kept = {}
+            for kind in ("outcome", "plan", "result"):
+                upload = form.get(kind)
+                if upload is not None and getattr(upload, "filename", ""):
+                    kept[kind] = project.keep_returned(name, section, kind, upload.filename, await upload.read())
+            if not kept:
+                return problem(request, EXPORT_WORDING["returned_nothing"], f"/exports/{name}")
+            for kind, form_name in (("plan", "plan"), ("outcome", "production outcome")):
+                if kind in kept:
+                    command, out = project.import_command(name, section, form_name, kept[kind], by)
+                    code, printed = jobs.run_now(project, jobs.module("describe", *command))
+                    if code:
+                        return problem(request, printed.splitlines()[-1] if printed else "", f"/exports/{name}")
+                    said.append(EXPORT_WORDING["imported"].format(what=EXPORT_WORDING["import_what"][form_name],
+                                                                  file=project.kept_import(name, out)))
+            if "result" in kept:
+                code, printed = jobs.run_now(project, jobs.module(
+                    "results", *project.results_command(name, section, kept["result"], by)))
+                said.append(printed.splitlines()[-1] if printed else "")
+                if code:
+                    return problem(request, " ".join(s for s in said if s), f"/exports/{name}")
+        except ProjectError as error:
+            return problem(request, error, f"/exports/{name}")
+        return _said(name, " ".join(s for s in said if s), f"section-{section}")
+
     routes = [
         Route("/", overview),
         Route("/schemas", add_schema, methods=["POST"]),
@@ -389,6 +583,17 @@ def create_app(project_folder, hosts=None, describe_folder=None):
         Route("/runs/{name}", run_page),
         Route("/runs/{name}/progress", run_progress),
         Route("/runs/{name}/steps/{file}", step_page),
+        Route("/exports", exports_page),
+        Route("/exports", start_export, methods=["POST"]),
+        Route("/exports/{name}", export_page),
+        Route("/exports/{name}/progress", export_progress),
+        Route("/exports/{name}/episodes", export_episodes, methods=["POST"]),
+        Route("/exports/{name}/specification", export_specification, methods=["POST"]),
+        Route("/exports/{name}/specification/save", export_save, methods=["POST"]),
+        Route("/exports/{name}/specification/load", export_load, methods=["POST"]),
+        Route("/exports/{name}/package", export_package, methods=["POST"]),
+        Route("/exports/{name}/sections/{section}/approve", export_approve, methods=["POST"]),
+        Route("/exports/{name}/sections/{section}/returned", export_returned, methods=["POST"]),
         Mount("/static", StaticFiles(directory=HERE / "static"), name="static"),
     ]
     if has_describe:

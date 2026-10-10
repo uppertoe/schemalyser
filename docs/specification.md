@@ -4,6 +4,8 @@
 
     python -m schemalyser.specification check SPECIFICATION.json
     python -m schemalyser.specification compile SPECIFICATION.json --out FOLDER [--episodes EPISODES.csv]
+    python -m schemalyser.specification choices [--out CHOICES.json]
+    python -m schemalyser.specification write FIELDS.json --out SPECIFICATION.json
     python -m schemalyser.audit export hospital-schema.schemalyser.zip SPECIFICATION.json --episodes EPISODES.csv --out FOLDER
 
 ## The two files
@@ -57,3 +59,10 @@ Without an episode list, every statement chooses no episode, so that the public 
 ## The second stage
 
 `python -m schemalyser.audit export` compiles the specification with the episode list, then takes each section through the role policy, the feasibility report and the compilation through the hospital schema to a package of its own, as `docs/audit.md` describes. Each package's manifest carries the specification's hash and the output class of every section, and `export.json` records what became of each section. A section of rows read from a large table, such as the readings, is a large clinical extraction, of class C, and needs the database team's approval before it runs.
+
+## The export screen's choices
+
+The export screen of the workbench writes a specification from the clinician's choices, and the command line does the same with the same fields. `choices` says what the screen offers, from the role contract and the catalogue alone, so that the offer is the same at every hospital: the parts of the record grouped as the chart's sections in the clinician's words, from the anaesthetic and its readings by kind to the notes, with the further parts after them; for each, its kinds with their meanings, the time on which its window runs, its flags with their meanings, and whether it stays inside the hospital unless named; and the catalogue's measures with their parameters, the columns of each table parameter in plain words, any default that the catalogue gives, and whether its SQL has been written. Whether this hospital supports each one is the feasibility report's to say, through `python -m schemalyser.feasibility sections`.
+
+`write` reads the form's fields as one JSON object, `{name: value or [values]}`, and writes the specification. `section` names each part chosen and `derived` each measure; `kinds.PART`, `window.PART` with its anchors and offsets, and `flag.PART.FLAG` set a section; `param.MEASURE.PARAMETER` sets a value, with one field `param.MEASURE.PARAMETER.ROW.COLUMN` for each cell of a table, of which an empty row is left out; and `output.class`, `output.keys` and `leave` set the output, where only a chosen section may leave. Each value is taken as the type its rule wants where it is one and kept as written otherwise, so that the specification is written either way and `check` names the rule it breaks. `specification.chosen` reads a specification back into the same fields, which is how the screen shows a loaded one.
+

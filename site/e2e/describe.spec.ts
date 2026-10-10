@@ -13,6 +13,8 @@ import { describeStrings as d } from '../src/describe-strings';
 // opened again.
 const fixtures = fileURLToPath(new URL('../../fixtures/', import.meta.url));
 const pass = process.env.DESCRIBE_PASS;
+// The person answering at a sitting, whose name every answer carries.
+const NAME = 'Dr A Clinician';
 
 test.skip(({ browserName }) => browserName === 'webkit', 'The page refuses to start in WebKit.');
 
@@ -142,7 +144,9 @@ function savedFiles(zip: string): Record<string, string> {
   ].join('\n'), zip], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })) as Record<string, string>;
   const steady = (text: string) => text.replace(/\b[jr][0-9a-f]{12}\b/g, 'ID').replace(/\b[0-9a-f]{64}\b/g, 'HASH')
     .replace(/\b[0-9a-f]{16}\b/g, 'SCHEMA').replace(/\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d)?/g, 'TIME').replace(/"seconds": [\d.]+/g, '"seconds": N')
-    .replace(/"(schema_id|parent_id)": (null|"SCHEMA")/g, '"$1": "SCHEMA"').replace(/"lineage": \[[^\]]*\]/g, '"lineage": []');
+    .replace(/"(schema_id|parent_id)": (null|"SCHEMA")/g, '"$1": "SCHEMA"').replace(/"lineage": \[[^\]]*\]/g, '"lineage": []')
+    // The salt of the concept translations is drawn at random for each hospital schema, and the keys made with it.
+    .replace(/"salt": "[0-9a-f]{32}"/g, '"salt": "SALT"').replace(/\bk[0-9a-f]{15}\b/g, 'KEY');
   return Object.fromEntries(Object.entries(held).map(([name, text]) => [name, steady(text)]));
 }
 
@@ -182,6 +186,16 @@ test('the record is described, saved as a hospital schema and opened again', asy
   // The watch saw the worker's own requests while the tab was online, so its silence offline means something.
   expect(online.some((url) => url.endsWith('py/schemalyser.zip'))).toBe(true);
   await stage(page, '1-offline', 'body');
+
+  // Who is answering, and the hospital, asked once at the start: until given, the saved file will say not recorded.
+  await expect(page.locator('#t-who-name-recorded')).toHaveText(d.who.nameNone);
+  await expect(page.locator('#t-who-hospital-recorded')).toHaveText(d.who.hospitalNone);
+  await expect(page.locator('#t-who-name-about')).toHaveText(d.who.nameAbout);
+  await page.locator('#who-name').fill(NAME);
+  await expect(page.locator('#t-who-name-recorded')).toHaveText(d.who.nameGiven(NAME));
+  await page.locator('#who-hospital').fill('The Invented Hospital');
+  await page.locator('#who-hospital').press('Tab');
+  await expect(page.locator('#t-who-hospital-recorded')).toHaveText(d.who.hospitalGiven('The Invented Hospital'));
 
   // The dictionary, with its receipt.
   await loadDictionary(page);
@@ -230,7 +244,13 @@ test('the record is described, saved as a hospital schema and opened again', asy
   const tally = (confirmed: number, corrected: number, notSure: number, untranslated: number) =>
     d.tally({ confirmed, corrected, not_sure: notSure, untranslated, remaining: total - confirmed - corrected - notSure - untranslated, total, tables, tables_remaining: tables });
   const birthRow = page.locator('#confirm [data-about="role_patient.birth_date"]');
+  // Each binding shows its five dimensions as recorded; until an answer, no person has answered for it.
+  await expect(birthRow.locator('.evidence dd[data-dimension="confirmed"]')).toHaveText(d.evidence.confirmedNone);
+  await expect(birthRow.locator('.evidence dd[data-dimension="present"]')).toContainText('The result of the query of tables and columns, returned on');
+  await expect(birthRow.locator('.evidence dd[data-dimension="validated"]')).toHaveText(d.evidence.validatedNone);
   await birthRow.getByRole('button', { name: d.yes }).click();
+  // The answer carries the name of the person answering, and the evidence says who established it and when.
+  await expect(birthRow.locator('.evidence dd[data-dimension="confirmed"]')).toContainText(`${NAME} answered for this on `);
   // An answered column shows its answer as a state, with Change the answer in place of the choices.
   await expect(birthRow.locator('.answered')).toContainText('Confirmed on');
   await expect(birthRow.getByRole('button', { name: d.yes })).toHaveCount(0);
@@ -283,6 +303,11 @@ test('the record is described, saved as a hospital schema and opened again', asy
   await readings.locator('textarea').fill(charted);
   await readings.getByRole('button', { name: d.chartedRead }).click();
   await expect(readings).toContainText(d.chartedReceipt(4, 2024));
+  // A count that the query left blank is shown as blank, with the core's reason beneath, and never as a figure.
+  await expect(readings.locator('td.suppressed')).toHaveCount(2);
+  await expect(readings.locator('td.suppressed').first()).toHaveText(d.blankCell);
+  await expect(readings.locator('.suppressed-note')).toHaveText(d.suppressedNote.under_ten);
+  await expect(readings).not.toContainText('under 10');
   await expect(readings.locator('th').nth(1)).toHaveText('Times charted');
   await expect(readings.locator('select[data-code="77"] option[value="other"]')).toHaveCount(1);
   await expect(readings).toContainText(d.codesOther);
@@ -365,6 +390,20 @@ test('the record is described, saved as a hospital schema and opened again', asy
   expect(settings.complete).toBeUndefined();
   expect(settings.time_zone).toBeTruthy();
   expect(settings.time_zone_from).toBe('proposed from this computer');
+  expect(settings.time_zone_by).toBeUndefined();
+  expect(settings.hospital).toBe('The Invented Hospital');
+  const entries = JSON.parse(readFileSync(join(unzipped, 'journal.json'), 'utf8')).entries as { kind: string; actor: string; scope: { hospital: string } }[];
+  expect(new Set(entries.map((e) => e.scope.hospital))).toEqual(new Set(['The Invented Hospital']));
+  expect(entries.filter((e) => ['answer', 'codes chosen', 'judgement', 'correction kept'].includes(e.kind)).every((e) => e.actor === NAME)).toBe(true);
+  expect(readFileSync(join(unzipped, 'README.md'), 'utf8')).toContain('It describes The Invented Hospital.');
+  // The save step shows the saved file's version, its parent and the version of the description it was made against,
+  // and how far each part has been checked in the three states.
+  await expect(page.locator('#t-version-info')).toContainText(d.versionInfo.id(settings.schema_id));
+  await expect(page.locator('#t-version-info')).toContainText(d.versionInfo.parent(null));
+  await expect(page.locator('#t-version-info')).toContainText(d.versionInfo.contract(settings.contract.version));
+  await expect(page.locator('#b-readiness h3')).toHaveText(d.readinessTable.heading);
+  await expect(page.locator('#readiness-table th')).toHaveText(d.readinessTable.columns);
+  await expect(page.locator('#readiness-table')).toContainText(d.readinessTable.notYet);
   // The readiness is derived from the evidence and never stored; the README states it, and settings name the version.
   expect(settings.readiness).toBeUndefined();
   expect(settings.schema_id).toMatch(/^[0-9a-f]{16}$/);
@@ -397,6 +436,11 @@ test('the record is described, saved as a hospital schema and opened again', asy
   const fromCommand = savedFiles(join(walked, readdirSync(walked).find((name) => name.endsWith('.schemalyser.zip'))!));
   expect(Object.keys(fromCommand).sort()).toEqual(Object.keys(fromPage).sort());
   for (const name of Object.keys(fromPage)) expect(fromCommand[name], name).toBe(fromPage[name]);
+
+  // The time zone stays as proposed from this computer until a person confirms it, and then names that person.
+  await page.locator('#time-zone-confirm').click();
+  await expect(page.locator('#t-time-zone-from')).toHaveText(d.timeZoneBy(NAME));
+  await expect(page.locator('#time-zone-confirm')).toBeHidden();
 
   // A change after the hospital schema was saved makes step 9 to be done again.
   await page.locator('#confirm [data-about="role_patient.patient_key"] .answer-yes').click();
@@ -1215,5 +1259,131 @@ test('a result or a file that the core refuses leaves nothing in the saved schem
   const settings = JSON.parse(files['settings.json']);
   expect(settings.parent_id ?? null).toBeNull();
   expect(settings.lineage ?? []).toEqual([]);
+  expect(requestsWhileOffline).toEqual([]);
+});
+
+// The hospital's other codes, each with its standard concept, read beside the codes of the readings at step 7: the
+// note says what the list is, the counts by status are shown once it is read, a list without its headings is refused
+// with the core's reason, and the codes stay in the saved file while the parts of the record give opaque keys.
+test('the hospital’s codes of drugs and units are translated to standard concepts and stay in the saved file', async ({ page, context, browserName }) => {
+  test.setTimeout(240_000);
+  const requestsWhileOffline: string[] = [];
+  let offline = false;
+  await watchRequests(context, () => offline, requestsWhileOffline);
+  await loadAndGoOffline(page, context, browserName);
+  offline = true;
+  await loadDictionary(page);
+  await page.locator('#propose').click();
+  await expect(page.locator('#t-propose-status')).toContainText('The page has proposed', { timeout: 60_000 });
+  // The progress says the same words, so the step waits for the receipt itself.
+  await expect(page.locator('#t-propose-status')).toHaveClass(/good/, { timeout: 60_000 });
+  await page.locator('#who-name').fill(NAME);
+
+  await openStep(page, 7);
+  const box = page.locator('#b-concepts');
+  await expect(box.locator('h3')).toHaveText(d.concepts.heading);
+  await expect(box.locator('#t-concepts-steps li')).toHaveText(d.concepts.steps);
+  await expect(box.locator('#t-concepts-about')).toHaveText(d.concepts.about);
+  await expect(box.locator('#concepts-held li[data-mapping="map_drug_concept"]')).toHaveText(d.concepts.none('Drugs'));
+  // A list without its headings is refused, with the core's reason.
+  await box.locator('#concepts-mapping').selectOption('map_drug_concept');
+  await box.locator('#concepts-paste').fill('PLANTED_DRUG_CODE,9100001,mapped');
+  await box.locator('#concepts-read').click();
+  await expect(box.locator('#t-concepts-status')).toContainText('row of headings');
+  // A pasted list of drugs, with a mapped, an ambiguous and an unmapped code.
+  await box.locator('#concepts-paste').fill(['code\tdescription\tconcept_id\tstatus\tprovenance',
+    'PLANTED_DRUG_CODE\tan invented drug\t9100001\tmapped\ta person',
+    'PLANTED_AMBIGUOUS\t\t9100002\tambiguous\ta person', 'PLANTED_AMBIGUOUS\t\t9100003\tambiguous\ta person',
+    'PLANTED_UNMAPPED\t\t0\tunmapped\ta person'].join('\n'));
+  await box.locator('#concepts-read').click();
+  const counts = { mapped: 1, unmapped: 1, ambiguous: 1 };
+  await expect(box.locator('#t-concepts-status')).toHaveText(d.concepts.receipt('Drugs', 3, counts));
+  await expect(box.locator('#concepts-held li[data-mapping="map_drug_concept"]')).toContainText(d.concepts.held('Drugs', 3, counts, NAME, '2026-01-01').split(`${NAME} recorded it on`)[0]);
+  await expect(box.locator('#concepts-held li[data-mapping="map_drug_concept"]')).toContainText(`${NAME} recorded it on`);
+  // The units, chosen as a file.
+  await box.locator('#concepts-mapping').selectOption('map_unit_concept');
+  await box.locator('#concepts-file').setInputFiles({ name: 'units.csv', mimeType: 'text/csv', buffer: Buffer.from('code,concept_id,status\nPLANTED_UNIT,8876,mapped\n') });
+  await expect(box.locator('#t-concepts-status')).toHaveText(d.concepts.receipt('Units', 1, { mapped: 1, unmapped: 0, ambiguous: 0 }));
+  await stage(page, 'k7-concepts', '#b-concepts');
+
+  // The saved file holds the codes in the hospital schema, and the parts' queries carry keys in their place.
+  await openStep(page, 9);
+  const download = page.waitForEvent('download');
+  await page.locator('#write-save').click();
+  const path = join(mkdtempSync(join(tmpdir(), 'concepts-')), 'concepts.schemalyser.zip');
+  await (await download).saveAs(path);
+  const read = (name: string) => execFileSync('python3', ['-c', 'import sys, zipfile; sys.stdout.write(zipfile.ZipFile(sys.argv[1]).read(sys.argv[2]).decode())', path, name], { encoding: 'utf8' });
+  const views = JSON.parse(read('map/map.json')).concepts.views;
+  expect(views.map_drug_concept.rows.map((r: { code: string }) => r.code)).toContain('PLANTED_DRUG_CODE');
+  // The part of the record turns each code into its opaque key, and what it gives an audit is the key alone.
+  expect(read('map/role_drug.sql')).toMatch(/= 'PLANTED_DRUG_CODE' THEN 'k[0-9a-f]{15}'/);
+  const entries = JSON.parse(read('journal.json')).entries as { kind: string; actor: string }[];
+  expect(entries.filter((e) => e.kind === 'concepts translated').map((e) => e.actor)).toEqual([NAME, NAME]);
+  expect(requestsWhileOffline).toEqual([]);
+});
+
+// A part recorded by more than one table: the kind of record of the part's first table is confirmed from the kinds in
+// plain words, a second table is added through the correction form of the part's table, and each table shows its own
+// kind of record and its own evidence.
+test('a part recorded by a second table takes it with its kind of record, and each table shows its own evidence', async ({ page, context, browserName }) => {
+  test.setTimeout(240_000);
+  const requestsWhileOffline: string[] = [];
+  let offline = false;
+  await watchRequests(context, () => offline, requestsWhileOffline);
+  await loadAndGoOffline(page, context, browserName);
+  offline = true;
+  await page.locator('#who-name').fill(NAME);
+  await loadDictionary(page);
+  await page.locator('#propose').click();
+  await expect(page.locator('#t-propose-status')).toContainText('The page has proposed', { timeout: 60_000 });
+  // The progress says the same words, so the step waits for the receipt itself.
+  await expect(page.locator('#t-propose-status')).toHaveClass(/good/, { timeout: 60_000 });
+  await openStep(page, 6);
+  const drugs = page.locator('#confirm section.role[data-role="role_drug"]');
+  const kind = drugs.locator('[data-about="role_drug.source_kind"]');
+  // The first table's kind of record is proposed in plain words, with its code after it, and offers no column.
+  await expect(kind.locator('.proposed')).toContainText(`${d.proposedLabel} A record that a drug or a fluid was given, made by the person who gave it (administration)`);
+  await expect(kind).not.toContainText(d.nothingProposed);
+  const pathways = drugs.locator('.pathways');
+  await expect(pathways.locator('h4')).toHaveText(d.pathways.heading);
+  await expect(pathways.locator('li.pathway')).toHaveCount(1);
+  await expect(pathways.locator('li.pathway').first()).toContainText(d.pathways.kindProposed);
+  await expect(pathways).toContainText(d.pathways.coverageNone);
+  await kind.locator('select.source-kind').selectOption('order');
+  await kind.getByRole('button', { name: d.pathways.kindConfirm }).click();
+  await expect(kind.locator('.answered')).toContainText('Confirmed on');
+  await expect(pathways.locator('li.pathway').first()).toContainText(`${NAME} confirmed this kind of record on`);
+
+  // A second table, added through the correction form of the part's table.
+  const rows = drugs.locator('[data-about="role_drug rows"]');
+  await rows.locator('.answer-another').click();
+  await rows.locator('select.correction-form').selectOption('pathway');
+  await expect(rows).toContainText(d.corrections.formWhat.pathway);
+  const table = rows.getByLabel(d.pathways.tableLabel, { exact: true });
+  await table.fill('OBS_READING');
+  await table.press('Tab');
+  await rows.getByLabel(d.pathways.kindLabel, { exact: true }).selectOption('charted_value');
+  await rows.getByRole('button', { name: d.pathways.add }).click();
+  await expect(pathways.locator('.pathway-added')).toHaveText(d.pathways.added('OBS_READING'));
+  await expect(pathways.locator('li.pathway')).toHaveCount(2);
+  const second = pathways.locator('li.pathway[data-pathway="role_drug@charted_value"]');
+  await expect(second.locator('.pathway-from')).toHaveText(d.pathways.from('OBS_READING', 'A value charted on the anaesthetic record or a flowsheet, by hand or from a device.', 'charted_value'));
+  await expect(second.locator('.evidence dd[data-dimension="confirmed"]')).toContainText(`${NAME} answered for this on`);
+  await expect(second.locator('.evidence dd[data-dimension="tested"]')).toHaveText(d.evidence.testedNone);
+  // The second table's kind of record is changed on its own line, and the core's refusal of no kind is not needed.
+  await second.locator('select.source-kind').selectOption('result');
+  await second.getByRole('button', { name: d.pathways.kindConfirm }).click();
+  await expect(second.locator('.pathway-from')).toContainText('(result)');
+  await expect(page.locator('#step-6')).not.toContainText(/\brole_[a-z]/);
+  await stage(page, 'p6-pathways', '#confirm section.role[data-role="role_drug"] .pathways');
+
+  await openStep(page, 9);
+  const download = page.waitForEvent('download');
+  await page.locator('#write-save').click();
+  const path = join(mkdtempSync(join(tmpdir(), 'pathways-')), 'pathways.schemalyser.zip');
+  await (await download).saveAs(path);
+  const map = JSON.parse(execFileSync('python3', ['-c', 'import sys, zipfile; sys.stdout.write(zipfile.ZipFile(sys.argv[1]).read("map/map.json").decode())', path], { encoding: 'utf8' }));
+  expect(map.roles.role_drug.source_kind).toBe('order');
+  expect(map.roles.role_drug.pathways.map((p: { name: string; source_kind: string }) => [p.name, p.source_kind])).toEqual([['charted_value', 'result']]);
   expect(requestsWhileOffline).toEqual([]);
 });

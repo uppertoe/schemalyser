@@ -39,6 +39,13 @@ as private as the list.
 
     python -m schemalyser.specification check SPEC
     python -m schemalyser.specification compile SPEC --out FOLDER [--episodes EPISODES.csv]
+    python -m schemalyser.specification choices [--out CHOICES.json]
+    python -m schemalyser.specification write FIELDS.json --out SPEC
+
+choices says what the export screen offers, from the role contract and the catalogue alone: the sections of the
+anaesthetic record in the clinician's words, each with its kinds, its window and its flags, and the catalogue's
+measures with their parameters. write turns the screen's choices, as the fields of its form, into a specification,
+which is how the screen writes one, so that the command line can do the same with the same fields.
 """
 import argparse
 import csv
@@ -53,7 +60,7 @@ from pathlib import Path
 
 import sqlglot
 
-from . import compiler, policy, rolemap, rolepolicy
+from . import compiler, policy, rolemap, rolepolicy, vocabulary
 
 FORMAT = "schemalyser-specification/1"
 FORMS = ("anaesthetic_keys", "patient_dates")
@@ -101,6 +108,7 @@ WORDING = {
     "key_says": "the link from each episode's number to its anaesthetic, which never leaves the hospital.",
     "resolution_says": "how many of the patient and date pairs resolved to exactly one anaesthetic, how many to several and how many to none.",
     "window_says": ", from {start} to {stop}",
+    "fields": "{name} is not a file of the screen's choices that Schemalyser can read: it holds one JSON object of the form's fields.",
 }
 
 
@@ -162,6 +170,253 @@ def every_kind(model):
     for items in model["vocabularies"].values():
         words |= {k["kind"] for k in items}
     return words
+
+
+# What the export screen offers, from the role contract and the catalogue alone.
+
+# The sections of the anaesthetic record as the clinician knows them, in the order of docs/product.md, each a group of
+# parts of the role contract. A part that no group names is offered among the further parts of the record.
+TREE = (("anaesthetic", ("role_anaesthetic", "role_patient", "role_anaesthetic_detail")), ("readings", ("role_reading",)),
+        ("drugs", ("role_drug",)), ("techniques", ("role_technique",)), ("fluids", ("role_fluid",)),
+        ("devices", ("role_device",)), ("events", ("role_event",)), ("staff", ("role_staff",)),
+        ("operations", ("role_operation",)), ("notes", ("role_note",)))
+FURTHER = "further"
+# The parts that stay inside the hospital unless the clinician names them as leaving.
+STAY_UNLESS_NAMED = ("role_note",)
+
+
+def section_name(part):
+    """The name that the screen gives a section of a part: the part's name without its prefix."""
+    return part[len("role_"):] if part.startswith("role_") else part
+
+
+def _kinds_with_meanings(model, column):
+    if column is None:
+        return []
+    if column.get("vocabulary"):
+        return [{"kind": k["kind"], "meaning": k.get("meaning")} for k in model["vocabularies"].get(column["vocabulary"], [])]
+    return [{"kind": k["kind"], "meaning": k.get("meaning")} for k in model["kinds"]]
+
+
+def _part_offer(model, view):
+    words = vocabulary.EXPORT_SCREEN
+    column = kind_column(view)
+    time = time_column(view)
+    return {"part": view["name"], "name": section_name(view["name"]),
+            "title": words["parts"].get(view["name"], rolemap.view_title(view["name"])),
+            "one_row_per": view.get("one_row_per"), "status": view.get("status"), "linked": link_column(view) is not None,
+            "episode": view["name"] in EPISODE_PARTS, "kind_column": column["name"] if column else None,
+            "kinds": _kinds_with_meanings(model, column),
+            "window": {"column": time["name"], "title": rolemap.column_title(view["name"], time["name"])} if time else None,
+            "flags": [{"name": c["name"], "title": c.get("title") or c["name"].replace("_", " "), "meaning": c.get("meaning")}
+                      for c in view["columns"] if c["type"] in ("flag", "flag_or_empty")],
+            "stays_unless_named": view["name"] in STAY_UNLESS_NAMED}
+
+
+def _capability_offer(capability):
+    words = vocabulary.EXPORT_SCREEN
+    parameters = []
+    for parameter in capability.get("parameters", []):
+        parameters.append({
+            "name": parameter["name"], "type": parameter["type"], "unit": parameter.get("unit"),
+            "meaning": parameter.get("meaning"), "choices": parameter.get("choices") or [],
+            "default": parameter.get("default"), "has_default": "default" in parameter,
+            "columns": [{"name": c["name"], "type": c["type"],
+                         "title": words["table_columns"].get(c["name"], c["name"].replace("_", " "))}
+                        for c in parameter.get("columns", [])]})
+    has_sql = bool(capability.get("sql")) or (CAPABILITIES / f"{capability['name']}.sql").is_file()
+    return {"name": capability["name"], "version": capability.get("version"), "meaning": capability.get("meaning"),
+            "grain": capability.get("grain"), "unit": capability.get("unit"), "window": capability.get("window"),
+            "output_class": capability.get("output_class"), "has_sql": has_sql, "parameters": parameters,
+            "requires": capability.get("requires")}
+
+
+def choices(model=None):
+    """What the export screen offers, from the role contract and the catalogue alone, and so the same at every
+    hospital: {"groups": [{"group", "title", "parts": [{"part", "name", "title", "linked", "episode", "kinds",
+    "window", "flags", ...}]}], "capabilities": [...], "kinds": every kind with its meaning and vocabulary, "forms",
+    "several", "classes", "keys"}. Whether this hospital supports each one is the feasibility report's to say
+    (feasibility.sections)."""
+    model = model or rolemap.contract()
+    words = vocabulary.EXPORT_SCREEN
+    parts = _parts(model)
+    named = {p for _, held in TREE for p in held}
+    groups = list(TREE) + [(FURTHER, tuple(v["name"] for v in model["views"] if v["name"] not in named))]
+    found = []
+    for group, names in groups:
+        offered = [_part_offer(model, parts[n]) for n in names if n in parts]
+        if offered:
+            found.append({"group": group, "title": words["groups"][group], "parts": offered})
+    kinds = [{"kind": k["kind"], "meaning": k.get("meaning"), "vocabulary": "reading"} for k in model["kinds"]]
+    for name, items in model["vocabularies"].items():
+        if name not in ("source_kind", "mapping_status", "mapping_provenance"):
+            kinds += [{"kind": k["kind"], "meaning": k.get("meaning"), "vocabulary": name} for k in items]
+    return {"groups": found, "capabilities": [_capability_offer(c) for c in model.get("capabilities", [])],
+            "kinds": kinds, "forms": list(FORMS), "several": list(SEVERAL), "classes": list(OUTPUT_CLASSES),
+            "keys": list(KEYS), "anchors": list(ANCHORS), "contract_version": model.get("version")}
+
+
+# The screen's choices, as the fields of its form, made into a specification.
+
+def _field(fields, name, default=""):
+    value = fields.get(name, default)
+    if isinstance(value, (list, tuple)):
+        value = value[0] if value else default
+    return "" if value is None else str(value).strip()
+
+
+def _fields(fields, name):
+    value = fields.get(name, [])
+    values = value if isinstance(value, (list, tuple)) else [value]
+    return [str(v).strip() for v in values if v is not None and str(v).strip()]
+
+
+def _whole(text, empty=None):
+    if text == "":
+        return empty
+    return int(text) if re.fullmatch(r"-?\d+", text) else text
+
+
+def _number(text):
+    if text == "":
+        return text
+    if re.fullmatch(r"-?\d+", text):
+        return int(text)
+    try:
+        value = float(text)
+    except ValueError:
+        return text
+    return value if math.isfinite(value) else text
+
+
+def _typed(kind, text):
+    """A value of the form as the type that its rule wants, or as written where it is not one, so that validate()
+    names the rule that it breaks."""
+    if kind == "whole":
+        return _whole(text, "")
+    if kind == "whole_or_empty":
+        return _whole(text, None)
+    if kind == "number":
+        return _number(text)
+    return text
+
+
+def _table(fields, prefix, columns):
+    rows = {}
+    pattern = re.compile(re.escape(prefix) + r"\.(\d+)\.(\d+)$")
+    for key in fields:
+        match = pattern.match(key)
+        if match:
+            rows.setdefault(int(match.group(1)), {})[int(match.group(2))] = _field(fields, key)
+    found = []
+    for number in sorted(rows):
+        cells = [rows[number].get(n, "") for n in range(len(columns))]
+        if any(cells):
+            found.append([_typed(column["type"], cell) for column, cell in zip(columns, cells)])
+    return found
+
+
+def from_form(fields, model=None):
+    """A specification from the export screen's choices, given as the fields of its form, {name: value or [values]}:
+
+        title                                   the title
+        episodes.form, episodes.window_hours, episodes.several
+        section                                 each part chosen, as role_x
+        name.role_x                             the section's name, where it is not the part's own
+        kinds.role_x                            each kind chosen
+        window.role_x                           1 to keep only the rows within a window, with window.role_x.from,
+                                                .from_minutes, .to and .to_minutes
+        flag.role_x.FLAG                        0 or 1, or empty for either
+        derived                                 each measure of the catalogue chosen, with dname.NAME for its name
+        param.NAME.PARAMETER                    a value, or each value chosen for a list; for a table, one field
+                                                param.NAME.PARAMETER.ROW.COLUMN for each cell
+        output.class, output.keys               the output
+        leave                                   each part or measure that may leave
+
+    Each value is taken as the type that its rule wants where it is one. The result is not checked: validate() says
+    which rules it breaks."""
+    model = model or rolemap.contract()
+    parts = _parts(model)
+    catalogue = rolemap.capabilities(model)
+    form = _field(fields, "episodes.form", FORMS[0])
+    episodes = {"form": form}
+    if form == "patient_dates":
+        episodes.update(window_hours=_whole(_field(fields, "episodes.window_hours"), ""),
+                        several=_field(fields, "episodes.several", SEVERAL[0]))
+    spec = {"format": FORMAT, "contract_version": model.get("version"), "title": _field(fields, "title") or None,
+            "episodes": episodes, "sections": [], "derived": []}
+    if spec["title"] is None:
+        del spec["title"]
+    names = {}
+    for part in dict.fromkeys(_fields(fields, "section")):
+        view = parts.get(part)
+        section = {"name": _field(fields, f"name.{part}") or section_name(part), "part": part}
+        if view is not None:
+            kinds = _fields(fields, f"kinds.{part}")
+            if kinds:
+                section["kinds"] = kinds
+            if _field(fields, f"window.{part}") == "1":
+                section["window"] = {"from": _field(fields, f"window.{part}.from", "start"),
+                                     "from_minutes": _whole(_field(fields, f"window.{part}.from_minutes"), 0),
+                                     "to": _field(fields, f"window.{part}.to", "stop"),
+                                     "to_minutes": _whole(_field(fields, f"window.{part}.to_minutes"), 0)}
+            flags = {}
+            for flag in sorted(flag_columns(view)):
+                value = _field(fields, f"flag.{part}.{flag}")
+                if value:
+                    flags[flag] = _whole(value, value)
+            if flags:
+                section["flags"] = flags
+        spec["sections"].append(section)
+        names[part] = section["name"]
+    for name in dict.fromkeys(_fields(fields, "derived")):
+        capability = catalogue.get(name)
+        item = {"name": _field(fields, f"dname.{name}") or name, "capability": name,
+                "version": capability.get("version") if capability else None, "parameters": {}}
+        for parameter in (capability or {}).get("parameters", []):
+            key, kind = f"param.{name}.{parameter['name']}", parameter["type"]
+            if kind == "table":
+                item["parameters"][parameter["name"]] = _table(fields, key, parameter.get("columns", []))
+            elif kind == "kinds":
+                item["parameters"][parameter["name"]] = _fields(fields, key)
+            elif kind == "concepts":
+                item["parameters"][parameter["name"]] = [_whole(v.strip(), "") for v in _field(fields, key).split(",") if v.strip()]
+            else:
+                item["parameters"][parameter["name"]] = _typed(kind, _field(fields, key))
+        spec["derived"].append(item)
+        names[name] = item["name"]
+    leaving = [names[n] for n in dict.fromkeys(_fields(fields, "leave")) if n in names]
+    spec["output"] = {"class": _field(fields, "output.class", OUTPUT_CLASSES[0]),
+                      "keys": _field(fields, "output.keys", KEYS[0]), "leaving": leaving}
+    if not spec["derived"]:
+        del spec["derived"]
+    return spec
+
+
+def chosen(spec, model=None):
+    """The choices that a specification records, keyed as the screen offers them, so that a loaded specification sets
+    the screen's fields: {"title", "episodes", "sections": {part: section}, "derived": {capability: item},
+    "output", "leave": [part or capability]}. Without a specification, the screen's starting choices: rows with the
+    keys pseudonymised, nothing chosen, and every section allowed to leave but the notes."""
+    model = model or rolemap.contract()
+    if not spec:
+        leave = [v["name"] for v in model["views"] if v["name"] not in STAY_UNLESS_NAMED] + \
+            [c["name"] for c in model.get("capabilities", [])]
+        return {"title": "", "episodes": {"form": FORMS[0]}, "sections": {}, "derived": {},
+                "output": {"class": OUTPUT_CLASSES[0], "keys": KEYS[0]}, "leave": leave}
+    sections, derived = {}, {}
+    for section in spec.get("sections") or []:
+        if isinstance(section, dict):
+            sections.setdefault(section.get("part"), section)
+    for item in spec.get("derived") or []:
+        if isinstance(item, dict):
+            derived.setdefault(item.get("capability"), item)
+    output = spec.get("output") if isinstance(spec.get("output"), dict) else {}
+    leaving = set(output.get("leaving") or [])
+    leave = [p for p, s in sections.items() if s.get("name") in leaving] + \
+        [c for c, d in derived.items() if d.get("name") in leaving]
+    return {"title": spec.get("title") or "", "episodes": spec.get("episodes") or {"form": FORMS[0]},
+            "sections": sections, "derived": derived, "output": output, "leave": leave}
 
 
 # Validation.
@@ -705,7 +960,35 @@ def main(argv=None):
     two.add_argument("specification")
     two.add_argument("--out", required=True)
     two.add_argument("--episodes", help="the private episode list, as CSV")
+    three = commands.add_parser("choices", help="Say what the export screen offers, from the role contract and the catalogue.")
+    three.add_argument("--out", help="the JSON file to write, rather than the screen")
+    four = commands.add_parser("write", help="Write a specification from the export screen's choices, as the fields of its form.")
+    four.add_argument("fields", help="a JSON object of the form's fields, {name: value or [values]}")
+    four.add_argument("--out", required=True)
     args = parser.parse_args(argv)
+    if args.command == "choices":
+        text = json.dumps(choices(), indent=2, ensure_ascii=False) + "\n"
+        if args.out:
+            Path(args.out).write_text(text, encoding="utf-8")
+        else:
+            sys.stdout.write(text)
+        return 0
+    if args.command == "write":
+        try:
+            fields = json.loads(Path(args.fields).read_text(encoding="utf-8"))
+            if not isinstance(fields, dict):
+                raise ValueError
+        except (OSError, ValueError):
+            print(WORDING["fields"].format(name=Path(args.fields).name), file=sys.stderr)
+            return 1
+        spec = from_form(fields)
+        Path(args.out).write_text(json.dumps(spec, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        reasons = validate(spec)
+        if reasons:
+            print(refusal(reasons), file=sys.stderr)
+            return 1
+        print(f"The specification keeps every rule of {FORMAT}.")
+        return 0
     try:
         spec, digest = load(args.specification)
         if args.command == "check":

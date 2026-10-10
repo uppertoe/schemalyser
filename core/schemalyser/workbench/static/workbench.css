@@ -70,3 +70,18 @@ td { overflow-wrap: anywhere; }
 .progress { background: var(--panel); border: 1px solid var(--line); padding: 0.6rem 1rem; border-radius: 0.3rem; }
 tr.failed td { background: var(--bad-bg); }
 tr.draft td { color: var(--muted); }
+.notice.good { background: var(--good-bg); color: var(--good); }
+.notice { background: var(--warn-bg); }
+.note { display: block; color: var(--muted); font-size: 0.85rem; margin-top: 0.2rem; }
+.who { font-family: system-ui, sans-serif; font-size: 0.9rem; color: var(--accent); }
+.choice { background: var(--panel); border: 1px solid var(--line); border-radius: 0.3rem; padding: 0.6rem 0.9rem; margin: 0.5rem 0; }
+.choice.unavailable { background: #f4f4f1; color: var(--muted); }
+.choice fieldset, #output fieldset { border: 1px solid var(--line); border-radius: 0.25rem; margin: 0.5rem 0; padding: 0.4rem 0.8rem; }
+.kinds { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: 0.2rem 1rem; }
+.kind.unavailable { font-family: system-ui, sans-serif; font-size: 0.85rem; color: var(--muted); }
+.window { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: end; }
+.window input[type=number] { width: 6rem; display: inline-block; }
+.parameter { margin: 0.6rem 0; }
+.parameter-table input, .parameter-table select { margin: 0; }
+.section-package, .section-results { border-top: 1px solid var(--line); margin-top: 1rem; padding-top: 0.4rem; }
+h4 { font-size: 0.95rem; margin: 0.8rem 0 0.3rem; font-family: system-ui, sans-serif; }

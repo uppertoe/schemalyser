@@ -659,3 +659,57 @@ def test_a_production_outcome_never_validates_and_reconciles_only_what_holds_no_
             assert now["form"] == "production outcome" and now["judgement"] == describe.NOT_RECORDED
             assert now["entry"] == found["entry"]["id"] and now["figure"][0]["rows_returned"] == 12
     assert changed
+
+
+# What became of each section of an export, as the export screen and export-status show it.
+
+def test_the_export_status_gives_each_section_s_claims_series_class_and_approval_and_shows_a_voided_one(saved, tmp_path, capsys):
+    folder = Path(rolemap.MODEL).parents[2] / "fixtures" / "export"
+    spec, episodes = folder / "neonatal-pressures.specification.json", folder / "invented-episodes.csv"
+    audit.build_export(saved, spec, episodes, tmp_path / "export", ("2024-01-01", "2024-12-31"), date=DATE)
+    found = audit.export_status(tmp_path / "export", saved, spec, episodes)
+    assert found["stale"] == [] and found["export"]["episodes"]["count"] == 6
+    sections = {s["name"]: s for s in found["sections"]}
+    readings = sections["mean_pressures"]
+    assert readings["describes"].startswith("the rows of Readings charted during an anaesthetic")
+    assert readings["roles_sql"].count("role_reading") >= 1 and "OBS_" not in readings["roles_sql"]
+    # The two claims are kept apart, as the package's feasibility report keeps them.
+    feasible = json.loads((tmp_path / "export" / "sections" / "mean_pressures" / "feasibility.json").read_text())
+    assert readings["feasibility"]["claims"] == feasible["claims"] and readings["feasibility"]["verdict_text"] == feasible["verdict_text"]
+    assert readings["execution_class"] == "C" and readings["class_says"] == policy.CLASSES["C"]
+    assert [s["step"] for s in readings["series"]] == ["count", "coverage", "rows"]
+    assert readings["series"][0]["sql"].rstrip(";").strip().endswith(")") or "COUNT" in readings["series"][0]["sql"].upper()
+    assert set(readings["requests"]) == {"plan", "production outcome"} and readings["approval"]["state"] == "not approved"
+    # An approval shows, and a change to what the package was built from voids it.
+    audit.approve(tmp_path / "export" / "sections" / "mean_pressures", "Ms D. Analyst", schema_path=saved, date=DATE)
+    assert {s["name"]: s for s in audit.export_status(tmp_path / "export", saved)["sections"]}["mean_pressures"]["approval"]["by"] == "Ms D. Analyst"
+    query = tmp_path / "export" / "sections" / "mean_pressures" / "query.sql"
+    query.write_text(query.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    after = {s["name"]: s for s in audit.export_status(tmp_path / "export", saved)["sections"]}["mean_pressures"]
+    assert after["status"]["voided"] and after["approval"]["state"] == "not approved" and after["approval"]["voided"]
+    # A specification changed since the export is stale.
+    changed = tmp_path / "changed.json"
+    changed.write_text(spec.read_text(encoding="utf-8").replace("Mean pressures", "Means"), encoding="utf-8")
+    assert audit.export_status(tmp_path / "export", saved, changed, episodes)["stale"] == ["specification"]
+    assert audit.main(["export-status", str(tmp_path / "export")]) == 0
+    assert json.loads(capsys.readouterr().out)["sections"][0]["name"] == "anaesthetics"
+    assert audit.export_status(tmp_path / "nothing") is None
+
+
+def test_the_results_package_shows_the_output_s_shape_and_the_resolution_of_pairs(package, tmp_path, capsys):
+    out = _approved(package, tmp_path)
+    output = tmp_path / "result.csv"
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    output.write_text(",".join(manifest["expected_output"]["columns"]) + "\n" + ",".join("1" for _ in manifest["expected_output"]["columns"]) + "\n", encoding="utf-8")
+    results.write(out, output, tmp_path / "results", date=DATE)
+    found = results.summary(tmp_path / "results")
+    assert found["shape"] == {"columns": manifest["expected_output"]["columns"], "rows": 1,
+                              "expected": manifest["expected_output"]["columns"], "same": True}
+    assert found["resolution"] is None and found["record"]["format"] == results.FORMAT
+    assert results.main(["show", str(tmp_path / "results")]) == 0 and json.loads(capsys.readouterr().out)["shape"]["rows"] == 1
+    # The pairs resolved to exactly one, with a count that the result leaves blank kept blank and no share inferred.
+    shape = {"columns": list(results.RESOLUTION), "data": [["40", "30", "6", "4"]]}
+    assert results.resolution(shape) == {"pairs": 40, "resolved_to_one": 30, "ambiguous": 6, "resolved_to_none": 4,
+                                         "share": 75.0, "blank": []}
+    blank = results.resolution({"columns": list(results.RESOLUTION), "data": [["40", "", "6", ""]]})
+    assert blank["share"] is None and blank["blank"] == ["resolved_to_one", "resolved_to_none"]

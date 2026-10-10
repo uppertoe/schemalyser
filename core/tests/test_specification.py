@@ -288,3 +288,72 @@ def test_a_capability_whose_entry_names_its_sql_is_filled_by_the_capability_modu
     bad = _spec(derived=[{"name": "burden", "capability": "hypotension_burden", "version": held["version"],
                           "parameters": dict(values, direction="sideways")}])
     assert "derived" in {r["rule"] for r in specification.validate(bad)}
+
+
+# What the export screen offers, and the specification that its choices make.
+
+FIELDS = {
+    "title": "Mean pressures of the planted neonates", "episodes.form": "anaesthetic_keys",
+    "section": ["role_anaesthetic", "role_reading"], "name.role_anaesthetic": "anaesthetics",
+    "name.role_reading": "mean_pressures", "kinds.role_reading": ["map_arterial", "map_cuff"],
+    "window.role_reading": "1", "window.role_reading.from": "start", "window.role_reading.from_minutes": "-15",
+    "window.role_reading.to": "stop", "window.role_reading.to_minutes": "15", "flag.role_reading.accepted": "1",
+    "derived": ["hypotension_burden"],
+    "param.hypotension_burden.kinds.0.0": "map_arterial", "param.hypotension_burden.kinds.0.1": "1",
+    "param.hypotension_burden.kinds.1.0": "map_cuff", "param.hypotension_burden.kinds.1.1": "2",
+    "param.hypotension_burden.kinds.2.0": "", "param.hypotension_burden.kinds.2.1": "",
+    "param.hypotension_burden.direction": "below",
+    "param.hypotension_burden.threshold_by_age_band.0.0": "0", "param.hypotension_burden.threshold_by_age_band.0.1": "28",
+    "param.hypotension_burden.threshold_by_age_band.0.2": "40",
+    "param.hypotension_burden.threshold_by_age_band.1.0": "28", "param.hypotension_burden.threshold_by_age_band.1.1": "",
+    "param.hypotension_burden.threshold_by_age_band.1.2": "45.5",
+    "param.hypotension_burden.window_from_minutes": "0", "param.hypotension_burden.window_until_minutes": "",
+    "param.hypotension_burden.reading_stands_minutes": "5",
+    "output.class": "rows", "output.keys": "pseudonymised", "leave": ["role_reading", "hypotension_burden", "role_drug"],
+}
+
+
+def test_the_screen_offers_the_sections_in_the_clinicians_words_with_their_kinds_windows_and_flags():
+    offer = specification.choices()
+    titles = [g["title"] for g in offer["groups"]]
+    assert titles[:3] == ["The anaesthetic", "Readings, by kind", "Drugs"] and titles[-1] == "Further parts of the record"
+    parts = {p["part"]: p for g in offer["groups"] for p in g["parts"]}
+    assert set(parts) == set(rolemap.all_views())
+    reading = parts["role_reading"]
+    assert reading["window"]["column"] == "reading_time" and [f["name"] for f in reading["flags"]] == ["accepted"]
+    assert {"kind": "map_arterial", "meaning": "A mean arterial pressure from an arterial line, in mmHg."} in reading["kinds"]
+    assert parts["role_anaesthetic"]["episode"] and parts["role_note"]["stays_unless_named"]
+    capabilities = {c["name"]: c for c in offer["capabilities"]}
+    table = next(p for p in capabilities["hypotension_burden"]["parameters"] if p["name"] == "threshold_by_age_band")
+    assert table["type"] == "table" and [c["name"] for c in table["columns"]] == ["from_days", "until_days", "threshold"]
+    assert table["columns"][0]["title"] == "From the age in days" and table["has_default"] is False
+    assert capabilities["hypotension_burden"]["has_sql"]
+    # The offer is the same at every hospital: it reads the contract and the catalogue, and no hospital schema.
+    assert "role_" not in json.dumps([g["title"] for g in offer["groups"]])
+
+
+def test_the_screen_s_choices_make_a_specification_that_keeps_every_rule(tmp_path, capsys):
+    spec = specification.from_form(FIELDS)
+    assert specification.validate(spec) == []
+    assert spec["sections"][1] == {"name": "mean_pressures", "part": "role_reading", "kinds": ["map_arterial", "map_cuff"],
+                                   "window": {"from": "start", "from_minutes": -15, "to": "stop", "to_minutes": 15},
+                                   "flags": {"accepted": 1}}
+    parameters = spec["derived"][0]["parameters"]
+    assert parameters["kinds"] == [["map_arterial", 1], ["map_cuff", 2]]
+    assert parameters["threshold_by_age_band"] == [[0, 28, 40], [28, None, 45.5]] and parameters["window_until_minutes"] is None
+    # Only a chosen section may leave, and the notes leave only when named.
+    assert spec["output"]["leaving"] == ["mean_pressures", "hypotension_burden"]
+    assert "role_note" not in specification.chosen(None)["leave"]
+    # The choices that a specification records set the screen's fields again.
+    again = specification.chosen(spec)
+    assert set(again["sections"]) == {"role_anaesthetic", "role_reading"} and set(again["leave"]) == {"role_reading", "hypotension_burden"}
+    # A value that is not of its type is kept as written, so that the rule it breaks is named.
+    broken = specification.from_form(dict(FIELDS, **{"param.hypotension_burden.reading_stands_minutes": "five",
+                                                      "episodes.form": "patient_dates", "episodes.window_hours": ""}))
+    assert {r["rule"] for r in specification.validate(broken)} == {"derived", "episodes"}
+    # The command line writes the same specification from the same fields.
+    (tmp_path / "fields.json").write_text(json.dumps(FIELDS), encoding="utf-8")
+    assert specification.main(["write", str(tmp_path / "fields.json"), "--out", str(tmp_path / "spec.json")]) == 0
+    assert json.loads((tmp_path / "spec.json").read_text(encoding="utf-8")) == spec
+    assert specification.main(["choices", "--out", str(tmp_path / "choices.json")]) == 0
+    assert json.loads((tmp_path / "choices.json").read_text(encoding="utf-8")) == specification.choices()

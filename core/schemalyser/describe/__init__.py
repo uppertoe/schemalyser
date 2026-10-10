@@ -123,11 +123,13 @@ def identifies_person(column, description=""):
     return bool(PERSON_NAME.search(column or "") or PERSON_WORDS.search(description or ""))
 
 WORDING = {
-    "concepts_unknown": "The contract holds no mapping view named {name}.",
+    "concepts_unknown": "Schemalyser keeps no list of codes named {name}. Choose one of the lists that the page offers.",
+    "concepts_headings": "The list of codes needs a row of headings that includes code, concept_id and status, and may also include description and provenance, as a CSV or tab-separated file. Check the headings, then give the list again.",
+    "concepts_empty": "The list of codes holds no rows below its headings, so Schemalyser has recorded nothing.",
     "concepts_rows": "Each row of a translation gives a local code, a standard concept as a whole number, whether the code is mapped, unmapped or ambiguous, and where the mapping came from. Only an unmapped code has the concept 0, and only an ambiguous code has more than one row.",
-    "pathway_part": "Only a part that records events, which the hospital schema already holds, can be reached by a further pathway.",
+    "pathway_part": "Only a part that records events, and that the hospital schema already holds, can be reached by a further pathway.",
     "pathway_name": "Please name the pathway in plain lower-case letters, digits and underscores, starting with a letter, and with a name that this part does not already use.",
-    "source_kind_unknown": "{kind} is not one of the kinds of source record that the contract knows.",
+    "source_kind_unknown": "{kind} is not one of the kinds of source record that Schemalyser knows. Choose one of the kinds of record that the page offers.",
     "source_kind_says": "A person named the kind of record of this pathway as {kind}.",
     "headings": "Schemalyser could not find a heading for the {fields} in the dictionary's first row. The clinician names the "
                 "heading under Name the headings yourself, then loads the file again.",
@@ -289,7 +291,8 @@ WORDING = {
     "cli_judged": "Schemalyser has recorded the clinician's judgement of {name} as {looks_right}, given by {actor}.",
     "cli_kept": "Schemalyser has kept the change to {about}, and the journal records its test on made-up rows.",
     "cli_discarded": "Schemalyser has not kept the change to {about}. The trial of a change records nothing, so the hospital schema is as it was before the trial.",
-    "cli_concepts_file": "Each row of the file of a translation has the headings code, description, concept_id, status and provenance, as a CSV or tab-separated file.",
+    "cli_pathway": "Schemalyser has added the pathway {name} to {part}, from {table}, whose kind of record is {kind}, as given by {actor}.",
+    "cli_source_kind": "Schemalyser has recorded the kind of record of {part} as {kind}, as given by {actor}.",
     "cli_correction_file": "Schemalyser could not read {name} as a change. It is a JSON file holding one correction, as the page's form gives it.",
     "cli_pair": "Each code is given as CODE=KIND, such as 52=map_arterial, and not as {item}.",
     "cli_heading": "Each heading is given as FIELD=HEADING, such as table=TABLE_NAME, and not as {item}.",
@@ -1871,11 +1874,43 @@ class Describe:
         return {"mapping": mapping, "codes": len({r["code"] for r in held}),
                 "statuses": {s: sum(1 for r in held if r["status"] == s) for s in ("mapped", "unmapped", "ambiguous")}}
 
+    def read_concepts(self, mapping, text, date=None, actor=None):
+        """Reads the hospital's list of one kind of local code with its standard concepts, as the text of a CSV or
+        tab-separated file with the headings code, description, concept_id, status and provenance, and records it as
+        translate_concepts does. The page pastes or chooses the file, and the command line reads it from a file."""
+        text = (text or "").replace("\r\n", "\n").lstrip("\ufeff")
+        first = text.split("\n", 1)[0]
+        reader = csv.DictReader(io.StringIO(text), delimiter="\t" if first.count("\t") > first.count(",") else ",")
+        if not {"code", "concept_id", "status"} <= {(f or "").strip().lower() for f in reader.fieldnames or []}:
+            raise DescribeError(WORDING["concepts_headings"])
+        rows = [{(k or "").strip().lower(): (v or "").strip() for k, v in row.items() if k is not None} for row in reader]
+        rows = [r for r in rows if any(r.values())]
+        if not rows:
+            raise DescribeError(WORDING["concepts_empty"])
+        return self.translate_concepts(mapping, rows, date=date, actor=actor)
+
+    def concepts(self):
+        """Each list of local codes that the hospital schema can translate, as the page shows it: [{"mapping", "title",
+        "codes", "statuses", "date", "by"}], with the counts of its codes by status once a translation is recorded and
+        None before. The codes themselves are not given."""
+        found = []
+        held = ((self.data or {}).get("concepts") or {}).get("views") or {}
+        for name, view in rolemap.mapping_views(self.model).items():
+            rows = (held.get(name) or {}).get("rows")
+            entry = self.log.latest("concepts translated", mapping=name)
+            found.append({"mapping": name, "title": view.get("title") or name, "description": rolemap.plain(view.get("description") or ""),
+                          "codes": len({r["code"] for r in rows}) if rows is not None else None,
+                          "statuses": {s: len({r["code"] for r in rows if r["status"] == s}) for s in ("mapped", "unmapped", "ambiguous")}
+                          if rows is not None else None,
+                          "date": (held.get(name) or {}).get("date"), "by": entry["actor"] if entry else None,
+                          "dimensions": self.dimensions_of("translations", name) if rows is not None else None})
+        return found
+
     def concept_rows(self, mapping):
         """The public rows of one mapping view as the hospital schema now gives them, each code replaced by its key."""
         return rolemap.mapping_rows(self.data, mapping)
 
-    def add_pathway(self, view_name, table, source_kind, name, date=None, actor=None):
+    def add_pathway(self, view_name, table, source_kind, name=None, date=None, actor=None):
         """Adds a further pathway to a part that records events: the rows of another table, with every column proposed
         again from it and the source kind that a person names. Each pathway's bindings carry evidence of their own,
         named as role_x@name rows and role_x@name.column."""
@@ -1884,7 +1919,12 @@ class Describe:
         if source_kind not in rolemap.source_kinds(self.model):
             raise DescribeError(WORDING["source_kind_unknown"].format(kind=source_kind))
         role = self.data["roles"][view_name]
-        if not rolemap.PATHWAY_NAME.fullmatch(name or "") or name in [p["name"] for p in role.get("pathways") or []]:
+        taken = [p["name"] for p in role.get("pathways") or []]
+        if not name:
+            # A pathway that the person does not name is named by its source kind, and by a number after it where this
+            # part already has a pathway of that name.
+            name = next(n for n in (source_kind if i == 1 else f"{source_kind}_{i}" for i in range(1, 100)) if n not in taken)
+        if not rolemap.PATHWAY_NAME.fullmatch(name or "") or name in taken:
             raise DescribeError(WORDING["pathway_name"])
         if self.dictionary is None or not NAME.match(table or "") or self.dictionary.table(table) is None:
             raise DescribeError(WORDING["no_table"].format(name=table))
@@ -2486,7 +2526,10 @@ ORDER  BY g.kind;"""
         stale, where it is."""
         held = self.dimensions[kind].get(subject) or evidence.empty()
         current = self._current(kind, subject)
-        return {dimension: None if not record else {**record, "stale": evidence.stale(record, current)}
+        # stale gives the reasons as clauses, and stale_on what changed: the binding, the link, the codes or the
+        # contract's definition of the part, which the page words for the reader.
+        return {dimension: None if not record else {**record, "stale": evidence.stale(record, current),
+                                                    "stale_on": sorted(k for k, v in record.get("rests_on", {}).items() if current.get(k) != v)}
                 for dimension, record in held.items()}
 
     def stale_evidence(self):
@@ -2750,7 +2793,11 @@ ORDER  BY g.kind;"""
                  **({"invented": True} if self.invented else {}), "provenance": METADATA}, date)
         files["journal.json"] = self._json({"format": evidence.JOURNAL_FORMAT, "entries": entries}, date)
         files["dimensions.json"] = self._json({"format": evidence.JOURNAL_FORMAT, **self.dimensions}, date)
-        settings = dict(self.settings)
+        # The settings in one order, whatever order they were given in, so that the same settings give the same file.
+        order = ("format", "made", "updated", "database", "year", "time_zone", "daylight_saving", "time_zone_from",
+                 "time_zone_by", "hospital")
+        settings = {**{k: self.settings[k] for k in order if k in self.settings},
+                    **{k: v for k, v in self.settings.items() if k not in order}}
         unfinished = self.unfinished()
         # Every column answered is not the same as complete: how far the schema has been checked is its readiness,
         # which is derived from the dimensions and never stored.
@@ -2781,7 +2828,7 @@ ORDER  BY g.kind;"""
         files["settings.json"] = self._json(settings, date)
         files["README.md"] = readme(sorted(files), self.version, date, kept, training, unfinished,
                                     self.untranslated() if self.data is not None else [], self.invented,
-                                    readiness, schema_id).encode("utf-8")
+                                    readiness, schema_id, self.settings.get("hospital")).encode("utf-8")
         return files
 
     def folder_zip(self, date=None):
@@ -2796,6 +2843,8 @@ ORDER  BY g.kind;"""
         files = self.folder_files(date)
         settings = json.loads(files["settings.json"])
         self.identity = {"schema_id": settings["schema_id"], "parent_id": settings["parent_id"], "lineage": settings["lineage"]}
+        # The version just saved was made against the contract as it stands, which the page shows on the save step.
+        self.contract_saved = settings.get("contract")
         self._saved = {"mark": self._state_mark(), "draft": bool(self.unfinished())}
         return files
 
@@ -2829,7 +2878,8 @@ ORDER  BY g.kind;"""
         self.dimensions = {"bindings": {}, "links": {}, "translations": {}, "parts": {}, "packages": {}}
         self._checked, self._after, self._baseline, self._tested, self._saved = {}, {}, None, None, None
         held = _json_of(files.get("settings.json"))
-        for key in ("made", "updated", "database", "year", "time_zone", "time_zone_from", "daylight_saving", "hospital"):
+        for key in ("made", "updated", "database", "year", "time_zone", "time_zone_from", "time_zone_by", "daylight_saving",
+                    "hospital"):
             if key in held:
                 self.settings[key] = held[key]
         self.identity = {"schema_id": held.get("schema_id"), "parent_id": held.get("parent_id"),
@@ -3022,13 +3072,25 @@ ORDER  BY g.kind;"""
         after_columns, after = read_grid(text, before_columns)
         return {"differences": _grid_differences(before_columns, before, after), "previous": True}
 
-    def set_settings(self, database=None, year=None, time_zone=None, daylight_saving=None, time_zone_from=None):
+    def set_settings(self, database=None, year=None, time_zone=None, daylight_saving=None, time_zone_from=None,
+                     hospital=None, actor=None):
+        """Records the database, the year of the lists, the hospital's name, or the time zone of the database's clocks.
+        A zone that a person gave or confirmed records the name of that person, given as actor, or "not recorded"."""
+        if hospital is not None:
+            # The name of the hospital that the saved schema describes, which every entry of the journal then carries in
+            # its scope. An empty name takes back one given earlier, and the journal then says "not recorded".
+            named = " ".join(str(hospital).split())[:120]
+            if named and named.lower() != NOT_RECORDED:
+                self.settings["hospital"] = named
+            else:
+                self.settings.pop("hospital", None)
         if database in ("production", "training", "unsure"):
             self.settings["database"] = database
         if year is not None and re.fullmatch(r"(19|20)\d\d", str(year)):
             self.settings["year"] = int(year)
         # The time zone that the database's clocks follow, as a name such as Australia/Sydney or UTC, which a person
         # gives once; the views give each time as the database holds it, so the saved schema says what that means.
+        held = tuple(self.settings.get(k) for k in ("time_zone", "time_zone_from", "daylight_saving"))
         if time_zone is not None and re.fullmatch(r"[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}", str(time_zone).strip()) \
                 and len(str(time_zone).strip()) <= 64:
             self.settings["time_zone"] = str(time_zone).strip()
@@ -3037,6 +3099,13 @@ ORDER  BY g.kind;"""
             self.settings["time_zone_from"] = time_zone_from if time_zone_from in TIME_ZONE_FROM else TIME_ZONE_FROM[0]
         if daylight_saving is not None:
             self.settings["daylight_saving"] = bool(daylight_saving)
+        # Who gave or confirmed the zone, recorded when the zone, its daylight saving or where it came from changes; a
+        # zone proposed from this computer was given by no one.
+        if tuple(self.settings.get(k) for k in ("time_zone", "time_zone_from", "daylight_saving")) != held:
+            if self.settings.get("time_zone_from") == TIME_ZONE_FROM[0]:
+                self.settings["time_zone_by"] = " ".join(str(actor or "").split())[:100] or NOT_RECORDED
+            else:
+                self.settings.pop("time_zone_by", None)
 
     # The evidence import: a result that the database analyst returns for one of the feasibility report's requests.
 
@@ -3323,8 +3392,22 @@ ORDER  BY g.kind;"""
                     shown["coding"] = self.coding(view["name"], column, item)
                     shown["title"] = rolemap.column_title(view["name"], column["name"])
                     shown["forms"] = correction_forms("column", shown["bound"], shown["link"], column["type"])
+                    if column.get("per_pathway"):
+                        # The kind of record of the first pathway, which a person names from the source kinds rather
+                        # than binds to a column, so it offers no correction form.
+                        shown["source_kind"] = {"about": view["name"], "kind": role.get("source_kind")}
+                        shown["forms"] = []
                     entry["items"].append(shown)
                 entry["items"][0]["forms"] = correction_forms("rows", entry["items"][0]["bound"], None, None)
+                # A part that records events may be reached by several pathways, each with its kind of record, its
+                # own evidence and its own coverage, which the page shows beside the part's table.
+                if view["name"] in rolemap.event_parts(self.model):
+                    # The correction form of the part's table also offers a further pathway, once it has a table.
+                    if entry["items"][0]["bound"]:
+                        entry["items"][0]["forms"] = [*entry["items"][0]["forms"], "pathway"]
+                    entry["pathways"] = self.pathways_of(view["name"])
+                    entry["coverage"] = [{k: r.get(k) for k in ("date", "by", "figure", "period", "note")} | {"stale": evidence.stale(r, self._current("parts", view["name"]))}
+                                         for r in ((self.dimensions.get("parts") or {}).get(view["name"]) or {}).get(COVERAGE_ASSESSED) or []]
                 # The part's own count, which takes neither a column still to translate nor one unanswered as answered.
                 entry["answered"] = sum(1 for i in entry["items"] if i["answer"] and i["answered_as"] != "untranslated")
             roles.append(entry)
@@ -3350,11 +3433,19 @@ ORDER  BY g.kind;"""
                               "finding_codes": self.finding_codes(k), "cells": _cells(v.get("columns"), v.get("rows"), k)}
                            for k, v in self.counts.items()},
                 "steps": steps["steps"], "current_step": steps["current"],
-                "settings": {k: self.settings.get(k) for k in ("made", "updated", "database", "year", "time_zone",
-                                                               "time_zone_from", "daylight_saving")},
+                "settings": {**{k: self.settings.get(k) for k in ("made", "updated", "database", "year", "time_zone",
+                                                                  "time_zone_from", "time_zone_by", "daylight_saving", "hospital")},
+                             # The hospital as the journal records it: the name given, "the invented hospital", or "not recorded".
+                             "hospital_recorded": self._hospital()},
+                "source_kinds": [{"kind": k["kind"], "meaning": k["meaning"]} for k in self.model["vocabularies"]["source_kind"]],
+                "concepts": self.concepts(),
                 "readiness": self.readiness(),
                 "schema": {"schema_id": self.identity["schema_id"], "parent_id": self.identity["parent_id"],
-                           "file": self.file_name(), "contract": {**self.contract_record(), "changed": self.contract_changes()}},
+                           "file": self.file_name(), "contract": {**self.contract_record(), "changed": self.contract_changes(),
+                                                                  # The version of the contract that this version of
+                                                                  # the saved file was made against, once it has one.
+                                                                  "made_against": (self.contract_saved or {}).get("version")
+                                                                  if self.identity["schema_id"] else None}},
                 "stale": self.stale_evidence(),
                 "scoreboard": rolemap.scoreboard(self.data)["lines"] if self.data is not None else [],
                 "provenance": {name: self.provenance(name) for name in self.journal},
@@ -3365,6 +3456,30 @@ ORDER  BY g.kind;"""
                 "untranslated": self.untranslated() if self.data is not None else [],
                 "unfinished": self.unfinished(),
                 "counts_offered": [n[6:] for n in self.journal if n.startswith("count-")]}
+
+    def pathways_of(self, view_name):
+        """The pathways to a part that records events, as the page shows them: the first, then each further one, with
+        its kind of record as recorded, the table of its rows, its columns' bindings, and the evidence of its rows in
+        their five dimensions, whose reconciled record carries the coverage that a count or test query measured."""
+        role = ((self.data or {}).get("roles") or {}).get(view_name)
+        if role is None:
+            return []
+        meanings = {k["kind"]: k["meaning"] for k in self.model["vocabularies"]["source_kind"]}
+        found = []
+        for name, pathway in rolemap.pathways(view_name, role):
+            part = view_name if name is None else f"{view_name}@{name}"
+            rows = pathway["rows"]
+            kind_item = pathway["columns"].get("source_kind") or {}
+            kind = pathway.get("source_kind")
+            found.append({"name": name, "about": part, "rows": f"{part} rows",
+                          "table": (rows.get("binding") or {}).get("table") or rows.get("from"),
+                          "source_kind": kind, "source_kind_meaning": meanings.get(kind, ""),
+                          "source_kind_status": kind_item.get("status"),
+                          "source_kind_confirmation": kind_item.get("confirmation"),
+                          "columns": [{"column": c, "title": rolemap.column_title(view_name, c), "from": e.get("from")}
+                                      for c, e in pathway["columns"].items() if e.get("binding")],
+                          "dimensions": self.dimensions_of("bindings", f"{part} rows") if rows.get("binding") else None})
+        return found
 
     def _item(self, about, attribute, item, meaning, table, column, role_type=None):
         binding = item.get("binding")
@@ -3611,6 +3726,8 @@ README = {
     "invented": "This file was made with the invented dictionary, for practice, and describes no hospital.",
     "title": "# The saved hospital schema",
     "stamp": "Schemalyser {version} saved this file on {date}.",
+    "hospital": "It describes {hospital}.",
+    "hospital_none": "The name of the hospital that it describes is not recorded.",
     "identity": "This version of the hospital schema is {schema_id}. settings.json names the version it was made from, and a later save makes a new version rather than changing this one.",
     "intro": "This file holds the hospital schema: where the hospital's database keeps each part of the anaesthetic "
              "record. The clinician, who led the audit, and the database analyst, who ran the queries, made it together with "
@@ -3734,13 +3851,15 @@ README_FILES = [
 
 
 def readme(paths, version, date, kept, training=(), unfinished="", untranslated=(), invented=False, readiness=None,
-           schema_id=None):
+           schema_id=None, hospital=None):
     """README.md of the hospital folder, which says what each file is, how it was made and how to remake it. training
     lists the queries whose results came from a training database, which are to be run again on production."""
     lines = [README["invented"], ""] if invented else []
     lines += [README["title"], "", README["stamp"].format(version=version or "unknown", date=_day(date)), ""]
     if schema_id:
         lines += [README["identity"].format(schema_id=schema_id), ""]
+    if not invented:
+        lines += [README["hospital"].format(hospital=hospital) if hospital else README["hospital_none"], ""]
     lines += [README["intro"], "", README["storage"], ""]
     if unfinished:
         lines += [README["draft"], "", README["draft_text"].format(parts=unfinished), ""]

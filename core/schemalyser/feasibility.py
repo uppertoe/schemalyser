@@ -28,6 +28,11 @@ that the hospital's database lacks it, and a route that has been checked is not 
 
     python -m schemalyser.feasibility report SCHEMA.zip QUERY.sql [--period FROM TO] [--out report.md|report.json]
     python -m schemalyser.feasibility programme SCHEMA.zip FOLDER/ [--period FROM TO] [--out programme.md|programme.json]
+    python -m schemalyser.feasibility sections SCHEMA.zip [--period FROM TO] [--out sections.md|sections.json]
+
+sections says, for each section of the anaesthetic record that the export screen offers and each measure of the
+catalogue, what this hospital supports and to what state of evidence, with the smallest investigation for each that
+falls short.
 
 Without --period, the question's period is the year that the hospital schema records, as the audit's package takes it.
 
@@ -210,7 +215,19 @@ WORDING = {
     "programme_none": "Nothing holds back any question.",
     "programme_questions": "Each question",
     "programme_questions_head": "| Question | Verdict |",
+    # What this hospital supports of each section of an export.
+    "sections_heading": "What the hospital schema supports of each section",
+    "sections_read": "Schemalyser read each section of the anaesthetic record, and each measure of the catalogue, against the hospital schema last updated on {date}, for the period from {start} to {end}.",
+    "sections_head": "| Section | State of the evidence | The smallest piece of work |",
+    "sections_unlinked": "Not joined to an episode",
+    "sections_unlinked_work": "The role model joins this part to neither an anaesthetic nor a patient, so it cannot be a section of an export.",
+    "sections_capabilities": "The measures of the catalogue",
+    "sections_capabilities_head": "| Measure | Supported | The smallest piece of work |",
+    "sections_supported": "Supported, to the states that its requirements have reached",
 }
+# A measure of the catalogue that needs a part or a column that the hospital schema does not yet map. It is never said to
+# be unavailable, because a missing mapping is not evidence that the hospital's database lacks the record.
+NOT_SUPPORTED = "not currently supported"
 
 
 class FeasibilityError(ValueError):
@@ -1464,6 +1481,106 @@ def programme_markdown(found):
     return "\n".join(lines)
 
 
+# What this hospital supports of each section of an export.
+
+def _lowest(rows):
+    return min((r["state"] for r in rows), key=RANK.get) if rows else None
+
+
+def _one_section(part, kinds=None):
+    """The specification of one section of a part, every column of it for every episode, as the export compiles it."""
+    from . import specification as specs  # rolepolicy, which specification imports, imports this module
+    section = {"name": specs.section_name(part), "part": part}
+    if kinds:
+        section["kinds"] = list(kinds)
+    return {"format": specs.FORMAT, "contract_version": rolemap.contract().get("version"),
+            "episodes": {"form": specs.FORMS[0]}, "sections": [section],
+            "output": {"class": "rows", "keys": "as recorded", "leaving": []}}
+
+
+def _section_support(schema, offer, period):
+    from . import specification as specs
+    found = {"part": offer["part"], "title": offer["title"], "readiness": schema.part(offer["part"]), "kinds": []}
+    if not offer["linked"]:
+        return dict(found, state=None, part_state=None, mapped=False, choosable=False, reason="not_linked",
+                    verdict=None, verdict_text=None, claims=None, coverage=None, requests=[], smallest=None)
+    compiled = specs.compile(_one_section(offer["part"]))
+    one = assess(schema, compiled["sections"][0]["sql"], f"{offer['name']}.sql", period)
+    own = next((r for r in one["states"] if r["id"] == offer["part"]), None)
+    part_state = own["state"] if own else None
+    mapped = part_state not in (None, NOT_DESCRIBED, NOT_MAPPED)
+    reason = "model_gap" if one["verdict"] == "model" else None if mapped else "not_mapped"
+    if offer["kinds"]:
+        every = specs.compile(_one_section(offer["part"], [k["kind"] for k in offer["kinds"]]))
+        rows = {r["kind"]: r for r in assess(schema, every["sections"][0]["sql"], f"{offer['name']}.sql", period)["states"]
+                if r["form"] == "kind"}
+        for kind in offer["kinds"]:
+            state = rows[kind["kind"]]["state"] if kind["kind"] in rows else NOT_DESCRIBED
+            found["kinds"].append({"kind": kind["kind"], "meaning": kind["meaning"], "state": state,
+                                   "choosable": mapped and state not in (NOT_DESCRIBED, NOT_MAPPED)})
+    return dict(found, state=_lowest(one["states"]), part_state=part_state, mapped=mapped,
+                choosable=reason is None, reason=reason, verdict=one["verdict"], verdict_text=one["verdict_text"],
+                claims=one["claims"], coverage=one["coverage"]["says"], requests=one["requests"],
+                smallest=one["requests"][0] if one["requests"] else None)
+
+
+def _capability_support(schema, offer, period):
+    """Whether this hospital supports a measure of the catalogue: the states of what the measure requires, and, where
+    a part or a column it requires is not currently mapped or not described by the role model, the evidence request
+    that would change that. A measure whose SQL has not been written cannot be chosen at any hospital."""
+    question = f"-- capability: {offer['name']}\nSELECT a.anaesthetic_key FROM role_anaesthetic AS a"
+    one = assess(schema, question, f"{offer['name']}.sql", period)
+    held = next((c for c in one["capabilities"] if c["name"] == offer["name"]), None) or {"requirements": [], "state": None}
+    wanted = set(held["requirements"])
+    rows = [r for r in one["states"] if r["id"] in wanted]
+    lacking = [r for r in rows if r["state"] in (NOT_DESCRIBED, NOT_MAPPED)]
+    requests = [r for r in one["requests"] if wanted & set(r["moves"])]
+    lacking_ids = {r["id"] for r in lacking}
+    needed = [r for r in requests if lacking_ids & set(r["moves"])]
+    supported = not lacking
+    return {"name": offer["name"], "state": held["state"], "supported": supported,
+            "choosable": supported and offer["has_sql"], "has_sql": offer["has_sql"],
+            "reason": None if supported and offer["has_sql"] else "not_supported" if not supported else "declared",
+            "lacking": [{"id": r["id"], "title": r["title"], "state": r["state"]} for r in lacking],
+            "states": [{"id": r["id"], "title": r["title"], "state": r["state"]} for r in rows],
+            "requests": requests, "smallest": (needed or requests or [None])[0]}
+
+
+def sections(schema, period=None):
+    """What this hospital supports of each section that the export screen offers, and of each measure of the
+    catalogue, from the saved hospital schema alone. Each section is assessed as the export compiles it, with every
+    column of its part for every episode, so its state is the lowest state of what that statement needs, its part's
+    own state is reported beside it, and its requests are the feasibility report's, the smallest first. A section
+    whose part is not currently mapped, or that the role model cannot yet join to an episode, cannot be chosen, and
+    neither can a kind whose codes the hospital schema does not hold. The two claims of each are kept apart, as the
+    report keeps them. Returns {"period", "updated", "groups": [{"group", "title", "parts"}], "capabilities"}."""
+    from . import specification as specs
+    first, last = _period(schema, period)
+    offer = specs.choices()
+    groups = [{"group": g["group"], "title": g["title"],
+               "parts": [_section_support(schema, item, (first, last)) for item in g["parts"]]} for g in offer["groups"]]
+    return {"period": {"from": first.isoformat(), "to": last.isoformat()}, "updated": schema.settings.get("updated"),
+            "groups": groups, "capabilities": [_capability_support(schema, c, (first, last)) for c in offer["capabilities"]]}
+
+
+def sections_markdown(found):
+    lines = [f"# {WORDING['sections_heading']}", "", WORDING["sections_read"].format(
+        date=describe._day(found["updated"] or ""), start=found["period"]["from"], end=found["period"]["to"]), "",
+        WORDING["sections_head"], "| --- | --- | --- |"]
+    for group in found["groups"]:
+        for part in group["parts"]:
+            state = _capital(part["state"]) if part["state"] else WORDING["sections_unlinked"]
+            work = WORDING["sections_unlinked_work"] if part["reason"] == "not_linked" else \
+                (part["smallest"] or {}).get("says") or WORDING["no_requests"]
+            lines.append(f"| {_cell(group['title'] + ': ' + part['title'])} | {_cell(state)} | {_cell(work)} |")
+    lines += ["", f"## {WORDING['sections_capabilities']}", "", WORDING["sections_capabilities_head"], "| --- | --- | --- |"]
+    for capability in found["capabilities"]:
+        held = WORDING["sections_supported"] if capability["supported"] else NOT_SUPPORTED
+        work = (capability["smallest"] or {}).get("says") or WORDING["no_requests"]
+        lines.append(f"| {capability['name']} | {_cell(held)} | {_cell(work)} |")
+    return "\n".join(lines + ["", WORDING["principle"], ""])
+
+
 def _write(text_md, data, out):
     if out is None:
         sys.stdout.write(text_md)
@@ -1486,6 +1603,10 @@ def main(argv=None):
     many.add_argument("folder")
     many.add_argument("--period", nargs=2, metavar=("FROM", "TO"))
     many.add_argument("--out")
+    every = commands.add_parser("sections", help="What the hospital schema supports of each section of an export.")
+    every.add_argument("schema")
+    every.add_argument("--period", nargs=2, metavar=("FROM", "TO"))
+    every.add_argument("--out")
     args = parser.parse_args(argv)
     try:
         if args.period:
@@ -1494,7 +1615,10 @@ def main(argv=None):
             except ValueError:
                 raise FeasibilityError("The period is a first and a last date, each written as 2024-01-31.") from None
         schema = Schema.load(args.schema)
-        if args.command == "report":
+        if args.command == "sections":
+            found = sections(schema, args.period)
+            _write(sections_markdown(found), found, args.out)
+        elif args.command == "report":
             path = Path(args.query)
             found = assess(schema, path.read_text(encoding="utf-8"), path.name, args.period)
             _write(markdown(found), found, args.out)

@@ -1,13 +1,18 @@
 <form class="grid" method="post" action="/runs">
   <label>The world:
-    <select name="world">{% for value, label in worlds %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></label>
+    <select name="world">{% for value, label in worlds %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
+    <span class="note">The world is the made-up hospital whose rows the test is run on. The invented hospital comes with Schemalyser, and any other is a world that the project keeps among its worlds. The test builds its tables from the world and runs the conversion over them.</span></label>
   <label>Rows for each source table:
-    <input type="number" name="rows" value="200" min="10" max="100000"></label>
+    <input type="number" name="rows" value="200" min="10" max="100000">
+    <span class="note">This many made-up rows are written to each table of the world. More rows take longer and find more.</span></label>
   <label>The profile:
-    <select name="profile"><option value="fast">Fast, on DuckDB alone</option><option value="full">Full, with the Data Quality Dashboard</option></select></label>
+    <select name="profile"><option value="fast">Fast, on DuckDB alone</option><option value="full">Full, with the Data Quality Dashboard</option></select>
+    <span class="note">The fast profile runs the checks in seconds. The full profile also runs the Data Quality Dashboard, the public set of checks of an OMOP database, which takes some minutes.</span></label>
   <label>The engine:
-    <select name="engine"><option value="duckdb">DuckDB</option><option value="sqlserver">DuckDB and SQL Server</option></select></label>
+    <select name="engine"><option value="duckdb">DuckDB</option><option value="sqlserver">DuckDB and SQL Server</option></select>
+    <span class="note">DuckDB runs on this computer. With SQL Server as well, the test also runs the steps on a SQL Server that the project's harness starts, and compares the two.</span></label>
   <label>The vocabulary:
-    <select name="vocabulary"><option value="">As the profile chooses</option><option value="sample">The sample of five public concepts</option><option value="athena">The pinned Athena release</option></select></label>
+    <select name="vocabulary"><option value="">As the profile chooses</option><option value="sample">The sample of five public concepts</option><option value="athena">The pinned Athena release</option></select>
+    <span class="note">The vocabulary is the set of standard concepts that the conversion maps codes to. The sample holds five public concepts and needs nothing more. The Athena release is the full public vocabulary, downloaded once from Athena; the workbench reads it and copies it into the project.</span></label>
   <button type="submit">Start the run</button>
 </form>

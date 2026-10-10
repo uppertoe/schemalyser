@@ -47,12 +47,24 @@
     <summary>Add a question</summary>
     <form method="post" action="/questions">
       <label>The question, in one sentence, which becomes the leading comment of its file:
-        <input type="text" name="title" required placeholder="Among neonates who had an anaesthetic, how many minutes did each spend with a mean pressure below 40?"></label>
+        <input type="text" name="title" required placeholder="Among neonates who had an anaesthetic, how many minutes did each spend with a mean pressure below 40?">
+        <span class="note">The clinician writes the question in words. The workbench keeps it at the head of the question's file, and every report on the question opens with it.</span></label>
       <label>Its SQL, written over the parts of the record:
-        <textarea name="sql" rows="10" required spellcheck="false"></textarea></label>
+        <textarea name="sql" rows="10" required spellcheck="false"></textarea>
+        <span class="note">The SQL is one SELECT over the parts of the record that the public description of the anaesthetic record names, such as role_reading, and never over the hospital's own tables. It comes from the clinician, or from the public side, where a coding agent writes it against made-up rows. The workbench keeps it in the project and reads it against a saved hospital schema to say what it needs.</span></label>
       <button type="submit">Add the question</button>
     </form>
   </details>
+</section>
+
+<section>
+  <h2>The exports of the anaesthesia record</h2>
+  {% if exports %}
+  <ul>{% for x in exports %}<li><a href="/exports/{{ x.name }}">{{ x.name }}</a>: {{ x.schema }}</li>{% endfor %}</ul>
+  {% else %}
+  <p>No export has been started in this project yet.</p>
+  {% endif %}
+  <p><a href="/exports">Start an export</a></p>
 </section>
 
 <section>
