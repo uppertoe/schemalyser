@@ -629,9 +629,11 @@ def create_app(project_folder, hosts=None, describe_folder=None):
                 folder, record = project.release(chosen_release)
                 script = folder / "release.sql"
                 text = script.read_text(encoding="utf-8") if script.is_file() and record.get("exit_code") == 0 else None
+                held = folder / "manifest.json"
                 written = {"name": chosen_release, "record": record, "script": text,
                            "path": f"{project_relative(folder, project)}/release.sql",
-                           "header": text.split("\n--\n", 1)[0] if text else None}
+                           "header": text.split("\n--\n", 1)[0] if text else None,
+                           "manifest": json.loads(held.read_text(encoding="utf-8")) if text and held.is_file() else None}
             except ProjectError:
                 written = None
         return page(request, "omop.html", w=OMOP_WORDING, world=world, world_label=labels.get(world, world), schema=schema,

@@ -248,6 +248,7 @@
   <p>{{ w.printed_heading }}</p>
   <pre class="log">{{ rec.printed | join("\n") }}</pre>
   <p>{{ w.manifest }}</p>
+  {% if written.manifest %}<p>{{ w.release_manifest.format(grade=written.manifest.execution_class, approval=written.manifest.approval.state) }}</p>{% endif %}
   <div x-data class="code">
     <button type="button" class="copy" @click="navigator.clipboard.writeText($refs.sql.innerText)">{{ w.script_copy }}</button>
     <details><summary>{{ w.script_show.format(lines=written.script.splitlines() | length) }}</summary>

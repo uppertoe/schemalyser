@@ -692,7 +692,7 @@ def test_a_production_outcome_never_validates_and_reconciles_only_what_holds_no_
     parts = ["role_patient", "role_anaesthetic", "role_reading"]
     request = dict(request, covers=s.covered(parts))
     before = {(kind, subject): (s.dimensions[kind].get(subject) or {}).get("reconciled")
-              for kind, subject, _ in s._subjects() if request["covers"].get(subject) == s._current(kind, subject)}
+              for kind, subject, _ in s._subjects() if request["covers"][kind].get(subject) == s._current(kind, subject)}
     found = s.import_evidence(request, "rows_returned\tseconds\toutcome\n12\t3.5\tcompleted\n", "Dr D")
     assert all(record.get("validated") is None for kind in ("bindings", "links", "translations")
                for record in s.dimensions[kind].values())

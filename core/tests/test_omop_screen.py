@@ -234,6 +234,10 @@ def test_the_release_is_written_through_the_saved_hospital_schema_into_the_proje
     folder = client.app.state.project.root / "omop" / "releases" / name
     script = (folder / "release.sql").read_text(encoding="utf-8")
     assert (folder / "source_manifest.csv").is_file() and (folder / "step_classes.json").is_file()
+    # The execution package's manifest sits beside the script, and the screen shows its class and its approval.
+    held = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    assert held["script"] == "release.sql" and held["approval"]["state"] == "not approved"
+    assert W["release_manifest"].format(grade=held["execution_class"], approval="not approved") in text
     assert W["release_written"].format(date=_day_today(), world="the invented hospital", schema=SCHEMA,
                                        path=f"omop/releases/{name}/release.sql") in text
     # The header states the routes and the classes, and the steps over the parts were compiled through the saved schema.

@@ -276,7 +276,7 @@ WORDING = {
     "cli_owed": "The hospital schema has changed since its last test on made-up rows, and the new version says that the test is owed. Schemalyser runs the test when the command save, or the evidence import, saves the next version.",
     "cli_unreadable": "Schemalyser could not read a hospital schema in {name}. Name the file that Schemalyser saved, or the folder that holds it.",
     "cli_refused": "Schemalyser has not opened the hospital schema in {name}, because the file breaks a rule of the hospital schema. {rule}",
-    "cli_needs_dictionary": "The hospital schema in {name} holds no copy of the dictionary, and the command line opens only a hospital schema that holds one.",
+    "cli_needs_dictionary": "The hospital schema in {name} holds no copy of the dictionary. Give the dictionary with --dictionary, and its second file with --dictionary-tables where there is one, as the page loads the dictionary at step 2 before it opens the file at step 3.",
     "cli_no_schema": "The folder {folder} holds no hospital schema that Schemalyser saved.",
     "cli_several": "The folder {folder} holds {count} versions of the hospital schema from which no other version there was made, so Schemalyser cannot tell which is the latest. Name the file of the version you mean.",
     "cli_started_already": "The folder {folder} already holds a hospital schema. If you mean to start another, name an empty folder.",
@@ -489,6 +489,18 @@ def _candidate_tables(item):
         for step in re.findall(r"([A-Za-z0-9_]+)\.[A-Za-z0-9_]+ = ([A-Za-z0-9_]+)\.", candidate["from"]):
             found += list(step)
     return found
+
+
+COVER_KINDS = ("bindings", "translations", "links", "parts")
+
+
+def _covered(held, kind, subject):
+    """The hashes that a request recorded for a subject under a kind, from covers as Describe.covered gives it, or from
+    the earlier form that keyed the subject alone and so held one entry for a column that is both a binding and a
+    translation."""
+    if held and set(held) <= set(COVER_KINDS):
+        return (held.get(kind) or {}).get(subject)
+    return held.get(subject)
 
 
 class Describe:
@@ -3176,10 +3188,14 @@ ORDER  BY g.kind;"""
 
     def covered(self, parts):
         """What a clinical reconciliation of the given parts would validate, or a production outcome of them would
-        reconcile, as {subject: hashes}, which a request carries so that the import moves nothing that has changed
-        since."""
-        return {subject: self._current(kind, subject) for kind, subject, view in self._subjects()
-                if (view in parts if kind != "links" else view[0] in parts and view[1] in parts)}
+        reconcile, as {kind: {subject: hashes}}, which a request carries so that the import moves nothing that has
+        changed since. The kinds are kept apart, because a column that is both a binding and a translation is one
+        subject under two kinds, each with evidence of its own."""
+        found = {}
+        for kind, subject, view in self._subjects():
+            if view in parts if kind != "links" else view[0] in parts and view[1] in parts:
+                found.setdefault(kind, {})[subject] = self._current(kind, subject)
+        return found
 
     def _checked_result(self, name, text, shape):
         """The rows of a result, refused with a reason where it lacks a column the request expects or holds a value
@@ -3268,7 +3284,7 @@ ORDER  BY g.kind;"""
             held = request.get("covers") or {}
             if form == "clinical reconciliation":
                 for kind, subject, _ in list(self._subjects()):
-                    if held.get(subject) == self._current(kind, subject):
+                    if _covered(held, kind, subject) == self._current(kind, subject):
                         self._set(kind, subject, "validated", evidence.record(date, self._current(kind, subject), by=entry["actor"],
                                                                               entry=entry["id"], figure=figure, form=form))
             elif form == PRODUCTION_OUTCOME:
@@ -3277,7 +3293,7 @@ ORDER  BY g.kind;"""
                                          request=request["request_id"])
                 self.dimensions["packages"].setdefault(package, {}).setdefault(PRODUCTION_OUTCOME, []).append(record)
                 for kind, subject, _ in list(self._subjects()):
-                    if held.get(subject) != self._current(kind, subject):
+                    if _covered(held, kind, subject) != self._current(kind, subject):
                         continue
                     standing = (self.dimensions[kind].get(subject) or {}).get("reconciled")
                     if standing and not evidence.stale(standing, self._current(kind, subject)):

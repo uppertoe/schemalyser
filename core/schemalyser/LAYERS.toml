@@ -37,6 +37,7 @@
 "schemalyser.policy" = { layer = "3" }
 "schemalyser.rolepolicy" = { layer = "3" }
 "schemalyser.release" = { layer = "3" }
+"schemalyser.manifests" = { layer = "3", note = "The primitives of an execution package's manifest, which the release (layer 3) and the audit's package (orchestration) both write and the package's status and approval read back." }
 "schemalyser.mapping" = { layer = "3", note = "It proposes mapping rows for a conversion; the conversion steps are layer 3's." }
 "schemalyser.routes" = { layer = "3", note = "It chooses a route for each step of a conversion, which is part of writing the steps." }
 "schemalyser.capability" = { layer = "3", note = "It reads the SQL of a capability of the catalogue and fills its parameters, which is the first stage of compiling a derived section." }

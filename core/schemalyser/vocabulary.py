@@ -558,7 +558,8 @@ OMOP_SCREEN = {
     "printed_heading": "What the release command printed, with the line that runs the script:",
     "script_copy": "Copy the script",
     "script_show": "Show the release script, {lines} lines",
-    "manifest": "Beside the script, source_manifest.csv lists the source tables and columns that the steps read, and step_classes.json holds the policy's report on each step and gate.",
+    "manifest": "Beside the script, source_manifest.csv lists the source tables and columns that the steps read, step_classes.json holds the policy's report on each step and gate, and manifest.json records what the script was built from, with the hashes that Schemalyser rechecks before an approval is recorded.",
+    "release_manifest": "The manifest places the script as a whole in class {grade}, and the database analyst's approval of it stands at {approval}.",
     # 4. Equivalence per question.
     "step4": "4. Equivalence per question",
     "step4_who": "The clinician reads this step.",

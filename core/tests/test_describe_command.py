@@ -312,3 +312,34 @@ def test_show_gives_the_readiness_the_stale_evidence_and_the_journal(tmp_path, c
 
 
 WORDING_OWED = describe.WORDING["cli_owed"]
+
+
+def test_a_saved_hospital_schema_without_its_dictionary_is_opened_with_the_dictionary_given(tmp_path, capsys):
+    """The page opens a saved file that holds no copy of the dictionary once a dictionary is loaded at step 2; the
+    command line takes the same dictionary with --dictionary, and without it says what to give."""
+    folder = tmp_path / "hospital"
+    run(capsys, "start", folder, DICTIONARY, "--tables", TABLES)
+    run(capsys, "propose", folder)
+    latest = describe_main.latest(folder)
+    # The copy of the dictionary is taken out of the saved file, as a licence may require.
+    with zipfile.ZipFile(latest) as archive:
+        kept = {name: archive.read(name) for name in archive.namelist() if not name.startswith("dictionary/")}
+    latest.write_bytes(describe_main._zipped(kept))
+    before = versions(folder)
+    code, _, err = run(capsys, "settings", folder, "--year", "2024")
+    assert code == 1 and describe.WORDING["cli_needs_dictionary"].format(name=latest.name) in err
+    assert versions(folder) == before
+    code, out, _ = run(capsys, "settings", folder, "--year", "2024", "--dictionary", DICTIONARY, "--dictionary-tables", TABLES)
+    assert code == 0 and len(versions(folder)) == len(before) + 1
+    held = json.loads(zipfile.ZipFile(describe_main.latest(folder)).read("settings.json"))
+    assert held["year"] == 2024 and held["parent_id"] == json.loads(kept["settings.json"])["schema_id"]
+    # The schema restored is the one that was saved, with the dictionary standing in for the missing copy.
+    sitting = describe.Describe()
+    sitting.load_dictionary(DICTIONARY.read_bytes(), TABLES.read_bytes(), {}, "invented-dictionary.csv", "invented-tables.csv")
+    sitting.restore(kept)
+    again = describe.Describe()
+    again.restore(describe._read_saved(describe_main.latest(folder)))
+    assert again.data == sitting.data
+    # A dictionary file that cannot be read is refused before anything is opened.
+    code, _, err = run(capsys, "settings", folder, "--year", "2025", "--dictionary", tmp_path / "missing.csv")
+    assert code == 2 and "missing.csv" in err and len(versions(folder)) == len(before) + 1

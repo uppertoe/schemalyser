@@ -9,8 +9,11 @@ CDM that OHDSI tools can read. It changes no core table.
     python -m schemalyser.release CONVERSION --catalogue CATALOGUE.csv --out FOLDER [--schema HOSPITAL-SCHEMA]
     python -m schemalyser.release CONVERSION --catalogue CATALOGUE.csv --report [--schema HOSPITAL-SCHEMA]
 
-The folder receives release.sql, which is run with sqlcmd, and source_manifest.csv, which lists
-the source tables and columns that the anaesthesia steps read. The command prints the sqlcmd line
+The folder receives release.sql, which is run with sqlcmd, source_manifest.csv, which lists
+the source tables and columns that the anaesthesia steps read, step_classes.json, which holds the
+static policy's report on each step and gate, and manifest.json, the execution package's manifest
+of the release, which python -m schemalyser.audit status rechecks and python -m schemalyser.audit
+approve records the database analyst's approval in. The command prints the sqlcmd line
 that runs the script, and exits with 1 when it refuses a step, a gate, a mapping row or a setting. With --report it
 writes nothing and prints conversion_report as JSON: each step with its route and class, the share of the steps on each
 route, and whether the folder is a draft.
@@ -73,6 +76,7 @@ from .conversion import (COUNT_MARK, FIELDS, IDENTIFIER_OFFSET, LAYERS, ROLES_ST
                       check_roles_step, custom_rows, draft_sentence, hospital_schema, layer_problems, read_counts, read_draft,
                       read_tables, route_of, route_problems)
 from .extract import analyse_request, decode
+from .manifests import TOOL, approval, contract_record, file_hashes, policy_version, sha256, tool_version
 from .selects import (QUOTED_TOKENS, REFUSED_NODES, REFUSED_WORDS, VARIABLE_TOKENS, Refused, _single_select,  # noqa: F401
                       check_text)
 from .translate import OMOP_SCHEMA
@@ -139,6 +143,8 @@ WORDING = {
     "classes": "The static policy, version {version}, has read the {count} steps and gates that this script carries under the conversion purpose: {c} {c_verb} of class C and none is of class D, so the script as a whole is of class C.",
     "class_step": "The static policy places this step in class {grade} under the conversion purpose.",
     "class_justified": "The {layer} step {name}, which this script does not carry, is of class {grade} under the conversion purpose, for the reason that conversion.json records in the line below.",
+    "manifest": "The manifest, manifest.json, records what the script was built from and places the script as a whole in class {grade}; python -m schemalyser.audit status rechecks its hashes, and python -m schemalyser.audit approve records the database analyst's approval in it.",
+    "manifest_permissions": "The account that runs the script needs SELECT on each source table in select_on, and in the anaesthesia schema and the published schema the right to create the tables in writes with their views and to write their rows; the script changes no core table.",
 }
 # The reasons for which the script is refused, each completing the sentence of not_written, so without a full stop.
 REFUSALS = {
@@ -885,6 +891,76 @@ def script(folder, settings=None, mappings=None, schema=None, catalogue=None):
     return text
 
 
+MANIFEST = "manifest.json"
+# The files of a release whose hashes its manifest records and python -m schemalyser.audit status rechecks.
+HASHED = ("release.sql", "source_manifest.csv", "step_classes.json")
+CLASSES = "ABCD"
+
+
+def _views_read(sql):
+    """The role views and mapping views that a step over the roles reads, in the contract's order."""
+    from . import rolemap
+    tree = sqlglot.parse_one(sql, read="tsql")
+    named = {cte.alias.lower() for cte in tree.find_all(exp.CTE)}
+    read = {table.name.lower() for table in tree.find_all(exp.Table) if not table.db}
+    return [view for view in list(rolemap.all_views()) + list(rolemap.mapping_views()) if view in read and view not in named]
+
+
+def _schema_record(schema_path):
+    """What the manifest records of the hospital schema that the steps over the roles were compiled through: the saved
+    file's name, hash and version, or a map folder's name alone, since only a file can be rechecked."""
+    import zipfile
+    if schema_path is None:
+        return None
+    path = Path(schema_path)
+    if not path.is_file():
+        return {"name": path.name, "sha256": None, "schema_id": None}
+    try:
+        with zipfile.ZipFile(path) as archive:
+            schema_id = json.loads(archive.read("settings.json")).get("schema_id")
+    except (KeyError, ValueError, zipfile.BadZipFile):
+        schema_id = None
+    return {"name": path.name, "sha256": sha256(path.read_bytes()), "schema_id": schema_id}
+
+
+def manifest(conversion, out, text, source_csv, classes, schema_path=None, date_made=None):
+    """The execution package's manifest of a release, as python -m schemalyser.audit keeps one for an audit's package:
+    what the script was built from, the class the policy gives the script as a whole, the permissions it needs, the
+    hashes of every file beside it that the package's status rechecks, and the approval that its approve command records. out holds
+    the files already written. schema_path is the saved hospital schema or map folder that was given, or else the map
+    folder beside the conversion is recorded."""
+    conversion, out = Path(conversion), Path(out)
+    steps = json.loads((conversion / "conversion.json").read_text())
+    carried = [entry for entry in classes if entry["carried"]]
+    grade = max((entry["execution_class"] for entry in carried), key=CLASSES.index, default="A")
+    views = []
+    for step in steps:
+        if step["layer"] in LAYERS[1:] and route_of(step, step["file"]) == "roles":
+            views += [view for view in _views_read(decode((conversion / step["file"]).read_bytes())) if view not in views]
+    contract = contract_record(views)
+    schema = _schema_record(Path(schema_path) if schema_path is not None else hospital_schema(conversion))
+    settings = settings_for(conversion)
+    shares = route_summary(conversion)
+    rows = list(csv.DictReader(io.StringIO(source_csv)))
+    return {
+        "tool": TOOL, "tool_version": tool_version(), "date": date_made or date.today().isoformat(),
+        "script": "release.sql", "sql_sha256": sha256(text),
+        "conversion": {"folder": conversion.name, "conversion_sha256": sha256((conversion / "conversion.json").read_bytes()),
+                       "steps": shares["steps"], "routes": {"roles": shares["roles"], "direct": shares["direct"]}},
+        "schema_file": schema, "role_model_version": contract["version"], "contract": contract,
+        "execution_class": grade, "policy_version": policy_version(), "policy_purpose": "conversion",
+        "carried": [{"file": e["file"], "what": e["what"], "execution_class": e["execution_class"]} for e in carried],
+        "settings": settings, "run": run_command(settings),
+        "permissions": {"select_on": sorted({row["table_name"] for row in rows}),
+                        "writes": sorted({step["table"] for step in steps if step["layer"] in LAYERS[1:]}),
+                        "says": WORDING["manifest_permissions"]},
+        "inputs": {"files": file_hashes(out, HASHED),
+                   "schema": {"sha256": schema["sha256"] if schema else None, "schema_id": schema["schema_id"] if schema else None},
+                   "contract": contract, "policy_version": policy_version()},
+        "approval": approval(out.name),
+    }
+
+
 def source_manifest(folder, catalogue, schema=None):
     """The source tables and columns that the anaesthesia steps read, a step over the roles as compiled, as CSV text."""
     request = as_request([(step["table"], sql) for step, sql in _steps(folder, schema=schema)])
@@ -918,17 +994,20 @@ def main():
             return 0
         schema = read_schema(args.conversion, args.schema, catalogue)
         text = script(args.conversion, schema=schema, catalogue=catalogue)
-        manifest = source_manifest(args.conversion, catalogue, schema)
+        source_csv = source_manifest(args.conversion, catalogue, schema)
         classes = step_classes(args.conversion, schema, catalogue)
     except Refused as error:
         print(WORDING["not_written"].format(reason=error), file=sys.stderr)
         return 1
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "release.sql").write_text(text, encoding="utf-8")
-    (args.out / "source_manifest.csv").write_text(manifest, encoding="utf-8")
+    (args.out / "source_manifest.csv").write_text(source_csv, encoding="utf-8")
     (args.out / "step_classes.json").write_text(json.dumps(classes, indent=1) + "\n", encoding="utf-8")
-    print(f"release.sql holds the {LAYERS[1]} and {LAYERS[2]} steps, source_manifest.csv lists {manifest.count(chr(10)) - 1} "
+    record = manifest(args.conversion, args.out, text, source_csv, classes, args.schema)
+    (args.out / MANIFEST).write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str) + "\n", encoding="utf-8")
+    print(f"release.sql holds the {LAYERS[1]} and {LAYERS[2]} steps, source_manifest.csv lists {source_csv.count(chr(10)) - 1} "
           f"source columns, and step_classes.json holds the static policy's report on each step and gate")
+    print(WORDING["manifest"].format(grade=record["execution_class"]))
     shares = route_summary(args.conversion)
     print(WORDING["routes"].format(count=shares["steps"], roles=shares["roles"], direct=shares["direct"],
                                    roles_verb="is" if shares["roles"] == 1 else "are",

@@ -54,9 +54,7 @@ schema. Nothing here is checked on a hospital's data: the tests build a saved sc
 """
 import argparse
 import datetime as dt
-import hashlib
 import json
-import re
 import sys
 import textwrap
 from pathlib import Path
@@ -65,11 +63,13 @@ import sqlglot
 from sqlglot import exp
 
 from . import describe, evidence, feasibility, policy, rolemap, roleshadow
+from .manifests import (APPROVAL_SAYS, APPROVAL_STATES, APPROVE, NOT_APPROVED, NOT_RECORDED, TOOL,  # noqa: F401 - read by plan.py and the tests
+                        approval as _approval, contract_record as _contract_record, file_hashes as _file_hashes,
+                        policy_version, sha256, tool_version)
 # The compilation of the audit is layer 3's (compiler.py), and the package reads it by the same names as before.
 from .compiler import (COHORT_PARTS, DROP, REACHED, SERIES_MARKERS, SESSION, AuditError, _cohort_cte,  # noqa: F401
                        _period, check_audit, compile_audit, schema_tables, script, specification)
 
-TOOL = "schemalyser"
 CAP = policy.CAP
 MANIFEST = "manifest.json"
 NOT_REVIEWED = "not yet reviewed"
@@ -150,19 +150,6 @@ PLAN_WORDING = {
 }
 
 
-def sha256(data):
-    return hashlib.sha256(data if isinstance(data, bytes) else data.encode("utf-8")).hexdigest()
-
-
-def tool_version():
-    try:
-        from importlib.metadata import version
-        return version("schemalyser")
-    except Exception:  # noqa: BLE001 - the package may run from its folder without being installed
-        text = (Path(__file__).resolve().parents[1] / "pyproject.toml")
-        found = re.search(r'^version = "([^"]+)"', text.read_text(encoding="utf-8"), re.M) if text.exists() else None
-        return found.group(1) if found else "unknown"
-
 
 def _wrapped(sentence):
     return "\n".join(f"-- {line}" for line in textwrap.wrap(sentence, 110))
@@ -194,9 +181,6 @@ def part2_text(sql):
 
 # The package.
 
-NOT_APPROVED = "not approved"
-APPROVAL_STATES = (NOT_APPROVED, "approved", "refused")
-NOT_RECORDED = "not recorded"
 # The files of a package whose hashes the manifest records and status() rechecks. plan.sqlplan joins them once a plan
 # has been reviewed. README.md is left out, because Schemalyser writes it again whenever the package's state moves.
 HASHED = ("query.sql", "question.sql", "decisions.json", "feasibility.json", "expected-output.json", "safety-report.json",
@@ -214,7 +198,6 @@ REQUEST_WORDING = {
     "plan": "The database analyst obtains the estimated plan of part 2, as README.md describes. The plan enters the hospital schema through the evidence import, with {command}, where RESULT is plan.sqlplan, and the hospital schema keeps it with the package's version.",
     "production outcome": "Once part 2 has run on the production database, the database analyst records how many rows it returned, how many seconds it took and its outcome, as one row with the columns rows_returned, seconds and outcome. The row enters the hospital schema through the evidence import, with {command}, and it records the run without validating any part of the record, which only a reconciliation against the clinical record does.",
 }
-APPROVE = "python -m schemalyser.audit approve {folder} --by NAME [--refuse] [--note TEXT] [--date YYYY-MM-DD]"
 
 INPUT_NAMES = {"schema": "the hospital schema", "contract": "the role contract", "policy": "the policy's version",
                "plan": "the plan review, which was made for another text of query.sql"}
@@ -226,7 +209,7 @@ MANIFEST_WORDING = {
                 "The account is restricted to reading the tables in select_on.",
                 "Resource Governor caps the account's memory and CPU where the edition of SQL Server has it.",
                 "The script does not run during the nightly load, because every read still holds a schema lock."],
-    "approval": "No one has yet recorded approval or refusal. The database analyst records either with the command below.",
+    "approval": APPROVAL_SAYS,
     "voided": "A change to {changed} after the package was built has returned the approval to not approved and voided the plan review.",
     "approved": "{by} approved the package on {date}.",
     "sqlserver_not_run": "The SQL Server harness has not run this script. tools/sqlserver/harness.py with --package runs it byte for byte on the synthetic database built from the invented world, and the manifest then records the result file and its hash.",
@@ -234,25 +217,6 @@ MANIFEST_WORDING = {
     "sqlserver_failed": "The SQL Server harness ran query.sql byte for byte on {server}, on the synthetic database built from the invented world, on {date}, and SQL Server stopped it with an error, which sqlserver-result.json gives.",
     "refused": "{by} refused the package on {date}.",
 }
-
-
-def policy_version():
-    """The version of the policy that derives the class, or "not recorded" where the policy states none."""
-    return str(getattr(policy, "POLICY_VERSION", NOT_RECORDED))
-
-
-def _file_hashes(folder, names):
-    found = {}
-    for name in names:
-        path = Path(folder) / name
-        found[name] = sha256(path.read_bytes()) if path.is_file() else None
-    return found
-
-
-def _contract_record(views):
-    model = rolemap.contract()
-    hashes = rolemap.part_hashes(model)
-    return {"version": model.get("version"), "part_hashes": {v: hashes.get(v) for v in sorted(views)}}
 
 
 def _digest(value):
@@ -276,11 +240,6 @@ def _decisions(path):
 
 def _json(value):
     return json.dumps(value, indent=2, ensure_ascii=False, default=str) + "\n"
-
-
-def _approval(folder_name):
-    return {"state": NOT_APPROVED, "by": None, "date": None, "note": None, "inputs_sha256": None,
-            "says": MANIFEST_WORDING["approval"], "command": APPROVE.format(folder=folder_name)}
 
 
 def evidence_requests(schema, schema_name, folder_name, sql_sha):
@@ -411,6 +370,9 @@ def readme(manifest, found, expected, safety, plan_paragraph=None):
 
 def _rewrite_readme(folder, manifest, paragraph=None):
     folder = Path(folder)
+    if not (folder / "feasibility.json").is_file():
+        # A release's package (release.py) has no README of the audit's kind; its manifest carries the approval.
+        return
     found = json.loads((folder / "feasibility.json").read_text(encoding="utf-8"))
     expected = json.loads((folder / CORRECTNESS).read_text(encoding="utf-8"))
     safety = json.loads((folder / "safety-report.json").read_text(encoding="utf-8"))
@@ -484,12 +446,14 @@ def record_sqlserver_run(folder):
 def _changes(folder, manifest, schema_path=None):
     """What has changed since the package was built, as a list of the names of the inputs whose hashes differ."""
     inputs = manifest.get("inputs")
-    query = folder / "query.sql"
+    # The script is query.sql in an audit's package and release.sql in a release's, whose manifest names it.
+    script = manifest.get("script") or "query.sql"
+    query = folder / script
     current = sha256(query.read_bytes()) if query.is_file() else None
     changed = []
     if inputs is None:
         # A package built before the manifest recorded its inputs: only query.sql can be rechecked.
-        return (["query.sql"] if current != manifest["sql_sha256"] else []), current
+        return ([script] if current != manifest["sql_sha256"] else []), current
     files = inputs.get("files", {})
     now = _file_hashes(folder, files)
     changed += [name for name in files if now[name] != files[name]]
@@ -497,8 +461,8 @@ def _changes(folder, manifest, schema_path=None):
         changed.append(PLAN_FILE)
     if (folder / SQLSERVER_RESULT).is_file() and SQLSERVER_RESULT not in files:
         changed.append(SQLSERVER_RESULT)
-    if current != manifest["sql_sha256"] and "query.sql" not in changed:
-        changed.append("query.sql")
+    if current != manifest["sql_sha256"] and script not in changed:
+        changed.append(script)
     recorded = inputs.get("contract") or {}
     if _contract_record(list(recorded.get("part_hashes", {}))) != recorded:
         changed.append(INPUT_NAMES["contract"])
@@ -517,7 +481,8 @@ def _changes(folder, manifest, schema_path=None):
 def status(folder, schema_path=None):
     """Whether a package still stands as it was built. Every hashed input is rechecked: each file that the manifest
     records, the plan that was reviewed, the parts of the role contract that the question reads, the policy's version,
-    and, when schema_path is given, the saved hospital schema. A change to any of them voids the plan review and the
+    and, when schema_path is given, the saved hospital schema. A release's package (release.py) is rechecked the same
+    way, by the manifest that names its script. A change to any of them voids the plan review and the
     class, and returns the approval to not approved, which is written back into the manifest so that no approval
     outlives what it approved. Returns {"changed", "sql_changed", "execution_class", "plan_review", "approval",
     "voided", "says"}."""
@@ -538,7 +503,8 @@ def status(folder, schema_path=None):
             manifest["plan_review"] = dict(review, state="voided")
             (folder / MANIFEST).write_text(_json(manifest), encoding="utf-8")
         approval, review = manifest["approval"], manifest["plan_review"]
-    return {"changed": changed, "sql_changed": "query.sql" in changed, "execution_class": manifest["execution_class"],
+    return {"changed": changed, "sql_changed": (manifest.get("script") or "query.sql") in changed,
+            "execution_class": manifest["execution_class"],
             "plan_review": review["state"], "approval": approval["state"], "voided": voided,
             "says": WORDING["changed"] if voided else None}
 

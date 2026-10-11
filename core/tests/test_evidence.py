@@ -328,3 +328,22 @@ def test_a_clinical_reconciliation_validates_only_the_parts_it_covers_and_a_plan
     s.import_evidence(plan, "<ShowPlanXML/>", "Dr D", "metadata")
     kept = s.log.latest("evidence imported", form="plan")
     assert kept["provenance"] == "metadata" and s.texts[kept["payload"]["result"]] == "<ShowPlanXML/>"
+
+
+def test_a_column_that_is_both_a_binding_and_a_translation_is_covered_under_each_kind_and_validated_under_both(saved):
+    """The kind of a reading is bound to a column and its codes are translated, so one subject carries two records of
+    evidence; what a request covers keeps them apart, and a reconciliation validates both."""
+    s = opened(_files(saved))
+    s.choose_codes("role_reading.kind", {"52": "map_arterial"}, DATE)
+    covers = s.covered(["role_reading"])
+    assert "role_reading.kind" in covers["bindings"] and "role_reading.kind" in covers["translations"]
+    assert all(kind in describe.COVER_KINDS for kind in covers)
+    request = {"format": describe.REQUEST_FORMAT, "request_id": "qboth", "schema_id": s.identity["schema_id"],
+               "form": "reconciliation", "moves": ["role_reading"], "covers": covers}
+    s.import_evidence(request, "anaesthetics_sampled\tagreed\tdisagreed\n40\t40\t0\n", "Dr C")
+    assert s.dimensions["bindings"]["role_reading.kind"]["validated"]["by"] == "Dr C"
+    assert s.dimensions["translations"]["role_reading.kind"]["validated"]["by"] == "Dr C"
+    assert s.dimensions["bindings"]["role_patient.patient_key"]["validated"] is None
+    # A request in the earlier form, which keyed the subject alone, is still read.
+    flat = {subject: hashes for held in covers.values() for subject, hashes in held.items()}
+    assert describe._covered(flat, "bindings", "role_reading.kind") == flat["role_reading.kind"]

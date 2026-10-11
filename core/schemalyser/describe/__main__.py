@@ -60,7 +60,7 @@ from pathlib import Path
 
 from .. import evidence, propose, rolemap, roleshadow, summaries
 from ..hospital import HospitalError, InventedHospital, files_from
-from . import NOT_RECORDED, WORDING, Describe, DescribeError, _read_saved, _zipped
+from . import DICTIONARY_FOLDER, NOT_RECORDED, WORDING, Describe, DescribeError, _read_saved, _zipped
 
 ROOT = Path(__file__).resolve().parents[3]
 INVENTED_HOSPITAL = ROOT / "fixtures" / "hospital"
@@ -138,9 +138,11 @@ def latest(folder):
     return found[0]
 
 
-def _open(given, version):
-    """The sitting restored from the saved hospital schema, and the path of the file it was read from."""
-    path = Path(given)
+def _open(args, version):
+    """The sitting restored from the saved hospital schema named by args.schema, and the path of the file it was read
+    from. A saved schema that holds no copy of the dictionary is opened with the dictionary that --dictionary names, as
+    the page opens one once a dictionary is loaded at step 2; a file that holds its own copy takes that copy."""
+    path = Path(args.schema)
     if path.is_dir():
         path = latest(path)
     try:
@@ -149,6 +151,11 @@ def _open(given, version):
         raise Refused(WORDING["cli_unreadable"].format(name=path.name), 2) from None
     sitting = Describe()
     sitting.version = version
+    if getattr(args, "dictionary", None):
+        headings = _pairs(args.dictionary_heading, WORDING["cli_heading"])
+        tables = _bytes(args.dictionary_tables) if args.dictionary_tables else None
+        tables_name = Path(args.dictionary_tables).name if args.dictionary_tables else "tables.csv"
+        sitting.upload(_bytes(args.dictionary), tables, headings, Path(args.dictionary).name, tables_name)
     found = sitting.restore(files)
     if found["refused"]:
         raise Refused(WORDING["cli_refused"].format(name=path.name, rule=found["refused"]))
@@ -256,7 +263,7 @@ def cmd_start(args, version):
 
 
 def cmd_add_descriptions(args, version):
-    sitting, path = _open(args.schema, version)
+    sitting, path = _open(args, version)
     headings = _pairs(args.heading, WORDING["cli_heading"])
     receipt = sitting.add_descriptions(_bytes(args.vendor), _bytes(args.tables) if args.tables else None, headings,
                                        Path(args.vendor).name, Path(args.tables).name if args.tables else "vendor-tables.csv")
@@ -271,14 +278,14 @@ def cmd_dictionary_query(args, version):
 
 
 def cmd_propose(args, version):
-    sitting, path = _open(args.schema, version)
+    sitting, path = _open(args, version)
     sitting.propose()
     print(sitting._described())
     _write(sitting, args.out or path.parent)
 
 
 def cmd_settings(args, version):
-    sitting, path = _open(args.schema, version)
+    sitting, path = _open(args, version)
     daylight = None if args.daylight_saving is None else args.daylight_saving == "yes"
     sitting.set_settings(args.database, args.year, args.time_zone, daylight, args.time_zone_from, hospital=args.hospital,
                          actor=args.actor)
@@ -289,7 +296,7 @@ def cmd_settings(args, version):
 
 
 def cmd_query(args, version):
-    sitting, path = _open(args.schema, version)
+    sitting, path = _open(args, version)
     if args.what == "tables":
         found = [{"name": "tables-and-columns", "sql": sitting.tables_query(args.step)["sql"]}]
     elif args.what == "codes":
@@ -341,7 +348,7 @@ def _findings(found):
 
 
 def cmd_paste(args, version):
-    sitting, path = _open(args.schema, version)
+    sitting, path = _open(args, version)
     _, sentence, findings = _read(sitting, READINGS[args.what], _text(args.result), args)
     print(sentence)
     _findings(findings)
@@ -349,7 +356,7 @@ def cmd_paste(args, version):
 
 
 def cmd_invented_run(args, version):
-    sitting, path = _open(args.schema, version)
+    sitting, path = _open(args, version)
     try:
         hospital = InventedHospital(files_from(args.hospital, args.catalogue))
     except (HospitalError, OSError, ValueError, KeyError):
@@ -369,7 +376,7 @@ def cmd_invented_run(args, version):
 
 
 def cmd_answer(args, version):
-    sitting, path = _open(args.schema, version)
+    sitting, path = _open(args, version)
     answer = propose.ANSWERS.get(args.answer.lower().replace("-", " "), args.answer)
     sitting.confirm(args.about, answer, args.replacement or "", args.note or "", actor=args.actor)
     print(WORDING["cli_answered"].format(answer=answer, about=args.about, actor=args.actor or NOT_RECORDED))
@@ -377,7 +384,7 @@ def cmd_answer(args, version):
 
 
 def cmd_translate_codes(args, version):
-    sitting, path = _open(args.schema, version)
+    sitting, path = _open(args, version)
     chosen = _pairs(args.codes, WORDING["cli_pair"])
     sitting.choose_codes(args.key, chosen, actor=args.actor)
     print(WORDING["cli_codes"].format(count=f"{len(chosen):,} {'code' if len(chosen) == 1 else 'codes'}", key=args.key,
@@ -386,14 +393,14 @@ def cmd_translate_codes(args, version):
 
 
 def cmd_translate_concepts(args, version):
-    sitting, path = _open(args.schema, version)
+    sitting, path = _open(args, version)
     found = sitting.read_concepts(args.mapping, _text(args.rows), actor=args.actor)
     print(WORDING["cli_concepts"].format(mapping=found["mapping"], **{k: f"{v:,}" for k, v in found["statuses"].items()}))
     _write(sitting, args.out or path.parent)
 
 
 def cmd_add_pathway(args, version):
-    sitting, path = _open(args.schema, version)
+    sitting, path = _open(args, version)
     added = sitting.add_pathway(args.part, args.table, args.kind, args.name, actor=args.actor)
     print(WORDING["cli_pathway"].format(part=args.part, name=added["name"], table=args.table, kind=args.kind,
                                         actor=args.actor or NOT_RECORDED))
@@ -401,21 +408,21 @@ def cmd_add_pathway(args, version):
 
 
 def cmd_source_kind(args, version):
-    sitting, path = _open(args.schema, version)
+    sitting, path = _open(args, version)
     sitting.choose_source_kind(args.part, args.kind, actor=args.actor)
     print(WORDING["cli_source_kind"].format(part=args.part, kind=args.kind, actor=args.actor or NOT_RECORDED))
     _write(sitting, args.out or path.parent)
 
 
 def cmd_judge(args, version):
-    sitting, path = _open(args.schema, version)
+    sitting, path = _open(args, version)
     sitting.judge_count(args.count, args.looks_right, args.note or "", actor=args.actor)
     print(WORDING["cli_judged"].format(name=args.count, looks_right=args.looks_right, actor=args.actor or NOT_RECORDED))
     _write(sitting, args.out or path.parent)
 
 
 def cmd_correction_preview(args, version):
-    sitting, _ = _open(args.schema, version)
+    sitting, _ = _open(args, version)
     found = sitting.correction_preview(_correction(args.correction))
     print(found["sentence"])
     print("")
@@ -423,12 +430,12 @@ def cmd_correction_preview(args, version):
 
 
 def cmd_correction_check(args, version):
-    sitting, _ = _open(args.schema, version)
+    sitting, _ = _open(args, version)
     _show_report(roleshadow.correction_check(sitting, _correction(args.correction)))
 
 
 def cmd_correction_keep(args, version):
-    sitting, path = _open(args.schema, version)
+    sitting, path = _open(args, version)
     correction = _correction(args.correction)
     if not sitting.check_recorded(correction):
         _show_report(roleshadow.correction_check(sitting, correction))
@@ -438,7 +445,7 @@ def cmd_correction_keep(args, version):
 
 
 def cmd_correction_discard(args, version):
-    sitting, _ = _open(args.schema, version)
+    sitting, _ = _open(args, version)
     correction = _correction(args.correction)
     # The change is read as the trial read it, so that a change that could not be tried is refused with its reason.
     preview = sitting.correction_preview(correction)
@@ -446,18 +453,18 @@ def cmd_correction_discard(args, version):
 
 
 def cmd_test(args, version):
-    sitting, path = _open(args.schema, version)
+    sitting, path = _open(args, version)
     _show_report(roleshadow.check_model(sitting))
     _write(sitting, args.out or path.parent)
 
 
 def cmd_save(args, version):
-    sitting, path = _open(args.schema, version)
+    sitting, path = _open(args, version)
     _write(sitting, args.out or path.parent, tested=True)
 
 
 def cmd_show(args, version):
-    sitting, path = _open(args.schema, version)
+    sitting, path = _open(args, version)
     entries = sitting.log.entries()
     if args.json:
         print(json.dumps({"file": path.name, "view": sitting.view(), "readiness": sitting.readiness(),
@@ -478,26 +485,26 @@ def cmd_show(args, version):
 
 
 def cmd_check(args, version):
-    sitting, _ = _open(args.schema, version)
+    sitting, _ = _open(args, version)
     print(json.dumps(sitting.check(), indent=2, ensure_ascii=False, default=str))
 
 
 def cmd_compare(args, version):
-    sitting, _ = _open(args.schema, version)
+    sitting, _ = _open(args, version)
     found = sitting.compare(args.name, _text(args.result))
     for line in found["differences"]:
         print(line)
 
 
 def cmd_lookup(args, version):
-    sitting, _ = _open(args.schema, version)
+    sitting, _ = _open(args, version)
     found = sitting.names() if args.what == "tables" else \
         sitting.columns_of(args.table or "") if args.what == "columns" else sitting.joins_from(args.table or "")
     print(json.dumps(found, indent=2, ensure_ascii=False))
 
 
 def cmd_scoreboard(args, version):
-    sitting, path = _open(args.schema, version)
+    sitting, path = _open(args, version)
     board = rolemap.scoreboard(sitting.data or {"roles": {}})
     print(board["text"], end="")
     if args.write:
@@ -512,7 +519,7 @@ def cmd_import_evidence(args, version):
         raise Refused(WORDING["not_a_request"], 2) from None
     if isinstance(held, dict) and isinstance(held.get("requests"), list):
         held = next((r for r in held["requests"] if args.id in (r.get("request_id"), r.get("id"))), None)
-    sitting, path = _open(args.schema, version)
+    sitting, path = _open(args, version)
     # The import saves a new version, so the test on made-up rows that the schema owes, if any, is run first.
     roleshadow.run_owed_test(sitting)
     texts = [_text(r) for r in args.results]
@@ -561,6 +568,9 @@ def _argv(call, r, base, work, scratch, held):
     if call in ("dictionary_upload", "dictionary", "dictionary_database"):
         source = path() if r.get("file") else text("data-dictionary.csv")
         headings = [f"--heading={k}={v}" for k, v in (r.get("headings") or {}).items() if v]
+        # The dictionary stands in for the copy that an opened file may not hold, as it does on the page.
+        held["dictionary"] = ["--dictionary", source, *opt("--dictionary-tables", path("tables") if r.get("tables") else None),
+                              *[f"--dictionary-heading={k}={v}" for k, v in (r.get("headings") or {}).items() if v]]
         return ["start", s, source, *opt("--tables", path("tables") if r.get("tables") else None),
                 *opt("--reference", path("reference") if r.get("reference") else None), *headings, *step,
                 *(["--invented"] if call == "dictionary" and r.get("invented") else [])]
@@ -571,6 +581,7 @@ def _argv(call, r, base, work, scratch, held):
         for old in work.glob(SAVED):
             old.unlink()
         shutil.copy(path(), work / Path(r["file"]).name)
+        held["needs_dictionary"] = not _holds_dictionary(work / Path(r["file"]).name)
         return None
     if call == "hospital_build":
         held["hospital"] = (path("folder"), path("catalogue"))
@@ -651,6 +662,24 @@ def _argv(call, r, base, work, scratch, held):
     return None
 
 
+def _holds_dictionary(path):
+    """Whether a saved hospital schema holds its copy of the dictionary."""
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = set(archive.namelist())
+            info = json.loads(archive.read(f"{DICTIONARY_FOLDER}/dictionary.json")) if f"{DICTIONARY_FOLDER}/dictionary.json" in names else {}
+    except (OSError, ValueError, KeyError, zipfile.BadZipFile):
+        return False
+    return bool(info.get("file") and f"{DICTIONARY_FOLDER}/{info['file']}" in names)
+
+
+def _with_dictionary(argv, held):
+    """argv with the dictionary the page loaded, for a command that opens a saved hospital schema which holds no copy."""
+    if held.get("needs_dictionary") and held.get("dictionary") and argv[0] not in ("start", "dictionary-query", "walk"):
+        return [*argv, *held["dictionary"]]
+    return argv
+
+
 def walk(calls, base=".", version="", out=None):
     """Makes the hospital schema from the calls that the page makes of its bridge, in order, by giving each to the command
     that carries it, so that the command line does whatever the page does with the same files. Each call is {"call": the
@@ -686,6 +715,7 @@ def walk(calls, base=".", version="", out=None):
             argv = _argv(call, given.get("request") or {}, base, work, scratch, held)
             if argv is None:
                 continue
+            argv = _with_dictionary(argv, held)
             named = [w["request"]["hospital"] for _, w in waiting if (w.get("request") or {}).get("hospital") is not None]
             if argv[0] == "start" and named:
                 # The hospital named before the dictionary was loaded is in the scope of the first entry, as on the page.
@@ -701,7 +731,7 @@ def walk(calls, base=".", version="", out=None):
                 refused.append((number, said.getvalue().strip()))
         refused.sort()
         with contextlib.redirect_stdout(io.StringIO()):
-            code = main(["save", str(work), "--tool-version", version])
+            code = main([*_with_dictionary(["save", str(work)], held), "--tool-version", version])
         if code:
             raise Refused(WORDING["walk_unreadable"])
         saved = latest(work)
@@ -736,6 +766,13 @@ def parser():
     schema = argparse.ArgumentParser(add_help=False, parents=[common])
     schema.add_argument("schema", help="the saved hospital schema, or the folder that holds its versions, of which the "
                                        "latest is read")
+    schema.add_argument("--dictionary", default=None,
+                        help="the dictionary, for a saved hospital schema that holds no copy of its own: a vendor's export, "
+                             "or the saved result of the data dictionary query, as the page loads it at step 2")
+    schema.add_argument("--dictionary-tables", default=None,
+                        help="a second file beside --dictionary that gives each table's description and primary key")
+    schema.add_argument("--dictionary-heading", action="append", default=[], metavar="FIELD=HEADING",
+                        help="the dictionary's own heading for a field, as for start")
     writes = argparse.ArgumentParser(add_help=False, parents=[schema])
     writes.add_argument("--out", default=None, help="the folder for the new version; by default, the folder of SCHEMA")
     actor = argparse.ArgumentParser(add_help=False)

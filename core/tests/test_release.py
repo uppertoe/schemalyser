@@ -656,3 +656,44 @@ def test_the_conversion_report_gives_each_step_s_route_review_and_class_and_writ
     assert release.main() == 0
     assert json.loads(capsys.readouterr().out)["release_shares"] == report["release_shares"]
     assert sorted(p.name for p in tmp_path.iterdir()) == ["conversion"]
+
+
+def test_the_command_writes_the_manifest_beside_the_script_and_the_package_s_status_and_approval_serve_it(tmp_path, monkeypatch, capsys):
+    from schemalyser import audit, policy, rolemap
+    out = tmp_path / "out"
+    monkeypatch.setattr(sys, "argv", ["release", str(CONVERSION), "--catalogue", str(FIXTURES / "invented-catalogue.csv"),
+                                      "--out", str(out), "--schema", str(FIXTURES / "map")])
+    assert release.main() == 0
+    assert release.WORDING["manifest"].format(grade="C") in capsys.readouterr().out
+    held = json.loads((out / "manifest.json").read_text())
+    assert held["script"] == "release.sql" and held["sql_sha256"] == audit.sha256((out / "release.sql").read_bytes())
+    assert held["execution_class"] == "C" and held["policy_version"] == policy.POLICY_VERSION
+    assert set(held["inputs"]["files"]) == {"release.sql", "source_manifest.csv", "step_classes.json"}
+    assert all(held["inputs"]["files"][name] == audit.sha256((out / name).read_bytes()) for name in held["inputs"]["files"])
+    assert held["conversion"]["routes"] == {"roles": 1, "direct": 9} and held["conversion"]["steps"] == 10
+    # The contract's parts that the step over the roles reads are recorded by their hashes, and nothing else of it.
+    assert held["contract"]["part_hashes"] and set(held["contract"]["part_hashes"]) <= set(rolemap.all_views()) | set(rolemap.mapping_views())
+    assert held["schema_file"] == {"name": "map", "sha256": None, "schema_id": None}
+    assert "DRUG_GIVEN" in held["permissions"]["select_on"] and "drug_exposure" in held["permissions"]["writes"]
+    assert [e["file"] for e in held["carried"] if e["what"] == "step"] and all(e["execution_class"] == "C" for e in held["carried"])
+    assert held["run"].startswith("sqlcmd") and held["approval"]["state"] == "not approved"
+    # The package's status and approval serve the release's manifest as they serve an audit's.
+    standing = audit.status(out)
+    assert not standing["voided"] and standing["execution_class"] == "C" and standing["approval"] == "not approved"
+    approved = audit.approve(out, "an analyst", date="2026-10-11")
+    assert approved["state"] == "approved" and json.loads((out / "manifest.json").read_text())["approval"]["by"] == "an analyst"
+    # A change to the script, or to any hashed file beside it, returns the approval to not approved.
+    (out / "release.sql").write_text((out / "release.sql").read_text() + "\n-- changed\n", encoding="utf-8")
+    standing = audit.status(out)
+    assert standing["voided"] and standing["sql_changed"] and "release.sql" in standing["changed"]
+    assert json.loads((out / "manifest.json").read_text())["approval"]["state"] == "not approved"
+    # A saved hospital schema given as its one file is recorded by its hash and version.
+    import zipfile
+    saved = tmp_path / "hospital-schema.schemalyser.zip"
+    with zipfile.ZipFile(saved, "w") as archive:
+        for path in (FIXTURES / "map").iterdir():
+            archive.write(path, f"map/{path.name}")
+        archive.writestr("settings.json", json.dumps({"schema_id": "abc123"}))
+    record = release.manifest(CONVERSION, out, "SELECT 1", "table_name,column_name\n", [], saved)
+    assert record["schema_file"] == {"name": saved.name, "sha256": audit.sha256(saved.read_bytes()), "schema_id": "abc123"}
+    assert record["inputs"]["schema"] == {"sha256": audit.sha256(saved.read_bytes()), "schema_id": "abc123"}
