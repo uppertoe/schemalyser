@@ -9,7 +9,10 @@ let browser = null;
 
 async function load(base) {
   const { loadPyodide } = await import(base + 'pyodide/pyodide.mjs');
-  pyodide = await loadPyodide({ indexURL: base + 'pyodide/' });
+  // Nothing that Python prints or warns goes to the browser's console, which keeps what it is given and which a
+  // person may be asked to copy: a warning can quote a table, a column or a file.
+  pyodide = await loadPyodide({ indexURL: base + 'pyodide/', stdout: () => {}, stderr: () => {} });
+  pyodide.runPython("import warnings; warnings.simplefilter('ignore')");
   // DuckDB is loaded now, while the network is still on, so that the test on made-up rows works offline.
   await pyodide.loadPackage('duckdb', { messageCallback: () => {}, errorCallback: () => {} });
   const sitePackages = pyodide.runPython('import site; site.getsitepackages()[0]');

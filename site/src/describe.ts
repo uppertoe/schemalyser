@@ -168,7 +168,11 @@ function text(id: string, value: string) {
   $(id).textContent = value;
 }
 
+// Every status written, so that the lock can empty them all: a receipt names the vendor's file and its counts.
+const statusIds = new Set<string>();
+
 function status(id: string, value: string, kind: '' | 'good' | 'problem' = '') {
+  statusIds.add(id);
   const node = $(id);
   node.hidden = !value;
   node.textContent = value;
@@ -259,7 +263,26 @@ async function startWorker() {
   }
 }
 
+// Once a real file is held, the page itself has no further use for the network: the worker's means of reaching one
+// were removed when it loaded, and the page's go the same way, as a second defence behind the content security policy.
+// The invented dictionary and hospital are fetched before this, while nothing real is held.
+function sealPageNetwork() {
+  for (const name of ['fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource', 'WebTransport']) {
+    try {
+      Object.defineProperty(window, name, { value: undefined, writable: false, configurable: false });
+    } catch {
+      // A browser that will not let the name be redefined still has the policy.
+    }
+  }
+  try {
+    Object.defineProperty(Navigator.prototype, 'sendBeacon', { value: undefined, writable: false, configurable: false });
+  } catch {
+    // As above.
+  }
+}
+
 function lock() {
+  sealPageNetwork();
   worker?.terminate();
   worker = null;
   workerHasFiles = false;
@@ -279,6 +302,8 @@ function lock() {
   hospitalReady = false;
   for (const input of document.querySelectorAll<HTMLInputElement>('input[type=file]')) input.value = '';
   for (const area of document.querySelectorAll<HTMLTextAreaElement>('textarea')) area.value = '';
+  for (const input of document.querySelectorAll<HTMLInputElement>('input[type=text]')) input.value = '';
+  for (const id of statusIds) status(id, '');
   state = 'locked';
   render();
 }
@@ -1645,6 +1670,7 @@ function renderCounts() {
       noteLabel.htmlFor = noteId;
       const note = el('input');
       note.type = 'text';
+      note.autocomplete = 'off';
       note.id = noteId;
       note.value = draft.note;
       note.addEventListener('input', () => { draft.note = note.value; });
@@ -1705,6 +1731,7 @@ async function fromDatabase(data: string | File, name: string) {
   setBusy(true);
   status('t-database-status', d.databaseReading);
   workerHasFiles = true;
+  sealPageNetwork();
   try {
     const reply = await ask('describe_dictionary_database', [data, name, d.steps[1]]);
     if (reply.ok) {
@@ -1740,6 +1767,7 @@ $('dictionary-load').addEventListener('click', async () => {
   for (const input of document.querySelectorAll<HTMLInputElement>('#headings input')) if (input.value.trim()) headings[input.dataset.field!] = input.value.trim();
   setBusy(true);
   workerHasFiles = true;
+  sealPageNetwork();
   // The file is read as what it is: a saved result of the data dictionary query, a vendor's export that adds its
   // descriptions to a dictionary made from the database, or otherwise the dictionary itself.
   status('t-vendor-status', d.dictionaryReading);
@@ -1831,6 +1859,7 @@ $('schema-file').addEventListener('change', async () => {
   setBusy(true);
   status('t-folder-status', d.folderReading);
   workerHasFiles = true;
+  sealPageNetwork();
   try {
     const reply = await ask('describe_schema_open', [file]);
     if (!reply.ok) status('t-folder-status', d.folderFailed, 'problem');
@@ -2256,8 +2285,10 @@ linked('t-choice-saved', d.choiceSavedWhat, '3');
 text('t-version', d.version(__VERSION__));
 renderDatabase();
 
-// The boxes are emptied when the page is left, so that the browser does not keep their contents.
+// When the page is left, everything it holds is let go of and the boxes are emptied, so that neither the browser's
+// cache of left pages nor the next person at the computer gets the sitting back.
 window.addEventListener('pagehide', () => {
+  if (holdsAnything()) lock();
   for (const area of document.querySelectorAll<HTMLTextAreaElement>('textarea')) area.value = '';
 });
 
@@ -2291,4 +2322,12 @@ corrections.setup({
 
 show();
 render();
-void startWorker();
+// The page refuses to run inside another page, or in a window that another page opened, since a page served from the
+// same address could then read everything this one holds.
+if (window.top !== window.self || window.opener) {
+  state = 'load-failed';
+  text('t-load-failed', d.framed);
+  show();
+} else {
+  void startWorker();
+}

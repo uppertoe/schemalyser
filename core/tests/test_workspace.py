@@ -126,7 +126,7 @@ def test_the_core_modules_of_the_allowlist_cover_everything_that_they_import():
 
 def test_a_planted_reference_and_an_unlisted_folder_never_reach_the_workspace(planted, tmp_path):
     out = tmp_path / "out"
-    workspace.export(out, "public", repo=planted, date=DATE)
+    workspace.export(out, "public", repo=planted, date=DATE, untracked=True)
     paths = [p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()]
     assert not any(p.startswith(("reference/", "notes/", "docs/")) for p in paths)
     for path in out.rglob("*"):
@@ -134,32 +134,55 @@ def test_a_planted_reference_and_an_unlisted_folder_never_reach_the_workspace(pl
             assert b"PLANTED_REFERENCE" not in path.read_bytes() and b"PLANTED_NOTE" not in path.read_bytes(), path
 
 
+
+def test_a_file_that_git_does_not_track_never_enters_the_workspace_and_a_copy_without_git_says_so(tmp_path):
+    """A command run over a hospital's material can write into an allowlisted folder of the checkout. The export reads
+    git's own list of tracked files and refuses such a file by name; a copy of the repository that is not a checkout
+    is refused unless untracked is given, which only the tests do."""
+    import subprocess
+    checkout = tmp_path / "checkout"
+    _copy_repository(checkout)
+    subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+    subprocess.run(["git", "-C", str(checkout), "-c", "user.email=t@example.invalid", "-c", "user.name=t", "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(checkout), "-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", "-m", "tracked"], check=True)
+    assert workspace.sources(checkout) == workspace.sources(ROOT)
+    stray = checkout / "fixtures" / "map" / "PLANTED_STRAY.sql"
+    stray.write_text("SELECT 1 FROM PLANTED_HOSPITAL_TABLE\n")
+    with pytest.raises(workspace.WorkspaceError, match="fixtures/map/PLANTED_STRAY.sql is not tracked by git"):
+        workspace.export(tmp_path / "out", "public", repo=checkout, date=DATE)
+    assert not (tmp_path / "out").exists()
+    plain = tmp_path / "plain"
+    _copy_repository(plain)
+    with pytest.raises(workspace.WorkspaceError, match="not a git checkout"):
+        workspace.sources(plain)
+    assert workspace.sources(plain, untracked=True) == workspace.sources(ROOT)
+
 def test_a_file_outside_the_allowlist_is_refused_with_its_path_unless_it_is_listed(planted, tmp_path):
     with pytest.raises(workspace.WorkspaceError, match="docs/extra.md"):
-        workspace.export(tmp_path / "one", "public", repo=planted, include=["docs/extra.md"], date=DATE)
+        workspace.export(tmp_path / "one", "public", repo=planted, include=["docs/extra.md"], date=DATE, untracked=True)
     listed = workspace.ALLOWLIST + ({"path": "docs/extra.md", "why": "a test"},)
-    workspace.export(tmp_path / "two", "public", repo=planted, allowlist=listed, include=["docs/extra.md"], date=DATE)
+    workspace.export(tmp_path / "two", "public", repo=planted, allowlist=listed, include=["docs/extra.md"], date=DATE, untracked=True)
     assert (tmp_path / "two" / "docs" / "extra.md").is_file()
     denied = workspace.ALLOWLIST + ({"path": "reference/secret-schema.csv", "why": "a test"},)
     with pytest.raises(workspace.WorkspaceError, match="reference/secret-schema.csv"):
-        workspace.export(tmp_path / "three", "public", repo=planted, allowlist=denied, date=DATE)
+        workspace.export(tmp_path / "three", "public", repo=planted, allowlist=denied, date=DATE, untracked=True)
     assert not (tmp_path / "three").exists()
 
 
 def test_a_file_of_the_wrong_kind_or_a_link_in_an_allowlisted_folder_is_refused(planted, tmp_path):
     (planted / "fixtures" / "conversion" / "minutes.docx").write_bytes(b"x")
     with pytest.raises(workspace.WorkspaceError, match="fixtures/conversion/minutes.docx"):
-        workspace.export(tmp_path / "one", "public", repo=planted, date=DATE)
+        workspace.export(tmp_path / "one", "public", repo=planted, date=DATE, untracked=True)
     (planted / "fixtures" / "conversion" / "minutes.docx").unlink()
     (planted / "fixtures" / "map" / "linked.sql").symlink_to(planted / "reference" / "secret-schema.csv")
     with pytest.raises(workspace.WorkspaceError, match="fixtures/map/linked.sql"):
-        workspace.export(tmp_path / "two", "public", repo=planted, date=DATE)
+        workspace.export(tmp_path / "two", "public", repo=planted, date=DATE, untracked=True)
 
 
 def test_text_that_names_a_home_folder_is_refused(planted, tmp_path):
     (planted / "fixtures" / "map" / "role_note.sql").write_text("-- written in /Users/someone/project\n")
     with pytest.raises(workspace.WorkspaceError, match="fixtures/map/role_note.sql"):
-        workspace.export(tmp_path / "out", "public", repo=planted, date=DATE)
+        workspace.export(tmp_path / "out", "public", repo=planted, date=DATE, untracked=True)
 
 
 def test_an_agent_in_the_workspace_can_check_assess_and_build_the_example_on_invented_data(exported, tmp_path):
@@ -305,7 +328,7 @@ def test_a_real_schema_s_translations_never_reach_an_export(planted, tmp_path):
     held.mkdir(parents=True)
     (held / "map.json").write_text(json.dumps(secret), encoding="utf-8")
     with pytest.raises(workspace.WorkspaceError, match="reference/hospital/map/map.json"):
-        workspace.export(tmp_path / "named", "public", repo=planted, include=["reference/hospital/map/map.json"], date=DATE)
+        workspace.export(tmp_path / "named", "public", repo=planted, include=["reference/hospital/map/map.json"], date=DATE, untracked=True)
     import io
     import zipfile
     schema = io.BytesIO()
@@ -313,10 +336,10 @@ def test_a_real_schema_s_translations_never_reach_an_export(planted, tmp_path):
         archive.writestr("map/map.json", json.dumps(secret))
     (planted / "fixtures" / "map" / "hospital-schema.schemalyser.zip").write_bytes(schema.getvalue())
     with pytest.raises(workspace.WorkspaceError, match="fixtures/map/hospital-schema.schemalyser.zip"):
-        workspace.export(tmp_path / "inside", "public", repo=planted, date=DATE)
+        workspace.export(tmp_path / "inside", "public", repo=planted, date=DATE, untracked=True)
     (planted / "fixtures" / "map" / "hospital-schema.schemalyser.zip").unlink()
     out = tmp_path / "clean"
-    workspace.export(out, "public", repo=planted, date=DATE)
+    workspace.export(out, "public", repo=planted, date=DATE, untracked=True)
     for path in out.rglob("*"):
         if path.is_file():
             assert b"QUARTERMAINE" not in path.read_bytes(), path
@@ -343,7 +366,7 @@ def test_the_held_out_fixtures_the_planted_answers_and_the_planted_values_never_
     wide = workspace.ALLOWLIST + ({"path": "fixtures", "tree": True, "suffixes": (".json", ".csv", ".sql", ".txt", ".tsv", ".py"),
                                    "why": "a test"},)
     first = tmp_path / "wide"
-    workspace.export(first, "public", repo=planted, allowlist=wide, date=DATE)
+    workspace.export(first, "public", repo=planted, allowlist=wide, date=DATE, untracked=True)
     for path in first.rglob("*"):
         if path.is_file():
             data = path.read_bytes()
@@ -353,9 +376,9 @@ def test_the_held_out_fixtures_the_planted_answers_and_the_planted_values_never_
     for named in ("fixtures/held-out/neonatal/expected.json", "fixtures/held-out", "fixtures/planted-values.txt"):
         entry = {"path": named, "why": "a test"} if not named.endswith("held-out") else {"path": named, "tree": True, "suffixes": (".json",), "why": "a test"}
         with pytest.raises(workspace.WorkspaceError, match=re.escape(named)):
-            workspace.export(tmp_path / "named", "public", repo=planted, allowlist=workspace.ALLOWLIST + (entry,), date=DATE)
+            workspace.export(tmp_path / "named", "public", repo=planted, allowlist=workspace.ALLOWLIST + (entry,), date=DATE, untracked=True)
         with pytest.raises(workspace.WorkspaceError, match=re.escape(named)):
-            workspace.export(tmp_path / "included", "public", repo=planted, include=[named], date=DATE)
+            workspace.export(tmp_path / "included", "public", repo=planted, include=[named], date=DATE, untracked=True)
 
 
 # The import's small refusals (A27).
@@ -607,7 +630,7 @@ def test_a_private_schema_with_planted_names_reaches_neither_the_export_nor_any_
     (project / "schemas" / "hospital-schema.schemalyser.zip").write_bytes(planted_schema)
     (planted / "reference" / "hospital-schema.schemalyser.zip").write_bytes(planted_schema)
     out = tmp_path / "out"
-    workspace.export(out, "public", repo=planted, date=DATE)
+    workspace.export(out, "public", repo=planted, date=DATE, untracked=True)
     leaked = {p.relative_to(out).as_posix(): _planted_in(p.read_bytes()) for p in out.rglob("*") if p.is_file()}
     assert {path: names for path, names in leaked.items() if names} == {}
     # Each status, provoked in turn, names nothing of the hospital, no path and no diagnostic.

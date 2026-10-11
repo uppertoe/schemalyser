@@ -56,12 +56,29 @@ if not wheel.exists():
 if hashlib.sha256(wheel.read_bytes()).hexdigest() != SQLGLOT_SHA256:
     raise SystemExit("The sqlglot wheel does not match its pinned checksum.")
 
+REPO = SITE.parent
+
+
+def tracked(folder):
+    """The files under folder that git tracks, as absolute paths. The page is built from those alone, so that a file a
+    command wrote into the repository over a hospital's material is never published because it happens to sit there."""
+    relative = Path(folder).resolve().relative_to(REPO).as_posix()
+    try:
+        done = subprocess.run(["git", "-C", str(REPO), "ls-files", "-z", "--cached", "--", relative],
+                              capture_output=True, check=True)
+    except (OSError, subprocess.CalledProcessError):
+        raise SystemExit("git could not list the tracked files, which the build needs; build from a checkout.")
+    found = [REPO / name for name in done.stdout.decode("utf-8").split("\0") if name]
+    if not found:
+        raise SystemExit(f"git tracks nothing under {relative}, so there is nothing to build from.")
+    return found
+
+
 with zipfile.ZipFile(py_out / "schemalyser.zip", "w", zipfile.ZIP_DEFLATED) as archive:
-    # The whole package: the core, the role model, the OMOP field list and the public reference data that the
-    # synthetic world uses for realistic values.
-    for path in sorted(CORE.rglob("*")):
-        if not path.is_file() or "__pycache__" in path.parts or path.suffix in (".pyc", ".pyo") \
-                or path.name.startswith("."):
+    # The whole package as git tracks it: the core, the role model, the OMOP field list and the public reference data
+    # that the synthetic world uses for realistic values.
+    for path in tracked(CORE):
+        if "__pycache__" in path.parts or path.suffix in (".pyc", ".pyo") or path.name.startswith("."):
             continue
         info = zipfile.ZipInfo(f"schemalyser/{path.relative_to(CORE).as_posix()}", date_time=(1980, 1, 1, 0, 0, 0))
         archive.writestr(info, path.read_bytes())
@@ -76,6 +93,8 @@ shutil.rmtree(example_out, ignore_errors=True)
 # the page before using a real dictionary.
 (example_out / "dictionary").mkdir(parents=True, exist_ok=True)
 for name in ("invented-dictionary.csv", "invented-tables.csv"):
+    if FIXTURES / "dictionary" / name not in tracked(FIXTURES / "dictionary"):
+        raise SystemExit(f"git does not track fixtures/dictionary/{name}, so the build cannot publish it.")
     shutil.copyfile(FIXTURES / "dictionary" / name, example_out / "dictionary" / name)
 
 # The invented hospital, on which the describe page runs its own queries when the invented dictionary is in use: the
@@ -83,5 +102,10 @@ for name in ("invented-dictionary.csv", "invented-tables.csv"):
 # database's own records of its tables. Every value is invented. The page fetches these files beside the invented
 # dictionary while the tab is online, and the worker builds the database from them.
 hospital_out = example_out / "hospital"
-shutil.copytree(FIXTURES / "hospital", hospital_out)
+for path in tracked(FIXTURES / "hospital"):
+    target = hospital_out / path.relative_to(FIXTURES / "hospital")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(path, target)
+if FIXTURES / "invented-catalogue.csv" not in tracked(FIXTURES):
+    raise SystemExit("git does not track fixtures/invented-catalogue.csv, so the build cannot publish it.")
 shutil.copyfile(FIXTURES / "invented-catalogue.csv", hospital_out / "catalogue.csv")

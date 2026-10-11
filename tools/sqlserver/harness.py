@@ -52,6 +52,7 @@ The password for the sa login is read from reference/mssql-password.txt, or from
 SCHEMALYSER_MSSQL_PASSWORD_FILE names. It is passed to sqlcmd through the environment and never printed.
 """
 import argparse
+import atexit
 import csv
 import datetime as dt
 import hashlib
@@ -977,7 +978,15 @@ def main():
         raise SystemExit(f"The password file {password_file} does not exist. README.md says how to make it.")
     if args.out:
         args.out.mkdir(parents=True, exist_ok=True)
-    server = Server(args.container, password_file.read_text().strip(), args.out / "scripts" if args.out else None)
+    if args.out:
+        local = args.out / "scripts"
+    else:
+        # Every script run, which for a package is its query.sql, is copied here on its way to the container, so the
+        # folder is removed when the run ends rather than left in the computer's temporary folder.
+        held = tempfile.TemporaryDirectory(prefix="schemalyser-mssql-")
+        atexit.register(held.cleanup)
+        local = Path(held.name)
+    server = Server(args.container, password_file.read_text().strip(), local)
     workspace = args.out or server.local / "out"
     workspace.mkdir(parents=True, exist_ok=True)
     if args.world:

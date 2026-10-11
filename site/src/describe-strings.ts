@@ -94,6 +94,7 @@ export const describeStrings = {
   inventedLoaded:
     'The invented dictionary is loaded, with the invented hospital that answers its queries. Now take this tab offline and carry on at step 4.',
   loadFailed: 'The page has not been able to load. If the tab is online, reload it to try again.',
+  framed: 'This page cannot be used inside another page, or in a window that another page opened. Open it in a tab of its own.',
   offlineHowSummary: 'How to take this tab offline',
   offlineHow: [
     'In Chrome or Edge, press F12, choose the Network panel, open the menu that reads No throttling and choose Offline. Leave the developer tools open, because the tab goes back online when they close.',

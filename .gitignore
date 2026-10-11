@@ -54,8 +54,23 @@ load_postgresql.sql
 # The conversion to OMOP names the vendor's tables, so it is kept out of the public repo.
 etl/
 
+# The outputs that the documented commands write by default, each of which holds a hospital's names or the vendor's
+# material: the saved hospital schema, the reference lineage and its summary, and the feasibility reports.
+*.schemalyser.zip
+lineage.json
+lineage-run-summary.json
+report.md
+report.json
+programme.md
+programme.json
+sections.md
+sections.json
+
 # macOS folder settings.
 .DS_Store
 
 # The workbench vendors htmx and Alpine at build time; a local copy is not committed.
 core/schemalyser/workbench/static/*.min.js
+
+# The testbed example in the docs is kept, although its names match the ignored outputs.
+!docs/testbed-example/*

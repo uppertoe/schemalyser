@@ -73,8 +73,14 @@ def worlds(project):
 
 def create_app(project_folder, hosts=None, describe_folder=None):
     project = Project(project_folder)
-    # The core's own temporary files, such as those that reading a saved hospital schema makes, go inside the project.
+    # The core's own temporary files, such as those that reading a saved hospital schema makes, go inside the project,
+    # and whatever an earlier run left there is removed before this one starts.
     tempfile.tempdir = str(project.tmp)
+    for stale in project.tmp.iterdir():
+        if stale.is_dir() and not stale.is_symlink():
+            shutil.rmtree(stale, ignore_errors=True)
+        else:
+            stale.unlink(missing_ok=True)
     env = Environment(loader=FileSystemLoader(HERE / "templates"), autoescape=select_autoescape(["html"]))
     env.filters.update(number=_number, day=_day, md=_markdown, tojson_pretty=lambda v: json.dumps(v, indent=2, ensure_ascii=False),
                        capital=lambda text: (text or "")[:1].upper() + (text or "")[1:], words=_words)

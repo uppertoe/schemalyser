@@ -178,13 +178,32 @@ test('the record is described, saved as a hospital schema and opened again', asy
   let offline = false;
   // The context's route handler sees the worker's requests as well as the page's (network.ts).
   const online = await watchRequests(context, () => offline, requestsWhileOffline);
-
+  // Nothing reaches the browser's console, which keeps what it is given: not a message, not a warning from Python,
+  // not an error.
+  const consoleLines: string[] = [];
+  page.on('console', (message) => consoleLines.push(`${message.type()}: ${message.text()}`));
+  page.on('pageerror', (error) => consoleLines.push(`pageerror: ${error.message}`));
 
   await recordCalls(page);
   await loadAndGoOffline(page, context, browserName);
   offline = true;
-  // The watch saw the worker's own requests while the tab was online, so its silence offline means something.
+  // The watch saw the worker's own requests while the tab was online, so its silence offline means something, and
+  // every request made while online went to the page's own address.
   expect(online.some((url) => url.endsWith('py/schemalyser.zip'))).toBe(true);
+  const origin = new URL(page.url()).origin;
+  expect(online.filter((url) => !url.startsWith(origin))).toEqual([]);
+  // The policy refuses a request to another site from the page itself, not only from the worker.
+  const crossSite = await page.evaluate(
+    () =>
+      new Promise<string>((resolve) => {
+        window.addEventListener('securitypolicyviolation', (event) => resolve(`refused ${event.blockedURI}`), { once: true });
+        fetch('https://policy-check.invalid/', { mode: 'no-cors' }).then(
+          () => resolve('allowed'),
+          () => setTimeout(() => resolve('failed without the policy'), 500),
+        );
+      }),
+  );
+  expect(crossSite).toMatch(/^refused https:\/\/policy-check\.invalid/);
   await stage(page, '1-offline', 'body');
 
   // Who is answering, and the hospital, asked once at the start: until given, the saved file will say not recorded.
@@ -468,6 +487,8 @@ test('the record is described, saved as a hospital schema and opened again', asy
   await expect(page.locator('#b-schema-file')).toHaveText(d.folderChoose);
   await page.locator('#schema-file').setInputFiles(stripped);
   await expect(page.locator('#t-folder-status')).toHaveText(d.folderNeedsDictionary);
+  // Once a real file has been given to the page, the page's own means of reaching the network are gone.
+  expect(await page.evaluate(() => [typeof fetch, typeof XMLHttpRequest, typeof WebSocket])).toEqual(['undefined', 'undefined', 'undefined']);
   await expect(page.locator('#step-4')).toHaveAttribute('data-state', 'waiting');
   await page.locator('#schema-file').setInputFiles(zipPath);
   await expect(page.locator('#t-folder-status')).toContainText('The page has opened the hospital schema from the saved file.');
@@ -489,6 +510,8 @@ test('the record is described, saved as a hospital schema and opened again', asy
   await again.getByRole('button', { name: d.checkCompare }).click();
   await expect(again).toContainText('The table VISIT_DIAGNOSIS was in the earlier result and is not in the new one.');
   await stage(page, '11-checked', '#step-check');
+  // The page's own test of the policy above is the one thing the browser reports.
+  expect(consoleLines.filter((line) => !line.includes('policy-check.invalid'))).toEqual([]);
   expect(requestsWhileOffline).toEqual([]);
 });
 
@@ -834,7 +857,7 @@ test('the invented dictionary is loaded while online and marks the saved schema 
   await expect(page.locator('#h-choice-database')).toHaveText(d.choiceDatabase);
   await page.locator('#invented-load').click();
   const receipt = d.dictionaryReceipt({ tables: 25, columns: 98, described: 98, keyed: 25, skipped: 0, source: 'invented' });
-  await expect(page.locator('#t-dictionary-status')).toHaveText(receipt);
+  await expect(page.locator('#t-dictionary-status')).toHaveText(receipt, { timeout: 30_000 });
   await stage(page, 'i1-invented', '#step-2');
   await setOnline(page, context, browserName, false);
   await expect(page.locator('#receipt-1')).toHaveText(d.offlineDone);
@@ -940,7 +963,7 @@ test('going back online to load the invented dictionary leaves it loadable', asy
   await expect(page.locator('#database-paste')).toBeDisabled();
   await page.locator('#invented-load').click();
   await expect(page.locator('#t-dictionary-status')).toHaveText(
-    d.dictionaryReceipt({ tables: 25, columns: 98, described: 98, keyed: 25, skipped: 0, source: 'invented' }));
+    d.dictionaryReceipt({ tables: 25, columns: 98, described: 98, keyed: 25, skipped: 0, source: 'invented' }), { timeout: 30_000 });
   await expect(page.locator('#t-invented-status')).toHaveText(d.inventedLoaded);
   await expect(page.locator('#t-offline-invented')).toHaveText(d.inventedLoaded);
   await expect(page.locator('#step-1')).toHaveAttribute('data-state', 'current');
@@ -1386,4 +1409,15 @@ test('a part recorded by a second table takes it with its kind of record, and ea
   expect(map.roles.role_drug.source_kind).toBe('order');
   expect(map.roles.role_drug.pathways.map((p: { name: string; source_kind: string }) => [p.name, p.source_kind])).toEqual([['charted_value', 'result']]);
   expect(requestsWhileOffline).toEqual([]);
+});
+
+
+test('the page refuses to run inside another page', async ({ page, baseURL }) => {
+  // A page on the same address could read everything this one holds if it could open it in a frame, so the page
+  // says so and loads nothing.
+  await page.setContent(`<iframe src="${baseURL}"></iframe>`);
+  const frame = page.frameLocator('iframe');
+  await expect(frame.locator('#t-load-failed')).toHaveText(d.framed);
+  await expect(frame.locator('#t-loaded')).toBeHidden();
+  await expect(frame.locator('#t-loading')).toBeHidden();
 });

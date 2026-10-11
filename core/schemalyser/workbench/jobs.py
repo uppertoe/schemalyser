@@ -40,7 +40,7 @@ def module(name, *args):
 
 def run_now(project, command):
     """Runs a short command to its end. Returns (exit code, what it printed)."""
-    done = subprocess.run(command, cwd=PACKAGE_PARENT, env=environment(project), capture_output=True, text=True,
+    done = subprocess.run(command, cwd=str(project.root), env=environment(project), capture_output=True, text=True,
                           encoding="utf-8", errors="replace", timeout=600)
     return done.returncode, (done.stdout + done.stderr).strip()
 
@@ -76,7 +76,9 @@ def start(project, folder, record_name, command, env=None):
     record.update(started=now(), command=shown)
     record_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     log = (folder / "log.txt").open("w", encoding="utf-8")
-    process = subprocess.Popen(command, cwd=PACKAGE_PARENT, env=environment(project, env), stdout=log,
+    # Each command runs inside the project, so that anything written to a relative path lands there and never in the
+    # repository; the core is importable through PYTHONPATH, which environment() sets.
+    process = subprocess.Popen(command, cwd=str(project.root), env=environment(project, env), stdout=log,
                                stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
     with _lock:
         _running[str(folder)] = process

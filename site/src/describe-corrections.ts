@@ -813,6 +813,7 @@ function reportBox(report: Report, item: CorrectionItem, correction: Record<stri
     if (draft.although) {
       const reason = deps.el('input');
       reason.type = 'text';
+      reason.autocomplete = 'off';
       reason.value = draft.reason;
       reason.addEventListener('input', () => { draft.reason = reason.value; });
       box.append(labelled(item.about, 'reason', c.reasonLabel, reason));

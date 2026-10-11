@@ -54,7 +54,9 @@ import json
 import hashlib
 import re
 import secrets
+import shutil
 import tempfile
+import weakref
 import zipfile
 from pathlib import Path
 
@@ -2660,6 +2662,9 @@ ORDER  BY g.kind;"""
         that propose.confirm can work on it as it works on a map folder. It is never one of the hospital's folders."""
         if self._scratch is None:
             self._scratch = Path(tempfile.mkdtemp(prefix="schemalyser-describe-"))
+            # The folder holds the map, which quotes the dictionary, so it goes when the sitting goes, or when the
+            # interpreter does; it is never left in the computer's temporary folder.
+            weakref.finalize(self, shutil.rmtree, str(self._scratch), ignore_errors=True)
         folder = self._scratch / name
         folder.mkdir(parents=True, exist_ok=True)
         if name != "map":

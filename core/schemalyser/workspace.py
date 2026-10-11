@@ -31,7 +31,10 @@ import json
 import os
 import re
 import shutil
+import stat
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from . import audit, feasibility, rolemap, rolepolicy
@@ -113,7 +116,7 @@ DEPENDENCY_NAMES = re.compile(r"^(requirements.*\.(txt|in)|pyproject\.toml|setup
                               r"gemfile(\.lock)?|go\.(mod|sum)|cargo\.(toml|lock)|.*\.(whl|egg|tar\.gz))$", re.I)
 FOLDER_RULES = {
     "folder": "The question's folder is a folder with a plain name, not a link.",
-    "links": "The folder holds no symbolic link.",
+    "links": "The folder holds no link, symbolic or hard.",
     "dependencies": "The folder declares no dependency.",
     "files": "The folder holds question.sql, title.txt and note.md, and nothing else.",
     "size": f"Each file is at most {SIZE_LIMIT // 1024} KB.",
@@ -161,12 +164,32 @@ def _covered(relative, allowlist):
     return None
 
 
-def sources(repo=ROOT, allowlist=ALLOWLIST, include=()):
+def tracked_files(repo):
+    """The files that git tracks in repo, as relative posix paths, or None where repo is not a git checkout. Raises
+    WorkspaceError where git cannot list them."""
+    repo = Path(repo)
+    if not (repo / ".git").exists():
+        return None
+    try:
+        done = subprocess.run(["git", "-C", str(repo), "ls-files", "-z", "--cached"], capture_output=True, check=True)
+    except (OSError, subprocess.CalledProcessError):
+        raise WorkspaceError("git could not list the repository's tracked files, which the export reads so that it "
+                             "copies nothing that git does not track.") from None
+    return {name for name in done.stdout.decode("utf-8").split("\0") if name}
+
+
+def sources(repo=ROOT, allowlist=ALLOWLIST, include=(), untracked=False):
     """The repository's files that a workspace holds, as sorted relative paths. Raises WorkspaceError, naming the path,
-    for anything outside the allowlist or under DENIED, a link, a missing source, or a file of a kind its folder may
-    not hold."""
+    for anything outside the allowlist or under DENIED, a link, a missing source, a file of a kind its folder may
+    not hold, or a file that git does not track: a file written into an allowlisted folder by a command run over a
+    hospital's material is never copied because it happens to sit there. untracked lets a copy of the repository that
+    is not a git checkout, as the tests make, be exported."""
     repo = Path(repo).resolve()
     found = set()
+    tracked = None if untracked else tracked_files(repo)
+    if tracked is None and not untracked:
+        raise WorkspaceError("The repository is not a git checkout, so the export cannot tell which files git tracks; "
+                             "export from a checkout.")
     for entry in allowlist:
         relative = entry["path"].rstrip("/")
         if _denied(relative):
@@ -203,6 +226,9 @@ def sources(repo=ROOT, allowlist=ALLOWLIST, include=()):
         resolved = (repo / relative).resolve()
         if repo not in resolved.parents:
             raise WorkspaceError(f"{relative} resolves outside the repository.")
+        if tracked is not None and relative not in tracked:
+            raise WorkspaceError(f"{relative} is not tracked by git, so the workspace cannot hold it; commit it if it "
+                                 "is public, or remove it.")
     return sorted(found)
 
 
@@ -360,8 +386,9 @@ def planted_inputs(repo=ROOT):
     return (json.dumps(kept, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
-def export(out, profile="public", repo=ROOT, allowlist=ALLOWLIST, include=(), date=None):
-    """Writes the workspace to out, which must be empty or not yet exist. Returns the manifest."""
+def export(out, profile="public", repo=ROOT, allowlist=ALLOWLIST, include=(), date=None, untracked=False):
+    """Writes the workspace to out, which must be empty or not yet exist. Returns the manifest. Every source is a file
+    that git tracks, unless untracked is given for a copy of the repository that is not a checkout."""
     if profile not in PROFILES:
         raise WorkspaceError(f"{profile} is not a profile of the export; the only profile is public.")
     repo, out = Path(repo).resolve(), Path(out).resolve()
@@ -370,7 +397,7 @@ def export(out, profile="public", repo=ROOT, allowlist=ALLOWLIST, include=(), da
         raise WorkspaceError(f"{out.name} already holds files, and the export writes only into an empty folder.")
     if out == repo or repo in out.parents and _denied(out.relative_to(repo).as_posix()):
         raise WorkspaceError(f"{out.name} lies where no workspace may be written.")
-    files = sources(repo, allowlist, include)
+    files = sources(repo, allowlist, include, untracked)
     written = {}
     for relative in files:
         written[relative] = ((repo / relative).read_bytes(), relative)
@@ -440,10 +467,19 @@ def read_folder(folder):
             fail("files", f"{name} is not one of question.sql, title.txt and note.md")
             continue
         present.add(name)
-        if entry.stat(follow_symlinks=False).st_mode & 0o111:
+        held = entry.stat(follow_symlinks=False)
+        if not stat.S_ISREG(held.st_mode):
+            # A pipe would hold the read for ever, and a device or socket is not a file of a question.
+            fail("files", f"{name} is not a plain file")
+            continue
+        if held.st_nlink > 1:
+            # A hard link to a file elsewhere would make the rules read that file.
+            fail("links", f"{name} is linked to another file")
+            continue
+        if held.st_mode & 0o111:
             fail("executable", f"{name} is executable")
             continue
-        size = entry.stat(follow_symlinks=False).st_size
+        size = held.st_size
         if size > SIZE_LIMIT:
             fail("size", f"{name} holds {size:,} bytes")
             continue
@@ -501,10 +537,13 @@ def _schema_path(project, name):
 
 
 def _write_result(folder, result):
-    target = Path(folder) / RESULT
-    if target.is_symlink() or target.exists():
-        target.unlink()
-    target.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    """Writes the result beside the question, whole or not at all: it is written to a file of its own in the folder
+    and then put in place, so that nothing can swap a link in between."""
+    folder = Path(folder)
+    handle, temporary = tempfile.mkstemp(prefix=".import-result-", suffix=".json", dir=str(folder))
+    with os.fdopen(handle, "w", encoding="utf-8") as f:
+        f.write(json.dumps(result, indent=2) + "\n")
+    os.replace(temporary, folder / RESULT)
 
 
 def import_question(folder, hospital, schema=None, date=None):
@@ -521,16 +560,18 @@ def import_question(folder, hospital, schema=None, date=None):
             _write_result(folder, result)
         return result, checked, None
     texts = checked["texts"]
+    # The status is decided here, from the package and the public contract alone, before the hospital's project or
+    # schema is read for anything, and nothing that follows changes it. It is written beside the question now, so that
+    # whether a result comes back never depends on the project either.
+    status = checked["status"]
+    result.update(result=status, rules_failed=[], says=WORDING[status])
+    _write_result(folder, result)
     try:
         project = Project(hospital)
         schema_path = _schema_path(project, schema)
         feasibility.Schema.load(schema_path)
     except (ProjectError, feasibility.FeasibilityError) as error:
         raise WorkspaceError(str(error)) from None
-    # The status is decided here, from the package and the public contract alone, before the hospital schema is read
-    # for anything, and nothing that follows changes it.
-    status = checked["status"]
-    result.update(result=status, rules_failed=[], says=WORDING[status])
     title = " ".join(texts[TITLE].split())
     question = project.add_question(title, texts[QUESTION])
     question_path = project.question_path(question)
