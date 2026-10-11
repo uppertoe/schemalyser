@@ -158,9 +158,27 @@ def stale(held, current):
             if current.get(part) != value]
 
 
-def content_id(files):
+# The settings that are part of a version's identity: what a person gave or confirmed, so that a change of the hospital's
+# name, the database, the year, or the time zone of the database's clocks is a new version. The timestamps, the
+# identity itself, the contract's record and everything derived from the other files are left out.
+IDENTITY_SETTINGS = ("hospital", "database", "year", "time_zone", "daylight_saving", "time_zone_from", "time_zone_by",
+                     "invented")
+
+
+def identity_settings(settings):
+    """The settings that the content hash takes, as the ordered subset of settings.json that IDENTITY_SETTINGS names."""
+    return {k: settings[k] for k in IDENTITY_SETTINGS if settings.get(k) is not None}
+
+
+def content_id(files, settings=None):
     """The content hash of a saved version: every file but settings.json, which carries it, and README.md, which is
-    written from the rest. Returns the whole SHA-256 in hex."""
+    written from the rest, together with the identity settings (IDENTITY_SETTINGS), given as settings or read from
+    settings.json. Returns the whole SHA-256 in hex."""
     hashed = sorted((path, hashlib.sha256(bytes(data)).hexdigest()) for path, data in files.items()
                     if path not in ("settings.json", "README.md"))
+    if settings is None:
+        settings = json.loads(bytes(files["settings.json"]).decode("utf-8")) if "settings.json" in files else {}
+    chosen = identity_settings(settings)
+    if chosen:
+        hashed.append(("settings", hashlib.sha256(json.dumps(chosen, sort_keys=True).encode("utf-8")).hexdigest()))
     return hashlib.sha256(json.dumps(hashed).encode("utf-8")).hexdigest()

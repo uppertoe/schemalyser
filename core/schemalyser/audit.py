@@ -311,16 +311,18 @@ def build(schema_path, query_path, out, period=None, decisions_path=None, large=
     audit_sql = query_path.read_text(encoding="utf-8")
     decisions = _decisions(decisions_path)
     blank = not decisions["exact_small_numbers"]
-    out.mkdir(parents=True, exist_ok=True)
-    found = feasibility.assess(schema, audit_sql, query_path.name)
-    (out / "feasibility.md").write_text(feasibility.markdown(found), encoding="utf-8")
-    (out / "feasibility.json").write_text(feasibility.to_json(found), encoding="utf-8")
-    if found["verdict"] == "model":
-        raise AuditError(WORDING["model"].format(folder=out.name))
+    # The period is settled once, before anything is written, and the assessment and the compilation both take it, so
+    # that the coverage of the recording pathways is read over the period that the script runs.
     try:
         start, end = _period(*period) if period else (dt.date(schema.year, 1, 1), dt.date(schema.year, 12, 31))
     except (TypeError, ValueError):
         raise AuditError(WORDING["period"]) from None
+    out.mkdir(parents=True, exist_ok=True)
+    found = feasibility.assess(schema, audit_sql, query_path.name, (start, end))
+    (out / "feasibility.md").write_text(feasibility.markdown(found), encoding="utf-8")
+    (out / "feasibility.json").write_text(feasibility.to_json(found), encoding="utf-8")
+    if found["verdict"] == "model":
+        raise AuditError(WORDING["model"].format(folder=out.name))
     compiled = compile_audit(schema, audit_sql, start, end, blank, large=large)
     meta = {"date": _day(date), "query": query_path.name, "schema": schema_path.name, "question": found.get("question"),
             "start": start.isoformat(), "end": end.isoformat(), "large": large}

@@ -4,7 +4,7 @@ Every test runs on invented material: the invented world in `fixtures/`, the inv
 
 ## The core tests
 
-The core tests are run from `core/`. `uv run` installs the dependency group `dev` of `core/pyproject.toml`, which holds pytest, DuckDB 1.5.1 and Hypothesis, and the workbench's tests need five further packages, which are given on the command line. Without them, the workbench's tests are skipped rather than failed.
+The core tests are run from `core/`. `uv run` installs the dependency group `dev` of `core/pyproject.toml`, which holds pytest, DuckDB 1.5.1 and Hypothesis, and the workbench's tests need five further packages, which are given on the command line. Without them, the workbench's tests are skipped rather than failed, unless the environment variable `SCHEMALYSER_WORKBENCH_TESTS` is `required`, in which case `core/tests/conftest.py` fails the run before any test is collected. The workflow in `.github/workflows/tests.yml` installs the five packages and sets the variable, so that a run on GitHub's machines which skipped the workbench's tests cannot pass as though it had run them.
 
 The fast suite leaves out every test marked slow, and is the one to run day to day:
 

@@ -4,7 +4,7 @@ Everything that a person does on the page Describe the record can be done with `
 
 Where a command is given a folder in place of a file, it reads the latest version in that folder, which is the one from which no other version there was made. If the folder holds two versions of which neither was made from the other, Schemalyser asks for the file by name. `--out FOLDER` writes the new version into another folder.
 
-Every command that changes the hospital schema records it in the journal, as the page does. `--actor NAME` names the person who answered, chose or judged, and without it the journal records "not recorded". Only `test`, the check and keep of a change, `save` and `import-evidence` run the test on made-up rows. Every other command saves its version with the test owed, and the version says so, as the page's sitting does until a person saves it. A change to the settings alone is written into the file of the same version, because a version is named by the hash of every file but `settings.json`.
+Every command that changes the hospital schema records it in the journal, as the page does. `--actor NAME` names the person who answered, chose or judged, and without it the journal records "not recorded". Only `test`, the check and keep of a change, `save` and `import-evidence` run the test on made-up rows. Every other command saves its version with the test owed, and the version says so, as the page's sitting does until a person saves it. A change to the hospital's name, the database, the year or the time zone is a new version in a file of its own, because those settings are part of the hash that names a version; a save that only runs the owed test is written into the file of the same version.
 
 Run the commands from the `core` folder:
 

@@ -24,9 +24,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Run the core tests
+      - name: Run the core tests, with the workbench's packages so that its tests run rather than skip
         working-directory: core
-        run: uv run --with sqlglot==30.21.0 --with duckdb==1.5.1 --with pytest python -m pytest -q
+        env:
+          SCHEMALYSER_WORKBENCH_TESTS: required
+        run: >-
+          uv run --with sqlglot==30.21.0 --with duckdb==1.5.1 --with pytest
+          --with starlette --with jinja2 --with markdown --with python-multipart --with httpx
+          python -m pytest -q
 
   page:
     name: Page tests (Chromium and Firefox)

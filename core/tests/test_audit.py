@@ -154,29 +154,77 @@ def test_the_two_part_script_gives_every_planted_case_its_answer_on_a_shadow_of_
     assert found and roleshadow._neonates(found) == []
 
 
-@pytest.mark.parametrize("final", [PER_ANAESTHETIC, None])
-def test_the_two_part_script_gives_the_same_rows_as_the_audit_as_one_query_over_the_role_views(schema, final):
-    """Carried from the earlier design's scripts (B8). The audit, run as one query over the role views of the same
-    shadow with the anaesthetics of the period alone, gives the rows that part 1 and part 2 give together, both for
-    each anaesthetic and for the audit's own answer with its small counts left as they are."""
-    con, date_columns, views = _shadow(schema)
-    audit_sql = rolemap.AUDIT.read_text(encoding="utf-8")
-    compiled = audit.compile_audit(schema, audit_sql, dt.date(2024, 1, 1), dt.date(2024, 12, 31), blank=False, final=final)
+# A question that reads the patients in part 2 as well as in its cohort, so that a child with several anaesthetics in the
+# period is reached once for each patient and not once for each anaesthetic.
+BY_PATIENT = """WITH chosen AS (
+    SELECT a.anaesthetic_key, a.patient_key
+    FROM   role_anaesthetic a
+)
+SELECT COUNT(*) AS anaesthetics,
+       COUNT(DISTINCT c.patient_key) AS children
+FROM   chosen c
+       JOIN role_patient p ON p.patient_key = c.patient_key
+WHERE  p.is_test = 0"""
+
+
+def _single(con, date_columns, views, audit_sql, final, year=2024):
+    """The rows of the question run as one query over the role views of the shadow, with the anaesthetics of the year
+    alone."""
     for name, sql in views.items():
         view = to_duckdb(sql, date_columns)[0]
         if name == "role_anaesthetic":
-            view = (f"SELECT * FROM ({view}) AS a WHERE a.start_time >= TIMESTAMP '2024-01-01' "
-                    "AND a.start_time < TIMESTAMP '2025-01-01'")
-        con.execute(f"CREATE VIEW {name} AS {view}")
+            view = (f"SELECT * FROM ({view}) AS a WHERE a.start_time >= TIMESTAMP '{year}-01-01' "
+                    f"AND a.start_time < TIMESTAMP '{year + 1}-01-01'")
+        con.execute(f"CREATE OR REPLACE VIEW {name} AS {view}")
     tree = compiler.check_audit(audit_sql)
     if final is not None:
         tree = tree.copy()
         chosen = sqlglot.parse_one(final, dialect="tsql")
         chosen.set("with_" if "with_" in chosen.arg_types else "with", (tree.args.get("with_") or tree.args.get("with")).copy())
         tree = chosen
-    single = con.execute(to_duckdb(tree.sql(dialect="tsql"), date_columns)[0]).fetchall()
+    return con.execute(to_duckdb(tree.sql(dialect="tsql"), date_columns)[0]).fetchall()
+
+
+@pytest.mark.parametrize("question, final", [("neonatal", PER_ANAESTHETIC), ("neonatal", None), ("by patient", None)])
+def test_the_two_part_script_gives_the_same_rows_as_the_audit_as_one_query_over_the_role_views(schema, question, final):
+    """Carried from the earlier design's scripts (B8). The audit, run as one query over the role views of the same
+    shadow with the anaesthetics of the period alone, gives the rows that part 1 and part 2 give together, both for
+    each anaesthetic and for the audit's own answer with its small counts left as they are. The question by patient
+    reads the patients in part 2, and the period holds children with more than one anaesthetic."""
+    con, date_columns, views = _shadow(schema)
+    audit_sql = rolemap.AUDIT.read_text(encoding="utf-8") if question == "neonatal" else BY_PATIENT
+    compiled = audit.compile_audit(schema, audit_sql, dt.date(2024, 1, 1), dt.date(2024, 12, 31), blank=False, final=final)
+    single = _single(con, date_columns, views, audit_sql, final)
     two = _two_parts(con, date_columns, compiled)
     assert single and sorted(map(repr, two)) == sorted(map(repr, single))
+
+
+def test_a_part_at_the_patients_grain_is_reached_once_for_each_patient_of_the_cohort(schema):
+    """A child with several anaesthetics in the period appears once in #cohort for each of them. The patients are
+    reached from the cohort's distinct patient keys, so that a join through role_patient counts each anaesthetic once,
+    as the same question over the role views does."""
+    con, date_columns, views = _shadow(schema)
+    repeated = con.execute("SELECT COUNT(*) FROM (SELECT patient_key FROM (" + to_duckdb(views["role_anaesthetic"], date_columns)[0]
+                           + ") AS a WHERE a.start_time >= TIMESTAMP '2024-01-01' AND a.start_time < TIMESTAMP '2025-01-01' "
+                           "GROUP BY patient_key HAVING COUNT(*) > 1) AS r").fetchone()[0]
+    assert repeated > 0
+    compiled = audit.compile_audit(schema, BY_PATIENT, dt.date(2024, 1, 1), dt.date(2024, 12, 31), blank=False)
+    assert _two_parts(con, date_columns, compiled) == _single(con, date_columns, views, BY_PATIENT, None)
+    script = audit.script(compiled, {"query": "q", "schema": "s", "date": DATE, "start": "2024-01-01", "end": "2024-12-31"})
+    assert not _failed(_policy(schema, script))
+
+
+def test_the_package_assesses_the_coverage_of_the_pathways_over_the_period_it_is_built_for(saved, tmp_path):
+    """The period given to the build is the one the feasibility report assesses, so that a package for one year never
+    carries a coverage claim, or an evidence request, made over another."""
+    manifest = audit.build(saved, rolemap.AUDIT, tmp_path / "later", ("2025-01-01", "2025-12-31"), date=DATE)
+    assert manifest["period"] == {"from": "2025-01-01", "to": "2025-12-31"}
+    found = json.loads((tmp_path / "later" / "feasibility.json").read_text(encoding="utf-8"))
+    assert found["coverage"]["period"] == {"from": "2025-01-01", "to": "2025-12-31"}
+    coverage = [r for r in found["requests"] if r["form"] == "pathway coverage"]
+    assert coverage and all(r["period"] == {"from": "2025-01-01", "to": "2025-12-31"} for r in coverage)
+    assert "from 2025-01-01 to 2025-12-31" in (tmp_path / "later" / "feasibility.md").read_text(encoding="utf-8")
+    assert "2024" not in json.dumps(found["coverage"])
 
 
 def test_the_expected_output_comes_from_made_up_rows_with_every_planted_case_matching(package):

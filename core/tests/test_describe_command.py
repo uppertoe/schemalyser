@@ -243,16 +243,29 @@ def test_each_command_reads_the_latest_version_and_saves_a_new_one_beside_it(tmp
     assert run(capsys, "save", folder)[1].startswith("Nothing has changed since the version")
 
 
-def test_a_change_to_the_settings_alone_is_written_into_the_file_of_the_same_version(tmp_path, capsys):
+def test_a_change_to_the_settings_a_person_gave_is_a_new_version_beside_the_last(tmp_path, capsys):
     folder = tmp_path / "hospital"
     run(capsys, "start", folder, DICTIONARY, "--tables", TABLES)
     run(capsys, "propose", folder)
     before = versions(folder)
+    previous = json.loads(zipfile.ZipFile(describe_main.latest(folder)).read("settings.json"))["schema_id"]
     code, out, _ = run(capsys, "settings", folder, "--time-zone", "Australia/Sydney", "--daylight-saving", "yes")
     assert code == 0 and "the time zone of the database's clocks as Australia/Sydney" in out
-    assert versions(folder) == before
+    assert len(versions(folder)) == len(before) + 1
     held = json.loads(zipfile.ZipFile(describe_main.latest(folder)).read("settings.json"))
     assert held["time_zone"] == "Australia/Sydney" and held["daylight_saving"] is True
+    assert held["schema_id"] != previous and held["parent_id"] == previous
+    # The same settings given again change nothing, and nothing new is written.
+    code, out, _ = run(capsys, "settings", folder, "--time-zone", "Australia/Sydney", "--daylight-saving", "yes")
+    assert code == 0 and len(versions(folder)) == len(before) + 1
+    # A setting changed and changed back is a third version beside the other two, not the first written again, and the
+    # folder's latest is still the one that no other was made from.
+    for year in ("2024", "2025", "2024"):
+        assert run(capsys, "settings", folder, "--year", year)[0] == 0
+    assert len(versions(folder)) == len(before) + 4
+    latest = json.loads(zipfile.ZipFile(describe_main.latest(folder)).read("settings.json"))
+    assert latest["year"] == 2024 and len(latest["lineage"]) == len(set(latest["lineage"])) == len(before) + 3
+    assert run(capsys, "settings", folder, "--year", "2024")[0] == 0 and len(versions(folder)) == len(before) + 4
 
 
 def test_a_change_is_tried_kept_or_discarded_and_only_a_kept_one_is_saved(tmp_path, capsys):

@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from schemalyser import describe, rolemap, roleshadow
+from schemalyser import describe, evidence, rolemap, roleshadow
 from schemalyser.rolemap import __main__ as rolemap_main
 from schemalyser.describe import __main__ as describe_main
 from schemalyser.translate import to_duckdb
@@ -1072,6 +1072,7 @@ def test_the_hospital_s_name_and_the_person_who_gave_the_time_zone_are_recorded_
     # save that sends the same zone again leaves the name as it was.
     s.set_settings(time_zone="Australia/Sydney", daylight_saving=True, time_zone_from="proposed from this computer", actor="Dr A")
     assert s.view()["settings"]["time_zone_by"] is None
+    assert s.log.entries()[-1]["kind"] == "setting" and s.log.entries()[-1]["provenance"] == evidence.INFERENCE
     s.set_settings(time_zone="Australia/Sydney", daylight_saving=True, time_zone_from="a person", actor="Dr B")
     s.set_settings(time_zone="Australia/Sydney", daylight_saving=True, time_zone_from="a person", actor="Dr C")
     assert s.view()["settings"]["time_zone_by"] == "Dr B"
@@ -1081,6 +1082,74 @@ def test_the_hospital_s_name_and_the_person_who_gave_the_time_zone_are_recorded_
     assert "It describes The Invented Hospital." in again.folder_files(DATE)["README.md"].decode()
     s.set_settings(hospital="")
     assert s.view()["settings"]["hospital_recorded"] == "not recorded"
+
+
+def test_opening_a_saved_schema_leaves_nothing_of_the_one_the_sitting_held_before():
+    """A sitting that holds a mapped schema with its settings and evidence opens a draft that holds the dictionary alone.
+    Nothing of the earlier schema is kept: the next save holds no map, no name of the hospital and no entry that the
+    draft did not hold."""
+    s = fresh()
+    s.set_settings("production", 2024, "Australia/Sydney", True, hospital="The Invented Hospital")
+    s.confirm("role_patient.birth_date", "yes", date=DATE, actor="Dr A")
+    s.save(DATE)
+    draft = describe.Describe()
+    draft.version = "test"
+    draft.load_dictionary(DICTIONARY.read_bytes(), TABLES.read_bytes(), {}, "invented-dictionary.csv", "invented-tables.csv")
+    files = draft.folder_files(DATE)
+    assert "map/map.json" not in files
+    found = s.restore(files)
+    assert found["dictionary"] and not found["map"] and s.data is None and s.restored is found
+    assert s.confirmations == [] and len(s.log) == len(draft.log)
+    assert s.identity["schema_id"] == found["schema_id"] == json.loads(files["settings.json"])["schema_id"]
+    assert "hospital" not in s.settings and s.settings["year"] is None and s.view()["settings"]["hospital_recorded"] == "not recorded"
+    saved = s.folder_files(DATE)
+    assert "map/map.json" not in saved and set(saved) == set(files)
+    assert "hospital" not in json.loads(saved["settings.json"]) and json.loads(saved["settings.json"])["year"] is None
+    # A sitting whose dictionary was loaded from a file keeps that dictionary for a saved schema that holds no copy of
+    # its own, and nothing else of what it held.
+    t = fresh()
+    t.set_settings(hospital="The Other Hospital")
+    without = {k: v for k, v in s.folder_files(DATE).items() if not k.startswith("dictionary/")}
+    found = t.restore(without)
+    assert not found["needs_dictionary"] and not found["dictionary"] and t.dictionary is not None and t.data is None
+    assert "hospital" not in t.settings
+
+
+def test_a_change_of_a_setting_a_person_gave_is_a_new_version_with_the_last_as_its_parent():
+    """The hospital's name, the database, the year and the time zone are part of what a version is, so that a save after
+    any of them changes carries a new schema_id with the last version as its parent; a save that changes nothing keeps
+    the identity it had."""
+    s = fresh()
+    s.set_settings("training", 2024, "Australia/Sydney", True)
+    first = json.loads(s.save(DATE)["settings.json"])
+    assert first["schema_id"] == evidence.content_id(s.folder_files(DATE))[:16]
+    again = json.loads(s.folder_files(DATE)["settings.json"])
+    assert again["schema_id"] == first["schema_id"] and again["parent_id"] == first["parent_id"]
+    last = first
+    for change in ({"hospital": "The Invented Hospital"}, {"year": 2025}, {"database": "production"},
+                   {"time_zone": "UTC", "time_zone_from": "a person", "actor": "Dr A"}, {"daylight_saving": False}):
+        s.set_settings(**change)
+        saved = json.loads(s.save(DATE)["settings.json"])
+        assert saved["schema_id"] != last["schema_id"] and saved["parent_id"] == last["schema_id"]
+        assert last["schema_id"] in saved["lineage"] and saved["schema_id"] not in saved["lineage"]
+        assert saved["schema_id"] == evidence.content_id(s.folder_files(DATE))[:16]
+        last = saved
+    # The same settings given again change nothing.
+    s.set_settings("production", 2025, "UTC", False, hospital="The Invented Hospital")
+    assert json.loads(s.folder_files(DATE)["settings.json"])["schema_id"] == last["schema_id"]
+    # A setting changed and changed back is a new version, not the one before, because the journal records each
+    # change with what the setting was before; the lineage stays a line.
+    seen = [e["schema_id"] for e in (first,)] + [last["schema_id"]]
+    s.set_settings(year=2024, actor="Dr B")
+    back = json.loads(s.save(DATE)["settings.json"])
+    s.set_settings(year=2025, actor="Dr B")
+    again = json.loads(s.save(DATE)["settings.json"])
+    assert back["schema_id"] not in seen and again["schema_id"] not in seen + [back["schema_id"]]
+    assert again["parent_id"] == back["schema_id"] and back["parent_id"] == last["schema_id"]
+    assert again["lineage"] == again["lineage"][:len(set(again["lineage"]))] and again["schema_id"] not in again["lineage"]
+    entries = [e for e in s.log.entries() if e["kind"] == "setting"]
+    assert entries[-1]["payload"] == {"settings": {"year": 2025}, "before": {"year": 2024}}
+    assert entries[-1]["actor"] == "Dr B" and entries[-1]["provenance"] == evidence.PERSON
 
 
 def test_a_list_of_codes_with_its_concepts_is_read_and_the_view_gives_its_counts_by_status_and_no_code():

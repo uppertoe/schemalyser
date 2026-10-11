@@ -184,8 +184,9 @@ def _write(sitting, folder, tested=False):
         if _steady(held) == _steady(files):
             print(WORDING["cli_unchanged"].format(schema_id=schema_id, file=target.name))
             return target
-    # A version is named by the hash of every file but settings.json, so a change to the settings alone is written
-    # into the file of the same version.
+    # A version is named by the hash of every other file and of the settings a person gave, so a change to those settings
+    # is a new version in a file of its own; what settings.json records beyond them, such as that the test on made-up
+    # rows is owed or has been run, is written into the file of the same version.
     target.write_bytes(_zipped(files))
     print(WORDING["cli_saved"].format(schema_id=schema_id, file=target.name))
     if json.loads(files["settings.json"]).get("test_owed"):

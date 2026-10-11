@@ -26,6 +26,10 @@ COHORT_PARTS = ("role_anaesthetic", "role_patient")
 # How each part of the record is reached from #cohort in part 2: (the column that links it, the column of #cohort).
 REACHED = {"role_reading": ("anaesthetic_key", "anaesthetic_key"), "role_anaesthetic": ("anaesthetic_key", "anaesthetic_key"),
            "role_patient": ("patient_key", "patient_key")}
+# The one column of #cohort that is unique, by its primary key. A part reached through any other column of #cohort, such
+# as a part at the patient's grain, is reached from that column's distinct values, because a child with several
+# anaesthetics in the cohort appears in #cohort once for each, and a join through the part would otherwise multiply.
+COHORT_KEY = "anaesthetic_key"
 SESSION = ("SET NOCOUNT ON;", "SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;", "SET LOCK_TIMEOUT 10000;",
            "SET DEADLOCK_PRIORITY LOW;")
 DROP = "IF OBJECT_ID('tempdb..#cohort') IS NOT NULL DROP TABLE #cohort;"
@@ -232,6 +236,9 @@ def _reached_cte(schema, view, cohort_columns):
         raise AuditError(WORDING["unreached"].format(part=rolemap.view_title(view, False)))
     columns = [c for c in rolemap.views()[view] if c != link]
     lines, expressions, order, where = schema.sitting._reached(view, link, cohort_column, columns)
+    if cohort_column != COHORT_KEY:
+        assert lines[0] == "FROM   #cohort AS c"
+        lines = [f"FROM   (SELECT DISTINCT {cohort_column} FROM #cohort) AS c"] + lines[1:]
     text = ("SELECT " + ",\n       ".join([f"c.{cohort_column} AS {link}"] + [f"{expressions[c]} AS {c}" for c in columns])
             + "\n" + "\n".join(lines + describe._where(where)))
     return text, order

@@ -337,6 +337,9 @@ OPTIONAL_STEPS = ("3",)
 # Where the time zone of the database's clocks came from: a person typed or kept it, or the page proposed this
 # computer's own time zone and the person saved it unchanged, which the saved schema then says.
 TIME_ZONE_FROM = ("a person", "proposed from this computer")
+# The settings that set_settings records, and a change to which the journal records; the zone's three are one setting.
+ZONE_KEYS = ("time_zone", "time_zone_from", "daylight_saving", "time_zone_by")
+SETTING_KEYS = ("hospital", "database", "year", *ZONE_KEYS)
 # The evidence requests of the feasibility report, which the evidence import takes back. The format is the request's,
 # and each form of request that a result answers names the shape of the result it expects; a request of any other form
 # is answered on the page.
@@ -2813,8 +2816,9 @@ ORDER  BY g.kind;"""
         training = [self.journal[e["payload"]["name"]]["query"] for e in self.log.current("result returned")
                     if e["payload"].get("database") == "training" and e["payload"]["name"] in self.journal]
         readiness = self.readiness()
-        # The version's identity: the hash of every other file's contents, and the version it was made from.
-        content = evidence.content_id(files)
+        # The version's identity: the hash of every other file's contents and of the settings a person gave, and the
+        # version it was made from.
+        content = evidence.content_id(files, settings)
         schema_id = content[:16]
         parent = self.identity["schema_id"] if self.identity["schema_id"] != schema_id else self.identity["parent_id"]
         lineage = list(self.identity["lineage"])
@@ -2861,7 +2865,9 @@ ORDER  BY g.kind;"""
         it held. A folder without map/map.json starts a new hospital folder. A folder that holds no copy of the
         dictionary is restored only once a dictionary is loaded; until then nothing of it is taken, and the answer says
         that the dictionary is needed. Nothing is worked out again: the journal, the dimensions and the provenance of
-        each binding are read as they were recorded, and the sitting carries on from the version the file is."""
+        each binding are read as they were recorded, and the sitting carries on from the version the file is. The file
+        is read into a fresh sitting, which replaces this one only once it has been read, so that nothing this sitting
+        held before, such as its map, its settings or its evidence, outlives the file that replaces it."""
         files = dict(files)
         found = {"map": False, "tables": False, "codes": 0, "counts": 0, "dictionary": False, "reference": False, "confirmations": 0,
                  "queries": 0, "problem": "", "refused": "", "needs_dictionary": False, "schema_id": None, "contract_changed": []}
@@ -2870,13 +2876,29 @@ ORDER  BY g.kind;"""
         if files and not has_dictionary and self.dictionary is None:
             found["needs_dictionary"] = True
             return found
+        fresh = Describe()
+        fresh.version = self.version
+        if not has_dictionary:
+            # The dictionary loaded in this sitting stands in for the copy that the file does not hold.
+            fresh._take_dictionary(self)
+        found = fresh._restore(files, info, has_dictionary, found)
+        self.__dict__.clear()
+        self.__dict__.update(fresh.__dict__)
+        return found
+
+    def _take_dictionary(self, other):
+        """Takes the dictionary of another sitting, with what was loaded or worked out beside it: the reference lineage,
+        the proposer, and the tables and columns where they came from the database with the dictionary."""
+        for name in ("dictionary", "dictionary_files", "dictionary_saved", "dictionary_source", "invented", "vendor",
+                     "proposer", "_lookups", "reference", "reference_files"):
+            setattr(self, name, getattr(other, name))
+        if other.catalogue_source == "database":
+            self.catalogue, self.sizes = other.catalogue, dict(other.sizes)
+            self.catalogue_text, self.catalogue_source = other.catalogue_text, other.catalogue_source
+
+    def _restore(self, files, info, has_dictionary, found):
+        """restore() on a fresh sitting: reads the file into this sitting and returns what it held."""
         self.folder = files
-        # What the sitting held before is replaced by what the file holds, so that nothing is counted twice.
-        self.codes, self.counts = {}, {}
-        self.queries, self.results, self.values, self.probes = {}, {}, {}, {}
-        self.log, self.texts, self._journal_cache = evidence.Journal(), {}, None
-        self.dimensions = {"bindings": {}, "links": {}, "translations": {}, "parts": {}, "packages": {}}
-        self._checked, self._after, self._baseline, self._tested, self._saved = {}, {}, None, None, None
         held = _json_of(files.get("settings.json"))
         for key in ("made", "updated", "database", "year", "time_zone", "time_zone_from", "time_zone_by", "daylight_saving",
                     "hospital"):
@@ -3075,7 +3097,11 @@ ORDER  BY g.kind;"""
     def set_settings(self, database=None, year=None, time_zone=None, daylight_saving=None, time_zone_from=None,
                      hospital=None, actor=None):
         """Records the database, the year of the lists, the hospital's name, or the time zone of the database's clocks.
-        A zone that a person gave or confirmed records the name of that person, given as actor, or "not recorded"."""
+        A zone that a person gave or confirmed records the name of that person, given as actor, or "not recorded". A
+        change to any of them is appended to the journal as a "setting" entry, with what each was before, so that the
+        version records how its settings came to be what they are, and a setting changed and changed back is a new
+        version and not the one before."""
+        before = {k: self.settings.get(k) for k in SETTING_KEYS}
         if hospital is not None:
             # The name of the hospital that the saved schema describes, which every entry of the journal then carries in
             # its scope. An empty name takes back one given earlier, and the journal then says "not recorded".
@@ -3106,6 +3132,13 @@ ORDER  BY g.kind;"""
                 self.settings["time_zone_by"] = " ".join(str(actor or "").split())[:100] or NOT_RECORDED
             else:
                 self.settings.pop("time_zone_by", None)
+        changed = {k: self.settings.get(k) for k in SETTING_KEYS if self.settings.get(k) != before[k]}
+        if changed:
+            # A zone proposed from this computer, and nothing else, is the page's inference; every other change is a
+            # person's.
+            proposed = set(changed) <= set(ZONE_KEYS) and self.settings.get("time_zone_from") == TIME_ZONE_FROM[1]
+            self._append("setting", {"settings": changed, "before": {k: before[k] for k in changed}}, actor,
+                         evidence.INFERENCE if proposed else evidence.PERSON)
 
     # The evidence import: a result that the database analyst returns for one of the feasibility report's requests.
 
