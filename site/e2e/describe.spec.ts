@@ -162,6 +162,12 @@ async function loadAndGoOffline(page: Page, context: import('@playwright/test').
   await expect(page.locator('#receipt-1')).toBeVisible();
 }
 
+// What the browser reports that is not the page's doing: the worker's probes of the content security policy, and
+// Firefox's warning about a deprecated instruction in Pyodide's WebAssembly.
+function ownNoise(line: string) {
+  return line.includes('policy-check.invalid') || line.includes('api.github.com') || /WebAssembly exception handling .try. instruction is deprecated/.test(line);
+}
+
 async function loadDictionary(page: Page) {
   await page.locator('#way-upload').check();
   await page.locator('#dictionary').setInputFiles(fixtures + 'dictionary/invented-dictionary.csv');
@@ -510,8 +516,9 @@ test('the record is described, saved as a hospital schema and opened again', asy
   await again.getByRole('button', { name: d.checkCompare }).click();
   await expect(again).toContainText('The table VISIT_DIAGNOSIS was in the earlier result and is not in the new one.');
   await stage(page, '11-checked', '#step-check');
-  // The page's own test of the policy above is the one thing the browser reports.
-  expect(consoleLines.filter((line) => !line.includes('policy-check.invalid'))).toEqual([]);
+  // The worker's own test of the policy above, at its two addresses, is the one thing the page gives the browser to report.
+  // Firefox also warns about an instruction in Pyodide's WebAssembly, which is Pyodide's and not the page's.
+  expect(consoleLines.filter((line) => !ownNoise(line))).toEqual([]);
   expect(requestsWhileOffline).toEqual([]);
 });
 
