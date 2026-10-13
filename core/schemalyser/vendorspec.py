@@ -98,6 +98,7 @@ def convert(source):
     catalogue, tables, entries = [], [], []
     unread = 0
     listed = None
+    seen, without_columns, keys_without_columns = set(), [], []
     for name, text in _pages(source):
         if name == "_index.htm":
             listed = set(_INDEX_LINK.findall(text))
@@ -108,15 +109,27 @@ def convert(source):
             continue
         if listed is not None and found["table"] not in listed:
             continue
+        seen.add(found["table"])
         tables.append([found["table"], " ".join(found["key"]), found["description"]])
         keyed = {k.upper() for k in found["key"]}
+        names = {c["name"].upper() for c in found["columns"]}
+        if not found["columns"]:
+            without_columns.append(found["table"])
+        if keyed - names:
+            keys_without_columns.append(found["table"])
         for column in found["columns"]:
             catalogue.append(["", found["table"], column["name"], column["ordinal"], column["type"], "",
                               "YES" if column["name"].upper() in keyed else "NO", column["discontinued"], column["org_specific"],
                               column["description"]])
             for entry in column["entries"]:
                 entries.append([found["table"], column["name"], entry])
-    return catalogue, tables, entries, {"tables": len(tables), "columns": len(catalogue), "entries": len(entries), "unread": unread}
+    # The checks of completeness: a table the index lists without a page read, a page read with no column, and a key
+    # that names a column the page does not list. Each is a sign that the layout has changed or a page is damaged,
+    # and each is reported by count, so that a short import is never taken for a whole one.
+    missing_pages = sorted(listed - seen) if listed is not None else []
+    return catalogue, tables, entries, {"tables": len(tables), "columns": len(catalogue), "entries": len(entries), "unread": unread,
+                                        "missing_pages": missing_pages, "without_columns": without_columns,
+                                        "keys_without_columns": keys_without_columns, "indexed": len(listed) if listed is not None else None}
 
 
 def write(rows, headings, path):
@@ -150,7 +163,24 @@ def main(argv=None):
     print(f"Schemalyser read the specification: {counts['tables']:,} tables, {counts['columns']:,} columns and "
           f"{counts['entries']:,} published category entries, and {counts['unread']:,} pages that are not a table's. "
           f"The three files are in {out}, and the page takes the first two at step 2.")
+    for line in warnings(counts):
+        print(line, file=sys.stderr)
     return 0
+
+
+def warnings(counts):
+    """The sentences that say what the checks of completeness found, or none where the import is whole."""
+    lines = []
+    if counts.get("missing_pages"):
+        lines.append(f"The index lists {len(counts['missing_pages']):,} tables whose pages were not read, so the dictionary lacks them; "
+                     f"the download may be short or the layout changed. The first is {counts['missing_pages'][0]}.")
+    if counts.get("without_columns"):
+        lines.append(f"{len(counts['without_columns']):,} pages gave a table with no column, which the layout should never do; "
+                     f"the first is {counts['without_columns'][0]}.")
+    if counts.get("keys_without_columns"):
+        lines.append(f"{len(counts['keys_without_columns']):,} tables name a key column that their page does not list; "
+                     f"the first is {counts['keys_without_columns'][0]}.")
+    return lines
 
 
 if __name__ == "__main__":

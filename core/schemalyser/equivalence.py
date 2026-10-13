@@ -85,10 +85,19 @@ def compare_schemas(hospital, map_a, map_b, questions=()):
         except (HospitalError, ValueError, rolemap.MapError) as error:
             answers[name] = {"error": str(error).splitlines()[0][:200]}
             continue
-        whole_a, whole_b = {tuple(r) for r in got_a[1]}, {tuple(r) for r in got_b[1]}
-        answers[name] = {"rows_a": len(got_a[1]), "rows_b": len(got_b[1]), "rows_shared": len(whole_a & whole_b),
-                         "same": whole_a == whole_b and got_a[0] == got_b[0]}
+        answers[name] = compare_answers(got_a, got_b)
     return {"parts": parts, "questions": answers}
+
+
+def compare_answers(a, b):
+    """(columns, rows) of one question answered through two schemas, compared row by row with duplicates kept: an
+    answer that gives a row twice where the other gives it once is not the same answer, because the row stands for an
+    event of the record and losing one loses the event."""
+    columns_a, rows_a = a
+    columns_b, rows_b = b
+    whole_a, whole_b = Counter(tuple(r) for r in rows_a), Counter(tuple(r) for r in rows_b)
+    return {"rows_a": len(rows_a), "rows_b": len(rows_b), "rows_shared": sum((whole_a & whole_b).values()),
+            "same": whole_a == whole_b and columns_a == columns_b}
 
 
 def summary(found):

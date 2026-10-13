@@ -55,3 +55,16 @@ def test_the_command_runs_and_names_nothing_unless_asked(tmp_path, capsys):
     assert "Patients: " in out and "neonatal_low_mean_pressure: " in out and "PERSON_MASTER" not in out
     assert equivalence.main([str(tmp_path / "missing"), str(FIXTURES / "map"), "--hospital", str(FIXTURES / "hospital"),
                              "--catalogue", str(FIXTURES / "invented-catalogue.csv")]) == 1
+
+
+def test_an_answer_that_gives_a_row_twice_where_the_other_gives_it_once_is_not_the_same_answer():
+    columns = ["kind", "value"]
+    twice = (columns, [["map_arterial", "45"], ["map_arterial", "45"], ["map_cuff", "50"]])
+    once = (columns, [["map_arterial", "45"], ["map_cuff", "50"]])
+    found = equivalence.compare_answers(twice, once)
+    assert found == {"rows_a": 3, "rows_b": 2, "rows_shared": 2, "same": False}
+    assert equivalence.compare_answers(twice, (columns, list(reversed(twice[1]))))["same"]
+    assert not equivalence.compare_answers(once, (["value", "kind"], once[1]))["same"]
+    # A part's rows are compared the same way.
+    part = equivalence.compare_rows(twice, once, ["kind"])
+    assert (part["rows_a"], part["rows_b"], part["rows_shared"], part["keys_shared"]) == (3, 2, 2, 2)

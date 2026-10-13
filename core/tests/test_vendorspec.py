@@ -60,7 +60,9 @@ def test_the_specification_is_read_into_the_three_files_from_a_folder_or_a_zip(t
     folder.mkdir()
     _spec(folder)
     catalogue, tables, entries, counts = vendorspec.convert(folder)
-    assert counts == {"tables": 2, "columns": 7, "entries": 4, "unread": 1}
+    assert counts == {"tables": 2, "columns": 7, "entries": 4, "unread": 1, "missing_pages": [], "without_columns": [],
+                      "keys_without_columns": [], "indexed": 2}
+    assert vendorspec.warnings(counts) == []
     assert tables == [["READING", "SHEET_KEY LINE", "A reading on a sheet."], ["SHEET", "SHEET_KEY", "A sheet of observations, one row for each sheet."]]
     assert ["", "READING", "TAKEN_AT", 3, "DATETIME (Local)", "", "NO", "No", "", "The instant the reading was taken."] in catalogue
     assert ["", "READING", "OLD_VALUE", 4, "VARCHAR", "", "NO", "Yes", "Yes", "Discontinued."] in catalogue
@@ -88,3 +90,19 @@ def test_a_folder_without_a_table_page_writes_nothing(tmp_path, capsys):
     (tmp_path / "x.htm").write_text("<html><body>nothing</body></html>")
     assert vendorspec.main([str(tmp_path), "--out", str(tmp_path / "out")]) == 1
     assert "nothing was written" in capsys.readouterr().err
+
+
+def test_a_short_or_damaged_specification_is_reported_by_its_checks(tmp_path, capsys):
+    folder = tmp_path / "spec"
+    folder.mkdir()
+    _spec(folder)
+    # A table the index lists without a page, and a page whose key names a column it does not list.
+    index = (folder / "_index.htm").read_text().replace("</ul>", '<li><a href="./LOST.htm" title="Documentation for the table LOST" target="_self" >LOST</a></li></ul>')
+    (folder / "_index.htm").write_text(index)
+    (folder / "SHEET.htm").write_text(_page("SHEET", "A sheet.", ["SHEET_KEY", "GONE"], PAGES["SHEET"][2]))
+    _, _, _, counts = vendorspec.convert(folder)
+    assert counts["missing_pages"] == ["LOST"] and counts["keys_without_columns"] == ["SHEET"] and counts["indexed"] == 3
+    lines = vendorspec.warnings(counts)
+    assert len(lines) == 2 and "LOST" in lines[0] and "SHEET" in lines[1]
+    assert vendorspec.main([str(folder), "--out", str(tmp_path / "out")]) == 0
+    assert "whose pages were not read" in capsys.readouterr().err

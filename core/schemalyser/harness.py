@@ -540,6 +540,28 @@ class Analysis:
         }
 
 
+def apply_design(world, con, consistency_only=False):
+    """Writes the world's designed values (design.sql) over a built stand-in, statement by statement, and then the
+    world's consistency rules (consistency.sql beside it, where there is one), which state the agreement between tables
+    that a real database has and the generator cannot know. With consistency_only, only the rules are written, which is
+    safe between the layers of a conversion, because they change no code and no row's place. A statement that designs a
+    table or column that the stand-in does not hold is passed over, because the requests did not call for it."""
+    design = getattr(world, "design_path", None)
+    if not design:
+        return
+    files = [] if consistency_only else [Path(design)]
+    consistency = Path(design).with_name("consistency.sql")
+    if consistency.exists():
+        files.append(consistency)
+    for path in files:
+        for statement in path.read_text().split(";\n"):
+            if statement.strip():
+                try:
+                    con.execute(statement)
+                except duckdb.CatalogException:
+                    pass
+
+
 class World:
     def __init__(self, catalogue, requests, rules=None, design=None, planted=None, dialect="tsql"):
         self.catalogue_path, self.requests_path = Path(catalogue), Path(requests)
@@ -588,13 +610,7 @@ class World:
                     designed[(check.table, check.column, *check.parent)] = list(DESIGNED_FANOUT)
         sandbox = Sandbox(Catalogue.from_csv(self.catalogue_text()), inventory_zip(analysis), designed)
         sandbox.build(rows)
-        if self.design_path:
-            for statement in self.design_path.read_text().split(";\n"):
-                if statement.strip():
-                    try:
-                        sandbox.con.execute(statement)
-                    except duckdb.CatalogException:
-                        pass    # the statement designs a table or column that these requests did not call for
+        apply_design(self, sandbox.con)
         return sandbox.con
 
 
