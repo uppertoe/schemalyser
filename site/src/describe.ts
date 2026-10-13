@@ -1895,10 +1895,12 @@ $('schema-file').addEventListener('change', async () => {
     const reply = await ask('describe_schema_open', [file]);
     if (!reply.ok) status('t-folder-status', d.folderFailed, 'problem');
     else {
-      const restored = reply.restored as Parameters<typeof d.folderReceipt>[0] & { problem: string; needs_dictionary: boolean };
+      const restored = reply.restored as Parameters<typeof d.folderReceipt>[0] & { problem: string; needs_dictionary: boolean; contract_report?: string[] };
       if (restored.needs_dictionary) status('t-folder-status', d.folderNeedsDictionary, 'problem');
       else {
-        status('t-folder-status', [restored.problem, d.folderReceipt(restored)].filter(Boolean).join(' '), restored.map ? 'good' : '');
+        // A file saved under an earlier description of the record says which parts changed, what the page proposed for
+        // them from the dictionary the file holds, and what a person must still find.
+        status('t-folder-status', [restored.problem, d.folderReceipt(restored), ...(restored.contract_report ?? [])].filter(Boolean).join(' '), restored.map ? 'good' : '');
         if (restored.dictionary && model?.dictionary) {
           const fromDb = model.dictionary.source === 'database';
           status(fromDb ? 't-database-status' : 't-dictionary-status', d.dictionaryReceipt(model.dictionary), 'good');

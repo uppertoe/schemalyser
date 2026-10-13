@@ -131,6 +131,9 @@ WORDING = {
     "concepts_rows": "Each row of a translation gives a local code, a standard concept as a whole number, whether the code is mapped, unmapped or ambiguous, and where the mapping came from. Only an unmapped code has the concept 0, and only an ambiguous code has more than one row.",
     "pathway_part": "Only a part that records events, and that the hospital schema already holds, can be reached by a further pathway.",
     "pathway_name": "Please name the pathway in plain lower-case letters, digits and underscores, starting with a letter, and with a name that this part does not already use.",
+    "contract_changed_parts": "Schemalyser's description of {parts} has changed since this hospital schema was saved, so the evidence recorded for it no longer counts until it is checked again.",
+    "contract_proposed": "From the data dictionary the file holds, and with no query sent to the hospital's database, the page has proposed {what}; each waits for a person's answer.",
+    "contract_unproposed": "The dictionary holds nothing that fits {what}, so a person must name where the hospital records it, or say that it does not, and may need to look in the database.",
     "source_kind_unknown": "{kind} is not one of the kinds of source record that Schemalyser knows. Choose one of the kinds of record that the page offers.",
     "source_kind_says": "A person named the kind of record of this pathway as {kind}.",
     "headings": "Schemalyser could not find a heading for the {fields} in the dictionary's first row. The clinician names the "
@@ -863,21 +866,53 @@ class Describe:
         contract added are proposed from the dictionary the file holds, every answer stays as recorded, and the journal
         records the proposal with the parts the contract changed. Nothing is asked of the hospital's database: the
         proposal rests on the dictionary alone, and the tables query, the probes and the test say later what it is worth."""
+        report = {"columns_added": [], "parts_added": [], "proposed": [], "unproposed": []}
         if self.data is None or self.dictionary is None:
-            return 0
-        lacking = [name for name, role in self.data["roles"].items()
-                   if any(item.get("from") == rolemap.ADDED_FROM for item in role["columns"].values())]
+            return report
+        report["columns_added"] = [f"{name}.{column}" for name, role in self.data["roles"].items()
+                                   for column, item in role["columns"].items() if item.get("from") == rolemap.ADDED_FROM]
+        lacking = sorted({about.split(".")[0] for about in report["columns_added"]})
         known = set((self.contract_saved or {}).get("parts") or {})
         missing = [v["name"] for v in self.model["views"] if v["name"] not in self.data["roles"]
                    and v["name"] not in rolemap.mapping_views() and known and v["name"] not in known]
+        report["parts_added"] = missing
         if not lacking and not missing:
-            return 0
+            return report
         added = self._propose_unanswered_again(date, added_only=True, added_parts=set(missing))
+        # What the dictionary the file holds could and could not supply, so that a person sees at once what needs
+        # evidence from the hospital and what does not.
+        for about in report["columns_added"]:
+            name, column = about.split(".")
+            (report["proposed"] if self.data["roles"][name]["columns"][column].get("binding") else report["unproposed"]).append(about)
+        for name in missing:
+            role = self.data["roles"].get(name)
+            if role is None or not role["rows"].get("binding"):
+                report["unproposed"].append(f"{name} rows")
+                continue
+            report["proposed"].append(f"{name} rows")
+            for column, item in role["columns"].items():
+                if column != "source_kind":
+                    (report["proposed"] if item.get("binding") else report["unproposed"]).append(f"{name}.{column}")
         if added:
             self._append("proposal extended", {"changed_parts": self.contract_changes(), "columns_in": lacking, "parts_added": missing,
-                                               "proposed": added, "date": date or _today()}, TOOL, INFERENCE)
+                                               "proposed": report["proposed"], "unproposed": report["unproposed"],
+                                               "date": date or _today()}, TOOL, INFERENCE)
             self._refresh_present(self._catalogue_entry(), date)
-        return added
+        return report
+
+    def contract_report(self, found):
+        """The sentences that say what opening a file under a changed contract did: which parts changed, what the page
+        proposed from the dictionary the file holds, and what it could not, which needs evidence from the hospital."""
+        changed = found.get("contract_changed") or []
+        report = found.get("proposed_for_contract") or {}
+        if not changed and not report.get("columns_added") and not report.get("parts_added"):
+            return []
+        lines = [WORDING["contract_changed_parts"].format(parts=_and([rolemap.view_title(p, False) for p in changed]) or "no part")]
+        if report.get("proposed"):
+            lines.append(WORDING["contract_proposed"].format(what=_and([rolemap.plain_about(a) for a in report["proposed"]])))
+        if report.get("unproposed"):
+            lines.append(WORDING["contract_unproposed"].format(what=_and([rolemap.plain_about(a) for a in report["unproposed"]])))
+        return lines
 
     # The tables and columns query.
 
@@ -3054,7 +3089,8 @@ ORDER  BY g.kind;"""
         held before, such as its map, its settings or its evidence, outlives the file that replaces it."""
         files = dict(files)
         found = {"map": False, "tables": False, "codes": 0, "counts": 0, "dictionary": False, "reference": False, "confirmations": 0,
-                 "queries": 0, "problem": "", "refused": "", "needs_dictionary": False, "schema_id": None, "contract_changed": []}
+                 "queries": 0, "problem": "", "refused": "", "needs_dictionary": False, "schema_id": None, "contract_changed": [],
+                 "proposed_for_contract": {}, "contract_report": []}
         info = _json_of(files.get(f"{DICTIONARY_FOLDER}/dictionary.json"))
         has_dictionary = bool(info.get("file") and f"{DICTIONARY_FOLDER}/{info['file']}" in files)
         if files and not has_dictionary and self.dictionary is None:
@@ -3156,7 +3192,8 @@ ORDER  BY g.kind;"""
                     text = _text(files[path])
                     self.texts[path] = _strip_stamp(text) if key == "result" else text
         judgements = {e["payload"]["count"]: e["payload"] for e in self.log.current("judgement")}
-        found["proposed_for_contract"] = self._propose_added() if found.get("map") and self.dictionary is not None else 0
+        found["proposed_for_contract"] = self._propose_added() if found.get("map") and self.dictionary is not None else {}
+        found["contract_report"] = self.contract_report(found)
         for name, state in self.journal.items():
             if state.get("query") in self.texts:
                 self.queries[name] = self.texts[state["query"]]

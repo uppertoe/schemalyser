@@ -163,6 +163,9 @@ def _open(args, version):
         raise Refused(WORDING["cli_needs_dictionary"].format(name=path.name))
     if sitting.dictionary is None:
         raise Refused(WORDING["cli_unreadable"].format(name=path.name), 2)
+    # A file opened under a contract that changed since it was saved says so, beside any command's own output.
+    for line in found.get("contract_report") or []:
+        print(line, file=sys.stderr)
     return sitting, path
 
 

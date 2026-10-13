@@ -1296,7 +1296,9 @@ def test_a_saved_schema_opens_under_a_newer_contract_and_the_added_column_and_pa
     again = describe.Describe()
     again.version = "test"
     restored = again.restore(files)
-    assert restored["map"] and restored["contract_changed"] and restored["proposed_for_contract"] >= 2
+    assert restored["map"] and restored["contract_changed"]
+    assert "role_patient.given_name" in restored["proposed_for_contract"]["proposed"]
+    assert "role_ward rows" in restored["proposed_for_contract"]["proposed"] and restored["contract_report"]
     given = again.data["roles"]["role_patient"]["columns"]["given_name"]
     assert given["binding"] and given["binding"]["table"] == "PERSON_MASTER" and given["binding"]["column"] == "GIVEN_NAME"
     assert again.data["roles"]["role_patient"]["columns"]["birth_date"]["confirmation"]["answer"] == "yes"
