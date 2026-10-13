@@ -101,6 +101,9 @@ OUTSIDE_SHARE = 0.25
 
 # The wording that a person reads, in one place.
 WORDING = {
+    "added_says": "The contract added this column after the hospital schema was made, and no proposal has been made for it yet.",
+    "added_question": "Please name the table and column that hold it, or say that the hospital does not record it.",
+
     "not_one_select": "{where}: a role view is one SELECT, by the rule that the release script applies to a step ({reason}).",
     "with": "{where}: a role view may not begin with WITH, because the compiled query places it among common table expressions.",
     "columns": "{where}: the view gives the columns {found}, and the contract asks for exactly {wanted}, in that order.",
@@ -417,6 +420,8 @@ def read_map_json(folder):
 
 # The name of a further pathway to a part, which the map's evidence names as role_x@name.
 PATHWAY_NAME = re.compile(r"[a-z][a-z0-9_]{0,30}")
+# Where a column stands that the contract added after a map was made, until the page proposes it.
+ADDED_FROM = "nothing yet: the contract added this column after the hospital schema was made"
 
 
 def _pathway(view, role, columns, where):
@@ -425,6 +430,14 @@ def _pathway(view, role, columns, where):
     from ..corrections import check_shape
     _evidence(role["rows"], f"{where}, rows")
     check_shape(role["rows"].get("binding"), f"{where}, rows")
+    if isinstance(role["columns"], dict) and set(role["columns"]) < set(columns):
+        # A column the contract added after the map was made is read as unmapped, with the sentence that says so, so
+        # that a saved schema opens under a newer contract and the page can propose the column from the dictionary.
+        for name in columns:
+            if name not in role["columns"]:
+                role["columns"][name] = {"status": "proposed", "from": ADDED_FROM, "says": WORDING["added_says"],
+                                         "question": WORDING["added_question"], "binding": None, "confidence": "none",
+                                         "candidates": [], "provenance": "an inference"}
     if not isinstance(role["columns"], dict) or set(role["columns"]) != set(columns):
         raise MapError(WORDING["map_shape"].format(where=where, problem=f"columns gives evidence for exactly {', '.join(columns)}"))
     for column in columns:

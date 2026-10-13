@@ -39,7 +39,8 @@ NOT_RECORDED = "not recorded"
 TOOL = "Schemalyser"
 JOURNAL_FORMAT = 2
 KINDS = ("dictionary loaded", "vendor descriptions added", "reference lineage loaded", "query offered", "result returned",
-         "answer", "correction kept", "codes chosen", "concepts translated", "judgement", "setting", "test run", "evidence imported")
+         "answer", "correction kept", "codes chosen", "concepts translated", "judgement", "setting", "test run", "evidence imported",
+         "proposal extended")
 DIMENSIONS = ("confirmed", "present", "tested", "reconciled", "validated")
 # Why a dimension is stale, by the part of what it rested on that changed.
 REASONS = {"binding": "the binding changed", "link": "the link changed", "codes": "the codes changed",

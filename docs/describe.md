@@ -36,6 +36,7 @@ Run the commands from the `core` folder:
 - `save SCHEMA` runs the test on made-up rows that the hospital schema owes, if any, and saves the version that the page's Save would save.
 - `show SCHEMA [--json]` opens a saved hospital schema and prints its README, which gives its readiness, then its stale evidence and its journal, or with `--json` the page's whole view, the readiness, the stale evidence, the journal and the files.
 - `check SCHEMA` proposes the hospital schema again from its dictionary and its answers, and says whether it is the same.
+- A saved schema opens under a newer contract. A column the contract added to a part the file holds, and a part the contract added, are proposed from the dictionary the file carries when the file is opened, every answer stays as recorded, and the journal records the proposal as `proposal extended` with the parts the contract changed. Nothing is asked of the hospital's database for the proposal; the evidence of a changed part is marked stale, and the tables query, the probes and the test on made-up rows say what the proposal is worth.
 - `compare SCHEMA NAME RESULT` compares a new result of a query with the result that the hospital schema holds.
 - `lookup SCHEMA tables|columns|joins [TABLE]` lists the dictionary's tables, a table's columns, or the joins from a table, as the page's forms list them.
 - `scoreboard SCHEMA [--write]` prints how the proposals fared, as counts only, and with `--write` writes the same summary beside the saved schema for the owner to read before showing it to anyone.

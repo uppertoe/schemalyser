@@ -821,11 +821,13 @@ class Describe:
         self.codes = {k: v for k, v in self.codes.items() if not k.startswith(view_name + ".")}
         self._refresh_present(self._catalogue_entry(), date)
 
-    def _propose_unanswered_again(self, date=None):
+    def _propose_unanswered_again(self, date=None, added_only=False, added_parts=()):
         """Proposes again, from the dictionary as it now stands, every column of the first pathway of each part that no
         person has answered, from the same tables, and keeps every answered column, every table and every further
-        pathway as it is. Returns how many bindings changed. The check of a saved schema proposes from the same
-        dictionary, so what it rebuilds agrees with what the page then showed."""
+        pathway as it is. With added_only, it proposes only what the contract added after the schema was made: a column
+        a part lacked, and a part the schema did not hold, which it adds as a draft. Returns how many bindings changed
+        or were added. The check of a saved schema proposes from the same dictionary, so what it rebuilds agrees with
+        what the page then showed."""
         if self.data is None or self.dictionary is None:
             return 0
         if self.proposer is None:
@@ -834,21 +836,48 @@ class Describe:
                  if role["rows"].get("binding")}
         drafted = propose.draft(self.proposer.propose(bases), self.dictionary, self.model, date or _today(), "the hospital")
         changed = 0
-        for name, role in self.data["roles"].items():
-            fresh = drafted["roles"].get(name)
-            if fresh is None:
+        for name, fresh in drafted["roles"].items():
+            if name not in self.data["roles"]:
+                # A part the contract added since the save is drafted; a part the dictionary never fitted stays out.
+                if added_only and name in added_parts:
+                    self.data["roles"][name] = fresh
+                    changed += 1
                 continue
+            role = self.data["roles"][name]
             for column, item in role["columns"].items():
                 new = fresh["columns"].get(column)
                 if new is None or item.get("status") != "proposed" or item.get("confirmation") or "binding" not in item:
                     continue
-                if new.get("binding") != item.get("binding"):
+                if added_only and item.get("from") != rolemap.ADDED_FROM:
+                    continue
+                if new.get("binding") != item.get("binding") or added_only:
                     changed += 1
                     key = f"{name}.{column}"
                     if key in self.codes and not self.codes[key].get("chosen"):
                         del self.codes[key]
                 role["columns"][column] = new
         return changed
+
+    def _propose_added(self, date=None):
+        """After a saved schema is opened under a contract that changed since it was saved: the columns and parts the
+        contract added are proposed from the dictionary the file holds, every answer stays as recorded, and the journal
+        records the proposal with the parts the contract changed. Nothing is asked of the hospital's database: the
+        proposal rests on the dictionary alone, and the tables query, the probes and the test say later what it is worth."""
+        if self.data is None or self.dictionary is None:
+            return 0
+        lacking = [name for name, role in self.data["roles"].items()
+                   if any(item.get("from") == rolemap.ADDED_FROM for item in role["columns"].values())]
+        known = set((self.contract_saved or {}).get("parts") or {})
+        missing = [v["name"] for v in self.model["views"] if v["name"] not in self.data["roles"]
+                   and v["name"] not in rolemap.mapping_views() and known and v["name"] not in known]
+        if not lacking and not missing:
+            return 0
+        added = self._propose_unanswered_again(date, added_only=True, added_parts=set(missing))
+        if added:
+            self._append("proposal extended", {"changed_parts": self.contract_changes(), "columns_in": lacking, "parts_added": missing,
+                                               "proposed": added, "date": date or _today()}, TOOL, INFERENCE)
+            self._refresh_present(self._catalogue_entry(), date)
+        return added
 
     # The tables and columns query.
 
@@ -3127,6 +3156,7 @@ ORDER  BY g.kind;"""
                     text = _text(files[path])
                     self.texts[path] = _strip_stamp(text) if key == "result" else text
         judgements = {e["payload"]["count"]: e["payload"] for e in self.log.current("judgement")}
+        found["proposed_for_contract"] = self._propose_added() if found.get("map") and self.dictionary is not None else 0
         for name, state in self.journal.items():
             if state.get("query") in self.texts:
                 self.queries[name] = self.texts[state["query"]]

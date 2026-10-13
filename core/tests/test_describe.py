@@ -1273,3 +1273,37 @@ def test_a_no_without_a_replacement_says_the_hospital_does_not_record_the_column
     assert item["binding"] is None and item["confirmation"]["answer"] == "no" and item["from"].startswith("a person found")
     assert "NULL AS grade" in s.view_sql("role_staff") or "NULL" in s.view_sql("role_staff")
     assert [c["answer"] for c in s.confirmations] == ["no"]
+
+
+def test_a_saved_schema_opens_under_a_newer_contract_and_the_added_column_and_part_are_proposed_from_its_dictionary(monkeypatch):
+    # The contract gains a column on an answered part and a new part after the schema was saved. The file opens, every
+    # answer stays, the column and the part are proposed from the dictionary the file holds, the journal records it,
+    # and nothing is asked of the hospital's database.
+    s = fresh()
+    s.confirm("role_patient rows", "yes", date=DATE)
+    s.confirm("role_patient.birth_date", "yes", date=DATE)
+    files = s.folder_files(date=DATE)
+    model = json.loads(json.dumps(rolemap.contract()))
+    patient = next(v for v in model["views"] if v["name"] == "role_patient")
+    patient["columns"].append({"name": "given_name", "title": "the given name", "type": "text", "needed_by": [],
+                               "meaning": "The patient's given name.", "holds": "The patient record.", "look_for": ["given name", "first name"]})
+    model["views"].append({"name": "role_ward", "omop": [], "title": "Wards", "required": False, "status": "draft",
+                           "description": "One row for each ward of the hospital.", "one_row_per": "ward",
+                           "holds": "The list of wards.", "look_for": ["wards", "units of the hospital"], "key": ["ward_key"], "links": [],
+                           "columns": [{"name": "ward_key", "title": "the ward's identifier", "type": "key", "needed_by": [], "meaning": "The ward's key.", "holds": "The ward list.", "look_for": ["ward"]},
+                                       {"name": "ward_name", "title": "the ward's name", "type": "text", "needed_by": [], "meaning": "The ward's name.", "holds": "The ward list.", "look_for": ["ward name", "name of the ward"]}]})
+    monkeypatch.setattr(rolemap, "contract", lambda: model)
+    again = describe.Describe()
+    again.version = "test"
+    restored = again.restore(files)
+    assert restored["map"] and restored["contract_changed"] and restored["proposed_for_contract"] >= 2
+    given = again.data["roles"]["role_patient"]["columns"]["given_name"]
+    assert given["binding"] and given["binding"]["table"] == "PERSON_MASTER" and given["binding"]["column"] == "GIVEN_NAME"
+    assert again.data["roles"]["role_patient"]["columns"]["birth_date"]["confirmation"]["answer"] == "yes"
+    assert again.data["roles"]["role_ward"]["rows"]["binding"]["table"] == "WARD_DEF"
+    assert again.log.latest("proposal extended")["payload"]["parts_added"] == ["role_ward"]
+    assert not any(e["kind"] == "query offered" for e in again.log.entries() if e["payload"].get("name") != "tables-and-columns")
+    # The check rebuilds the same schema, and the evidence of the changed part is marked stale rather than lost.
+    checked = again.check()
+    assert checked["rebuilt"] and checked["same"], checked["differences"]
+    assert "role_patient" in again.contract_changes()
