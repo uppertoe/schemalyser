@@ -18,22 +18,43 @@ import json
 import re
 import sys
 from collections import Counter
+from decimal import Decimal
 from pathlib import Path
 
 from . import compiler, release, rolemap
 from .hospital import HospitalError, InventedHospital, files_from
 
 STAMP = re.compile(r"^--.*\n", re.M)
+DECIMAL_TEXT = re.compile(r"-?\d+\.\d+(e-?\d+)?", re.I)
 
 
 class EquivalenceError(ValueError):
     """The schemas or the stand-in cannot be read; the message says why."""
 
 
+def _cell(value):
+    """A value as the comparison sees it: a number is rounded to twelve significant figures, because two views written
+    apart from each other may convert a unit by a division in one and a multiplication in the other and differ in the
+    last binary digit, which is no difference in what the record says. Twelve figures leave that digit out and keep
+    every figure a record holds, so that two equal values never fall on opposite sides of a rounding."""
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, (float, Decimal)):
+        return float(f"{float(value):.12g}")
+    if isinstance(value, str) and DECIMAL_TEXT.fullmatch(value):
+        # The stand-in gives every value as text, and a number with a decimal point is one.
+        return float(f"{float(value):.12g}")
+    return value
+
+
+def _row(row):
+    return tuple(_cell(v) for v in row)
+
+
 def _keyed(columns, rows, key):
     at = [columns.index(k) for k in key if k in columns]
-    keys = {tuple(r[i] for i in at) for r in rows} if at else set()
-    whole = Counter(tuple(r) for r in rows)
+    keys = {tuple(_cell(r[i]) for i in at) for r in rows} if at else set()
+    whole = Counter(_row(r) for r in rows)
     return keys, whole
 
 
@@ -95,7 +116,7 @@ def compare_answers(a, b):
     event of the record and losing one loses the event."""
     columns_a, rows_a = a
     columns_b, rows_b = b
-    whole_a, whole_b = Counter(tuple(r) for r in rows_a), Counter(tuple(r) for r in rows_b)
+    whole_a, whole_b = Counter(_row(r) for r in rows_a), Counter(_row(r) for r in rows_b)
     return {"rows_a": len(rows_a), "rows_b": len(rows_b), "rows_shared": sum((whole_a & whole_b).values()),
             "same": whole_a == whole_b and columns_a == columns_b}
 

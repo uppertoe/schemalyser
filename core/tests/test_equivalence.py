@@ -68,3 +68,16 @@ def test_an_answer_that_gives_a_row_twice_where_the_other_gives_it_once_is_not_t
     # A part's rows are compared the same way.
     part = equivalence.compare_rows(twice, once, ["kind"])
     assert (part["rows_a"], part["rows_b"], part["rows_shared"], part["keys_shared"]) == (3, 2, 2, 2)
+
+
+def test_a_number_that_two_views_convert_by_different_arithmetic_is_the_same_value():
+    # One view divides days by seven and the other multiplies by a factor; the stand-in gives both back as text that
+    # differs in the last digit, and a decimal column pads its zeros. Neither is a difference in what the record says.
+    columns = ["patient_key", "gestation_weeks", "birth_weight_grams"]
+    a = (columns, [["1", "37.14285714285714", "629.075405"], ["2", "24.0", "1006.1237550000001"]])
+    b = (columns, [["1", "37.142857142857146", "629.07540500"], ["2", "24.0", "1006.12375500"]])
+    assert equivalence.compare_answers(a, b)["same"]
+    assert equivalence.compare_rows(a, b, ["patient_key"])["rows_shared"] == 2
+    # A key that happens to hold digits is not a number, and a different one stays different.
+    assert not equivalence.compare_answers((columns, [["01", "24.0", "1.0"]]), (columns, [["1", "24.0", "1.0"]]))["same"]
+    assert not equivalence.compare_answers((columns, [["1", "24.1", "1.0"]]), (columns, [["1", "24.0", "1.0"]]))["same"]

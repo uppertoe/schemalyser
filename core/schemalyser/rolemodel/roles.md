@@ -584,7 +584,7 @@ A map translates the hospital's own codes into these kinds. Most vocabularies en
 | Vocabulary | Kinds |
 |---|---|
 | sex | female, male, indeterminate, other |
-| technique | general_inhalational, general_intravenous, sedation, spinal, epidural, combined_spinal_epidural, caudal, upper_limb_block, lower_limb_block, trunk_block, groin_block, head_neck_block, local_infiltration, other |
+| technique | general, general_inhalational, general_intravenous, sedation, regional, spinal, epidural, combined_spinal_epidural, caudal, upper_limb_block, lower_limb_block, trunk_block, groin_block, head_neck_block, local_infiltration, other |
 | specialty | cardiac, general, neurosurgery, orthopaedic, ear_nose_throat, dental, ophthalmic, plastic, urology, imaging, other |
 | unit | intensive_care, high_dependency, theatre, recovery, emergency, ward, other |
 | location | theatre, imaging, catheter_laboratory, intensive_care, emergency_department, ward, other |

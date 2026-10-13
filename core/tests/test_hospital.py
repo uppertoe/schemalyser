@@ -149,11 +149,14 @@ def test_a_values_query_and_a_test_query_run_on_it(invented):
     assert receipt["rows"] == 1 and receipt["findings"]
 
 
-def test_only_the_invented_dictionary_and_an_offered_query_are_answered(invented):
+def test_a_query_runs_on_the_stand_in_it_is_given_and_only_an_offered_query_is_answered(invented):
+    # A rehearsal may name any stand-in for any dictionary; without one, no query runs here, and a query the page has
+    # not offered is not run.
     s = sitting(invented_dictionary=False)
     s.tables_query()
-    with pytest.raises(describe.DescribeError, match="only the queries written for the invented dictionary"):
-        s.run_invented(invented, "tables-and-columns", "tables")
+    with pytest.raises(describe.DescribeError, match="No invented hospital is loaded"):
+        s.run_invented(None, "tables-and-columns", "tables")
+    assert s.run_invented(invented, "tables-and-columns", "tables")
     with pytest.raises(describe.DescribeError, match="has not written this query yet"):
         sitting().run_invented(invented, "count-coverage_by_year", "count", name="coverage_by_year")
 
