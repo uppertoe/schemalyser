@@ -310,10 +310,12 @@ export const describeStrings = {
     "The query reads only the database's own records of its tables, and never a row of any table. It may take a minute on a large database, and it needs no special permission beyond reading the database.",
   tablesPasteLabel: 'The result, copied with its headers:',
   tablesRead: 'Read the result',
-  tablesReceipt: (r: { tables: number; columns: number; sized: number; asked: number; absent: number }) =>
+  tablesReceipt: (r: { tables: number; columns: number; sized: number; asked: number; absent: number; added?: number }) =>
     `The page has read the result: ${plural(r.columns, 'column', 'columns')} in ${plural(r.tables, 'table', 'tables')}.${
       r.absent ? ` ${plural(r.absent, 'table', 'tables')} did not come back, either because ${r.absent === 1 ? 'it does' : 'they do'} not exist here or because this login cannot see ${r.absent === 1 ? 'it' : 'them'}.` : ' Every table came back.'
-    } Each column in step 6 now shows whether the database holds it.`,
+    } Each column in step 6 now shows whether the database holds it.${
+      r.added ? ` The database holds ${plural(r.added, 'column', 'columns')} that the dictionary does not describe, and the page has added ${r.added === 1 ? 'it' : 'them'} to the dictionary from the result, so that ${r.added === 1 ? 'it' : 'they'} can be named in step 6.` : ''
+    }`,
   tablesDoubt: 'More than half of the tables did not come back. The database analyst should make sure that the SQL window is connected to the reporting database before going on.',
   tablesUnreadable: "The page could not read this as the query's result. Use Copy with Headers on the whole results grid, then paste it again.",
 
@@ -394,6 +396,13 @@ export const describeStrings = {
     large: (table: string, n: number) => `The database holds this. ${table} is large, at about ${rows(n)}, so the page's queries read only a sample of it.`,
     unknown: ['', 'Step 5', ' will say whether the database holds this.'],
   },
+  factsHeading: 'Facts the test on made-up rows rests on',
+  factsWhat:
+    "A part may reach its anaesthetic by a column of the anaesthetic's table that is not its key. The test on made-up rows then treats two anaesthetics of one admission as sharing that column, and reports every row as linked to both, until a person says that one value of the column belongs to one anaesthetic only. The counts and the test query on the hospital's database measure the same thing on real rows, so a wrong answer here changes only what the test assumes.",
+  factsAnswered: (answer: string, by: string, day: string) => `Answered ${answer} by ${by} on ${day}.`,
+  factsYes: 'Yes, one anaesthetic only',
+  factsNo: 'No, two may share it',
+  factsNotSure: 'Not sure',
   questionsHeading: 'Questions for the database team',
   questionsWhat: 'Each column marked Not sure is listed here. The clinician chooses Copy the questions and pastes them into an email to the team, and the database analyst answers each column above when the team replies.',
   questionsNone: 'There are no questions yet.',
@@ -621,6 +630,7 @@ export const describeStrings = {
     suggestedLabel: (table: string) => `Links from ${table} that the dictionary suggests:`,
     suggestedNone: 'Choose a suggested link, or fill in the fields below',
     suggestedRepeats: 'may repeat rows',
+    suggestedIdentifier: (word: string) => `on the shared identifier ${word}`,
     addStep: 'Add another table',
     removeStep: 'Remove the last table',
     finalColumn: (table: string) => `Then take the value from the column of ${table}`,
@@ -706,6 +716,11 @@ export const describeStrings = {
     hospitalNone: 'No hospital has been named yet, so the saved file will record the hospital as "not recorded".',
     hospitalGiven: (name: string) => `The saved file will record that it describes ${name}.`,
     hospitalInvented: 'The invented dictionary is in use, so the saved file records the hospital as the invented hospital.',
+    identifiersLabel: 'Identifiers that tables share without any table being keyed by them, separated by commas:',
+    identifiersAbout:
+      "Some databases carry one identifier in many tables without keying any of them by it, as some vendors carry the contact number of an encounter in many tables. If the database analyst names such a word here, the page can propose a link between two parts on columns that carry it, with low confidence, and the test query at step 8 then says whether the join reaches one anaesthetic for each row. The page proposes with it from the next proposal.",
+    identifiersNone: 'No shared identifier has been named, so the page proposes links only on the keys that the dictionary shows.',
+    identifiersGiven: (words: string[]) => `The page will propose links on columns that carry ${words.join(', ')}, and the saved file records the words.`,
   },
 
   // The translation of the hospital's other codes into standard concepts, at step 7 beside the codes of the readings.

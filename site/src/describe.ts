@@ -86,12 +86,17 @@ interface Model {
   proposed: boolean; roles: Role[]; tally: Tally;
   untranslated: { about: string; title: string; from: string }[]; unfinished: string; counts_offered: string[];
   questions: { about: string; title: string; question: string; meaning: string }[]; catalogue: boolean;
+  // The facts about the hospital's data that the test on made-up rows rests on, each with any answer recorded.
+  facts?: { about: string; table: string; column: string; parts: string[]; question: string; meaning: string;
+    answer: string | null; date: string | null; by: string | null; note: string | null }[];
   catalogue_source: 'database' | 'query' | null; vocabularies: Vocabulary[]; counts: Record<string, CountHeld>;
   settings: {
     made: string | null; updated: string | null; database: string | null; year: number | null; time_zone?: string | null;
     time_zone_from?: string | null; time_zone_by?: string | null; daylight_saving?: boolean | null;
     // The hospital's name as given, and as the journal records it: the name, the invented hospital, or not recorded.
     hospital?: string | null; hospital_recorded?: string;
+    // The words by which the site names an identifier that tables share without any keying it, such as the word for a contact number.
+    identifiers?: string[] | null;
   };
   source_kinds?: { kind: string; meaning: string }[]; concepts?: ConceptsHeld[];
   steps: Record<string, StepHeld>; current_step: string | null; answered_share: number; answered_any: boolean;
@@ -536,7 +541,7 @@ function show() {
     }
     // The names of the person answering and of the hospital may be given once the page is ready, before the tab is
     // offline, since they hold nothing of the hospital's database; they stay in this tab.
-    if (input.id === 'who-name' || input.id === 'who-hospital') {
+    if (input.id === 'who-name' || input.id === 'who-hospital' || input.id === 'who-identifiers') {
       input.disabled = state !== 'ready';
       continue;
     }
@@ -580,6 +585,7 @@ function render() {
     text('t-tally', d.tally(model.tally));
     renderTally(model.tally);
   }
+  renderFacts();
   const questions = model?.questions ?? [];
   $('t-questions-none').hidden = questions.length > 0;
   $('questions').hidden = questions.length === 0;
@@ -622,6 +628,10 @@ function renderWho() {
   const recorded = model?.settings.hospital_recorded ?? (hospital.value.trim() || 'not recorded');
   const said = recorded === 'the invented hospital' ? d.who.hospitalInvented : recorded === 'not recorded' ? d.who.hospitalNone : d.who.hospitalGiven(recorded);
   status('t-who-hospital-recorded', said, recorded === 'not recorded' ? '' : 'good');
+  const identifiers = $<HTMLInputElement>('who-identifiers');
+  const words = model?.settings.identifiers ?? [];
+  if (words.length && identifiers.value.trim() !== words.join(', ') && document.activeElement !== identifiers) identifiers.value = words.join(', ');
+  status('t-who-identifiers-recorded', words.length ? d.who.identifiersGiven(words) : d.who.identifiersNone, words.length ? 'good' : '');
 }
 
 // The lists of the hospital's other codes, each with what the hospital schema holds of it, at step 7.
@@ -1043,6 +1053,27 @@ function answeredNode(item: Item) {
     return line;
   }
   return null;
+}
+
+// The facts the test on made-up rows rests on: one line each, with the question, any answer, and three buttons.
+function renderFacts() {
+  const facts = model?.facts ?? [];
+  $('b-facts').hidden = facts.length === 0;
+  $('facts').replaceChildren(...facts.map((fact) => {
+    const box = el('div', undefined, 'fact');
+    box.append(el('p', fact.question));
+    if (fact.answer) box.append(el('p', d.factsAnswered(fact.answer, fact.by ?? 'not recorded', fact.date ?? ''), 'status good'));
+    const actions = el('div', undefined, 'actions');
+    for (const [value, label] of [['yes', d.factsYes], ['no', d.factsNo], ['not sure', d.factsNotSure]] as const) {
+      const button = el('button', label, value === fact.answer ? 'chosen' : 'secondary') as HTMLButtonElement;
+      button.type = 'button';
+      button.disabled = busy;
+      button.addEventListener('click', () => void answer(fact.about, value));
+      actions.append(button);
+    }
+    box.append(actions);
+    return box;
+  }));
 }
 
 async function answer(about: string, value: string, replacement = '', from?: HTMLElement) {
@@ -1987,6 +2018,13 @@ $('who-hospital').addEventListener('change', async () => {
   } catch { /* kept */ }
   renderWho();
 });
+// The shared identifiers go to the core, which records them and proposes with them from the next proposal.
+$('who-identifiers').addEventListener('change', async () => {
+  try {
+    await ask('describe_settings', [JSON.stringify({ identifiers: $<HTMLInputElement>('who-identifiers').value.trim() })]);
+  } catch { /* kept */ }
+  renderWho();
+});
 
 // The hospital's list of one kind of code with its standard concepts, pasted or chosen as a file, which the core reads.
 async function readConcepts(text: string) {
@@ -2188,6 +2226,8 @@ const fixed: Record<string, string> = {
   't-confirm-about': d.confirmAbout,
   't-model-check-what': d.corrections.modelCheckWhat,
   'model-check': d.corrections.modelCheck,
+  'h-facts': d.factsHeading,
+  't-facts-what': d.factsWhat,
   'h-questions': d.questionsHeading,
   't-questions-what': d.questionsWhat,
   't-questions-none': d.questionsNone,
@@ -2219,6 +2259,8 @@ const fixed: Record<string, string> = {
   't-who-name-about': d.who.nameAbout,
   'l-who-hospital': d.who.hospitalLabel,
   't-who-hospital-about': d.who.hospitalAbout,
+  'l-who-identifiers': d.who.identifiersLabel,
+  't-who-identifiers-about': d.who.identifiersAbout,
   'time-zone-confirm': d.timeZoneConfirm,
   'h-concepts': d.concepts.heading,
   's-concepts-about': d.concepts.aboutSummary,

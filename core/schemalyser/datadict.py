@@ -150,6 +150,23 @@ class Dictionary:
         entry = found.column(column)
         return entry._description if entry is not None else ""
 
+    def add_from_catalogue(self, catalogue):
+        """Adds to the dictionary every column that the catalogue holds in a table the dictionary knows and the dictionary
+        does not, with the catalogue's data type and no description, and returns how many were added. A vendor's export
+        can be short of a column that the database has, and the result of the tables and columns query is the database's
+        own account of its tables, so a column it shows is one the hospital schema may name."""
+        added = 0
+        for known in catalogue.tables():
+            held = self.table(known.name)
+            if held is None:
+                continue
+            for column in known.columns.values():
+                if held.column(column.name) is None:
+                    data_type = column.data_type if DATA_TYPE.match(column.data_type or "") else ""
+                    held.columns[column.name.upper()] = Entry(held.name, column.name, data_type, None, len(held.columns) + 1, "")
+                    added += 1
+        return added
+
     def restricted_to(self, catalogue):
         """A dictionary of only the tables and columns that the catalogue holds, in the catalogue's spelling, with the
         number of the dictionary's columns that the catalogue does not hold. The dictionary describes the vendor's

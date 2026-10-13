@@ -365,9 +365,9 @@ def read_map_json(folder):
     except (OSError, ValueError):
         raise MapError(WORDING["map_json"].format(where=MAP_FILE)) from None
     if not isinstance(data, dict) or not {"world", "description", "roles", "kinds"} <= set(data) \
-            <= {"world", "description", "roles", "kinds", "eras", "questions", "normalisations", "concepts"}:
+            <= {"world", "description", "roles", "kinds", "eras", "questions", "normalisations", "concepts", "facts"}:
         raise MapError(WORDING["map_shape"].format(where=MAP_FILE, problem="the map holds world, description, roles, kinds and, "
-                                                                           "optionally, eras, questions, normalisations and concepts"))
+                                                                           "optionally, eras, questions, normalisations, concepts and facts"))
     # A binding that names a normalisation is read back into its route, so that what follows checks the route itself.
     from ..normalise import resolve
     data = resolve(data)

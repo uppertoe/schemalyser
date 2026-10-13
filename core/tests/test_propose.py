@@ -581,3 +581,87 @@ def _unchanged_since_1_0(about):
     found = next((c for c in spec["columns"] if c["name"] == column), None)
     return found is not None and found["type"] != "local_key" and not found.get("per_pathway") and not found.get("optional") \
         and column not in spec["key"]
+
+
+def _small_dictionary(tmp_path, rows, tables):
+    columns = tmp_path / "small.csv"
+    columns.write_text("TABLE_NAME,COLUMN_NAME,DATA_TYPE,IS_PRIMARY_KEY,DESCRIPTION\n" + "\n".join(",".join(r) for r in rows) + "\n")
+    keys = tmp_path / "small-tables.csv"
+    keys.write_text("TABLE_NAME,PRIMARY_KEY,DESCRIPTION\n" + "\n".join(",".join(r) for r in tables) + "\n")
+    return datadict.load(columns, keys)
+
+
+def test_a_link_may_be_offered_on_an_identifier_the_site_names_with_low_confidence(tmp_path):
+    # The readings reach the anaesthetic only through a contact number that keys no table. Without the site's word for
+    # it the link is empty; with it, every column of the anaesthetic's table that carries the word is a candidate, in a
+    # fixed order, each with low confidence and a sentence that sends the person to the test query.
+    rows = [("EPISODE", "EPISODE_ID", "numeric", "YES", "The anaesthesia episode."),
+            ("EPISODE", "ANAES_CONTACT", "numeric", "NO", "The contact number of the anaesthesia encounter."),
+            ("EPISODE", "BILLING_CONTACT", "numeric", "NO", "The contact number of the hospital encounter."),
+            ("EPISODE", "START_TIME", "datetime", "NO", "The start of the anaesthetic."),
+            ("EPISODE", "STOP_TIME", "datetime", "NO", "The stop of the anaesthetic."),
+            ("EPISODE", "PERSON_ID", "varchar", "NO", "The patient."),
+            ("PERSON", "PERSON_ID", "varchar", "YES", "The patient."),
+            ("PERSON", "BIRTH_DATE", "datetime", "NO", "The date of birth of the patient."),
+            ("PERSON", "DEATH_DATE", "datetime", "NO", "The date of death of the patient."),
+            ("SHEET", "SHEET_ID", "numeric", "YES", "The flowsheet record."),
+            ("SHEET", "ENC_CONTACT", "numeric", "NO", "The contact number of the encounter the sheet was charted in."),
+            ("MEAS", "SHEET_ID", "numeric", "YES", "The flowsheet record."),
+            ("MEAS", "LINE", "int", "YES", "The line."),
+            ("MEAS", "ROW_ID", "varchar", "NO", "The flowsheet row associated with this reading."),
+            ("MEAS", "TAKEN", "datetime", "NO", "The time the value was taken."),
+            ("MEAS", "VALUE", "varchar", "NO", "The measured value of the reading.")]
+    tables = [("EPISODE", "EPISODE_ID", "One row for each anaesthesia episode."), ("PERSON", "PERSON_ID", "One row for each patient."),
+              ("SHEET", "SHEET_ID", "One row for each flowsheet record."), ("MEAS", "SHEET_ID LINE", "The flowsheet measurements, one row for each reading charted.")]
+    dictionary = _small_dictionary(tmp_path, rows, tables)
+    without = propose.Proposer(dictionary).propose()["role_reading"]["columns"]["anaesthetic_key"]
+    assert without["best"] is None
+    found = propose.Proposer(dictionary, identifiers=["contact"]).propose()["role_reading"]["columns"]["anaesthetic_key"]
+    best = found["best"]
+    assert found["confidence"] == "low" and best["table"] == "EPISODE" and best["column"] == "EPISODE_ID"
+    assert best["path"] == [["MEAS", "SHEET_ID", "SHEET", "SHEET_ID"], ["SHEET", "ENC_CONTACT", "EPISODE", "ANAES_CONTACT"]]
+    assert "test query at step 8" in best["identifier"]
+    assert [c["path"][-1][3] for c in found["candidates"]] == ["BILLING_CONTACT"]
+    # The identifier never outranks a link by a key: a table keyed by the episode wins outright.
+    rows.append(("SHEET", "EPISODE_ID", "numeric", "NO", "The anaesthesia episode the sheet belongs to."))
+    keyed = propose.Proposer(_small_dictionary(tmp_path, rows, tables), identifiers=["contact"]).propose()["role_reading"]["columns"]["anaesthetic_key"]
+    assert (keyed["best"]["table"], keyed["best"]["column"]) == ("SHEET", "EPISODE_ID") and keyed["confidence"] != "low"
+
+
+def test_a_replacement_in_a_table_without_a_key_is_joined_on_the_shared_key_name(tmp_path):
+    # VALID_PERSON keys nothing in the dictionary, so no link reaches it, but it carries the patient's own key by name.
+    rows = [("PERSON", "PERSON_ID", "varchar", "YES", "The patient."), ("PERSON", "BIRTH_DATE", "datetime", "NO", "Date of birth."),
+            ("VALID_PERSON", "PERSON_ID", "varchar", "NO", "The patient."), ("VALID_PERSON", "IS_VALID_YN", "varchar", "NO", "Y for a real patient."),
+            ("OTHER", "OTHER_ID", "varchar", "YES", "Something else.")]
+    dictionary = _small_dictionary(tmp_path, rows, [("PERSON", "PERSON_ID", "Patients."), ("OTHER", "OTHER_ID", "Other.")])
+    assert propose.shared_key_step(dictionary, "PERSON", "VALID_PERSON") == [["PERSON", "PERSON_ID", "VALID_PERSON", "PERSON_ID"]]
+    assert propose.shared_key_step(dictionary, "PERSON", "OTHER") is None
+    assert propose.shared_key_step(dictionary, "PERSON", "NO_SUCH") is None
+
+
+def test_a_reference_that_names_staging_models_is_read_to_the_base_tables():
+    dictionary = datadict.load(DICTIONARY, TABLES)
+    lineage = {"targets": {"measurement": {"fields": {"value_as_number": {"columns": ["OBS_READING_STG.READ_VALUE"]}},
+                                           "joins": [{"tables": ["OBS_READING_STG", "OBS_SHEET_DEDUP"],
+                                                      "on": [["OBS_READING_STG.SHEET_KEY", "OBS_SHEET_DEDUP.SHEET_KEY"]]}]}}}
+    reference = propose._Reference(lineage, dictionary)
+    assert reference.columns("measurement") == [("OBS_READING", "READ_VALUE", "value_as_number", "field")]
+    assert reference.joined("OBS_SHEET", "SHEET_KEY") == [(("OBS_READING", "SHEET_KEY"), ("OBS_SHEET.SHEET_KEY", "measurement"))]
+
+
+def test_the_proposer_holds_its_score_against_the_gold_standard_of_the_public_specification(tmp_path):
+    # The gold file grades each binding by what decides it, and the score counts outcomes per grade. The floor below is
+    # what the proposer reached on 13 October 2026 from the specification with its tables file; a change that lowers
+    # it shows here. Counts only: nothing of the specification is printed.
+    from schemalyser import gold
+    held = EPIC_EXPECTED.parent / "gold.json"
+    if not (held.exists() and (EPIC / "ehi-catalogue.csv").exists()):
+        pytest.skip("the public specification and its gold standard are kept in the private folder, which is absent here")
+    from schemalyser.extract import decode
+    dictionary = datadict.load(EPIC / "ehi-catalogue.csv", EPIC / "ehi-tables.csv")
+    catalogue = Catalogue.from_csv(decode((EPIC / "ehi-catalogue.csv").read_bytes()))
+    propose.propose_map(dictionary, catalogue, tmp_path / "draft", date=DATE)
+    found = gold.score(gold.load_gold(held), gold.read_map(tmp_path / "draft"))
+    c = found["counts"]
+    assert c["documented"]["exact"] >= 24 and c["documented"]["unlisted"] <= 2 and c["documented"]["empty"] <= 3
+    assert c["corroborated"]["exact"] >= 2

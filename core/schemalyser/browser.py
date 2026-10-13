@@ -144,7 +144,8 @@ def describe_settings(request):
     than as given; a zone given or confirmed by a person records the name in actor."""
     r = json.loads(request)
     return _reply(lambda: _describing().set_settings(r.get("database"), r.get("year"), r.get("timeZone"), r.get("daylightSaving"),
-                                                     r.get("timeZoneFrom"), hospital=r.get("hospital"), actor=r.get("actor")))
+                                                     r.get("timeZoneFrom"), hospital=r.get("hospital"), actor=r.get("actor"),
+                                                     identifiers=r.get("identifiers")))
 
 
 def describe_concepts(request):

@@ -218,6 +218,10 @@ WORDING = {
     "sized_few": "{table}, which holds fewer than ten rows",
     "sized_unknown": "{table}, whose size is not known",
     "question_column": "The page proposes {source} as {title}. Is that right, and if not, which column holds it?",
+    "fact_question": "Please confirm whether one value of {source} belongs to one anaesthetic only, and never to two. {parts} {reach} the anaesthetic by this column, and it is not the key of {table}, so the test on made-up rows treats two anaesthetics of one admission as sharing it until a person says that they do not.",
+    "fact_meaning": "Whether one value of {source} belongs to one anaesthetic only. The counts and the test query on the hospital's database measure this as well, and a yes changes only what the test on made-up rows assumes.",
+    "fact_unknown": "The hospital schema holds no link to the anaesthetic through {source}, so there is nothing to confirm about it.",
+    "fact_differs": "The fact about {source} differs: the saved schema holds {before}, and the schema proposed again holds {after}.",
     "question_nothing": "The page has found no column for {title}. Which column holds it, if the hospital records it?",
     "question_rows": "The page proposes {table} as the table that holds one row for each {what}. Is that right, and if not, which table holds them?",
     "assumed_plain": "The page assumes that {subject} is 1 where {source} holds {yes}, and 0 where it holds anything else or is empty. Confirm or change it in the form that opens after Yes.",
@@ -245,7 +249,7 @@ WORDING = {
     "identifying": "The page does not offer columns that hold a person's name, address, contact details or medical record number, and {name} is one, so the page cannot use it here.",
     "identifying_values": "The page does not list the values of {name}, because it holds a person's name, address, contact details or medical record number.",
     "kinds_absent": "Codes were chosen at step 7 for {kinds}, but no readings of {those} appear in {year}. The clinician looks again at {codes} at step 7.",
-    "invented_only": "The invented hospital answers only the queries written for the invented dictionary. With a real dictionary, the database analyst runs each query on the hospital's database.",
+    "invented_only": "No invented hospital is loaded to answer this query. With a real dictionary, the database analyst runs each query on the hospital's database, or a rehearsal names a stand-in's folder on the command line.",
     "invented_not_offered": "The page has not written this query yet. Write it first, then choose Run on the invented hospital.",
     "invented_failed": "The invented hospital could not run this query. Write it again and run it once more; if it still fails, answer this item by hand.",
     "invented_missing": "The invented hospital holds no table {table}, so it cannot run this query. The database analyst chooses another table or column at step 6, or answers this item by hand.",
@@ -341,7 +345,7 @@ OPTIONAL_STEPS = ("3",)
 TIME_ZONE_FROM = ("a person", "proposed from this computer")
 # The settings that set_settings records, and a change to which the journal records; the zone's three are one setting.
 ZONE_KEYS = ("time_zone", "time_zone_from", "daylight_saving", "time_zone_by")
-SETTING_KEYS = ("hospital", "database", "year", *ZONE_KEYS)
+SETTING_KEYS = ("hospital", "database", "year", "identifiers", *ZONE_KEYS)
 # The evidence requests of the feasibility report, which the evidence import takes back. The format is the request's,
 # and each form of request that a result answers names the shape of the result it expects; a request of any other form
 # is answered on the page.
@@ -767,7 +771,7 @@ class Describe:
         if progress:
             progress(0, total)
         if self.proposer is None:
-            self.proposer = propose.Proposer(self.dictionary, self.model, self.reference)
+            self.proposer = propose.Proposer(self.dictionary, self.model, self.reference, self.settings.get("identifiers") or ())
         proposer = self.proposer
         done = [0]
         plain_base = propose.Proposer.base
@@ -802,7 +806,7 @@ class Describe:
         if not NAME.match(table or "") or self.dictionary.table(table) is None:
             raise DescribeError(WORDING["no_table"].format(name=table))
         if self.proposer is None:
-            self.proposer = propose.Proposer(self.dictionary, self.model, self.reference)
+            self.proposer = propose.Proposer(self.dictionary, self.model, self.reference, self.settings.get("identifiers") or ())
         bases = {name: role["rows"]["binding"]["table"] for name, role in self.data["roles"].items()
                  if role["rows"].get("binding")}
         bases[view_name] = self.dictionary.table(table).name
@@ -816,6 +820,35 @@ class Describe:
         self.data["roles"][view_name] = role
         self.codes = {k: v for k, v in self.codes.items() if not k.startswith(view_name + ".")}
         self._refresh_present(self._catalogue_entry(), date)
+
+    def _propose_unanswered_again(self, date=None):
+        """Proposes again, from the dictionary as it now stands, every column of the first pathway of each part that no
+        person has answered, from the same tables, and keeps every answered column, every table and every further
+        pathway as it is. Returns how many bindings changed. The check of a saved schema proposes from the same
+        dictionary, so what it rebuilds agrees with what the page then showed."""
+        if self.data is None or self.dictionary is None:
+            return 0
+        if self.proposer is None:
+            self.proposer = propose.Proposer(self.dictionary, self.model, self.reference, self.settings.get("identifiers") or ())
+        bases = {name: role["rows"]["binding"]["table"] for name, role in self.data["roles"].items()
+                 if role["rows"].get("binding")}
+        drafted = propose.draft(self.proposer.propose(bases), self.dictionary, self.model, date or _today(), "the hospital")
+        changed = 0
+        for name, role in self.data["roles"].items():
+            fresh = drafted["roles"].get(name)
+            if fresh is None:
+                continue
+            for column, item in role["columns"].items():
+                new = fresh["columns"].get(column)
+                if new is None or item.get("status") != "proposed" or item.get("confirmation") or "binding" not in item:
+                    continue
+                if new.get("binding") != item.get("binding"):
+                    changed += 1
+                    key = f"{name}.{column}"
+                    if key in self.codes and not self.codes[key].get("chosen"):
+                        del self.codes[key]
+                role["columns"][column] = new
+        return changed
 
     # The tables and columns query.
 
@@ -858,12 +891,23 @@ class Describe:
         self.catalogue, self.sizes = catalogue, sizes
         self.catalogue_source = "query"
         self.catalogue_text = _tsv(list(first_ask.LAYOUT), rows)
+        # A column that the database has and the dictionary lacks is added to the dictionary from the result, without a
+        # description, so that a person can name it and the proposer can offer it. The proposer and the lookups are made
+        # again from the dictionary as it now stands.
+        added = self.dictionary.add_from_catalogue(catalogue) if self.dictionary is not None else 0
+        changed = 0
+        if added:
+            self.proposer, self._lookups = None, {}
+            # A result read back from a saved schema proposes nothing again: the saved map already holds what the
+            # page then proposed, and the check of a saved schema must see the map as it was saved.
+            if record:
+                changed = self._propose_unanswered_again()
         if record:
-            self._refresh_present(self.pasted("tables-and-columns", text))
+            self._refresh_present(self.pasted("tables-and-columns", text, added_columns=added, proposed_again=changed))
         asked = set(n.upper() for n in self.tables_named())
         held = {t.name.upper() for t in catalogue.tables()}
         return {"tables": len(held), "columns": sum(len(t.columns) for t in catalogue.tables()), "sized": len(sizes),
-                "asked": len(asked), "absent": len(asked - held), "doubt": first_ask.doubt(asked, held)}
+                "asked": len(asked), "absent": len(asked - held), "doubt": first_ask.doubt(asked, held), "added": added}
 
     def presence(self, binding):
         """Whether a binding's tables and columns exist, and how large its tables are, once the query has been read."""
@@ -893,6 +937,11 @@ class Describe:
         person who answered, which the journal records, or "not recorded" where none was given."""
         date = date or _today()
         replacement = (replacement or "").strip()
+        if about.startswith("fact "):
+            if answer not in ("yes", "no", "not sure"):
+                raise DescribeError(WORDING["not_a_name"])
+            self._confirm_fact(about, answer, note, date, actor)
+            return
         rows_of = re.fullmatch(r"(role_\w+) rows", about)
         if answer == "no" and rows_of:
             self.repropose(rows_of.group(1), replacement.split(".")[0], date)
@@ -901,7 +950,9 @@ class Describe:
                                            date, actor)
             self._settled(about, entry, date)
             return
-        if answer == "no":
+        # A no with a replacement names the column that holds it; a no without one says that the hospital does not
+        # record the column, which leaves it empty, as the question offers.
+        if answer == "no" and replacement:
             replacement = self._checked_replacement(about, replacement)
         folder = self._work_folder()
         line = io.StringIO()
@@ -942,7 +993,10 @@ class Describe:
                 if table.upper() not in known:
                     graph = self.proposer.graph if self.proposer is not None else propose._Graph(self.dictionary)
                     if table.upper() not in graph.reach(base):
-                        raise DescribeError(WORDING["unreachable"].format(table=table))
+                        step = propose.shared_key_step(self.dictionary, base, table)
+                        if step is None:
+                            raise DescribeError(WORDING["unreachable"].format(table=table))
+                        via = " via " + " then ".join(f"{a}.{b} = {c}.{d}" for a, b, c, d in step)
         elif self.catalogue is not None:
             held = self.catalogue.table(table)
             if held is None or held.column(column) is None:
@@ -1061,9 +1115,69 @@ class Describe:
             parts.append(f"{n:,} {'column' if n == 1 else 'columns'} confirmed whose codes are not yet translated")
         return " and ".join(parts)
 
+    def facts(self):
+        """The facts about the hospital's data that the test on made-up rows rests on, each with the person's answer
+        where one is recorded. Today there is one kind: for each column of the anaesthetic's table that is not its key
+        and by which some part reaches its anaesthetic, whether one value of that column belongs to one anaesthetic
+        only. The test shares every other such column between two planted anaesthetics of one admission, and a yes
+        here, recorded as a person's answer, stops it sharing that one. Each is {"about": "fact TABLE.COLUMN",
+        "table", "column", "parts": [titles], "question", "meaning", "answer", "date", "by", "note"}."""
+        if self.data is None:
+            return []
+        anaesthetic = self.data["roles"].get("role_anaesthetic")
+        table = ((anaesthetic or {}).get("rows") or {}).get("binding", {}).get("table") if anaesthetic else None
+        if not table:
+            return []
+        held = self.dictionary.table(table) if self.dictionary is not None else None
+        key = {k.upper() for k in held.primary_key()} if held is not None else set()
+        reached = {}
+        for name, whole in self.data["roles"].items():
+            if name == "role_anaesthetic":
+                continue
+            for _, role in rolemap.pathways(name, whole):
+                # A part no person has answered for is a draft, which the test leaves out, so it asks nothing yet.
+                if not any(item.get("status") == "person" or item.get("confirmation") for item in [role["rows"], *role["columns"].values()]):
+                    continue
+                binding = (role["columns"].get("anaesthetic_key") or {}).get("binding") or {}
+                path = binding.get("path") or []
+                if not path or path[-1][2].upper() != table.upper():
+                    continue
+                for _, b in propose.step_pairs(path[-1]):
+                    if b.upper() not in key:
+                        column = held.column(b).name if held is not None and held.column(b) else b
+                        reached.setdefault(column.upper(), (column, []))[1].append(rolemap.view_title(name, False))
+        found = []
+        recorded = self.data.get("facts") or {}
+        for upper in sorted(reached):
+            column, parts = reached[upper]
+            source = f"{table}.{column}"
+            fact = recorded.get(source) or {}
+            titles = list(dict.fromkeys(parts))
+            found.append({"about": f"fact {source}", "table": table, "column": column, "parts": titles,
+                          "question": WORDING["fact_question"].format(source=source, parts=_and(titles), table=table,
+                                                                      reach="reaches" if len(titles) == 1 else "reach"),
+                          "meaning": WORDING["fact_meaning"].format(source=source),
+                          "answer": fact.get("answer"), "date": fact.get("date"), "by": fact.get("by"), "note": fact.get("note")})
+        return found
+
+    def _confirm_fact(self, about, answer, note, date, actor):
+        """Records a person's answer to a fact about the hospital's data, in the map's facts and in the journal. The
+        fact must be one the schema rests on, and it names a column the map already names, so nothing of the
+        hospital enters the schema that was not there before."""
+        source = about[len("fact "):].strip()
+        known = {f["about"]: f for f in self.facts()}
+        if about not in known:
+            raise DescribeError(WORDING["fact_unknown"].format(source=source))
+        fact = known[about]
+        source = f"{fact['table']}.{fact['column']}"
+        facts = self.data.setdefault("facts", {})
+        facts[source] = {"answer": answer, "date": date, "by": actor or NOT_RECORDED, "note": " ".join((note or "").split())[:400]}
+        self.settings["updated"] = date
+        self._log_confirmation(f"fact {source}", answer, "", note, date, actor)
+
     def questions(self):
         """The bindings marked not sure, each named in plain words, with a question that states the proposal and asks
-        whether it is right, and the meaning of the column."""
+        whether it is right, and the meaning of the column; then the facts not yet answered, or marked not sure."""
         found = []
         for about, item in self._items():
             if (item.get("confirmation") or {}).get("answer") != "not sure":
@@ -1082,6 +1196,10 @@ class Describe:
             else:
                 question = WORDING["question_nothing"].format(title=rolemap.plain_about(about))
             found.append({"about": about, "title": rolemap.plain_about(about, True), "question": question, "meaning": meaning})
+        for fact in self.facts():
+            if fact["answer"] in (None, "not sure"):
+                found.append({"about": fact["about"], "title": f"One value of {fact['table']}.{fact['column']} for one anaesthetic",
+                              "question": fact["question"], "meaning": fact["meaning"]})
         return found
 
     # Corrections in plain forms, each checked on invented rows before it is kept.
@@ -1198,7 +1316,9 @@ class Describe:
             # A problem that names no part, such as the test audit's answer, falls on the parts that every audit reads.
             failing |= {about.split(" ")[0].split(".")[0]} if about else set(contract)
         mark = self._test_mark()
-        outcome = {view: "failed" if view in failing else "passed" for view in self.data["roles"]}
+        # A part the test left out, because no person has answered for it, is neither passed nor failed.
+        left_out = set(found.get("left_out") or ())
+        outcome = {view: "not run" if view in left_out else "failed" if view in failing else "passed" for view in self.data["roles"]}
         run = "r" + evidence.digest([mark, evidence.now(), len(self.log)], 12)
         entry = self._append("test run", {"run": run, "map": mark, "passed": not found["problems"],
                                           "problems": len(found["problems"]), "parts": outcome,
@@ -1346,6 +1466,24 @@ class Describe:
                 entry = other.column(key[0])
                 if entry is not None and other.primary_key() != (entry.name,):
                     found.append({"from": key[0], "table": other.name, "to": entry.name, "repeats": True})
+        # The joins on an identifier that the site names as shared, from each column of this table that carries it to
+        # each column of a part's own table that carries it, which may repeat rows and which the test query settles.
+        identifiers = tuple(self.settings.get("identifiers") or ())
+        if identifiers and self.data is not None:
+            if self.proposer is None:
+                self.proposer = propose.Proposer(self.dictionary, self.model, self.reference, identifiers)
+            bases = {role["rows"]["binding"]["table"].upper() for role in self.data["roles"].values() if role["rows"].get("binding")}
+            for entry in held.columns.values():
+                word = self.proposer._identifier_word(entry.name)
+                if word is None or entry.name.upper() in {k.upper() for k in key}:
+                    continue
+                for base in sorted(bases):
+                    other = self.dictionary.table(base)
+                    if other is None or other.name.upper() == held.name.upper():
+                        continue
+                    for theirs in other.columns.values():
+                        if self.proposer._identifier_word(theirs.name) == word and theirs.name.upper() not in {k.upper() for k in other.primary_key()}:
+                            found.append({"from": entry.name, "table": other.name, "to": theirs.name, "repeats": True, "identifier": word})
         seen, unique = set(), []
         for item in found:
             mark = (item["from"].upper(), item["table"].upper(), item["to"].upper())
@@ -1947,7 +2085,7 @@ class Describe:
             raise DescribeError(WORDING["no_table"].format(name=table))
         date = date or _today()
         if self.proposer is None:
-            self.proposer = propose.Proposer(self.dictionary, self.model, self.reference)
+            self.proposer = propose.Proposer(self.dictionary, self.model, self.reference, self.settings.get("identifiers") or ())
         bases = {n: r["rows"]["binding"]["table"] for n, r in self.data["roles"].items() if r["rows"].get("binding")}
         bases[view_name] = self.dictionary.table(table).name
         drafted = propose.draft(self.proposer.propose(bases), self.dictionary, self.model, date, "the hospital")["roles"][view_name]
@@ -2421,7 +2559,7 @@ ORDER  BY g.kind;"""
         The surface builds the invented hospital (hospital.py) and hands it here, so that this module imports nothing of
         the test worlds. Its grid(sql) gives the result as the results grid copies it, and raises a ValueError, which
         may name the table that the query reads and the invented hospital does not hold, where it cannot run the query."""
-        if not self.invented or hospital is None:
+        if hospital is None:
             raise DescribeError(WORDING["invented_only"])
         sql = self.queries.get(query)
         if sql is None:
@@ -2815,7 +2953,7 @@ ORDER  BY g.kind;"""
         files["dimensions.json"] = self._json({"format": evidence.JOURNAL_FORMAT, **self.dimensions}, date)
         # The settings in one order, whatever order they were given in, so that the same settings give the same file.
         order = ("format", "made", "updated", "database", "year", "time_zone", "daylight_saving", "time_zone_from",
-                 "time_zone_by", "hospital")
+                 "time_zone_by", "hospital", "identifiers")
         settings = {**{k: self.settings[k] for k in order if k in self.settings},
                     **{k: v for k, v in self.settings.items() if k not in order}}
         unfinished = self.unfinished()
@@ -2918,7 +3056,7 @@ ORDER  BY g.kind;"""
         self.folder = files
         held = _json_of(files.get("settings.json"))
         for key in ("made", "updated", "database", "year", "time_zone", "time_zone_from", "time_zone_by", "daylight_saving",
-                    "hospital"):
+                    "hospital", "identifiers"):
             if key in held:
                 self.settings[key] = held[key]
         self.identity = {"schema_id": held.get("schema_id"), "parent_id": held.get("parent_id"),
@@ -3046,6 +3184,9 @@ ORDER  BY g.kind;"""
             fresh.catalogue = self.catalogue
             for row in self.confirmations:
                 try:
+                    if row["attribute"].startswith("fact "):
+                        fresh.confirm(row["attribute"], row["answer"], "", row.get("note") or "", row.get("date") or None)
+                        continue
                     view, pathway, column = _about_parts(row["attribute"])
                     kind = re.search(r"source kind (\w+)", row.get("note") or "")
                     if pathway and row["attribute"].endswith(" rows") and kind and fresh._pathway(view, pathway) is None:
@@ -3112,7 +3253,7 @@ ORDER  BY g.kind;"""
         return {"differences": _grid_differences(before_columns, before, after), "previous": True}
 
     def set_settings(self, database=None, year=None, time_zone=None, daylight_saving=None, time_zone_from=None,
-                     hospital=None, actor=None):
+                     hospital=None, actor=None, identifiers=None):
         """Records the database, the year of the lists, the hospital's name, or the time zone of the database's clocks.
         A zone that a person gave or confirmed records the name of that person, given as actor, or "not recorded". A
         change to any of them is appended to the journal as a "setting" entry, with what each was before, so that the
@@ -3127,6 +3268,15 @@ ORDER  BY g.kind;"""
                 self.settings["hospital"] = named
             else:
                 self.settings.pop("hospital", None)
+        if identifiers is not None:
+            # The words by which the site names an identifier that tables share without any keying it, such as the word for a contact number. A
+            # change makes the proposer again, so that the next proposal offers links on them.
+            words = sorted({w.strip().upper() for w in re.split(r"[\s,;]+", str(identifiers)) if w.strip() and NAME.match(w.strip())})[:20]
+            if words:
+                self.settings["identifiers"] = words
+            else:
+                self.settings.pop("identifiers", None)
+            self.proposer = None
         if database in ("production", "training", "unsure"):
             self.settings["database"] = database
         if year is not None and re.fullmatch(r"(19|20)\d\d", str(year)):
@@ -3471,7 +3621,7 @@ ORDER  BY g.kind;"""
                         for v in self.vocabularies()]
         steps = self.steps(vocabularies, invented_hospital)
         return {"dictionary": self.dictionary_receipt(), "proposed": self.data is not None, "roles": roles,
-                "tally": tally, "questions": self.questions(), "catalogue": self.catalogue is not None,
+                "tally": tally, "questions": self.questions(), "facts": self.facts(), "catalogue": self.catalogue is not None,
                 # The share of the columns answered, which the bar at the head of step 6 shows, and whether any column
                 # or table has an answer yet.
                 "answered_share": round(100 * (tally["total"] - tally["remaining"] - tally["untranslated"]) / tally["total"])
@@ -3488,7 +3638,8 @@ ORDER  BY g.kind;"""
                            for k, v in self.counts.items()},
                 "steps": steps["steps"], "current_step": steps["current"],
                 "settings": {**{k: self.settings.get(k) for k in ("made", "updated", "database", "year", "time_zone",
-                                                                  "time_zone_from", "time_zone_by", "daylight_saving", "hospital")},
+                                                                  "time_zone_from", "time_zone_by", "daylight_saving", "hospital",
+                                                                  "identifiers")},
                              # The hospital as the journal records it: the name given, "the invented hospital", or "not recorded".
                              "hospital_recorded": self._hospital()},
                 "source_kinds": [{"kind": k["kind"], "meaning": k["meaning"]} for k in self.model["vocabularies"]["source_kind"]],
@@ -3731,6 +3882,11 @@ def _differences(before, after):
                 and (x.get("confirmation") or {}).get("answer") == (y.get("confirmation") or {}).get("answer")
             if not same:
                 found.append(WORDING["differs"].format(about=rolemap.plain_about(about, True), before=_shown(x), after=_shown(y)))
+    for source in dict.fromkeys([*(before.get("facts") or {}), *(after.get("facts") or {})]):
+        x, y = (before.get("facts") or {}).get(source), (after.get("facts") or {}).get(source)
+        if (x or {}).get("answer") != (y or {}).get("answer"):
+            found.append(WORDING["fact_differs"].format(source=source, before=(x or {}).get("answer") or "no answer",
+                                                        after=(y or {}).get("answer") or "no answer"))
     for kind in dict.fromkeys([*before["kinds"], *after["kinds"]]):
         x, y = before["kinds"].get(kind, {}).get("codes"), after["kinds"].get(kind, {}).get("codes")
         if sorted(x or []) != sorted(y or []):

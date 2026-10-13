@@ -289,6 +289,10 @@ class Source:
         self.counter = 5_000_000
         self.anaesthetic_table = None
         self.rows_of = {}      # anaesthetic key -> its row of the anaesthetic's table
+        # The columns of the anaesthetic's table of which a person has said that one value belongs to one anaesthetic
+        # only (the facts of the map), as upper-case names: the planted pairs do not share these. The shadow reads
+        # nothing else of the hospital: its rows are invented, and a fact names a column the map already names.
+        self.one_anaesthetic = frozenset()
 
     def table(self, name):
         upper = name.upper()
@@ -386,7 +390,8 @@ class Source:
         """A new value for a join column, or, for the second anaesthetic of a pair in one encounter, the value that
         the first holds, given to the first where it has none yet."""
         if row is not None and row.get("__same") is not None and self.anaesthetic_table \
-                and table.upper() == self.anaesthetic_table.upper() and column.upper() not in self.table(table)["key"]:
+                and table.upper() == self.anaesthetic_table.upper() and column.upper() not in self.table(table)["key"] \
+                and column.upper() not in self.one_anaesthetic:
             first = row["__same"]
             if first.get(column.upper()) is None:
                 self.set(first, table, column, self.fresh(table, column))
@@ -394,6 +399,34 @@ class Source:
         self.counter += 1
         declared = self.declared(table, column)
         return self.counter if declared in ("int", "number") else f"F{self.counter}"
+
+
+def one_anaesthetic_columns(data):
+    """The columns of the anaesthetic's table of which the map's facts say, by a person's yes, that one value belongs to
+    one anaesthetic only, as upper-case names."""
+    anaesthetic = (data.get("roles") or {}).get("role_anaesthetic") or {}
+    table = ((anaesthetic.get("rows") or {}).get("binding") or {}).get("table")
+    if not table:
+        return frozenset()
+    found = set()
+    for key, fact in (data.get("facts") or {}).items():
+        held, _, column = key.partition(".")
+        if held.upper() == table.upper() and fact.get("answer") == "yes":
+            found.add(column.upper())
+    return frozenset(found)
+
+
+def answered_parts(data):
+    """The parts for which a person has answered anything: the table, a column, or a further pathway. A part no person
+    has answered for is a draft the proposer made, and the test on made-up rows leaves it out, so that its rows never
+    reach a table that an answered part reads."""
+    found = set()
+    for name, whole in (data.get("roles") or {}).items():
+        for _, role in rolemap.pathways(name, whole):
+            items = [role["rows"], *role["columns"].values()]
+            if any(item.get("status") == "person" or item.get("confirmation") for item in items):
+                found.add(name)
+    return found
 
 
 def _hashable(value):
@@ -427,6 +460,7 @@ class Shadow:
         anaesthetic = state.data["roles"].get("role_anaesthetic")
         if anaesthetic:
             self.source.anaesthetic_table = anaesthetic["rows"]["binding"]["table"]
+            self.source.one_anaesthetic = one_anaesthetic_columns(state.data)
 
     # Codes.
 
@@ -557,6 +591,17 @@ class Shadow:
                 direct.append((column, binding))
             else:
                 later.append((column, binding))
+        # A column of the row by which a link to the anaesthetic begins, such as the encounter of an administration,
+        # takes the anaesthetic's own value for it, so that the link reaches the anaesthetic's row rather than a copy:
+        # where the same column is also bound directly, as the stay's key, its invented value gives way.
+        anaesthetic = source.anaesthetic_table
+        deferred = set()
+        if anaesthetic:
+            for column, binding in later:
+                path = binding.get("path") or []
+                if path and path[-1][2].upper() == anaesthetic.upper() and binding["column"].upper() in self.source.table(anaesthetic)["key"]:
+                    deferred.update(a.upper() for a, _ in propose.step_pairs(path[0]))
+        direct = [(column, binding) for column, binding in direct if source.column(base, binding["column"]) not in deferred]
         for column, binding in direct:
             # The row's own values are gathered before the row joins its table, and so outside every index.
             upper = source.column(base, binding["column"])
@@ -631,6 +676,7 @@ class Shadow:
                         if step[2].upper() == table.upper():
                             joined.add(b.upper())
         joined -= set(held["key"])
+        joined -= set(self.source.one_anaesthetic)
         for row in held["rows"]:
             first = row.get("__same")
             if first is None:
@@ -1051,6 +1097,14 @@ def run_check(state, seed=SHADOW_SEED, anaesthetics=SHADOW_ANAESTHETICS):
             about[problems[-1]] = f"{name} rows"
     held = copy.copy(state)
     held.data = data
+    answered = answered_parts(data)
+    drafts = [name for name in data["roles"] if name not in answered and name not in rolemap.views()]
+    if drafts:
+        notes.append(WORDING["drafts_left_out"].format(parts=_and([title(v) for v in drafts]), parts_them="it" if len(drafts) == 1 else "them"))
+        for name in drafts:
+            del data["roles"][name]
+            views.pop(name, None)
+            vocabularies.pop(name, None)
     shadow = Shadow(held, views, kinds, vocabularies)
     shadow.register()
     rows = role_rows(held, seed, anaesthetics)
@@ -1069,7 +1123,8 @@ def run_check(state, seed=SHADOW_SEED, anaesthetics=SHADOW_ANAESTHETICS):
     shadow.pair_encounters()
     con, date_columns = shadow.database()
     try:
-        return _run_views(state, data, views, order, shadow, con, date_columns, problems, notes, about, began)
+        return {**_run_views(state, data, views, order, shadow, con, date_columns, problems, notes, about, began),
+                "left_out": drafts}
     finally:
         # The database is in memory and holds every table of the shadow; closing it gives the memory back, which matters
         # in the browser, where a sitting runs many checks.
@@ -1122,7 +1177,7 @@ def _run_views(state, data, views, order, shadow, con, date_columns, problems, n
     else:
         problems.append(WORDING["neonatal_missing"].format(views=_and([title(v) for v in lacking])))
     return {"problems": list(dict.fromkeys(problems)), "notes": list(dict.fromkeys(notes)), "views": len(views),
-            "about": about, "seconds": round(time.perf_counter() - began, 1)}
+            "about": about, "seconds": round(time.perf_counter() - began, 1), "left_out": []}
 
 
 def _compare(name, spec, got, expected, state):

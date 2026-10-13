@@ -100,6 +100,11 @@ QUOTE = 160                     # how many characters of a description a sentenc
 COPIES = {"edit", "audit", "original", "delet"}
 # Where a proposal came from when it rests on a reference conversion's lineage rather than on the dictionary.
 REFERENCE = "a reference conversion"
+# The suffixes by which a reference conversion names a staging model or a deduplicated view of a base table.
+STAGING_SUFFIXES = ("_STG", "_DEDUP")
+# What a link joined on a shared identifier that is not a key scores, below every link by a key, so that the probe at
+# step 8 and not the proposal settles it.
+IDENTIFIER_LINK = 0.45
 # What a candidate from the reference scores for each word of meaning that it shares with the role's column, and what a
 # link from the reference's joins scores, below a link by the same name.
 REFERENCE_SCORE = 0.5
@@ -135,6 +140,7 @@ WORDING = {
     "reference_field_says": "A conversion at another hospital reads this table for {target}, and fills {field} from {table}.{column}.",
     "reference_filter_says": "A conversion at another hospital reads this table for {target}, and tests {table}.{column} to choose its rows.",
     "reference_link_says": "A conversion at another hospital reads this table for {target}, and joins {table}.{column} to {other}.",
+    "identifier_says": "{table}.{column} and {other} both carry the identifier {word}, which the site names as one that tables share, and neither is a key, so the test query at step 8 must show that each row reaches one anaesthetic.",
     "source_kind_says": "The page proposes that the rows of this pathway are of the kind {kind}: {meaning}.",
     "source_kind_question": "Please confirm what kind of record each {what} of this pathway comes from, such as an order, an administration or a charted value.",
     "nothing_says": "The dictionary holds no column within reach of {table} that fits {about}, so the page leaves it empty.",
@@ -504,14 +510,17 @@ def _confidence(score, runner_up, phrase, factor, matched):
 class Proposer:
     """Proposes a draft map for a role model from a dictionary that is already restricted to the catalogue."""
 
-    def __init__(self, dictionary, model=None, reference=None):
-        """reference, when given, is a lineage of a reference conversion as compare.lineage gives it."""
+    def __init__(self, dictionary, model=None, reference=None, identifiers=()):
+        """reference, when given, is a lineage of a reference conversion as compare.lineage gives it. identifiers,
+        when given, are the words by which the site names an identifier that tables share without any keying it, such
+        as the word for a contact number, by which a link to another part may be offered with low confidence."""
         self.dictionary = dictionary
         self.model = model or rolemap.contract()
         self.index = _Index(dictionary)
         self.graph = _Graph(dictionary)
         self._scores, self._pools = {}, {}
         self.reference = _Reference(reference, dictionary) if reference else None
+        self.identifiers = tuple(sorted({str(w).upper() for w in identifiers if str(w).strip()}))
 
     def _reference_candidates(self, base, view, column):
         """The columns that the reference reads for the view's OMOP tables and that share the column's meaning, within
@@ -624,6 +633,34 @@ class Proposer:
                               "reference": WORDING["reference_link_says"].format(
                                   target=target_name.upper(), table=self.dictionary.table(table).name, column=entry.name,
                                   other=f"{target_table}.{target_column}")})
+        if self.identifiers:
+            held = {(c["table"].upper(), c["column"].upper(), tuple(map(tuple, c["path"]))) for c in found}
+            home = self.dictionary.table(target_table)
+            for table_upper, (factor, path) in reach.items():
+                if table_upper == target_table.upper() or len(path) >= 3:
+                    continue
+                table = self.dictionary.table(table_upper)
+                for entry in table.columns.values():
+                    if path and path[-1][3].upper() == entry.name.upper():
+                        continue
+                    word = self._identifier_word(entry.name)
+                    if word is None:
+                        continue
+                    for theirs in home.columns.values():
+                        if self._identifier_word(theirs.name) != word or theirs.name.upper() in {k.upper() for k in home.primary_key()}:
+                            continue
+                        a, b = _type_of(entry.data_type), _type_of(theirs.data_type)
+                        if "unknown" not in (a, b) and a != b:
+                            continue
+                        step = path + [[table.name, entry.name, home.name, theirs.name]]
+                        key = (home.name.upper(), target_column.upper(), tuple(map(tuple, step)))
+                        if key in held:
+                            continue
+                        held.add(key)
+                        found.append({"table": home.name, "column": home.column(target_column).name, "path": step,
+                                      "data_type": home.column(target_column).data_type, "score": IDENTIFIER_LINK * factor,
+                                      "exact": False, "matched": set(), "phrase": False, "factor": 1.0, "identifier": WORDING["identifier_says"].format(
+                                          table=table.name, column=entry.name, other=f"{home.name}.{theirs.name}", word=word)})
         if not found:
             # The other role's table may point at a table in reach, as an anaesthetic record points at its theatre case.
             # Such a join is one to many in principle, so it is offered last and with low confidence.
@@ -641,6 +678,14 @@ class Proposer:
                                       "matched": set(), "phrase": False, "factor": 1.0})
         found.sort(key=lambda c: (-c["score"], len(c["path"]), c["table"], c["column"]))
         return found
+
+    def _identifier_word(self, name):
+        """The site's identifier word that a column's name carries as one of its words, or None."""
+        words = set(_core(name.upper().split("_")))
+        for word in self.identifiers:
+            if word in words:
+                return word
+        return None
 
     def _own_key(self, base, view, column):
         key = self.dictionary.table(base).primary_key()
@@ -690,7 +735,7 @@ class Proposer:
                 found = self._link_candidates(base, target, self._avoid(role, bound))
                 if found:
                     best = found[0]
-                    confidence = "low" if best.get("reverse") or best.get("reference") else \
+                    confidence = "low" if best.get("reverse") or best.get("reference") or best.get("identifier") else \
                         "high" if best["exact"] and len(best["path"]) <= 1 else "medium" if best["exact"] else "low"
                     return {"best": best, "candidates": found[1:1 + SHOWN], "confidence": confidence, "link": (role, key, target)}
             ranked = self._candidates(base, view, column)
@@ -919,6 +964,13 @@ class _Reference:
     def _known(self, name):
         table, _, column = str(name).partition(".")
         held = self.dictionary.table(table) if column and table.isupper() else None
+        if held is None and column and table.isupper():
+            # A dbt project reads its sources through staging models named after the table with a suffix, and a plain
+            # copy of the same SQL through deduplicated views; either names the base table once the suffix is off.
+            for suffix in STAGING_SUFFIXES:
+                if table.endswith(suffix) and self.dictionary.table(table[:-len(suffix)]) is not None:
+                    held = self.dictionary.table(table[:-len(suffix)])
+                    break
         entry = held.column(column) if held is not None else None
         return (held.name, entry.name) if entry is not None else None
 
@@ -999,6 +1051,8 @@ def _column_says(dictionary, candidate, view_name, column_name, link=None):
     table, column = candidate["table"], candidate["column"]
     if candidate.get("reference"):
         return candidate["reference"]
+    if candidate.get("identifier"):
+        return candidate["identifier"]
     description = dictionary.description(table, column)
     if candidate.get("own_key") and candidate.get("derive"):
         named = [f"{table}.{other}" for other in candidate["derive"]["with"]] + [f"{table}.{column}"]
@@ -1046,6 +1100,8 @@ def _candidate_entry(dictionary, candidate):
         entry["words"] = _quote(description) + "."
     if candidate.get("reference"):
         entry["reference"] = candidate["reference"]
+    if candidate.get("identifier"):
+        entry["identifier"] = candidate["identifier"]
     return entry
 
 
@@ -1500,6 +1556,20 @@ def _parse_replacement(text, where):
     return table, column, path, via is not None
 
 
+def shared_key_step(dictionary, base, table):
+    """The one join by which base reaches table on the column that names base's own key, as [[base, key, table, key]],
+    where table carries a column of that name and the dictionary shows no link; or None. A table that the vendor's
+    specification leaves without a key, such as a list of valid patients keyed by the patient, is reached this way,
+    and the test query at step 8 then says whether the join repeats rows."""
+    held, other = dictionary.table(base), dictionary.table(table)
+    if held is None or other is None:
+        return None
+    key = held.primary_key()
+    if len(key) != 1 or other.column(key[0]) is None:
+        return None
+    return [[held.name, held.column(key[0]).name, other.name, other.column(key[0]).name]]
+
+
 def _known_paths(role):
     """The joins that a view already makes, as {table: path}, its own table included."""
     paths = {role["rows"]["binding"]["table"].upper(): []}
@@ -1580,9 +1650,12 @@ def confirm(folder, confirmations, catalogue=None, dictionary=None, today=None, 
                         path = known[table.upper()]
                     elif graph is not None and restricted.table(role["rows"]["binding"]["table"]) is not None:
                         reach = graph.reach(role["rows"]["binding"]["table"])
-                        if table.upper() not in reach:
-                            raise ProposeError(WORDING["unreachable"].format(where=where, table=table))
-                        path = reach[table.upper()][1]
+                        if table.upper() in reach:
+                            path = reach[table.upper()][1]
+                        else:
+                            path = shared_key_step(restricted, role["rows"]["binding"]["table"], table)
+                            if path is None:
+                                raise ProposeError(WORDING["unreachable"].format(where=where, table=table))
                     else:
                         raise ProposeError(WORDING["unreachable"].format(where=where, table=table))
                 data_type = ""

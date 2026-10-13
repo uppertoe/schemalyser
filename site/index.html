@@ -48,6 +48,12 @@
             <p id="t-who-hospital-about" class="note"></p>
             <p id="t-who-hospital-recorded" class="status" role="status"></p>
           </div>
+          <div class="field">
+            <label for="who-identifiers" id="l-who-identifiers"></label>
+            <input type="text" id="who-identifiers" autocomplete="off" spellcheck="false" maxlength="200" />
+            <p id="t-who-identifiers-about" class="note"></p>
+            <p id="t-who-identifiers-recorded" class="status" role="status"></p>
+          </div>
         </section>
         <ol class="steps">
           <li class="step" id="step-1">
@@ -286,6 +292,11 @@
                 <div id="model-check-result"></div>
               </section>
               <div id="confirm"></div>
+              <section id="b-facts" class="aside-block" hidden>
+                <h3 id="h-facts"></h3>
+                <p id="t-facts-what" class="note"></p>
+                <div id="facts"></div>
+              </section>
               <section id="b-questions" class="aside-block">
                 <h3 id="h-questions"></h3>
                 <p id="t-questions-what" class="note"></p>

@@ -281,7 +281,8 @@ def test_the_dictionary_is_always_in_the_saved_schema_and_is_restored_from_it(si
     assert files["dictionary/invented-dictionary.csv"] == DICTIONARY.read_bytes()
     assert "This file holds a copy of it in dictionary/" in files["README.md"].decode()
     again = describe.Describe()
-    assert again.restore(files)["dictionary"] and again.dictionary.column_count() == 98
+    # The saved file is the dictionary as loaded; the sitting adds to it the columns that the tables result found.
+    assert again.restore(files)["dictionary"] and again.dictionary.column_count() == sitting.dictionary.column_count() > 98
     assert again.view()["dictionary"]["source"] == "saved" and not again.invented
 
 
@@ -589,7 +590,12 @@ def test_a_change_kept_over_old_problems_says_that_it_broke_nothing_new_and_they
     assert corrections.outcome({"passed": True, "problems": [], "remaining": []}) == "passed"
     assert corrections.outcome({"passed": True, "problems": [], "remaining": ["a", "b"]}) == \
         "passed: broke nothing new; 2 problems were there before it and remain"
+    # A readings link through the visit alone doubles every reading between two anaesthetics of one admission, and that
+    # problem stays while a change elsewhere is tried and kept over it.
     s = fresh()
+    for about in ("role_patient rows", "role_anaesthetic rows", "role_reading rows", "role_drug rows"):
+        s.confirm(about, "yes", date=DATE)
+    s.confirm("role_reading.anaesthetic_key", "no", "ANAES_RECORD.ANAES_KEY via OBS_READING.SHEET_KEY = OBS_SHEET.SHEET_KEY then OBS_SHEET.VISIT_KEY = ANAES_RECORD.VISIT_KEY", date=DATE)
     found = roleshadow.correction_check(s, {"form": "column", "about": "role_drug.route", "replacement": "LK_ROUTE.LABEL"})
     assert found["passed"] and found["remaining"]
     roleshadow.correction_keep(s, {"form": "column", "about": "role_drug.route", "replacement": "LK_ROUTE.LABEL"}, date=DATE)
@@ -1189,3 +1195,81 @@ def test_each_pathway_of_a_part_shows_its_kind_of_record_its_table_and_its_own_e
     assert drug["pathways"][1]["dimensions"]["confirmed"]["by"] == "Dr B"
     assert drug["pathways"][1]["columns"] and drug["coverage"] == []
     assert not [r for r in s.view()["roles"] if r["name"] == "role_patient"][0].get("pathways")
+
+
+def test_a_column_the_database_holds_and_the_dictionary_lacks_is_added_from_the_tables_result():
+    # The invented dictionary describes no DOC_TS on DRUG_GIVEN, and the invented database has one. Before the tables
+    # query's result is read, the column cannot be named; afterwards it is in the dictionary, without a description,
+    # and the lookups and the proposer offer it.
+    s = fresh()
+    assert s.dictionary.table("DRUG_GIVEN").column("DOC_TS") is None
+    s.tables_query("5. Run the tables and columns query")
+    receipt = s.read_tables(tables_result())
+    assert receipt["added"] >= 1
+    entry = s.dictionary.table("DRUG_GIVEN").column("DOC_TS")
+    assert entry is not None and entry.data_type and s.dictionary.description("DRUG_GIVEN", "DOC_TS") == ""
+    assert "DOC_TS" in [c["name"] for c in s.columns_of("DRUG_GIVEN")["columns"]]
+    payload = s.log.latest("result returned", name="tables-and-columns")["payload"]
+    assert payload["added_columns"] == receipt["added"] and payload["proposed_again"] >= 1
+    # The columns that no person had answered were proposed again from the dictionary as it now stands.
+    assert s.data["roles"]["role_drug"]["columns"]["order_key"]["binding"]["column"] == "ORDER_KEY"
+    # A result that holds nothing new adds nothing and says so.
+    assert s.read_tables(tables_result())["added"] == 0
+
+
+def test_a_fact_about_a_shared_column_is_asked_recorded_and_read_by_the_test_on_made_up_rows():
+    # The readings reach the anaesthetic by the visit, a column of the anaesthetic's table that is not its key, so the
+    # test shares it between two planted anaesthetics of one admission and finds every reading linked to both. The
+    # page then asks whether one value of that column belongs to one anaesthetic only; a yes, recorded as a person's
+    # answer in the map's facts, stops the sharing, and the check of a saved schema replays it.
+    s = fresh()
+    for about in ("role_patient rows", "role_anaesthetic rows", "role_reading rows"):
+        s.confirm(about, "yes", date=DATE)
+    s.confirm("role_reading.anaesthetic_key", "no", "ANAES_RECORD.ANAES_KEY via OBS_READING.SHEET_KEY = OBS_SHEET.SHEET_KEY then OBS_SHEET.VISIT_KEY = ANAES_RECORD.VISIT_KEY", date=DATE)
+    facts = s.facts()
+    assert [f["about"] for f in facts] == ["fact ANAES_RECORD.VISIT_KEY"]
+    assert facts[0]["parts"] == ["Readings charted during an anaesthetic"] and facts[0]["answer"] is None
+    assert "one value of ANAES_RECORD.VISIT_KEY belongs to one anaesthetic only" in facts[0]["question"]
+    assert any(q["about"] == "fact ANAES_RECORD.VISIT_KEY" for q in s.questions())
+    before = roleshadow.run_check(s)
+    assert any("linked to a second anaesthetic" in p for p in before["problems"])
+    with pytest.raises(describe.DescribeError, match="holds no link"):
+        s.confirm("fact ANAES_RECORD.CASE_KEY", "yes", date=DATE)
+    s.confirm("fact ANAES_RECORD.VISIT_KEY", "yes", note="One visit holds one anaesthetic here", date=DATE, actor="the analyst")
+    assert s.data["facts"]["ANAES_RECORD.VISIT_KEY"] == {"answer": "yes", "date": DATE, "by": "the analyst", "note": "One visit holds one anaesthetic here"}
+    assert s.facts()[0]["answer"] == "yes" and not any(q["about"].startswith("fact ") for q in s.questions())
+    after = roleshadow.run_check(s)
+    assert not any("linked to a second anaesthetic" in p for p in after["problems"]), after["problems"]
+    # The journal and the saved schema carry the answer, and a new sitting rebuilds the same schema from them.
+    assert s.log.latest("answer", about="fact ANAES_RECORD.VISIT_KEY")["payload"]["answer"] == "yes"
+    files = s.folder_files(date=DATE)
+    assert json.loads(files["map/map.json"])["facts"]["ANAES_RECORD.VISIT_KEY"]["answer"] == "yes"
+    again = describe.Describe()
+    again.version = "test"
+    again.restore(files)
+    assert again.facts()[0]["answer"] == "yes"
+    checked = again.check()
+    assert checked["rebuilt"] and checked["same"], checked["differences"]
+    # The shadow reads nothing of the hospital through a fact: it names a column the map already names, and that is all.
+    assert roleshadow.one_anaesthetic_columns(s.data) == frozenset({"VISIT_KEY"})
+
+
+def test_a_part_no_person_has_answered_for_is_left_out_of_the_test_and_recorded_as_not_run():
+    s = fresh()
+    s.confirm("role_patient rows", "yes", date=DATE)
+    found = roleshadow.run_check(s)
+    assert "role_drug" in found["left_out"] and "role_patient" not in found["left_out"]
+    assert any(n.startswith("No person has yet answered for") and "Drugs given" in n for n in found["notes"])
+    assert not any(p.startswith("In Drugs given") for p in found["problems"])
+    s.test(date=DATE, found=found)
+    entry = s.log.latest("test run")
+    assert entry["payload"]["parts"]["role_drug"] == "not run" and entry["payload"]["parts"]["role_patient"] in ("passed", "failed")
+
+
+def test_a_no_without_a_replacement_says_the_hospital_does_not_record_the_column():
+    s = fresh()
+    s.confirm("role_staff.grade", "no", note="The hospital records the staff type and no grade apart from it", date=DATE, actor="the analyst")
+    item = s.data["roles"]["role_staff"]["columns"]["grade"]
+    assert item["binding"] is None and item["confirmation"]["answer"] == "no" and item["from"].startswith("a person found")
+    assert "NULL AS grade" in s.view_sql("role_staff") or "NULL" in s.view_sql("role_staff")
+    assert [c["answer"] for c in s.confirmations] == ["no"]

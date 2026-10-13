@@ -28,7 +28,7 @@ interface Report {
   about?: Record<string, string>;
 }
 interface Column { name: string; type: string; key: boolean; present: boolean | null; description?: string; identifying?: boolean }
-interface Join { from: string; table: string; to: string; repeats: boolean }
+interface Join { from: string; table: string; to: string; repeats: boolean; identifier?: string }
 interface Step { from: string; table: string; to: string; from2: string; to2: string }
 interface Draft {
   form: string; f: Record<string, string>; steps: Step[]; codes: [string, string][];
@@ -502,7 +502,7 @@ function stepsFields(item: CorrectionItem, box: HTMLElement, pair: boolean) {
       none.value = '';
       select.append(none);
       suggested.forEach((join, n) => {
-        const option = deps.el('option', `${start}.${join.from} = ${join.table}.${join.to}${join.repeats ? `, which ${c.suggestedRepeats}` : ''}`);
+        const option = deps.el('option', `${start}.${join.from} = ${join.table}.${join.to}${join.identifier ? `, ${c.suggestedIdentifier(join.identifier)}` : ''}${join.repeats ? `, which ${c.suggestedRepeats}` : ''}`);
         option.value = String(n);
         select.append(option);
       });

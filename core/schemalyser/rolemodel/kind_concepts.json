@@ -1,0 +1,20 @@
+{
+  "description": "The standard concept of each kind of reading of the role model, and the concept of the unit the kind is measured in, for a conversion step over the roles that writes measurements. Each concept was confirmed in the Athena vocabulary release of 29 August 2026 as a standard concept of the Measurement or Unit domain. A kind with no entry here is written with the concept 0 until a person names its concept; the kind itself stays in measurement_source_value, so that the rows can be counted and mapped later. This file is public and names no hospital's code.",
+  "kinds": {
+    "map_arterial":        {"concept_id": 21490852, "concept": "Invasive Mean blood pressure", "unit_concept_id": 8876, "unit": "millimeter mercury column"},
+    "map_cuff":            {"concept_id": 21492241, "concept": "Mean blood pressure by Noninvasive", "unit_concept_id": 8876, "unit": "millimeter mercury column"},
+    "systolic_arterial":   {"concept_id": 4353843,  "concept": "Invasive systolic arterial pressure", "unit_concept_id": 8876, "unit": "millimeter mercury column"},
+    "diastolic_arterial":  {"concept_id": 4354253,  "concept": "Invasive diastolic arterial pressure", "unit_concept_id": 8876, "unit": "millimeter mercury column"},
+    "systolic_cuff":       {"concept_id": 4354252,  "concept": "Non-invasive systolic arterial pressure", "unit_concept_id": 8876, "unit": "millimeter mercury column"},
+    "diastolic_cuff":      {"concept_id": 4068414,  "concept": "Non-invasive diastolic arterial pressure", "unit_concept_id": 8876, "unit": "millimeter mercury column"},
+    "central_venous_pressure": {"concept_id": 3000333, "concept": "Central venous pressure (CVP) Mean", "unit_concept_id": 8876, "unit": "millimeter mercury column"},
+    "heart_rate":          {"concept_id": 3027018,  "concept": "Heart rate", "unit_concept_id": 8541, "unit": "per minute"},
+    "respiratory_rate":    {"concept_id": 3024171,  "concept": "Respiratory rate", "unit_concept_id": 8541, "unit": "per minute"},
+    "spo2":                {"concept_id": 40762499, "concept": "Oxygen saturation in Arterial blood by Pulse oximetry", "unit_concept_id": 8554, "unit": "percent"},
+    "etco2":               {"concept_id": 3035357,  "concept": "Carbon dioxide [Partial pressure] in Exhaled gas --at end expiration", "unit_concept_id": 8876, "unit": "millimeter mercury column"},
+    "temperature":         {"concept_id": 3020891,  "concept": "Body temperature", "unit_concept_id": 586323, "unit": "degree Celsius"},
+    "fio2":                {"concept_id": 4353936,  "concept": "Inspired oxygen concentration", "unit_concept_id": 8554, "unit": "percent"},
+    "peep":                {"concept_id": 3022875,  "concept": "Positive end expiratory pressure setting Ventilator", "unit_concept_id": 0, "unit": ""},
+    "expired_sevoflurane": {"concept_id": 21490568, "concept": "Sevoflurane [VFr/PPres] Airway adaptor --during expiration", "unit_concept_id": 8554, "unit": "percent"}
+  }
+}

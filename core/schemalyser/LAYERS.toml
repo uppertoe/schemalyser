@@ -20,6 +20,7 @@
 "schemalyser.blanking" = { layer = "shared", note = "The blanking of small counts in a result, which the two-part script and the query compiled through a map (compiler.py) both use." }
 "schemalyser.vocabulary" = { layer = "shared" }
 "schemalyser.selects" = { layer = "shared", note = "The rule that a text of T-SQL is one SELECT that only reads, which the release script (layer 3), the map's own checks (layer 2) and the compilation of a question (layer 3) all apply. It reads T-SQL and nothing else." }
+"schemalyser.vendorspec" = { layer = "adapter", note = "A vendor's published specification of its export, as the zip it offers, read into the dictionary files that screen 1 takes at step 2. It reads one fixed page layout and names no table; the specification stays on the analyst's machine." }
 "schemalyser.datadict" = { layer = "shared", note = "The reader of a data dictionary file, which the hospital schema (layer 2) and the reference adapter's transplant both read. It imports only the shared tier and knows nothing of any layer: it reads a plain table of tables, columns and descriptions." }
 "schemalyser.summaries" = { layer = "shared", note = "By its purpose it is orchestration, but the reference adapters that write two of the three named summaries may import only layers 1 and 3 and the shared tier, and the scoreboard sits in layer 2, so the exporters import nothing from the package and take each output as data." }
 
@@ -45,6 +46,8 @@
 
 "schemalyser.testbed" = { layer = "4" }
 "schemalyser.convert" = { layer = "4", note = "It runs a conversion over the synthetic database and checks what it writes. The conversion folder's format is conversion.py's, which it reads by the same names as before." }
+"schemalyser.equivalence" = { layer = "4", note = "Two hospital schemas run part by part on a stand-in and compared, and a question over the roles compiled through each and its answers compared: the measure of the pipeline, as counts. It reads maps through release.read_schema and runs on the invented hospital." }
+"schemalyser.gold" = { layer = "4", note = "The gold scorer: a proposal against what an expert bound from the same facts, graded by what decides it, as counts. It reads a draft map or a saved schema (layer 2) and names nothing unless asked; it is evidence about the proposer, which no proposal reads." }
 "schemalyser.roleshadow" = { layer = "4", note = "The role-level shadow with its planted cases, the map's shadow on which a hospital schema and a correction are tested, the hospital run of a world, and the correctness report of an execution package. It runs the test that a sitting of screen 1 owes and hands the result back to the sitting as data." }
 "schemalyser.harness" = { layer = "4", note = "The synthetic world: the analysis of its requests, the checks that its stand-in database answers and the script that writes them, which the conversion's run and the SQL Server harness both use, and the translated form of an execution package's script on DuckDB, which the testbed compares with the SQL Server harness's run of it." }
 "schemalyser.sample_vocabulary" = { layer = "4", note = "A few public concepts for the fast profile, which the testbed and the SQL Server harness both write." }

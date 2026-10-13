@@ -1,0 +1,79 @@
+{
+  "format": "schemalyser-gold/1",
+  "about": "The gold standard of the invented world: the bindings of its hand-written map in fixtures/map, graded as a vendor's public specification would grade them. Every name is invented.",
+  "bindings": {
+    "role_patient rows": {
+      "gold": "PERSON_MASTER",
+      "grade": "documented"
+    },
+    "role_patient.patient_key": {
+      "gold": "PERSON_MASTER.PERSON_KEY",
+      "grade": "documented"
+    },
+    "role_patient.birth_date": {
+      "gold": "PERSON_MASTER.BIRTH_TS",
+      "grade": "documented"
+    },
+    "role_patient.death_date": {
+      "gold": "PERSON_MASTER_2.DEATH_TS via PERSON_MASTER.PERSON_KEY = PERSON_MASTER_2.PERSON_KEY",
+      "grade": "documented"
+    },
+    "role_patient.is_test": {
+      "gold": "PERSON_MASTER.TEST_PERSON_FLAG",
+      "grade": "documented"
+    },
+    "role_anaesthetic rows": {
+      "gold": "ANAES_RECORD",
+      "grade": "documented"
+    },
+    "role_anaesthetic.anaesthetic_key": {
+      "gold": "ANAES_RECORD.ANAES_KEY",
+      "grade": "documented"
+    },
+    "role_anaesthetic.patient_key": {
+      "gold": "VISIT.PERSON_KEY via ANAES_RECORD.CASE_KEY = THEATRE_CASE.CASE_KEY then THEATRE_CASE.VISIT_KEY = VISIT.VISIT_KEY",
+      "grade": "corroborated",
+      "accept": [
+        "VISIT.PERSON_KEY via ANAES_RECORD.VISIT_KEY = VISIT.VISIT_KEY"
+      ],
+      "why": "The hand-written map reaches the visit through the theatre case; the anaesthetic's own VISIT_KEY reaches the same visit directly, and either is right."
+    },
+    "role_anaesthetic.start_time": {
+      "gold": "ANAES_RECORD.ANAES_START_TS",
+      "grade": "documented"
+    },
+    "role_anaesthetic.stop_time": {
+      "gold": "ANAES_RECORD.ANAES_STOP_TS",
+      "grade": "documented"
+    },
+    "role_reading rows": {
+      "gold": "OBS_READING",
+      "grade": "documented"
+    },
+    "role_reading.anaesthetic_key": {
+      "gold": "OBS_SHEET.ANAES_KEY via OBS_READING.SHEET_KEY = OBS_SHEET.SHEET_KEY",
+      "grade": "documented"
+    },
+    "role_reading.kind": {
+      "gold": "OBS_READING.OBS_TYPE_KEY",
+      "grade": "documented"
+    },
+    "role_reading.reading_time": {
+      "gold": "OBS_READING.READ_TS",
+      "grade": "documented"
+    },
+    "role_reading.value": {
+      "gold": "OBS_READING.READ_VALUE",
+      "grade": "documented"
+    },
+    "role_reading.accepted": {
+      "gold": "OBS_READING.ACCEPTED_FLAG",
+      "grade": "documented"
+    },
+    "role_reading.value_text": {
+      "gold": "OBS_READING.READ_VALUE",
+      "grade": "documented"
+    }
+  },
+  "facts": []
+}

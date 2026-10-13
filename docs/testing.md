@@ -28,6 +28,14 @@ Some of the time of the fast suite is spent setting up fixtures that several tes
 
 `core/tests/test_invariants.py` holds one test for each invariant of `docs/contract.md`, section 5, that no other test held, and each test is named after its invariant. The test of invariant 2 sweeps every file under `core/`, `site/src`, `site/public`, `fixtures/`, `docs/` and `tools/` that git tracks or would track, for the patterns and names in `core/tests/invariant2-denylist.json`. That file holds only invented stand-ins, and the test shows on planted text that each entry is caught before it sweeps the repository. On the hospital's side, a private copy of the file with real names can be kept outside version control and named by the environment variable `SCHEMALYSER_PRIVATE_DENYLIST`, and the same test then reads it as well.
 
+## The gold standard
+
+`python -m schemalyser.gold GOLD.json SCHEMA.zip|MAP_FOLDER [--names]` scores a proposal against what an expert bound from the same facts. The gold file grades each binding by what decides it: documented, where the vendor's own words settle it; corroborated, where another conversion or a real export agrees with a reading of them; and hospital-only, where nothing public decides it and the right proposal is to leave the column empty and ask. The score counts, for each grade, the bindings proposed exactly or as an accepted alternative, those listed among the alternatives, those bound to something else, and those left empty, and for hospital-only columns those withheld, those confirmed and those guessed. The counts name nothing, so they can be shared; `--names` prints each miss for the owner. The invented world's gold file is `fixtures/gold/invented.json`, which `core/tests/test_gold.py` scores. A vendor's gold file names the vendor's tables, so it stays in the private folder, where `curve.sh` beside it scores the proposer at each state of knowledge, from the public specification alone to the database's own dictionary with the shared identifier and a reference, and a test in `test_propose.py` holds the floor it reached. The gold standard is held out: it scores the proposer and is never used to tune it.
+
+## Equivalence
+
+`python -m schemalyser.equivalence SCHEMA_A SCHEMA_B --hospital FOLDER --catalogue FILE [--question QUERY.sql]` runs every part of the record that both schemas supply on a stand-in in the invented hospital's layout and compares the rows and the keys, then compiles each question over the roles through both schemas and compares the answers. It is the last of the four measures in `docs/success.md`; `core/tests/test_equivalence.py` runs it on the invented world, the page's schema against the hand-written map.
+
 ## The page specs
 
 The page bundles a copy of the core, so the page is built again after any change to the core, and the specs are run from `site/`:

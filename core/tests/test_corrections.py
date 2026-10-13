@@ -123,7 +123,9 @@ def test_the_check_passes_a_sound_correction(proposed, name):
     found = roleshadow.correction_check(proposed, SOUND[name])
     assert found["passed"], found["problems"]
     assert not found["problems"]
-    assert found["views"] == len(proposed.data["roles"])
+    # The parts no person has answered for are left out of the test; the corrected part counts as answered.
+    assert found["views"] + len(found["left_out"]) == len(proposed.data["roles"])
+    assert SOUND[name]["about"].split(".")[0].split(" ")[0] not in found["left_out"]
 
 
 def test_the_check_says_the_model_is_whole_when_nothing_is_wrong():
@@ -137,9 +139,11 @@ def test_the_check_says_the_model_is_whole_when_nothing_is_wrong():
     s.data["roles"].pop("role_operation")
     found = roleshadow.correction_check(s, LINK)
     assert found["passed"]
-    assert found["sentence"].startswith("This change keeps the hospital schema whole: all 12 parts of the record run on made-up rows and give the rows "
+    tested = len(s.data["roles"]) - len(found["left_out"])
+    assert found["sentence"].startswith(f"This change keeps the hospital schema whole: all {tested} parts of the record run on made-up rows and give the rows "
                                         "they should, every identifying column is unique, every flag is filled, and the "
                                         "invented newborns of the test audit give the expected answer.")
+    assert {"role_staff", "role_device", "role_reading"} <= set(s.data["roles"]) - set(found["left_out"])
 
 
 def test_the_check_catches_a_link_that_repeats_readings(proposed):

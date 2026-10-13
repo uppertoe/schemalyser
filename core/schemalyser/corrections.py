@@ -130,6 +130,7 @@ WORDING = {
     "check_mends": "This change also mends {count} that {were} there before it.",
     "check_now_breaks": "The hospital schema as it stands has {count}:",
     "placeholders": "The local codes of {kinds} are not chosen yet, so the test on made-up rows gives {them}.",
+    "drafts_left_out": "No person has yet answered for {parts}, so the test on made-up rows leaves {parts_them} out until someone does.",
     "orphans": "In {view}, {count} made-up rows link to an anaesthetic that Anaesthetics does not hold, which can be right where Anaesthetics leaves some anaesthetics out.",
     "contract": "In {view}, {problem}",
     "runs_not": "In {view}, the page could not run this SQL on made-up rows: {error}.",
@@ -620,7 +621,7 @@ def report(before, after, change=True):
             else WORDING["check_now_breaks"].format(count=_problems_text(len(after["problems"])))
         return {"passed": not after["problems"], "sentence": sentence, "problems": after["problems"], "remaining": [],
                 "mended": "", "notes": after["notes"], "seconds": after["seconds"], "views": after["views"],
-                "about": dict(after.get("about") or {})}
+                "left_out": list(after.get("left_out") or []), "about": dict(after.get("about") or {})}
     if new:
         sentence = WORDING["check_breaks"].format(count=_plural(len(new), "place", "places"))
     elif old:
@@ -631,7 +632,8 @@ def report(before, after, change=True):
     mends = WORDING["check_mends"].format(count=_problems_text(len(mended)), were="was" if len(mended) == 1 else "were") if mended else ""
     return {"passed": passed, "sentence": sentence, "problems": new, "remaining": old if new or old else [],
             "mended": mends, "notes": after["notes"], "seconds": round(before.get("seconds", 0) + after["seconds"], 1),
-            "views": after["views"], "about": {**(before.get("about") or {}), **(after.get("about") or {})}}
+            "views": after["views"], "left_out": list(after.get("left_out") or []),
+            "about": {**(before.get("about") or {}), **(after.get("about") or {})}}
 
 
 def outcome(found):

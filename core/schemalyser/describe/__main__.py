@@ -288,7 +288,7 @@ def cmd_settings(args, version):
     sitting, path = _open(args, version)
     daylight = None if args.daylight_saving is None else args.daylight_saving == "yes"
     sitting.set_settings(args.database, args.year, args.time_zone, daylight, args.time_zone_from, hospital=args.hospital,
-                         actor=args.actor)
+                         actor=args.actor, identifiers=args.identifiers)
     held = sitting.settings
     print(WORDING["cli_settings"].format(**{k: held.get(k) if held.get(k) is not None else NOT_RECORDED
                                             for k in ("database", "year", "time_zone")}))
@@ -597,6 +597,7 @@ def _argv(call, r, base, work, scratch, held):
         daylight = r.get("daylightSaving")
         return ["settings", s, *opt("--database", r.get("database")), *opt("--year", r.get("year")),
                 *(["--hospital", str(r["hospital"])] if r.get("hospital") is not None else []), *opt("--actor", r.get("actor")),
+                *(["--identifiers", str(r["identifiers"])] if r.get("identifiers") is not None else []),
                 *(["--time-zone", str(r["timeZone"])] if r.get("timeZone") is not None else []),
                 *opt("--daylight-saving", None if daylight is None else "yes" if daylight else "no"),
                 *opt("--time-zone-from", r.get("timeZoneFrom"))]
@@ -809,6 +810,8 @@ def parser():
     one.add_argument("--time-zone-from", help="a person, or proposed from this computer")
     one.add_argument("--hospital", help="the name of the hospital that the hospital schema describes; an empty name takes "
                                         "back one given earlier")
+    one.add_argument("--identifiers", help="the words by which the site names an identifier that tables share without "
+                                           "any keying it, such as the word for a contact number, separated by commas; an empty list takes back one given earlier")
     one = add("query", "write a query for the database analyst to run, and record it in the journal", [writes, step])
     one.add_argument("what", choices=("tables", "codes", "counts", "values", "probe"))
     one.add_argument("--key", help="for codes, the column of a kind, such as role_reading.kind")
