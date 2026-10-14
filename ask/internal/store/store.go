@@ -57,6 +57,9 @@ func Open(path string) (*Store, error) {
 		   role TEXT NOT NULL, content TEXT NOT NULL, created TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS packages (id INTEGER PRIMARY KEY, question_id INTEGER NOT NULL REFERENCES questions(id),
 		   version INTEGER NOT NULL, json TEXT NOT NULL, hash TEXT NOT NULL, created TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS reports (id INTEGER PRIMARY KEY, question_id INTEGER NOT NULL REFERENCES questions(id),
+		   version INTEGER NOT NULL, json TEXT NOT NULL, level TEXT NOT NULL, created TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS reports_by_question ON reports(question_id, version)`,
 		`CREATE INDEX IF NOT EXISTS messages_by_question ON messages(question_id, id)`,
 		`CREATE INDEX IF NOT EXISTS packages_by_question ON packages(question_id, version)`,
 	} {
@@ -217,4 +220,43 @@ func (s *Store) package_(ctx context.Context, query string, args ...any) (*Packa
 	}
 	p.Created = parse(created)
 	return &p, nil
+}
+
+// Report is one examination report the owner uploaded for one version of a question's package.
+type Report struct {
+	ID      int64
+	Version int
+	JSON    string
+	Level   string
+	Created time.Time
+}
+
+// AddReport records a report for a version of the question's package.
+func (s *Store) AddReport(ctx context.Context, id int64, version int, jsonText, level string, now time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO reports (question_id, version, json, level, created) VALUES (?, ?, ?, ?, ?)`,
+		id, version, jsonText, level, stamp(now))
+	return err
+}
+
+// ReportFor gives the latest report of one version of the question's package, or nil where none was uploaded.
+func (s *Store) ReportFor(ctx context.Context, id int64, version int) (*Report, error) {
+	var r Report
+	var created string
+	err := s.db.QueryRowContext(ctx, `SELECT id, version, json, level, created FROM reports WHERE question_id = ? AND version = ? ORDER BY id DESC LIMIT 1`, id, version).
+		Scan(&r.ID, &r.Version, &r.JSON, &r.Level, &created)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	r.Created = parse(created)
+	return &r, nil
+}
+
+// Examinations counts the reports uploaded for a question, over every version.
+func (s *Store) Examinations(ctx context.Context, id int64) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM reports WHERE question_id = ?`, id).Scan(&n)
+	return n, err
 }

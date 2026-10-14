@@ -6,6 +6,7 @@ package rolemodel
 
 //go:generate cp ../../../core/schemalyser/rolemodel/contract.json contract.json
 //go:generate cp ../../../core/schemalyser/rolemodel/question.schema.json question.schema.json
+//go:generate cp ../../../fixtures/examiner.pub examiner.pub
 
 import (
 	_ "embed"
@@ -20,6 +21,12 @@ var contractJSON []byte
 
 //go:embed question.schema.json
 var schemaJSON []byte
+
+//go:embed examiner.pub
+var examinerPublicKey string
+
+// ExaminerPublicKey gives the examiner's public key as the repository holds it, hex.
+func ExaminerPublicKey() string { return strings.TrimSpace(examinerPublicKey) }
 
 // What a gate may do with a part for a question, in the contract's words.
 const (

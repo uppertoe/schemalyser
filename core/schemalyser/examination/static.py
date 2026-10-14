@@ -46,7 +46,7 @@ def run(path, admit=None):
             says += f" It reads {', '.join(admission['ceiling'])}, admitted with a ceiling."
         if admission["drafts"]:
             says += f" It reads {', '.join(admission['drafts'])}, a draft admitted for this examination only."
-    return {"stage": STAGE, "package": {"path": str(path), "sha256": hashlib.sha256(data).hexdigest(),
+    return {"stage": STAGE, "package": {"path": path.name, "sha256": hashlib.sha256(data).hexdigest(),
                                         "title": package["title"] if package else None},
             "rules": rules, "failed": failed, "form": form, "admission": admission, "dialect_version": dialect_version,
             "level": level, "says": says}

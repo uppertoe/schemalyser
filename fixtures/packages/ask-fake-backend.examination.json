@@ -1,0 +1,286 @@
+{
+  "stage": "static",
+  "package": {
+    "path": "ask-fake-backend.question.json",
+    "sha256": "a2cba580e8195fd60f558be26f77f699fcafa908b9970fa36ad8a50ea6970997",
+    "title": "Red cells given to neonates under anaesthesia"
+  },
+  "rules": [
+    {
+      "id": "file",
+      "rule": "The question is one plain file named NAME.question.json, with a plain name, and not a folder.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "links",
+      "rule": "The file is not a link, symbolic or hard, and nothing beside it where the result is written is a link.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "executable",
+      "rule": "The file is not executable.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "size",
+      "rule": "The file is at most 256 KB.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "text",
+      "rule": "The file is UTF-8 text.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "json",
+      "rule": "the file holds one JSON object",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "schema",
+      "rule": "the package has the fields of schemalyser-question/1 and no other",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "format",
+      "rule": "the format is schemalyser-question/1",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "contract_version",
+      "rule": "the package was written against the contract that Schemalyser holds",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "parts",
+      "rule": "the parts are exactly the parts the SQL reads",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "part_version",
+      "rule": "each part is at its version in the contract",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "admission",
+      "rule": "each part's admission is what the contract gives it for a question",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "capabilities",
+      "rule": "each capability is in the catalogue at its version, with its parameters, and its SQL can be filled",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "proposals",
+      "rule": "each proposal keeps the contract's shape",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "dates",
+      "rule": "every date and time reads",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "examinable",
+      "rule": "the examinable object names its oracle or says why it has none",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "waits",
+      "rule": "The package waits for nothing: it holds no proposal and reads no part the contract refuses for a question.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "parse",
+      "rule": "The question is one statement that the parser understands.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "statements",
+      "rule": "The question is one SELECT, which may use common table expressions, and fills no table.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "dynamic",
+      "rule": "The question runs no procedure and no dynamic SQL, uses no variable and reaches no other server.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "names",
+      "rule": "The question names no other database, no linked server and no schema.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "tables",
+      "rule": "The question reads only the role views of the contract, the mapping views and its own steps.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "columns",
+      "rule": "Every column that the question reads is a column of the contract or of one of its own steps.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "functions",
+      "rule": "The question uses only the functions of the allowlist.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "kinds",
+      "rule": "Every kind that the question names is a kind of the contract's vocabularies.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "capabilities",
+      "rule": "Every capability that the question names is one of the catalogue's.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "dialect",
+      "rule": "The question keeps the portable dialect: a division with one side cast or a fraction, AVG of a number or a cast, text equality only on kinds and keys, CONCAT for text, a chosen row's order ending in a key, and DATEDIFF in days, minutes or seconds.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "columns",
+      "rule": "The columns the package declares in its examinable result are the columns its SQL returns, in that order.",
+      "passed": true,
+      "fragments": []
+    }
+  ],
+  "failed": [],
+  "form": [],
+  "admission": {
+    "ceiling": [
+      "role_fluid"
+    ],
+    "drafts": []
+  },
+  "dialect_version": 1,
+  "level": "well formed",
+  "says": "The package is well formed: it keeps every rule of its format and of the role policy, and its question has the two-part form. It reads role_fluid, admitted with a ceiling.",
+  "shadow": {
+    "stage": "shadow",
+    "runs": [
+      {
+        "seed": 1,
+        "order": "given",
+        "ran": true,
+        "columns": [
+          "anaesthetics",
+          "red_cells_ml"
+        ],
+        "rows": 1
+      },
+      {
+        "seed": 1,
+        "order": "shuffled",
+        "ran": true,
+        "columns": [
+          "anaesthetics",
+          "red_cells_ml"
+        ],
+        "rows": 1
+      },
+      {
+        "seed": 2,
+        "order": "given",
+        "ran": true,
+        "columns": [
+          "anaesthetics",
+          "red_cells_ml"
+        ],
+        "rows": 1
+      },
+      {
+        "seed": 2,
+        "order": "shuffled",
+        "ran": true,
+        "columns": [
+          "anaesthetics",
+          "red_cells_ml"
+        ],
+        "rows": 1
+      }
+    ],
+    "problems": [],
+    "outcome": "passed",
+    "says": "The question runs on the shadow at 2 seeds in 2 insertion orders and gives one answer at each seed."
+  },
+  "metamorphic": {
+    "stage": "metamorphic",
+    "seed": 1,
+    "checks": {
+      "unrelated": {
+        "applied": true,
+        "samples": 8,
+        "failures": [],
+        "outcome": "passed"
+      },
+      "duplicates": {
+        "applied": false,
+        "samples": 0,
+        "failures": [],
+        "outcome": "not applied",
+        "says": "the examinable names no outcome part with a rule for duplicates"
+      },
+      "moved": {
+        "applied": true,
+        "samples": 8,
+        "failures": [],
+        "outcome": "passed"
+      }
+    },
+    "outcome": "passed",
+    "says": "The question passes the metamorphic checks applied (unrelated, moved) on a sample of 8 rows at seed 1."
+  },
+  "oracle": {
+    "stage": "oracle",
+    "outcome": "not applied",
+    "runs": [],
+    "says": "The oracle does not cover the question (the package gives no examinable object), so its logic rests on cases written by hand."
+  },
+  "examined_at": "2026-10-14T19:30:34+11:00",
+  "versions": {
+    "contract": "1.1",
+    "policy": "1",
+    "dialect": 1,
+    "examiner": "1",
+    "register_sha256": "873d6dfc2037b7e80ec7b0ef386580a09470c8c3461175fa1cf5fc9e5b2d1d59"
+  },
+  "status": {
+    "level": "logic examined",
+    "says": "The package's logic is examined: it runs on the shadow, passes the three metamorphic checks, and the oracle does not cover it, so its logic rests on cases written by hand."
+  },
+  "signature": {
+    "public_key": "8298c2cb0f1382586732ed5489758b71d5b67b693724cafcfa032ab98dfc031a",
+    "signature": "e03367a32c2d2b518c0d74824173a137008b221dac208293aa7652be3641291fb059b7959a4bb9fcab5389944abe88e4a11d27c419eb3c7e1d0027fd9f0d8908"
+  }
+}

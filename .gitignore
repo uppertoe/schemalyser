@@ -79,3 +79,4 @@ core/schemalyser/workbench/static/*.min.js
 # by its Dockerfile at build; the copies are never committed, so that there is one contract and one schema.
 ask/internal/rolemodel/contract.json
 ask/internal/rolemodel/question.schema.json
+ask/internal/rolemodel/examiner.pub

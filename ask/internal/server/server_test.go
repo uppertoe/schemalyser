@@ -1,20 +1,26 @@
 package server
 
 import (
+	"bytes"
+	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/uppertoe/schemalyser/ask/internal/config"
+	"github.com/uppertoe/schemalyser/ask/internal/examination"
 	"github.com/uppertoe/schemalyser/ask/internal/model"
 	"github.com/uppertoe/schemalyser/ask/internal/question"
 	"github.com/uppertoe/schemalyser/ask/internal/rolemodel"
@@ -61,7 +67,7 @@ func do(t *testing.T, req *http.Request) (*http.Response, string) {
 
 func TestAClinicianAsksTheAssistantClarifiesAndThePackageIsPublishedAtASecretAddress(t *testing.T) {
 	fake := &model.Fake{Replies: []string{"Which age range do you mean by neonate, and over which years?", settled}}
-	_, ts := testServer(t, fake)
+	s, ts := testServer(t, fake)
 	form := url.Values{"message": {"How many neonates had a mean pressure below 35?"}}
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/questions", strings.NewReader(form.Encode()))
 	req.Header.Set("content-type", "application/x-www-form-urlencoded")
@@ -89,6 +95,17 @@ func TestAClinicianAsksTheAssistantClarifiesAndThePackageIsPublishedAtASecretAdd
 	if len(fake.Calls[1]) != 3 || fake.Calls[1][1].Role != "assistant" {
 		t.Fatalf("the model did not see the whole conversation: %v", fake.Calls[1])
 	}
+	// Before the examiner's report, the page says the question is not examined and the address serves nothing.
+	if !strings.Contains(body, "stands at <strong>drafted</strong>") || strings.Contains(body, "/q/") {
+		t.Fatalf("an unexamined package shows an address:\n%s", body)
+	}
+	hash := s.latestHash(t, page)
+	upload(t, ts, page, s.signed(t, hash, "logic examined", "The package's logic is examined."))
+	req, _ = http.NewRequest(http.MethodGet, ts.URL+page, nil)
+	_, body = do(t, as("owner@example.test", req))
+	if !strings.Contains(body, "stands at <strong>logic examined</strong>") {
+		t.Fatalf("the level is not shown:\n%s", body)
+	}
 	// The address the asker copies names version 1 and carries the hash of its bytes.
 	address := regexp.MustCompile(`https://ask\.example\.test/q/[0-9a-f]{48}/1#sha256=[0-9a-f]{64}`).FindString(body)
 	if address == "" {
@@ -98,7 +115,7 @@ func TestAClinicianAsksTheAssistantClarifiesAndThePackageIsPublishedAtASecretAdd
 	path, fragment, _ := strings.Cut(path, "#sha256=")
 	req, _ = http.NewRequest(http.MethodGet, ts.URL+path, nil)
 	resp, body = do(t, req)
-	if resp.StatusCode != 200 || resp.Header.Get("content-type") != "application/json; charset=utf-8" {
+	if resp.StatusCode != 200 || resp.Header.Get("content-type") != "application/json; charset=utf-8" || resp.Header.Get("x-schemalyser-question-level") != "logic examined" {
 		t.Fatalf("the secret address did not serve the package: %d", resp.StatusCode)
 	}
 	sum := sha256.Sum256([]byte(body))
@@ -200,10 +217,162 @@ func TestOnlyTheAllowedAddressesMaySignIn(t *testing.T) {
 	}
 }
 
+// The examiner of the tests: a fresh key, whose public key the server is configured with.
+type examiner struct {
+	public  ed25519.PublicKey
+	private ed25519.PrivateKey
+}
+
+func (s *Server) examiner(t *testing.T) *examiner {
+	t.Helper()
+	public, private, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.cfg.ExaminerPublicKey = hex.EncodeToString(public)
+	return &examiner{public, private}
+}
+
+var examiners = map[*Server]*examiner{}
+
+// signed writes a report over the package with the given hash at a level, signed by the test's examiner.
+func (s *Server) signed(t *testing.T, hash, level, says string) []byte {
+	t.Helper()
+	e, ok := examiners[s]
+	if !ok {
+		e = s.examiner(t)
+		examiners[s] = e
+	}
+	report := map[string]any{
+		"package":     map[string]any{"path": "package.json", "sha256": hash, "title": "A question"},
+		"status":      map[string]any{"level": level, "says": says},
+		"rules":       []any{map[string]any{"id": "schema", "rule": "The package has the fields of the format.", "passed": true, "fragments": []any{}}},
+		"planted":     []any{map[string]any{"name": "secret_case", "outcome": "failed", "says": "row 990002400 differs"}, map[string]any{"name": "other_case", "outcome": "passed", "says": "fine"}},
+		"examined_at": "2026-10-15T09:00:00+11:00",
+		"versions":    map[string]any{"contract": "1.1", "policy": "1", "dialect": json.Number("1"), "examiner": "1"},
+	}
+	signature := ed25519.Sign(e.private, examination.Canonical(report))
+	report["signature"] = map[string]any{"public_key": hex.EncodeToString(e.public), "signature": hex.EncodeToString(signature)}
+	data, _ := json.Marshal(report)
+	return data
+}
+
+func (s *Server) latestHash(t *testing.T, page string) string {
+	t.Helper()
+	id, _ := strconv.ParseInt(strings.TrimPrefix(page, "/questions/"), 10, 64)
+	latest, err := s.store.LatestPackage(context.Background(), id)
+	if err != nil || latest == nil {
+		t.Fatalf("no package: %v", err)
+	}
+	return latest.Hash
+}
+
+func upload(t *testing.T, ts *httptest.Server, page string, report []byte) (*http.Response, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	part, _ := writer.CreateFormFile("report", "report.json")
+	part.Write(report)
+	writer.Close()
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+page+"/report", &buf)
+	req.Header.Set("content-type", writer.FormDataContentType())
+	req.Header.Set("HX-Request", "true")
+	return do(t, as("owner@example.test", req))
+}
+
+func TestAnUnsignedOrWronglySignedReportIsRefusedAndAPackageBelowLogicExaminedIsNotPublished(t *testing.T) {
+	fake := &model.Fake{Replies: []string{settled}}
+	s, ts := testServer(t, fake)
+	form := url.Values{"message": {"How much red cell volume do neonates get?"}}
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/questions", strings.NewReader(form.Encode()))
+	req.Header.Set("content-type", "application/x-www-form-urlencoded")
+	resp, _ := do(t, as("owner@example.test", req))
+	page := resp.Header.Get("Location")
+	hash := s.latestHash(t, page)
+	good := s.signed(t, hash, "well formed", "The package is well formed.")
+	// Unsigned, signed by another key, and changed after signing: each refused, and nothing recorded.
+	var held map[string]any
+	json.Unmarshal(good, &held)
+	delete(held, "signature")
+	unsigned, _ := json.Marshal(held)
+	_, body := upload(t, ts, page, unsigned)
+	if !strings.Contains(body, "carries no signature") {
+		t.Fatalf("an unsigned report was not refused:\n%s", body)
+	}
+	other, _, _ := ed25519.GenerateKey(nil)
+	json.Unmarshal(good, &held)
+	held["signature"].(map[string]any)["public_key"] = hex.EncodeToString(other)
+	wrong, _ := json.Marshal(held)
+	if _, body := upload(t, ts, page, wrong); !strings.Contains(body, "not the examiner") {
+		t.Fatalf("another key's report was not refused:\n%s", body)
+	}
+	changed := []byte(strings.Replace(string(good), "well formed", "logic examined", 1))
+	if _, body := upload(t, ts, page, changed); !strings.Contains(body, "does not match its content") {
+		t.Fatalf("a changed report was not refused:\n%s", body)
+	}
+	if n, _ := s.store.Examinations(context.Background(), 1); n != 0 {
+		t.Fatalf("a refused report was recorded: %d", n)
+	}
+	// A verified report at well formed is recorded, the model hears only the bounded feedback, and nothing is published.
+	_, body = upload(t, ts, page, good)
+	if !strings.Contains(body, "The examiner") || strings.Contains(body, "secret_case") || strings.Contains(body, "990002400") {
+		t.Fatalf("the feedback is missing or holds case detail:\n%s", body)
+	}
+	if !strings.Contains(body, "1 of 2 planted cases disagree") {
+		t.Fatalf("the count of disagreeing cases is not given:\n%s", body)
+	}
+	form = url.Values{"message": {"Please fix it."}}
+	req, _ = http.NewRequest(http.MethodPost, ts.URL+page+"/messages", strings.NewReader(form.Encode()))
+	req.Header.Set("content-type", "application/x-www-form-urlencoded")
+	do(t, as("owner@example.test", req))
+	turns := fake.Calls[len(fake.Calls)-1]
+	heard := ""
+	for _, turn := range turns {
+		heard += turn.Content + "\n"
+	}
+	if !strings.Contains(heard, "The examiner reports: ") || strings.Contains(heard, "secret_case") || strings.Contains(heard, "990002400") {
+		t.Fatalf("the model heard the wrong thing:\n%s", heard)
+	}
+	q, _ := s.store.Question(context.Background(), 1)
+	req, _ = http.NewRequest(http.MethodGet, ts.URL+"/q/"+q.Token+"/1", nil)
+	if resp, _ := do(t, req); resp.StatusCode != 404 {
+		t.Fatalf("a package at well formed was published: %d", resp.StatusCode)
+	}
+	req, _ = http.NewRequest(http.MethodGet, ts.URL+"/q/"+q.Token, nil)
+	if resp, _ := do(t, req); resp.StatusCode != 404 {
+		t.Fatalf("a package at well formed was published at the plain address: %d", resp.StatusCode)
+	}
+}
+
+func TestAFourthExaminationIsRefused(t *testing.T) {
+	fake := &model.Fake{Replies: []string{settled}}
+	s, ts := testServer(t, fake)
+	form := url.Values{"message": {"How much red cell volume do neonates get?"}}
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/questions", strings.NewReader(form.Encode()))
+	req.Header.Set("content-type", "application/x-www-form-urlencoded")
+	resp, _ := do(t, as("owner@example.test", req))
+	page := resp.Header.Get("Location")
+	hash := s.latestHash(t, page)
+	for n := 1; n <= 3; n++ {
+		if _, body := upload(t, ts, page, s.signed(t, hash, "well formed", "Not yet.")); strings.Contains(body, "as many as it may have") {
+			t.Fatalf("examination %d was refused:\n%s", n, body)
+		}
+	}
+	_, body := upload(t, ts, page, s.signed(t, hash, "logic examined", "Now."))
+	if !strings.Contains(body, "has had 3 examinations, which is as many as it may have") {
+		t.Fatalf("a fourth examination was not refused:\n%s", body)
+	}
+	q, _ := s.store.Question(context.Background(), 1)
+	req, _ = http.NewRequest(http.MethodGet, ts.URL+"/q/"+q.Token+"/1", nil)
+	if resp, _ := do(t, req); resp.StatusCode != 404 {
+		t.Fatalf("the fourth report published the package: %d", resp.StatusCode)
+	}
+}
+
 func TestASecondVersionLeavesTheFirstsBytesAndAddressUnchanged(t *testing.T) {
 	second := strings.Replace(settled, "under 28 days at the start", "under 29 days at the start", 1)
 	fake := &model.Fake{Replies: []string{settled, second}}
-	_, ts := testServer(t, fake)
+	s, ts := testServer(t, fake)
 	form := url.Values{"message": {"How much red cell volume do neonates get?"}}
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/questions", strings.NewReader(form.Encode()))
 	req.Header.Set("content-type", "application/x-www-form-urlencoded")
@@ -211,6 +380,9 @@ func TestASecondVersionLeavesTheFirstsBytesAndAddressUnchanged(t *testing.T) {
 	page := resp.Header.Get("Location")
 	req, _ = http.NewRequest(http.MethodGet, ts.URL+page, nil)
 	_, body := do(t, as("dr@example.test", req))
+	upload(t, ts, page, s.signed(t, s.latestHash(t, page), "logic examined", "Examined."))
+	req, _ = http.NewRequest(http.MethodGet, ts.URL+page, nil)
+	_, body = do(t, as("dr@example.test", req))
 	first := regexp.MustCompile(`/q/[0-9a-f]{48}/1#sha256=[0-9a-f]{64}`).FindString(body)
 	if first == "" {
 		t.Fatal("no address for version 1")
@@ -221,6 +393,7 @@ func TestASecondVersionLeavesTheFirstsBytesAndAddressUnchanged(t *testing.T) {
 	req, _ = http.NewRequest(http.MethodPost, ts.URL+page+"/messages", strings.NewReader(form.Encode()))
 	req.Header.Set("content-type", "application/x-www-form-urlencoded")
 	do(t, as("dr@example.test", req))
+	upload(t, ts, page, s.signed(t, s.latestHash(t, page), "logic examined", "Examined again."))
 	req, _ = http.NewRequest(http.MethodGet, ts.URL+page, nil)
 	_, body = do(t, as("dr@example.test", req))
 	second2 := regexp.MustCompile(`/q/[0-9a-f]{48}/2#sha256=[0-9a-f]{64}`).FindString(body)

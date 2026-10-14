@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/uppertoe/schemalyser/ask/internal/config"
+	"github.com/uppertoe/schemalyser/ask/internal/examination"
 	"github.com/uppertoe/schemalyser/ask/internal/model"
 	"github.com/uppertoe/schemalyser/ask/internal/prompt"
 	"github.com/uppertoe/schemalyser/ask/internal/question"
@@ -51,6 +53,12 @@ func New(cfg *config.Config, st *store.Store, m model.Model) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg.ExaminerPublicKey == "" {
+		cfg.ExaminerPublicKey = rolemodel.ExaminerPublicKey()
+	}
+	if cfg.Examinations == 0 {
+		cfg.Examinations = 3
+	}
 	s := &Server{cfg: cfg, store: st, model: m, contract: contract, system: prompt.Build(contract), now: time.Now}
 	s.index = template.Must(template.New("layout").Parse(layoutHTML + indexHTML))
 	s.page = template.Must(template.New("layout").Parse(layoutHTML + questionHTML + conversationHTML))
@@ -70,6 +78,7 @@ func New(cfg *config.Config, st *store.Store, m model.Model) (*Server, error) {
 	mux.HandleFunc("GET /questions/{id}", s.withUser(s.show))
 	mux.HandleFunc("POST /questions/{id}/messages", s.withUser(s.reply))
 	mux.HandleFunc("GET /questions/{id}/package.json", s.withUser(s.download))
+	mux.HandleFunc("POST /questions/{id}/report", s.withUser(s.report))
 	s.handler = secure(mux)
 	return s, nil
 }
@@ -116,6 +125,10 @@ type pageData struct {
 	Messages                                   []store.Message
 	Package                                    *store.Package
 	Pkg                                        *question.Package
+	Report                                     *store.Report
+	Level, LevelSays                           string
+	Published                                  bool
+	Examinations, ExaminationsAllowed          int
 }
 
 func (s *Server) home(w http.ResponseWriter, r *http.Request, user string) {
@@ -248,7 +261,8 @@ func (s *Server) converse(ctx context.Context, q *store.Question, user, text str
 	if err != nil {
 		return nil, err
 	}
-	// A held-back message and the sentence that answered it stay in the record but are not shown to the model.
+	// A held-back message and the sentence that answered it stay in the record but are not shown to the model. The
+	// examiner's bounded feedback reaches the model as a turn of the clinician's side.
 	turns := make([]model.Turn, 0, len(history))
 	skipAnswer := false
 	for _, m := range history {
@@ -258,6 +272,10 @@ func (s *Server) converse(ctx context.Context, q *store.Question, user, text str
 		}
 		if skipAnswer && m.Role == "assistant" {
 			skipAnswer = false
+			continue
+		}
+		if m.Role == "examiner" {
+			turns = append(turns, model.Turn{Role: "user", Content: "The examiner reports: " + m.Content})
 			continue
 		}
 		turns = append(turns, model.Turn{Role: m.Role, Content: m.Content})
@@ -339,8 +357,99 @@ func (s *Server) pageOf(ctx context.Context, q *store.Question, user, problem st
 		if err := json.Unmarshal([]byte(latest.JSON), &pkg); err == nil {
 			data.Pkg = &pkg
 		}
+		report, err := s.store.ReportFor(ctx, q.ID, latest.Version)
+		if err != nil {
+			return pageData{}, err
+		}
+		data.Report = report
+		data.Level, data.LevelSays = "drafted", "The question has not been examined yet, so it is not published."
+		if report != nil {
+			verified, err := examination.Verify([]byte(report.JSON), s.cfg.ExaminerPublicKey)
+			if err == nil {
+				data.Level, data.LevelSays, data.Published = verified.Level, verified.Says, examination.Publishable(verified.Level)
+			}
+		}
+		data.Examinations, _ = s.store.Examinations(ctx, q.ID)
+		data.ExaminationsAllowed = s.cfg.Examinations
 	}
 	return data, nil
+}
+
+// report takes the examiner's signed report of the latest version of a question's package, uploaded by the owner,
+// verifies it, records it, sets the question's state to the level it grants, and, where the level is below what
+// publishes the package, gives the model the examiner's bounded feedback on the next turn.
+func (s *Server) report(w http.ResponseWriter, r *http.Request, user string) {
+	q, err := s.owned(r, user)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	problem, err := s.takeReport(r.Context(), q, r)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	if r.Header.Get("HX-Request") == "" {
+		http.Redirect(w, r, fmt.Sprintf("/questions/%d", q.ID), http.StatusSeeOther)
+		return
+	}
+	data, err := s.pageOf(r.Context(), q, user, problem)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.render(w, s.turns, data)
+}
+
+// ErrReportRefused says why an uploaded report was not recorded.
+var ErrReportRefused = errors.New("report refused")
+
+func (s *Server) takeReport(ctx context.Context, q *store.Question, r *http.Request) (string, error) {
+	if err := r.ParseMultipartForm(4 << 20); err != nil {
+		return "The report was not uploaded as a file.", nil
+	}
+	file, _, err := r.FormFile("report")
+	if err != nil {
+		return "The report was not uploaded as a file.", nil
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, 4<<20))
+	if err != nil {
+		return "The report could not be read.", nil
+	}
+	count, err := s.store.Examinations(ctx, q.ID)
+	if err != nil {
+		return "", err
+	}
+	if count >= s.cfg.Examinations {
+		return fmt.Sprintf("This question has had %d examinations, which is as many as it may have; the next needs the owner's word.", count), nil
+	}
+	latest, err := s.store.LatestPackage(ctx, q.ID)
+	if err != nil {
+		return "", err
+	}
+	if latest == nil {
+		return "The question has no package to examine yet.", nil
+	}
+	verified, err := examination.Verify(data, s.cfg.ExaminerPublicKey)
+	if err != nil {
+		return "The report was not recorded: " + err.Error() + ".", nil
+	}
+	if verified.PackageSHA256 != latest.Hash {
+		return "The report was not recorded: it is over another version of the package than the latest, whose hash the address carries.", nil
+	}
+	if err := s.store.AddReport(ctx, q.ID, latest.Version, string(data), verified.Level, s.now()); err != nil {
+		return "", err
+	}
+	if err := s.store.SetTitleAndStatus(ctx, q.ID, q.Title, verified.Level, s.now()); err != nil {
+		return "", err
+	}
+	if !examination.Publishable(verified.Level) && verified.Feedback != "" {
+		if err := s.store.AddMessage(ctx, q.ID, "examiner", verified.Feedback, s.now()); err != nil {
+			return "", err
+		}
+	}
+	return "", nil
 }
 
 func (s *Server) download(w http.ResponseWriter, r *http.Request, user string) {
@@ -388,7 +497,22 @@ func (s *Server) servePackage(w http.ResponseWriter, r *http.Request, q *store.Q
 		http.Error(w, "This question has no package at this address: the conversation is still settling it, or this version was never written.", http.StatusNotFound)
 		return
 	}
+	// A version is published only once the examiner's verified report puts it at logic examined or above.
+	report, err := s.store.ReportFor(r.Context(), q.ID, held.Version)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	verified := (*examination.Report)(nil)
+	if report != nil {
+		verified, _ = examination.Verify([]byte(report.JSON), s.cfg.ExaminerPublicKey)
+	}
+	if verified == nil || !examination.Publishable(verified.Level) {
+		http.Error(w, "This version of the question has not been examined to the level that publishes it; the owner uploads the examiner's report first.", http.StatusNotFound)
+		return
+	}
 	w.Header().Set("content-type", "application/json; charset=utf-8")
+	w.Header().Set("x-schemalyser-question-level", verified.Level)
 	w.Header().Set("cache-control", "no-store")
 	w.Header().Set("access-control-allow-origin", "*")
 	w.Header().Set("access-control-expose-headers", "x-schemalyser-question-hash, x-schemalyser-question-version")

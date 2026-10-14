@@ -8,6 +8,7 @@ RUN go mod download
 COPY ask/ ./
 COPY core/schemalyser/rolemodel/contract.json internal/rolemodel/contract.json
 COPY core/schemalyser/rolemodel/question.schema.json internal/rolemodel/question.schema.json
+COPY fixtures/examiner.pub internal/rolemodel/examiner.pub
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ask .
 RUN mkdir -p /data && chown 65532:65532 /data
 

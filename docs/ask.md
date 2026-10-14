@@ -12,4 +12,4 @@ A question package, `schemalyser-question/1`, in the shape of the schema beside 
 
 ## What is not yet done
 
-The page does not yet open a package by address, and until it does the package is downloaded as a file. The examination does not yet run on a package, so the page's state word for every question stays at `drafted`. The policy admits the contract parts and the mapping views, so a question over a draft part compiles only once that part is promoted.
+The page does not yet open a package by address, and until it does the package is downloaded as a file. The examination runs on the owner's own machine, and its signed report, uploaded on the question's page, is what publishes a version: the service verifies the examiner's signature, shows the level and publishes at logic examined or above, returning to the model only the bounded feedback the examination allows (14 October 2026). The policy admits the contract parts and the mapping views, so a question over a draft part compiles only once that part is promoted.

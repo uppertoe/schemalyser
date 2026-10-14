@@ -19,6 +19,10 @@ type Config struct {
 	AdminEmails   []string // who may see every question rather than their own
 	AllowedEmails []string // who may sign in at all; the admins always may, and no one else when the list is empty
 	BrandName     string
+	// The examiner's public key, hex, with which a report is verified; the repository's when not set.
+	ExaminerPublicKey string
+	// How many examinations a question may have, so that the count of disagreeing cases cannot search for the answers.
+	Examinations int
 }
 
 func getenv(key, fallback string) string {
@@ -31,14 +35,16 @@ func getenv(key, fallback string) string {
 // Load reads the configuration and refuses a combination the service cannot run with.
 func Load() (*Config, error) {
 	c := &Config{
-		ListenAddr: getenv("ASK_LISTEN", ":8080"),
-		SQLitePath: getenv("ASK_SQLITE", "/data/ask.db"),
-		PublicURL:  strings.TrimRight(getenv("ASK_PUBLIC_URL", "http://localhost:8080"), "/"),
-		Backend:    strings.ToLower(getenv("ASK_MODEL_BACKEND", "api")),
-		Model:      getenv("ASK_MODEL", "claude-fable-5-1"),
-		APIKey:     getenv("ANTHROPIC_API_KEY", ""),
-		DevUser:    strings.ToLower(getenv("ASK_DEV_USER", "")),
-		BrandName:  getenv("BRAND_NAME", "Schemalyser"),
+		ListenAddr:        getenv("ASK_LISTEN", ":8080"),
+		SQLitePath:        getenv("ASK_SQLITE", "/data/ask.db"),
+		PublicURL:         strings.TrimRight(getenv("ASK_PUBLIC_URL", "http://localhost:8080"), "/"),
+		Backend:           strings.ToLower(getenv("ASK_MODEL_BACKEND", "api")),
+		Model:             getenv("ASK_MODEL", "claude-fable-5-1"),
+		APIKey:            getenv("ANTHROPIC_API_KEY", ""),
+		DevUser:           strings.ToLower(getenv("ASK_DEV_USER", "")),
+		BrandName:         getenv("BRAND_NAME", "Schemalyser"),
+		ExaminerPublicKey: strings.ToLower(getenv("ASK_EXAMINER_PUBLIC_KEY", "")),
+		Examinations:      3,
 	}
 	for _, e := range strings.Split(getenv("ASK_ADMIN_EMAILS", ""), ",") {
 		if e = strings.ToLower(strings.TrimSpace(e)); e != "" {

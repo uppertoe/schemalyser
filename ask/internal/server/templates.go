@@ -60,7 +60,7 @@ const questionHTML = `{{define "body"}}
 const conversationHTML = `{{define "conversation"}}
 {{range .Messages}}
 <div class="turn {{.Role}}">
-  <div class="speaker">{{if eq .Role "user"}}You{{else}}Assistant{{end}}</div>
+  <div class="speaker">{{if eq .Role "user"}}You{{else if eq .Role "examiner"}}The examiner{{else}}Assistant{{end}}</div>
   <div class="text">{{.Content}}</div>
 </div>
 {{end}}
@@ -68,9 +68,16 @@ const conversationHTML = `{{define "conversation"}}
 {{if .Package}}
 <div class="package" x-data="{open: false}">
   <h2>The question, written for the hospital</h2>
-  <p>This is version {{.Package.Version}} of the question package. The hospital opens it in Schemalyser at this address, which is private to whoever holds it and names this version, so that what the hospital opens is what you see here:</p>
+  <p>This is version {{.Package.Version}} of the question package. Its examination stands at <strong>{{.Level}}</strong>. {{.LevelSays}}</p>
+  {{if .Published}}<p>The hospital opens it in Schemalyser at this address, which is private to whoever holds it and names this version, so that what the hospital opens is what you see here:</p>
   <p><code>{{.Address}}</code></p>
-  <p class="state">The latest version is always at <code>{{.Latest}}</code>.</p>
+  <p class="state">The latest version is always at <code>{{.Latest}}</code>.</p>{{else}}
+  <p class="state">The package is published at its address once the examiner's report puts it at logic examined or above.</p>{{end}}
+  {{if .Admin}}<form hx-post="/questions/{{.Question.ID}}/report" hx-target="#conversation" hx-swap="innerHTML" hx-encoding="multipart/form-data" method="post" action="/questions/{{.Question.ID}}/report" enctype="multipart/form-data" class="report">
+    <label for="report">The examiner's report of this version, signed ({{.Examinations}} of {{.ExaminationsAllowed}} examinations used)</label>
+    <input id="report" type="file" name="report" accept="application/json" required>
+    <button type="submit">Upload the report</button>
+  </form>{{end}}
   <p>Its parts of the record: {{range $i, $p := .Pkg.Parts}}{{if $i}}, {{end}}{{$p.Name}}{{end}}.{{if .Pkg.Drafts}} Not yet in the contract: {{range $i, $p := .Pkg.Drafts}}{{if $i}}, {{end}}{{$p}}{{end}}.{{end}}</p>
   {{if .Pkg.Decisions}}<h3>Decisions</h3><ul>{{range .Pkg.Decisions}}<li>{{.Decision}}</li>{{end}}</ul>{{end}}
   {{if .Pkg.Proposals}}<h3>What the record does not yet describe</h3><ul>{{range .Pkg.Proposals}}<li>A {{.Kind}} for {{.Part}}: {{.Because}}</li>{{end}}</ul><p>The owner of the record's description decides whether to add these. Until then the question waits.</p>{{end}}
