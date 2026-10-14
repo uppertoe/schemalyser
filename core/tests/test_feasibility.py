@@ -146,7 +146,7 @@ def test_the_neonatal_audit_asks_for_the_smallest_investigation_of_each_gap(neon
     assert "- No person has assessed the recording pathways of Readings charted during an anaesthetic for this period." in text
     assert "| The link from Readings charted during an anaesthetic to Anaesthetics | Checked against the database |" in text
     assert "1. **For the database analyst.** This request concerns the date of death in Patients." in text
-    assert "Three requirements are proposed, not confirmed: the date of death in Patients" in text
+    assert "Four requirements are proposed, not confirmed: the date of death in Patients" in text
     # The prose of the report keeps to the page's vocabulary.
     prose = re.sub(r"```sql.*?```", "", text, flags=re.S)
     prose = re.sub(r"`[^`]*`", "", prose)
