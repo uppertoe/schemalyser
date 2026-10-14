@@ -1,71 +1,112 @@
 # Roadmap
 
-The work runs in two tracks side by side. The clinical track shows that the hospital schema, and one audit made through it, are right on the real database. The engineering track shows, on invented data alone, that the conversion to OMOP and its release script do what they claim, and that a coding agent can work on the project without seeing anything from a hospital. Neither track waits for the other until they meet, and the principle from the reviews of 8 October 2026 still holds: validation comes before breadth, so nothing new is built on the hospital schema until one audit made through it has been shown to be clinically right.
+This is the plan of record from 14 October 2026. It replaces the roadmap of 9 October, which was written around a first meeting on the hospital's production database. That meeting is not available for now, so the plan below is built to go as far as it can on what exists: the public role contract, the invented world, the realistic stand-in built from the vendor's published specification of its export, and the knowledge that the hospital's real database follows that specification closely. Each item states what done means, and an item is done only when that statement is true.
 
-Each item below states what done means. An item is done only when that statement is true, and not when the code for it has been written.
+The architecture contract (`docs/contract.md`) remains the standard the code is held to, and `docs/alignment.md` remains the register of where the code falls short of it. This roadmap says what is built, in what order the rest is built, and where each layer of the intended product sits.
 
-Since 9 October 2026 the architecture contract (`docs/contract.md`) is the standard the code is held to, and `docs/alignment.md` is the register of where the code falls short of it, with an order of work: behaviour and logic first, then tests, then integration, then the surfaces. The items below remain the two tracks' goals; the register says what has to change in the code before each can be met honestly. Two acceptance tests in the contract judge the whole: the query lifecycle from a coding agent's question to an execution package, and the infusion boundary test. The roles are tested against a second, publicly documented source once both pass, before any further draft part is promoted. When the roles are later populated from the hospital's core OMOP, equivalence with the audit over the roles is established for each question and never assumed from the conversion passing its tests.
+## The problem
 
-## The clinical track
+One clinician has access to the hospital's database and an intermediate knowledge of SQL. Fifty anaesthetists want answers from the record. The clinician's time goes to five things: pinning down what an asker means, working out where the thing lives in the database, writing and debugging the joins, checking the result looks right, and doing it all again for the next variant of the same question. Only the last two need the database, and only checking needs a person. Schemalyser's purpose is to take the other three off the one person and to make the two that remain short.
 
-### 1. The first meeting confirms the hospital schema
+## The shape
 
-The clinician and the database analyst work through the page Describe the record on production at the first meeting, and save the hospital schema. The counts at step 8 then give two things that the saved file keeps apart: the clinician's judgement of whether each count looks right, and the coverage that the count measured, such as the share of anaesthetics with a patient and the share with a reading of a kind that the audit needs. The scoreboard then shows, as counts that name nothing, how well the proposer did, overall and for each category of column, so that a wrong link is not hidden among descriptive columns that were right.
+One private file, the hospital schema, and six layers around it.
 
-A reference conversion written elsewhere can be set beside ours as supporting evidence (`compare.py`, described in `docs/compare.md`). It reads the SQL of both, with the saved hospital schema's proposals where one is given, and reports where they read the record alike and where they differ, with an uncertainty item for each disagreement on an anaesthesia table. Agreement is never taken as proof, because workflows and configuration differ between hospitals. The reference and the detail of the report stay on the hospital's own storage, and only the counts at the top of the report may be shared. It runs from the command line today, has been tested only on an invented reference, and adds nothing to the hospital schema.
+1. **The role model.** The public contract of parts, columns, kinds and capabilities, the same at every hospital, with a checker of its shape and a try command for whoever adds to it.
+2. **The hospital schema.** Built once per hospital on the page Describe the record, from the database's own dictionary and a handful of analyst queries, with the evidence for every fact and its readiness. The only private thing.
+3. **Questions.** A question is a package: a specification in the clinician's terms, SQL over the roles, the contract version it was written against, and a status. The capability catalogue is the set of parameterised questions chosen from a list; a free question is a package written for one asker.
+4. **The examination.** Invented data with planted cases whose answers are held out, the role-level shadow, the test on made-up rows, the equivalence of two schemas, and metamorphic checks. Everything here runs with no hospital.
+5. **Compilation and execution.** The policy over a question, its compilation through the hospital schema into the hospital's own SQL, the execution package the analyst runs, and the equivalence of the compiled script on the target engine.
+6. **The public service.** A web application for the anaesthetists, with a language model behind it, that turns a free-text question into a specification and a package, and publishes the package at an address. It sees the role model and the invented world and nothing of any hospital.
 
-The reference's lineage now does two further things. The transplant command writes a conversion folder from it, one step for each OMOP table that the reference writes, checked against the vendor's public specification, with every redacted literal held as a named placeholder for the owner to decide, so that a route that the reference takes and ours lacks can be run in the testbed before anyone writes it by hand. The proposer can also read the lineage beside the dictionary, on the command line and as an optional file at step 2 of the page, so that a column that the dictionary describes thinly gains the reference's column as a candidate, ranked below every match that the dictionary's own words support and recorded as resting on a reference conversion. Both have been tested only on the invented reference, and the owner runs them on the private material.
+**Where OMOP comes in.** Twice, as a target and as a source. As a target, the anaesthesia layer of OMOP is written by conversion steps over the roles, so that a validated hospital schema fills the anaesthesia tables beside the hospital's core OMOP; three such steps exist. As a source, a hospital whose anaesthesia record is already in OMOP binds the same contract to OMOP tables, and every question runs there unchanged. A cohort defined in ATLAS is a third, later entry: an input to a question's cohort rather than a way of writing the question.
 
-Done means that a saved hospital schema exists on the hospital's own storage in which all three contract views have reached the state *checked against the database*, with the measured coverage recorded beside each judgement, and that its scoreboard has been read and any lesson for the proposer has been recorded in the public repository without naming the vendor's model.
+## What is built
 
-### 2. The neonatal audit runs
+| Piece | Where | State on 14 October 2026 |
+| --- | --- | --- |
+| The role contract, 18 parts, 23 vocabularies, the capability catalogue | `core/schemalyser/rolemodel/` | Version 1.1; three parts at contract status, fifteen drafts |
+| The checker of the contract's shape, run by the tests | `core/schemalyser/contractcheck.py` | Built |
+| The try command, which opens a saved schema under a candidate contract | `python -m schemalyser.describe try` | Built |
+| The page Describe the record, and the same operations on the command line | `site/`, `core/schemalyser/describe/` | Built; nine steps; one saved file per version |
+| A saved schema reopened under a newer contract, with the added fields proposed from its own dictionary and nothing asked of the database | `core/tests/test_migration.py` | Built and proven end to end |
+| The invented world and its dictionary | `fixtures/` | Built; the examination's public half |
+| The realistic stand-in from the vendor's published specification, with a hand-written reference map | private reference folder | 56 tables; sixteen parts run through the naive schema and agree with the reference row for row |
+| The measure of success: gold score, cost by kind of decision, readiness, equivalence | `docs/success.md`, `gold.py`, `equivalence.py` | Built; the realistic pass scores 26 of 33 documented bindings exact and 0 wrong |
+| The policy over a question, the two-part script, the feasibility report, the execution package | `policy.py`, `rolepolicy.py`, `feasibility.py`, `audit.py` | Built for the three contract parts |
+| The specification compiled into SQL over the roles | `specification.py` | Built, in the export's shape of sections per episode |
+| The question import into a hospital's project, with its three statuses | `python -m schemalyser.workspace import` | Built; the workspace export holds out the planted answers |
+| The role-level shadow and the planted neonates | `roleshadow.py`, `fixtures/held-out/` | Built; the neonatal audit runs on it with no map |
+| The OMOP testbed on the invented world and on the stand-in | `python -m schemalyser.testbed` | Built; the stand-in's fast profile passes with 22 steps and 20 planted scenarios |
+| Three conversion steps over the roles: measurements, visit details, procedures | private conversion folder | Built; identical rows to the direct steps on the stand-in |
+| The SQL Server harness and the release equivalence | `tools/sqlserver/` | Built; run only when the T-SQL changes |
+| The workbench, a local service over a project folder | `core/schemalyser/workbench/` | Built |
 
-Screen 2 is the anaesthesia record export, described in `docs/product.md`: a list of episodes and a specification of sections in, one file for each section out, built one section at a time with readings first. The neonatal low mean pressure audit is its first analysis, and the first thing run on production, because it returns rounded counts rather than rows. For that audit the screen reads the saved hospital schema, builds a shadow from it, plants the standard neonatal cases, runs the audit on the made-up rows, and compiles the two-part script for production. The database analyst then runs the script once on production. The export's own path is the same one with the cohort replaced by the episode list and the computation replaced by returning the sections' rows, and it is built on the audit's path once the audit has run.
+What is not built: a question-shaped specification with a cohort and an outcome, the package's status levels, the page's import of a package by file or address, metamorphic checks, the portable dialect in the policy, the public service, and a hospital schema bound to OMOP as a source.
 
-The first half of screen 2 is the report on whether a question can be answered (`feasibility.py`, described in `docs/feasibility.md`). It reads the audit and the saved hospital schema, gives each requirement of the audit its state, from not currently mapped to checked against the database, and asks for the smallest investigation that would move each one that falls short, so that the clinician and the database analyst know what remains before the script is run. It runs from the command line today; the page's screen follows, and it adds nothing to the hospital schema itself.
+## The order of work
 
-The second half is the execution package (`audit.py`, described in `docs/audit.md`). The clinician builds it from the audit and the saved hospital schema, and it holds the two-part script over the hospital's tables with its specification, the answer on made-up rows, and a safety report kept apart from both. The safety report applies a static policy to the final text of the script and derives its execution class from that text, and the plan review then reads the estimated plan that the database analyst obtains for part 2. Like the feasibility report, it runs from the command line today and has been tested only on the invented world.
+The order proves the risky claim first, which is that a question over the roles answers as well as a query written by hand against the database, and it leaves the language model to last, because it is the easiest part to add and the hardest to validate.
 
-Done means that the neonatal audit has run once on production through the hospital schema, that every planted case gave its expected answer on the shadow beforehand, and that the result carries its coverage by year, so that a year in which the schema reaches too few readings is visible beside the answer.
+### 1. One question end to end, by hand
 
-### 3. A sample of anaesthetics is reconciled against the clinical record
+The median blood transfusion requirement of neonates having surgery, written as a specification and as SQL over the roles, compiled through the saved schema of the realistic pass, run on the stand-in, and compared with a query written by hand the way an analyst would write it against the stand-in's tables. The equivalence tool does the comparison.
 
-A clinician reconciles a sample of anaesthetics against the clinical record, including some from each band of the audit's answer and some that fell into the band in which nothing was recorded. Each disagreement is explained, either as a fault in the hospital schema, which is corrected and the counts run again, or as a limit of the record, which the result states.
+Done means that the two answers agree on the stand-in, or that every difference is explained as a choice the specification makes, and that the question's package holds everything the comparison needed.
 
-Done means that the reconciliation has been completed and its findings written down, that every disagreement has an explanation, and that the three contract views can then be recorded as *clinically validated*. Until that is so, no second audit is started.
+### 2. Promotion of parts on the stand-in's evidence
 
-## The engineering track
+The rule that no draft joins the contract until the three contract parts are clinically validated at a hospital was written for a world with a first meeting. Without one, a middle status is needed: a part that runs through a naive schema on the stand-in and agrees with a hand-written reference row for row is *rehearsed*, and the policy admits a rehearsed part for a question whose own status is no higher than synthetic tests passed. The sixteen parts that agree today are the candidates, and the parts a question needs are promoted first.
 
-### 4. A one-command OMOP test run on the invented source
+Done means that the contract has the status, that the checker enforces it, that the policy admits rehearsed parts under that rule, and that the transfusion question passes the policy.
 
-One command runs the whole OMOP side on the invented source. It builds an OMOP CDM 5.4 instance from the published field list, runs the real conversion and the real release script, checks the planted scenarios against their expected rows, reconciles the source with the target, runs the DataQualityDashboard on the output, and writes one machine-readable report. The expected rows are written independently of the conversion, as the planted scenarios already are, so that a mistake in a step cannot also be a mistake in its test. The DataQualityDashboard is run rather than reimplemented, and the transformation that runs in the test is exactly the one that the release script carries into the hospital.
+### 3. The question package
 
-Done means that the command gives a pass or a failure with one report file, that its full profile runs with the pinned Athena vocabulary and records the release that it used, that the report holds the outcome of every planted scenario, the reconciliation of source to target and the DataQualityDashboard's findings, that a test fails if the test run and the release script would run different SQL, and that the command runs in the project's continuous testing.
+The package format: `specification.json` in the clinician's terms, with a cohort, an outcome and a result grain; `question.sql` over the roles; the contract version; a hash; `note.md`; and a status with four levels: well formed, synthetic tests passed, hospital mapping supported, production validated. The import that exists is extended to read it, and the catalogue's capabilities are written in the same form so that a chosen capability and a free question are one kind of thing.
 
-### 5. The export for work with a language model
+Done means that the transfusion question and the five capabilities of the catalogue's first list are packages, that the import gives each its status, and that a package at a lower status cannot be compiled for production.
 
-A command writes an exported workspace that a coding agent can work on, rather than a language model being built into the tool. The export is a product in its own right: it holds an allowlist of what may appear, renames anything else deterministically, refuses to write a workspace that holds a name outside the allowlist, and lists in an uncertainty register what the export does not know. The standing rule still holds, so the export carries no hospital data, metadata or dictionary text, and its checks are what demonstrate that.
+### 4. The page opens a question
 
-Done means that a coding agent given only the exported workspace can implement a held-out transformation, one that the export does not contain, and that the implementation passes tests written independently of the agent and kept outside the workspace. The export's checks must also run in the test suite against invented inputs with planted names, and a planted name must never survive into an export.
+Step 1 of the page accepts a package as a file, shows its specification and its SQL in words before anything else, checks it against the policy, compiles it through the loaded hospital schema, and reports the parts the schema lacks with what the stored dictionary proposes for them, as the reopening under a newer contract does today. Then the address: the page fetches a package from an address that carries its hash, before it goes offline, and refuses a package whose hash does not match; the file remains as the fallback where the network is closed.
 
-The export is built (`core/schemalyser/workspace.py`, described in `docs/workspace.md`). `python -m schemalyser.workspace export --profile public` writes the workspace from an explicit allowlist of public sources and stops, naming the path, at anything outside it, and `python -m schemalyser.workspace import` takes a finished question back into a hospital's project in one direction, applying the role-level policy of `rolepolicy.py` and returning a fixed status alone. For this first part, done means that a coding agent given only the workspace can write a question that imports and builds, and the tests show that on the invented world, with a planted file under `reference/` that never reaches the export. The held-out transformation test remains to do, as do the deterministic renaming and the uncertainty register, which the allowlist has not yet needed.
+Done means that the browser test opens the transfusion package both ways, refuses a package whose hash is wrong, and produces the compiled script, and that the page still seals itself from the network afterwards.
 
-### 6. A local service and dbt, considered
+### 5. The examination
 
-The offline page stays as the tool for work that faces the hospital. Once the one-command test run exists and the first audit has been validated, a local Python service may be added for the developer's side, with files as the only interface between the service and the page. Whether the conversion should then be written as dbt models is considered at the same time, once the test run has been used in earnest.
+Planted cases for each question with their answers held out, as the planted neonates are; a metamorphic suite of three checks, an unrelated patient added changing nothing, a duplicated reading handled as the specification says, and a reading moved to another encounter leaving the cohort; and the status synthetic tests passed granted only by this suite. The examination is public except for the held-out answers.
 
-Done means that a written decision exists for each, with its reasons. Where the service is built, done also means that the two exchange only files and that the page still runs offline without it.
+Done means that the transfusion question and the five capabilities each pass their planted cases and the three checks, and that a deliberately wrong version of each fails.
 
-The local service exists as the workbench (`core/schemalyser/workbench/`, described in `docs/workbench.md`), which serves pages over a project folder on the clinician's computer and in a container. It starts the core's commands for the audit's package, the plan review and the test on made-up rows, and shows their reports, and it adds no logic of its own. The offline page still runs without it, and the two exchange only the saved hospital schema. The decision on dbt is still to be written, and the workbench has been tried only on the invented world.
+### 6. The portable dialect
 
-## Where the tracks meet
+The role query dialect is fixed as the subset of SQL that round-trips to DuckDB and to SQL Server, with the temporal and window constructs a clinical question needs either standardised or refused, and the policy rejects what is outside it. SQL Server keeps its place as the final gate of a compiled package, run only when the compiled script changes.
 
-The tracks meet once the three contract views are clinically validated and the one-command test run is in place. The conversion to OMOP is then re-pointed from the source tables onto the roles, so that it reads the same validated hospital schema that the audit reads, and screen 3, the OMOP layer, is built on the test run.
+Done means that every package of steps 1 to 5 is inside the dialect, that the policy refuses a construct outside it with a sentence saying so, and that the testbed's release equivalence still passes on SQL Server.
 
-Done means that the release script written from a validated hospital schema passes the one-command test run on the invented source, and that, for the reconciled sample of anaesthetics, the OMOP rows agree with what the clinician found in the clinical record.
+### 7. The public service
 
-## Standing rules for both tracks
+The web application for the anaesthetists: a conversation that turns a free-text question into a specification, a model writing SQL over the roles against the public contract and the invented world, the examination run on its output, and the package published at an address with its hash. Before any anaesthetist uses it, ten questions are given to several models and the iterations, the recurring mistakes and the pass rate on the held-out cases are counted.
 
-The earlier modules are retired as the tracks need them to be. `docs/architecture.md` classifies every module of the core as active workflow, shared infrastructure, a candidate for the test run, or superseded. Screen 2 and the test run take what they need from the superseded modules, such as the form of the two-part scripts and the planted scenarios, and the rest are then removed. This is done once no active module, shared module or test-run module depends on a superseded one, and the superseded modules and their tests are gone from the repository.
+Done means that the measured pass rate and the recurring mistakes are written down, and that the service publishes only packages the examination has passed.
 
-The fifteen draft views stay drafts. No view joins the contract, and no audit reads a draft view, until the three contract views have been clinically validated at a hospital and a second audit needs a further view. This is a rule rather than a task, and it holds until both conditions are met.
+### 8. OMOP as a source, and the anaesthesia layer promoted
+
+A hospital schema that binds the contract to the invented OMOP patients the testbed makes, so that the transfusion question runs there unchanged; and the conversion steps over the roles promoted in the private conversion, with the full testbed run. ATLAS cohorts follow as an input to a question's cohort.
+
+Done means that the transfusion question gives the same answer through the OMOP-bound schema as through the stand-in's, and that the full testbed passes with the steps over the roles in place of the direct ones.
+
+### When the database becomes available
+
+The clinical track of the earlier roadmap resumes at that point and is unchanged in substance: the hospital schema is built on the training database with the page, the first question runs on production through it, and a sample of anaesthetics is reconciled against the clinical record. Everything above is designed so that this takes a day rather than a project, because the schema will be built from a dictionary whose shape the stand-in has rehearsed, with answers the page already knows how to ask for.
+
+## Decisions for the owner
+
+- Whether to adopt the rehearsed status and the rule under which the policy admits it, which step 2 needs.
+- Whether the first question is the transfusion question or one the three contract parts already cover, which makes step 1 a morning rather than a day.
+- Whether the package is published at an address at all, or only as a file, which step 4 needs before its second half.
+- The open questions of the capability catalogue in `docs/capabilities.md`, which the five capabilities of step 3 need answered.
+
+## Standing rules
+
+These do not change. The repository is public and holds no name of a hospital's table or column; the realistic stand-in and the reference map stay in the private reference folder. No language model sees anything of a hospital: the public service and any coding agent see the role model and the invented world only, and the planted answers are held out of every export. The page works offline and sends nothing anywhere; the one inbound fetch it may make is of a package whose hash it checks. The execution package is a plain file the analyst reads in full before it is run, and no result leaves the hospital without the policy's rounding. Clinical validation is a person reconciling records, and no status below production validated claims it.
