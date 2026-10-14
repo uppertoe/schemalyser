@@ -1,0 +1,12 @@
+# The clinician-facing service, behind the login wall. The secret addresses under /q/ are open, because the page in a
+# hospital fetches a question's package from one without a login; each is a 48-character secret and holds nothing of
+# any hospital.
+ask.{$DOMAIN} {
+	handle /q/* {
+		reverse_proxy ask:8080
+	}
+	handle {
+		import protected
+		reverse_proxy ask:8080
+	}
+}

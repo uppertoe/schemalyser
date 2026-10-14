@@ -1,0 +1,27 @@
+services:
+  ask:
+    image: ghcr.io/uppertoe/schemalyser-ask:latest
+    restart: unless-stopped
+    user: "65532:65532"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    mem_limit: 128m
+    pids_limit: 64
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      - ASK_PUBLIC_URL=https://ask.${DOMAIN}
+      - ASK_SQLITE=/data/ask.db
+    volumes:
+      - ask_data:/data
+    healthcheck:
+      test: ["/app", "-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+volumes:
+  ask_data:

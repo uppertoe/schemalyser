@@ -41,8 +41,9 @@ One private file, the hospital schema, and six layers around it.
 | Three conversion steps over the roles: measurements, visit details, procedures | private conversion folder | Built; identical rows to the direct steps on the stand-in |
 | The SQL Server harness and the release equivalence | `tools/sqlserver/` | Built; run only when the T-SQL changes |
 | The workbench, a local service over a project folder | `core/schemalyser/workbench/` | Built |
+| Ask, the clinician-facing service: a conversation with a model that writes a question package over the roles and publishes it at a secret address | `ask/`, described in `docs/ask.md` | First version built on 14 October 2026; the page does not yet open a package by address, and no examination runs on one |
 
-What is not built: a question-shaped specification with a cohort and an outcome, the package's status levels, the page's import of a package by file or address, metamorphic checks, the portable dialect in the policy, the public service, and a hospital schema bound to OMOP as a source.
+What is not built: the package's status levels beyond drafted, the page's import of a package by file or address, metamorphic checks, the portable dialect in the policy, the examination of a package, and a hospital schema bound to OMOP as a source. The public service exists in a first version, built out of the roadmap's order at the owner's decision, and its package format is the one step 3 fixes.
 
 ## The order of work
 
