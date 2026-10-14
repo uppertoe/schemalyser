@@ -670,9 +670,19 @@ def _episode_ctes(spec, episodes):
     form = spec["episodes"]["form"]
     columns = ", ".join(f"a.{c}" for c in ANAESTHETIC)
     if form == "anaesthetic_keys":
-        chosen = ("a.anaesthetic_key IN (" + ", ".join(_literal(k) for k in episodes["rows"]) + ")") if episodes else "1 = 0"
-        return [f"episode AS (\n    SELECT {columns}\n    FROM   role_anaesthetic AS a\n    WHERE  {chosen}\n)"]
+        # The list is a table of keys the hospital supplied, joined by key: a key is never compared with a literal. It
+        # stands inside the episode step, so that the step reads the anaesthetics alone and compiles as the cohort.
+        listed = _listed("anaesthetic_key", episodes["rows"] if episodes else [])
+        return [f"episode AS (\n    SELECT {columns}\n    FROM   (\n{listed}\n    ) AS l\n    JOIN   role_anaesthetic AS a ON a.anaesthetic_key = l.anaesthetic_key\n)"]
     return _pair_ctes(spec, episodes) + [_pair_episode(spec)]
+
+
+def _listed(column, keys):
+    """A table of one row for each key of a list, as the text of a derived table's body."""
+    if keys:
+        lines = [f"SELECT {_literal(k)} AS {column}" if n == 1 else f"SELECT {_literal(k)}" for n, k in enumerate(keys, 1)]
+        return _indent("\nUNION ALL\n".join(lines), "        ")
+    return _indent(f"SELECT CAST(NULL AS varchar(64)) AS {column}\nWHERE  1 = 0", "        ")
 
 
 def _pair_ctes(spec, episodes):
@@ -680,17 +690,16 @@ def _pair_ctes(spec, episodes):
     columns = ", ".join(f"a.{c}" for c in ANAESTHETIC)
     if episodes:
         patients = sorted({p for p, _ in episodes["rows"]})
-        chosen = "a.patient_key IN (" + ", ".join(_literal(p) for p in patients) + ")"
         lines = [f"SELECT {n} AS pair_number, {_literal(p)} AS patient_key, CAST('{d.isoformat()}' AS datetime) AS episode_day"
                  if n == 1 else f"SELECT {n}, {_literal(p)}, CAST('{d.isoformat()}' AS datetime)"
                  for n, (p, d) in enumerate(episodes["rows"], 1)]
         pairs = "\n    UNION ALL\n    ".join(lines)
     else:
-        chosen = "1 = 0"
+        patients = []
         pairs = ("SELECT CAST(NULL AS int) AS pair_number, CAST(NULL AS varchar(64)) AS patient_key, "
                  "CAST(NULL AS datetime) AS episode_day\n    WHERE  1 = 0")
     return [
-        f"candidate AS (\n    SELECT {columns}\n    FROM   role_anaesthetic AS a\n    WHERE  {chosen}\n)",
+        f"candidate AS (\n    SELECT {columns}\n    FROM   (\n{_listed('patient_key', patients)}\n    ) AS l\n    JOIN   role_anaesthetic AS a ON a.patient_key = l.patient_key\n)",
         f"pairs AS (\n    {pairs}\n)",
         ("matched AS (\n    SELECT p.pair_number, c.anaesthetic_key\n    FROM   pairs AS p\n"
          "    JOIN   candidate AS c ON c.patient_key = p.patient_key\n"

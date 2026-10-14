@@ -1,0 +1,59 @@
+{
+ "cases": {
+  "hypotension_burden": {
+   "kind": "capability",
+   "files": {
+    "rows": "4e741f552c8e4a227bafaf2be0b04e205e2ee52fa0468cdca9b83eadcf89f711",
+    "expected": "814dfbefd509fd6849a592fffc2776e96e78bcba2d0905c028a4e62aebb26df5"
+   },
+   "date": "2026-10-14"
+  },
+  "hypothermia": {
+   "kind": "capability",
+   "files": {
+    "rows": "4e741f552c8e4a227bafaf2be0b04e205e2ee52fa0468cdca9b83eadcf89f711",
+    "expected": "5537b128904134864be146a676eda3329a1707befe136478bed890bc9cf09700"
+   },
+   "date": "2026-10-14"
+  },
+  "hypoxaemia_burden": {
+   "kind": "capability",
+   "files": {
+    "rows": "4e741f552c8e4a227bafaf2be0b04e205e2ee52fa0468cdca9b83eadcf89f711",
+    "expected": "ffa4afc9b4ffe5ef0892afa0fb7c1a6ef1768d89f4dabc8c84f15019b053854e"
+   },
+   "date": "2026-10-14"
+  },
+  "monitoring_completeness": {
+   "kind": "capability",
+   "files": {
+    "rows": "4e741f552c8e4a227bafaf2be0b04e205e2ee52fa0468cdca9b83eadcf89f711",
+    "expected": "5fb5c6e601eb7622d9d0012dbe1382374f0653dda4874390ca4cf3ca16c64301"
+   },
+   "date": "2026-10-14"
+  },
+  "neonatal_low_mean_pressure": {
+   "kind": "audit",
+   "files": {
+    "planted": "6154295ce955d90619562e249c3158b4f7762492280f7ebde8637ba0deb835fe"
+   },
+   "date": "2026-10-14"
+  },
+  "saturation_below_90": {
+   "kind": "question",
+   "files": {
+    "rows": "b589c5541e4a9b154b6953b9d17d87d89ffb335dc82c4fc3fdf675be1f7f921c",
+    "expected": "4e406d24f1931683b56267b1dc823feebe025de27946c81a4257cbe70df7960a"
+   },
+   "date": "2026-10-14"
+  },
+  "volatile_consumption": {
+   "kind": "capability",
+   "files": {
+    "rows": "4e741f552c8e4a227bafaf2be0b04e205e2ee52fa0468cdca9b83eadcf89f711",
+    "expected": "be39095b8ab2445aec8a1cf697cc97abc397700d982c63cff4f1e55db5335805"
+   },
+   "date": "2026-10-14"
+  }
+ }
+}

@@ -24,6 +24,8 @@ func TestThePromptStatesTheTwoPartFormTheMedianTheStandingOfPartsAndNamesEveryMa
 		"The capability catalogue.",
 		"The service works out which parts the SQL reads",
 		"read it in question_sql as a table named after it",
+		"write examinable, the structured form of the decisions",
+		"{\"oracle\": \"none\"",
 		"composable, giving anaesthetic_key, age_days, threshold, readings, minutes_beyond",
 	} {
 		if !strings.Contains(text, want) {

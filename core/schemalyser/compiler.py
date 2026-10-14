@@ -381,6 +381,10 @@ def compile_audit(schema, audit_sql, start, end, blank=True, final=None, large=p
     if "start_time" not in [c.lower() for c in body.named_selects]:
         # The count of the series bounds #cohort by the period, so #cohort carries the start of each anaesthetic.
         body.select(f"{alias}.start_time", dialect="tsql", copy=False)
+    if "patient_key" not in [c.lower() for c in body.named_selects]:
+        # #cohort always carries the patient, so that a part at the patient's grain, or a step of the question that
+        # reads the patients again, is reached from it.
+        body.select(f"{alias}.patient_key", dialect="tsql", copy=False)
     # Where part 2 reads a part whose rows may carry only the stay, and the schema binds the stay on it and on the
     # anaesthetic's detail, #cohort carries the stay from the detail, so that the part is reached through the stay too.
     inside = {id(t) for t in cohort.this.find_all(exp.Table)}

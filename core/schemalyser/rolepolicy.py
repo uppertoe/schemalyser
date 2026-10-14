@@ -23,8 +23,9 @@ the text with sqlglot in the SQL Server dialect and checks it against the role c
                 and SQL Server give one answer: a division has one side cast to float or written as a fraction, AVG
                 takes a number or a cast, text is compared with = only where it is a kind or a key, text is joined
                 with CONCAT and never +, a ROW_NUMBER window and a TOP carry an ORDER BY that ends in a key column so
-                that the row chosen is the same on every engine, LEAD and LAG carry an ORDER BY, and DATEDIFF counts
-                days, minutes or seconds; each refusal says what to write instead
+                that the row chosen is the same on every engine, LEAD and LAG carry an ORDER BY, DATEDIFF counts
+                days, minutes or seconds, and no key is compared with a literal; each refusal says what to write
+                instead
 
 Each rule is passed, or failed with the fragment that broke it. Anything the parser cannot understand is refused.
 
@@ -246,7 +247,14 @@ class _Checker:
             if translate._whole(node.this, tree, self.whole):
                 self.fail("dialect", f"{node.sql(dialect='tsql')} averages a whole number, which SQL Server truncates: "
                                      f"write AVG(CAST({node.this.sql(dialect='tsql')} AS float))")
-        for node in tree.find_all(exp.EQ, exp.NEQ):
+        for node in tree.find_all(exp.EQ, exp.NEQ, exp.In, exp.Like, exp.ILike):
+            sides = [node.this] + ([node.expression] if not isinstance(node, exp.In) else list(node.expressions))
+            if any(self._column_type(side, aliases) == "key" for side in sides) and \
+                    any(isinstance(side, exp.Literal) for side in sides):
+                self.fail("dialect", f"{node.sql(dialect='tsql')} compares a key with a literal, which no clinical question needs: "
+                                     f"choose rows by what the record says of them, never by a key")
+            if not isinstance(node, (exp.EQ, exp.NEQ)):
+                continue
             for side in (node.this, node.expression):
                 if self._column_type(side, aliases) == "text":
                     self.fail("dialect", f"{node.sql(dialect='tsql')} compares free text with =, which the engines read differently: "

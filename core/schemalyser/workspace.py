@@ -46,6 +46,14 @@ PROFILES = ("public",)
 # Folders that no workspace may draw on, whatever an allowlist says. fixtures/held-out holds the planted scenarios and
 # their expected rows, which judge an agent's work and so are never shown to it.
 DENIED = ("reference", "etl", "notes", ".git", "fixtures/held-out")
+# The private examiner root, where a free question's planted cases and their answers are kept, is denied as well,
+# wherever SCHEMALYSER_EXAMINATION puts it inside the repository; its default is under reference/, denied already.
+_examination_root = os.environ.get("SCHEMALYSER_EXAMINATION")
+if _examination_root:
+    try:
+        DENIED = DENIED + (Path(_examination_root).resolve().relative_to(ROOT).as_posix(),)
+    except ValueError:
+        pass
 # Files that no workspace may hold, whatever an allowlist says: the planted neonates' expected answers, which the
 # export replaces with the planted rows alone, and the planted values that a run's output is searched for.
 DENIED_FILES = ("core/schemalyser/rolemodel/planted_neonates.json", "fixtures/planted-values.txt")
@@ -488,9 +496,10 @@ def read_file(path):
     return _rules(failures, FILE_RULES), (text if not failures else None)
 
 
-def check_question(path):
+def check_question(path, admit=None):
     """The file's rules, the package's rules, the rule that it waits for nothing and, when they pass, the role-level
-    policy on its SQL, with the status that the import returns, as {"rules", "failed", "status", "form", "package"}.
+    policy on its SQL, with the status that the import returns, as {"rules", "failed", "status", "form", "package",
+    "sql"}. admit="draft", which only the examiner gives, lets the policy read a draft part.
 
     The status is a function of the package and the public contract alone: malformed where a rule fails,
     requires_private_review where the question passes every rule but lacks the form of the two-part script (a step
@@ -505,16 +514,16 @@ def check_question(path):
         package, sql = (found["package"], found["sql"]) if not found["failed"] else (None, None)
     if package is not None:
         waiting = [f"the package holds {len(package['proposals'])} proposal(s)"] if package["proposals"] else []
-        waiting += [f"{p['name']} is refused for a question" for p in package["parts"] if p["admission"] == question.REFUSED]
+        waiting += [f"{p['name']} is refused for a question" for p in package["parts"] if p["admission"] == question.REFUSED and admit != "draft"]
         rules = rules + _rules({"waits": waiting} if waiting else {}, WAITS_RULE)
         if not waiting:
             # The policy reads the SQL with its capabilities composed, as the hospital compiles it.
-            rules = rules + rolepolicy.check(sql, [c["name"] for c in package["capabilities"]])["rules"]
+            rules = rules + rolepolicy.check(sql, [c["name"] for c in package["capabilities"]], admit=admit)["rules"]
     failed = [r["id"] for r in rules if not r["passed"]]
     if failed:
         status = "malformed"
     else:
-        form = audit.public_form(sql)
+        form = audit.public_form(sql, admit=admit)
         status = "requires_private_review" if form else "accepted"
     return {"rules": rules, "failed": failed, "status": status, "form": form, "package": package, "sql": sql}
 

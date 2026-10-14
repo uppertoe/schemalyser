@@ -66,6 +66,12 @@
 "schemalyser.plan" = { layer = "orchestration", note = "The plan review is one of the package's contents, and it takes its wording from audit.py." }
 "schemalyser.project" = { layer = "orchestration", note = "The project folder, which the workbench and the import from the public workspace both use; it reads the version from audit.py and checks a schema with feasibility.py." }
 "schemalyser.workspace" = { layer = "orchestration", note = "The export is a projection rather than a layer, and the import builds a package in a hospital's project, so it sits with the package assembler." }
+"schemalyser.examination" = { layer = "orchestration", note = "The examination of a question package: its stages read the package as the import does, run it on the shadow and compare it with the oracle and the planted cases, and grant a level; it assembles a report from layers 3 and 4 as the audit assembles a package." }
+"schemalyser.examination.static" = { layer = "orchestration", note = "Stage 1 of the examination, over the package alone." }
+"schemalyser.examination.shadow" = { layer = "orchestration", note = "Stage 2 of the examination: the package run on the role-level shadow (layer 4) at several seeds and insertion orders." }
+"schemalyser.examination.metamorphic" = { layer = "orchestration", note = "Stage 3 of the examination: the three metamorphic checks on the role-level shadow (layer 4)." }
+"schemalyser.examination.planted" = { layer = "orchestration", note = "Stage 4 of the examination: the planted cases under a fresh transform, from the register and the private root, run on the role-level shadow (layer 4) and compared as the equivalence tool compares answers." }
+"schemalyser.examination.__main__" = { layer = "5", note = "The command line of the examination." }
 "schemalyser.results" = { layer = "orchestration", note = "The results package, written from an execution package and a production run's output; it stays inside the hospital." }
 
 "schemalyser.browser" = { layer = "5" }

@@ -333,11 +333,13 @@ def generated_further(seed, generated, model=None):
     return found
 
 
-def role_shadow(seed=1, anaesthetics=400, with_planted=True, extra=None, further=False):
+def role_shadow(seed=1, anaesthetics=400, with_planted=True, extra=None, further=False, shuffle=None):
     """A DuckDB database that holds the role views and the mapping views as tables, the three that every map supplies
     filled from a seed and, with_planted, with the planted neonates and the planted rows of the mapping views and the
     drug events that name them, and the further views otherwise empty unless further asks for generated_further's rows
-    of every part. extra, when given, is {view: [row, ...]} of further rows for any view. Returns the connection."""
+    of every part. extra, when given, is {view: [row, ...]} of further rows for any view. shuffle, when given, is the
+    seed by which each table's rows are inserted in another order, so that a question that depends on the order of
+    the rows can be seen to. Returns the connection."""
     import duckdb
     con = duckdb.connect()
     model = rolemap.contract()
@@ -357,6 +359,11 @@ def role_shadow(seed=1, anaesthetics=400, with_planted=True, extra=None, further
                     rows[name] = rows[name] + cases[name]["rows"]
     for name, more in (extra or {}).items():
         rows[name] = rows[name] + more
+    if shuffle is not None:
+        rng = random.Random(shuffle)
+        for name in shape:
+            rows[name] = list(rows[name])
+            rng.shuffle(rows[name])
     for name, columns in shape.items():
         kinds_of = [ROLE_TYPES[c["type"]] for c in columns]
         for first in range(0, len(rows[name]), 2000):

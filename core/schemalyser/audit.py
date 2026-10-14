@@ -702,15 +702,18 @@ PUBLIC_FORM = {
 
 
 def _aggregated(node):
-    return any(not isinstance(f.parent, exp.Window) for f in node.find_all(exp.AggFunc))
+    """Whether a projection is an aggregate: an aggregate function outside a window, or the median, which the dialect
+    writes as PERCENTILE_CONT within its group over a window, as SQL Server has it."""
+    return any(not isinstance(f.parent, exp.Window) for f in node.find_all(exp.AggFunc)) or node.find(exp.PercentileCont) is not None
 
 
-def public_form(sql):
+def public_form(sql, admit=None):
     """The rules of PUBLIC_FORM that a question breaks, as a list of their ids, empty when it keeps them all. The
     answer depends on the question and the role contract only, never on any hospital schema, so that the status it
-    gives is the same whichever hospital the project holds."""
+    gives is the same whichever hospital the project holds. admit="draft", which only the examiner gives, reads a
+    draft part."""
     try:
-        tree = check_audit(sql).copy()
+        tree = check_audit(sql, admit=admit).copy()
     except Exception:  # noqa: BLE001 - a question that is not one SELECT over the roles does not have the form
         return ["form"]
     broken = []
@@ -718,7 +721,8 @@ def public_form(sql):
         cohort = _cohort_cte(tree)
     except AuditError:
         return ["cohort"]
-    carried = {c.lower() for c in cohort.this.named_selects}
+    # The compiled cohort always carries the anaesthetic's key and the patient's, so a part reached by either is reached.
+    carried = {c.lower() for c in cohort.this.named_selects} | {"patient_key"}
     inside = {id(t) for t in cohort.this.find_all(exp.Table)}
     for table in tree.find_all(exp.Table):
         view = table.name.lower()
