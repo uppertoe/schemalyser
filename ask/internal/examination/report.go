@@ -34,6 +34,7 @@ type Report struct {
 	ExaminedAt    string
 	Feedback      string    // what may return to the model: bounded, with no case detail
 	Examples      []Example // the worked examples the asker confirms, in clinical words
+	Ceiling       []string  // the rehearsed parts the package reads, admitted with a ceiling
 }
 
 // Example is one worked example of the report: a case at a boundary of the question, valued by the examiner's own
@@ -92,7 +93,17 @@ func Verify(data []byte, publicKeyHex string) (*Report, error) {
 			}
 		}
 	}
-	return &Report{PackageSHA256: sha, Level: level, Says: says, ExaminedAt: at, Feedback: feedback(held), Examples: examples}, nil
+	var ceiling []string
+	if admission, ok := held["admission"].(map[string]any); ok {
+		if parts, ok := admission["ceiling"].([]any); ok {
+			for _, part := range parts {
+				if name, ok := part.(string); ok {
+					ceiling = append(ceiling, name)
+				}
+			}
+		}
+	}
+	return &Report{PackageSHA256: sha, Level: level, Says: says, ExaminedAt: at, Feedback: feedback(held), Examples: examples, Ceiling: ceiling}, nil
 }
 
 // Canonical writes a value as the examiner's Python writes the bytes it signs: keys sorted, no spaces, numbers as

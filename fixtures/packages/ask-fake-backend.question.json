@@ -48,6 +48,10 @@
   }
  ],
  "proposals": [],
+ "approval": {
+  "reference": "QA-2026-014",
+  "use": "audit"
+ },
  "note": "Counts and volumes only.",
  "produced": {
   "model": "fake",

@@ -69,6 +69,14 @@ type Produced struct {
 	By    string `json:"by,omitempty"`
 }
 
+// Approval is the reference of the audit, quality improvement, service evaluation or research a question serves,
+// and its declared use, which is never the care of an individual patient.
+type Approval struct {
+	Reference string `json:"reference"`
+	Use       string `json:"use"`
+	Says      string `json:"says,omitempty"`
+}
+
 // Package is the question as the service saves and publishes it.
 type Package struct {
 	Format          string          `json:"format"`
@@ -81,6 +89,7 @@ type Package struct {
 	QuestionSQL     string          `json:"question_sql"`
 	Parts           []Part          `json:"parts"`
 	Proposals       []Proposal      `json:"proposals"`
+	Approval        *Approval       `json:"approval,omitempty"`
 	Note            string          `json:"note,omitempty"`
 	Produced        Produced        `json:"produced"`
 }
@@ -140,6 +149,7 @@ func Parse(raw string, contract *rolemodel.Contract, produced Produced, date str
 		QuestionSQL  string          `json:"question_sql"`
 		Note         string          `json:"note"`
 		Proposals    []Proposal      `json:"proposals"`
+		Approval     *Approval       `json:"approval"`
 	}
 	if err := json.Unmarshal([]byte(raw), &in); err != nil {
 		return nil, nil, fmt.Errorf("the question block is not valid JSON: %v", err)
@@ -153,8 +163,8 @@ func Parse(raw string, contract *rolemodel.Contract, produced Produced, date str
 	}
 	pkg := &Package{Format: Format, Title: strings.TrimSpace(in.Title), ContractVersion: contract.Version.String(),
 		Statement: in.Statement, Decisions: in.Decisions, Examinable: in.Examinable, Capabilities: in.Capabilities,
-		QuestionSQL: sqlText, Parts: partsIn(sqlText, contract, in.Capabilities), Proposals: in.Proposals, Note: strings.TrimSpace(in.Note),
-		Produced: produced}
+		QuestionSQL: sqlText, Parts: partsIn(sqlText, contract, in.Capabilities), Proposals: in.Proposals, Approval: in.Approval,
+		Note: strings.TrimSpace(in.Note), Produced: produced}
 	if pkg.Decisions == nil {
 		pkg.Decisions = []Decision{}
 	}

@@ -93,11 +93,11 @@ The web application for the anaesthetists: a conversation that turns a free-text
 
 Done means that the measured pass rate and the recurring mistakes are written down, and that the service publishes only packages the examination has passed.
 
-### 8. OMOP as a source, and the anaesthesia layer promoted
+### 8. The OMOP round trip, and the anaesthesia layer promoted
 
-A hospital schema that binds the contract to the invented OMOP patients the testbed makes, so that the transfusion question runs there unchanged; and the conversion steps over the roles promoted in the private conversion, with the full testbed run. ATLAS cohorts follow as an input to a question's cohort.
+A round trip: the testbed's invented world converted to OMOP by the conversion steps, a hospital schema bound to that OMOP as a source, and the transfusion question compiled through it and through the stand-in's schema, so that the two answers can be compared; and the conversion steps over the roles promoted in the private conversion, with the full testbed run. `docs/omop-source.md` says which conventions an OMOP must meet before the contract parts can be bound to it. ATLAS cohorts follow as an input to a question's cohort.
 
-Done means that the transfusion question gives the same answer through the OMOP-bound schema as through the stand-in's, and that the full testbed passes with the steps over the roles in place of the direct ones.
+Done means that the transfusion question gives the same answer through the OMOP-bound schema as through the stand-in's, and that the full testbed passes with the steps over the roles in place of the direct ones. The round trip starts when a second site or a research need asks for it.
 
 ### When the database becomes available
 

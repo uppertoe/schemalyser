@@ -289,6 +289,66 @@ func confirm(t *testing.T, ts *httptest.Server, page, example, verdict, note str
 	return do(t, as("dr@example.test", req))
 }
 
+func TestTheCustodianSignsTheLogicOnlyAsAdminForTheDeclaredUseAndTheSignaturesAreServed(t *testing.T) {
+	fake := &model.Fake{Replies: []string{settled}}
+	s, ts := testServer(t, fake)
+	form := url.Values{"message": {"How much red cell volume do neonates get?"}}
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/questions", strings.NewReader(form.Encode()))
+	req.Header.Set("content-type", "application/x-www-form-urlencoded")
+	resp, _ := do(t, as("dr@example.test", req))
+	page := resp.Header.Get("Location")
+	sign := func(email, use, accept string) (*http.Response, string) {
+		form := url.Values{"use": {use}, "accept": {accept}}
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+page+"/signoff", strings.NewReader(form.Encode()))
+		req.Header.Set("content-type", "application/x-www-form-urlencoded")
+		req.Header.Set("HX-Request", "true")
+		return do(t, as(email, req))
+	}
+	// Before the examination, and by the asker rather than the custodian, nothing is signed.
+	if resp, _ := sign("dr@example.test", "audit", "yes"); resp.StatusCode != 404 {
+		t.Fatalf("the asker could sign as custodian: %d", resp.StatusCode)
+	}
+	if _, body := sign("owner@example.test", "audit", "yes"); !strings.Contains(body, "once the examiner") {
+		t.Fatalf("a signature before the examination was taken:\n%s", body)
+	}
+	hash := s.latestHash(t, page)
+	report := s.signed(t, hash, "logic examined", "Examined.")
+	report = []byte(strings.Replace(string(report), `"status"`, `"admission":{"ceiling":["role_fluid"],"drafts":[]},"status"`, 1))
+	// The report's ceiling is part of what was signed, so the test signs a report that carries it.
+	var held map[string]any
+	json.Unmarshal(report, &held)
+	delete(held, "signature")
+	e := examiners[s]
+	held["admission"] = map[string]any{"ceiling": []any{"role_fluid"}, "drafts": []any{}}
+	signature := ed25519.Sign(e.private, examination.Canonical(held))
+	held["signature"] = map[string]any{"public_key": hex.EncodeToString(e.public), "signature": hex.EncodeToString(signature)}
+	report, _ = json.Marshal(held)
+	upload(t, ts, page, report)
+	confirm(t, ts, page, "age-27", "confirmed", "")
+	if _, body := sign("owner@example.test", "research", "yes"); !strings.Contains(body, "must be the use the package declares, audit") {
+		t.Fatalf("a signature for another use was taken:\n%s", body)
+	}
+	if _, body := sign("owner@example.test", "audit", ""); !strings.Contains(body, "accepts each rehearsed part") {
+		t.Fatalf("a signature without accepting the rehearsed part was taken:\n%s", body)
+	}
+	_, body := sign("owner@example.test", "audit", "yes")
+	if !strings.Contains(body, "The custodian, owner@example.test, signed the logic for audit on 14 October 2026, accepting role_fluid.") {
+		t.Fatalf("the signature is not recorded:\n%s", body)
+	}
+	q, _ := s.store.Question(context.Background(), 1)
+	req, _ = http.NewRequest(http.MethodGet, ts.URL+"/q/"+q.Token+"/1/signatures.json", nil)
+	resp, body = do(t, req)
+	var served map[string]any
+	if resp.StatusCode != 200 || json.Unmarshal([]byte(body), &served) != nil {
+		t.Fatalf("the signatures were not served: %d %s", resp.StatusCode, body)
+	}
+	logic := served["logic"].(map[string]any)
+	meaning := served["meaning"].(map[string]any)
+	if logic["by"] != "owner@example.test" || logic["use"] != "audit" || logic["date"] != "2026-10-14" || meaning["by"] != "dr@example.test" {
+		t.Fatalf("signatures: %v", served)
+	}
+}
+
 func TestARejectedExampleReachesTheModelAsAChangeOfDecision(t *testing.T) {
 	fake := &model.Fake{Replies: []string{settled, "I have changed the decision.\n\n```schemalyser-question\n" + question.Block + "\n```"}}
 	s, ts := testServer(t, fake)

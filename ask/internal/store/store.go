@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -63,6 +64,9 @@ func Open(path string) (*Store, error) {
 		`CREATE TABLE IF NOT EXISTS confirmations (id INTEGER PRIMARY KEY, question_id INTEGER NOT NULL REFERENCES questions(id),
 		   version INTEGER NOT NULL, example TEXT NOT NULL, verdict TEXT NOT NULL, by TEXT NOT NULL, note TEXT NOT NULL, created TEXT NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS confirmations_by_question ON confirmations(question_id, version)`,
+		`CREATE TABLE IF NOT EXISTS signoffs (id INTEGER PRIMARY KEY, question_id INTEGER NOT NULL REFERENCES questions(id),
+		   version INTEGER NOT NULL, by TEXT NOT NULL, use TEXT NOT NULL, accepts TEXT NOT NULL, created TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS signoffs_by_question ON signoffs(question_id, version)`,
 		`CREATE INDEX IF NOT EXISTS messages_by_question ON messages(question_id, id)`,
 		`CREATE INDEX IF NOT EXISTS packages_by_question ON packages(question_id, version)`,
 	} {
@@ -298,4 +302,38 @@ func (s *Store) Confirmations(ctx context.Context, id int64, version int) (map[s
 		found[c.Example] = c
 	}
 	return found, rows.Err()
+}
+
+// Signoff is the custodian's signature of a version's logic: who, for which use, accepting which rehearsed parts.
+type Signoff struct {
+	By      string
+	Use     string
+	Accepts []string
+	Created time.Time
+}
+
+// AddSignoff records the custodian's signature of a version's logic.
+func (s *Store) AddSignoff(ctx context.Context, id int64, version int, by, use string, accepts []string, now time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO signoffs (question_id, version, by, use, accepts, created) VALUES (?, ?, ?, ?, ?, ?)`,
+		id, version, by, use, strings.Join(accepts, ","), stamp(now))
+	return err
+}
+
+// SignoffFor gives the latest signature of a version's logic, or nil.
+func (s *Store) SignoffFor(ctx context.Context, id int64, version int) (*Signoff, error) {
+	var found Signoff
+	var accepts, created string
+	err := s.db.QueryRowContext(ctx, `SELECT by, use, accepts, created FROM signoffs WHERE question_id = ? AND version = ? ORDER BY id DESC LIMIT 1`, id, version).
+		Scan(&found.By, &found.Use, &accepts, &created)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if accepts != "" {
+		found.Accepts = strings.Split(accepts, ",")
+	}
+	found.Created = parse(created)
+	return &found, nil
 }

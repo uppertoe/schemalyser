@@ -25,6 +25,7 @@ func TestThePromptStatesTheTwoPartFormTheMedianTheStandingOfPartsAndNamesEveryMa
 		"The service works out which parts the SQL reads",
 		"read it in question_sql as a table named after it",
 		"write examinable, the structured form of the decisions",
+		"write them as approval, an object with reference and use",
 		"{\"oracle\": \"none\"",
 		"composable, giving anaesthetic_key, age_days, threshold, readings, minutes_beyond",
 	} {

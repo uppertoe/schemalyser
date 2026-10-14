@@ -11,6 +11,7 @@ const Block = `{"title": "Red cells given to neonates under anaesthesia",
                 "decision": "Test patients are left out."}],
  "question_sql": "WITH neonatal AS (SELECT a.anaesthetic_key FROM role_anaesthetic a JOIN role_patient p ON p.patient_key = a.patient_key WHERE p.is_test = 0 AND DATEDIFF(day, p.birth_date, a.start_time) < 28)\nSELECT COUNT(*) AS anaesthetics, SUM(f.volume_ml) AS red_cells_ml FROM neonatal n JOIN role_fluid f ON f.anaesthetic_key = n.anaesthetic_key WHERE f.kind = 'red_cells'",
  "note": "Counts and volumes only.",
+ "approval": {"reference": "QA-2026-014", "use": "audit"},
  "proposals": []}`
 
 // OverCapability is a settled question's block that composes a capability of the catalogue and takes a median over

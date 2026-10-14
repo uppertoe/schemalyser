@@ -87,6 +87,13 @@ const conversationHTML = `{{define "conversation"}}
       </form>{{end}}
     </li>{{end}}
   </ul>{{end}}
+  {{if .Pkg.Approval}}<p>The question serves the {{.Pkg.Approval.Use}} with the reference {{.Pkg.Approval.Reference}}.</p>{{else}}<p class="state">The package carries no approval reference yet; the assistant asks for the audit or research the question serves.</p>{{end}}
+  {{if .Signoff}}<p class="state">The custodian, {{.Signoff.By}}, signed the logic for {{.Signoff.Use}} on {{.Signoff.Created.Format "2 January 2006"}}{{if .Signoff.Accepts}}, accepting {{range $i, $p := .Signoff.Accepts}}{{if $i}}, {{end}}{{$p}}{{end}}{{end}}.</p>
+  {{else if and .Admin .Published .Pkg.Approval}}<form hx-post="/questions/{{.Question.ID}}/signoff" hx-target="#conversation" hx-swap="innerHTML" method="post" action="/questions/{{.Question.ID}}/signoff" class="signoff">
+    <input type="hidden" name="use" value="{{.Pkg.Approval.Use}}">
+    {{if .Ceiling}}<label><input type="checkbox" name="accept" value="yes"> I accept {{range $i, $p := .Ceiling}}{{if $i}}, {{end}}{{$p}}{{end}}, rehearsed on the stand-in, for this {{.Pkg.Approval.Use}}.</label>{{end}}
+    <button type="submit">Sign the logic as custodian</button>
+  </form>{{end}}
   {{if .Admin}}<form hx-post="/questions/{{.Question.ID}}/report" hx-target="#conversation" hx-swap="innerHTML" hx-encoding="multipart/form-data" method="post" action="/questions/{{.Question.ID}}/report" enctype="multipart/form-data" class="report">
     <label for="report">The examiner's report of this version, signed ({{.Examinations}} of {{.ExaminationsAllowed}} examinations used)</label>
     <input id="report" type="file" name="report" accept="application/json" required>

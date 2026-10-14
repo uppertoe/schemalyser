@@ -80,6 +80,8 @@ func New(cfg *config.Config, st *store.Store, m model.Model) (*Server, error) {
 	mux.HandleFunc("GET /questions/{id}/package.json", s.withUser(s.download))
 	mux.HandleFunc("POST /questions/{id}/report", s.withUser(s.report))
 	mux.HandleFunc("POST /questions/{id}/examples", s.withUser(s.confirm))
+	mux.HandleFunc("POST /questions/{id}/signoff", s.withUser(s.signoff))
+	mux.HandleFunc("GET /q/{token}/{version}/signatures.json", s.signatures)
 	s.handler = secure(mux)
 	return s, nil
 }
@@ -132,6 +134,8 @@ type pageData struct {
 	Examinations, ExaminationsAllowed          int
 	Examples                                   []exampleView
 	Unconfirmed                                int
+	Signoff                                    *store.Signoff
+	Ceiling                                    []string
 }
 
 // exampleView is one worked example with the asker's word on it.
@@ -385,6 +389,11 @@ func (s *Server) pageOf(ctx context.Context, q *store.Question, user, problem st
 				if examination.Publishable(verified.Level) && data.Unconfirmed > 0 {
 					data.LevelSays += fmt.Sprintf(" The package is published once the %d worked examples not yet confirmed are confirmed.", data.Unconfirmed)
 				}
+				data.Ceiling = verified.Ceiling
+				data.Signoff, err = s.store.SignoffFor(ctx, q.ID, latest.Version)
+				if err != nil {
+					return pageData{}, err
+				}
 			}
 		}
 		data.Examinations, _ = s.store.Examinations(ctx, q.ID)
@@ -483,6 +492,108 @@ func (s *Server) takeConfirmation(ctx context.Context, q *store.Question, user s
 		}
 	}
 	return "", nil
+}
+
+// signoff records the custodian's signature of the latest version's logic: the admin confirms the examination and
+// accepts each rehearsed part the package reads for the question's declared use.
+func (s *Server) signoff(w http.ResponseWriter, r *http.Request, user string) {
+	q, err := s.owned(r, user)
+	if err != nil || !s.cfg.IsAdmin(user) {
+		http.NotFound(w, r)
+		return
+	}
+	problem := ""
+	latest, err := s.store.LatestPackage(r.Context(), q.ID)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	switch {
+	case latest == nil:
+		problem = "The question has no package to sign for."
+	default:
+		report, err := s.store.ReportFor(r.Context(), q.ID, latest.Version)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		var verified *examination.Report
+		if report != nil {
+			verified, _ = examination.Verify([]byte(report.JSON), s.cfg.ExaminerPublicKey)
+		}
+		var pkg question.Package
+		_ = json.Unmarshal([]byte(latest.JSON), &pkg)
+		use := strings.TrimSpace(r.FormValue("use"))
+		if verified == nil || !examination.Publishable(verified.Level) {
+			problem = "The custodian signs the logic once the examiner's report puts the version at logic examined or above."
+		} else if pkg.Approval == nil || pkg.Approval.Reference == "" {
+			problem = "The package carries no approval reference and declared use, so there is nothing to sign for yet; the assistant asks the anaesthetist for them."
+		} else if use != pkg.Approval.Use {
+			problem = "The use signed for must be the use the package declares, " + pkg.Approval.Use + "."
+		} else if r.FormValue("accept") == "" && len(verified.Ceiling) > 0 {
+			problem = "The signature accepts each rehearsed part the package reads for this use: " + strings.Join(verified.Ceiling, ", ") + "."
+		} else if err := s.store.AddSignoff(r.Context(), q.ID, latest.Version, user, use, verified.Ceiling, s.now()); err != nil {
+			s.fail(w, err)
+			return
+		}
+	}
+	if r.Header.Get("HX-Request") == "" {
+		http.Redirect(w, r, fmt.Sprintf("/questions/%d", q.ID), http.StatusSeeOther)
+		return
+	}
+	data, err := s.pageOf(r.Context(), q, user, problem)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.render(w, s.turns, data)
+}
+
+// signatures serves, beside a published version, the signatures it rests on: the asker's confirmations of the
+// worked examples as the signature of meaning, and the custodian's signature of the logic.
+func (s *Server) signatures(w http.ResponseWriter, r *http.Request) {
+	q, err := s.store.QuestionByToken(r.Context(), r.PathValue("token"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	version, err := strconv.Atoi(r.PathValue("version"))
+	if err != nil || version < 1 {
+		http.NotFound(w, r)
+		return
+	}
+	confirmations, err := s.store.Confirmations(r.Context(), q.ID, version)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	signoff, err := s.store.SignoffFor(r.Context(), q.ID, version)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	held := map[string]any{"format": "schemalyser-signatures/1", "version": version}
+	var meaning []map[string]any
+	for _, c := range confirmations {
+		if c.Verdict == "confirmed" {
+			meaning = append(meaning, map[string]any{"example": c.Example, "by": c.By, "date": c.Created.UTC().Format("2006-01-02")})
+		}
+	}
+	if len(meaning) > 0 {
+		held["meaning"] = map[string]any{"by": meaning[0]["by"], "date": meaning[0]["date"], "examples": meaning}
+	}
+	if signoff != nil {
+		accepts := signoff.Accepts
+		if accepts == nil {
+			accepts = []string{}
+		}
+		held["logic"] = map[string]any{"by": signoff.By, "date": signoff.Created.UTC().Format("2006-01-02"), "use": signoff.Use, "accepts": accepts}
+	}
+	w.Header().Set("content-type", "application/json; charset=utf-8")
+	w.Header().Set("cache-control", "no-store")
+	w.Header().Set("access-control-allow-origin", "*")
+	encoded, _ := json.MarshalIndent(held, "", " ")
+	_, _ = w.Write(encoded)
 }
 
 // report takes the examiner's signed report of the latest version of a question's package, uploaded by the owner,

@@ -2,7 +2,7 @@
   "stage": "static",
   "package": {
     "path": "ask-fake-backend.question.json",
-    "sha256": "a2cba580e8195fd60f558be26f77f699fcafa908b9970fa36ad8a50ea6970997",
+    "sha256": "03b7ab62d2b46730ff6193853e9635d73a9afb0735ccfcec98cdf1b190f07f73",
     "title": "Red cells given to neonates under anaesthesia"
   },
   "rules": [
@@ -267,7 +267,7 @@
     "runs": [],
     "says": "The oracle does not cover the question (the package gives no examinable object), so its logic rests on cases written by hand."
   },
-  "examined_at": "2026-10-14T19:30:34+11:00",
+  "examined_at": "2026-10-14T19:45:58+11:00",
   "versions": {
     "contract": "1.1",
     "policy": "1",
@@ -281,6 +281,6 @@
   },
   "signature": {
     "public_key": "8298c2cb0f1382586732ed5489758b71d5b67b693724cafcfa032ab98dfc031a",
-    "signature": "e03367a32c2d2b518c0d74824173a137008b221dac208293aa7652be3641291fb059b7959a4bb9fcab5389944abe88e4a11d27c419eb3c7e1d0027fd9f0d8908"
+    "signature": "5e02412af9f4614906c40d37dc6f558dc7ee54e1dfef2b2904b1d4aa5ee75f1fb4a085b73355ca205159f554d6151f0fd84c747f420d0fb62727c13d5d416306"
   }
 }

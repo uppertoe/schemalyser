@@ -560,3 +560,55 @@ def test_the_report_carries_the_examples_and_the_command_writes_them(tmp_path, c
     report = json.loads(out.read_text())
     assert report["examples"] and all(e["says"] for e in report["examples"]) and "rows" not in report["examples"][0]
     assert any(e["id"] == "age-27" and e["counted"] is not False for e in examples.generate(held["examinable"]))
+
+
+def test_a_production_build_needs_the_approval_reference_and_the_custodian_s_signature(tmp_path, monkeypatch):
+    from schemalyser import describe, roleshadow as shadow_module
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import test_audit as t
+    key = signing.new_key()
+    monkeypatch.setattr(status, "PUBLIC_KEY", tmp_path / "examiner.pub")
+    (tmp_path / "examiner.pub").write_text(signing.public_key(key).hex())
+    # The service's package over the rehearsed fluids part, with and without its approval.
+    held = json.loads((FIXTURES / "ask-fake-backend.question.json").read_text(encoding="utf-8"))
+    unapproved = write(tmp_path, "unapproved", held)
+    held["approval"] = {"reference": "QA-2026-014", "use": "audit"}
+    approved = write(tmp_path, "approved", held)
+    assert question.check(approved.read_text(encoding="utf-8"))["failed"] == []
+    bad = dict(held, approval={"reference": "QA-2026-014", "use": "the care of one patient"})
+    assert question.check(json.dumps(bad))["failed"] == ["schema"]
+    reports = {}
+    for name, path in (("unapproved", unapproved), ("approved", approved)):
+        reports[name] = tmp_path / f"{name}.report.json"
+        reports[name].write_text(static.to_json(_examined(path, key)), encoding="utf-8")
+    s = describe.Describe()
+    s.version = "test"
+    s.load_dictionary(t.DICTIONARY.read_bytes(), t.TABLES.read_bytes(), {}, "invented-dictionary.csv", "invented-tables.csv")
+    s.propose(date=t.DATE)
+    s.set_settings("production", 2024, "Australia/Sydney", True)
+    s.tables_query()
+    s.read_tables(t.tables_result({"OBS_READING": t.READINGS}))
+    for about in t.CONFIRMED:
+        s.confirm(about, "yes", date=t.DATE)
+    saved = tmp_path / "hospital-schema.schemalyser.zip"
+    saved.write_bytes(shadow_module.save_zip(s, t.DATE))
+    period = ("2024-01-01", "2024-12-31")
+    with pytest.raises(audit.AuditError, match="carries no approval reference"):
+        audit.build(saved, unapproved, tmp_path / "one", period, date=t.DATE, production=reports["unapproved"])
+    with pytest.raises(audit.AuditError, match="custodian has not signed"):
+        audit.build(saved, approved, tmp_path / "two", period, date=t.DATE, production=reports["approved"])
+    signatures = tmp_path / "signatures.json"
+    signatures.write_text(json.dumps({"meaning": {"by": "dr@example.test", "date": "2026-10-15"},
+                                      "logic": {"by": "the owner", "date": "2026-10-15", "use": "audit", "accepts": []}}), encoding="utf-8")
+    with pytest.raises(audit.AuditError, match="reads role_fluid, rehearsed and admitted with a ceiling, and the custodian's signature by the owner does not accept"):
+        audit.build(saved, approved, tmp_path / "three", period, date=t.DATE, production=reports["approved"], signatures=signatures)
+    signatures.write_text(json.dumps({"logic": {"by": "the owner", "date": "2026-10-15", "use": "research", "accepts": ["role_fluid"]}}), encoding="utf-8")
+    with pytest.raises(audit.AuditError, match="signed the logic for research, and the package declares its use as audit"):
+        audit.build(saved, approved, tmp_path / "four", period, date=t.DATE, production=reports["approved"], signatures=signatures)
+    signatures.write_text(json.dumps({"logic": {"by": "the owner", "date": "2026-10-15", "use": "audit", "accepts": ["role_fluid"]}}), encoding="utf-8")
+    try:
+        audit.build(saved, approved, tmp_path / "five", period, date=t.DATE, production=reports["approved"], signatures=signatures)
+    except audit.AuditError as error:
+        # The invented hospital does not bind the fluids part, which is the build's own refusal, past every gate here.
+        assert "production" not in str(error), error

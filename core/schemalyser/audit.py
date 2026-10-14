@@ -84,6 +84,11 @@ WORDING = {
     "examination_other": "Schemalyser has not built a package for production, because the report {name} is not over the package {package} as it is now.",
     "examination_unverified": "Schemalyser has not built a package for production, because the report is not verified: {says}",
     "examination_level": "Schemalyser has not built a package for production, because the question's examination grants the level {level}, and production needs logic examined or above. {says}",
+    "approval": "Schemalyser has not built a package for production, because the package carries no approval reference and declared use for the audit or research it serves.",
+    "signatures_unread": "Schemalyser has not built a package for production, because {name} is not a signatures file it can read.",
+    "custodian": "Schemalyser has not built a package for production, because the custodian has not signed the question's logic: the signatures carry no logic signature with a name and a date.",
+    "ceiling": "Schemalyser has not built a package for production, because the package reads {parts}, rehearsed and admitted with a ceiling, and the custodian's signature by {by} does not accept them for this purpose.",
+    "use": "Schemalyser has not built a package for production, because the custodian signed the logic for {signed}, and the package declares its use as {declared}.",
     "period": "The period is two dates, the first no later than the second, written as YYYY-MM-DD.",
     "decisions": "{name} is not a decisions file that Schemalyser can read: it holds one JSON object with a list of decisions.",
     "package": "{name} is a question package that breaks a rule of its format, so nothing is built from it:\n{problems}",
@@ -232,8 +237,10 @@ def _digest(value):
     return sha256(json.dumps(value, sort_keys=True, ensure_ascii=False))
 
 
-def _examined(query_path, report_path):
-    """Raises AuditError unless the report is the examiner's, over this package, at logic examined or above."""
+def _examined(query_path, report_path, signatures_path=None):
+    """Raises AuditError unless the report is the examiner's, over this package, at logic examined or above, the
+    package carries its approval reference and declared use, and the custodian has signed the logic for that use,
+    accepting each rehearsed part the package reads."""
     from .examination import status
     try:
         report = json.loads(Path(report_path).read_text(encoding="utf-8"))
@@ -247,6 +254,23 @@ def _examined(query_path, report_path):
         raise AuditError(WORDING["examination_unverified"].format(name=Path(report_path).name, says=found["says"]))
     if found["level"] not in status.LEVELS[2:]:
         raise AuditError(WORDING["examination_level"].format(level=found["level"], says=found["says"]))
+    package = json.loads(query_path.read_text(encoding="utf-8"))
+    approval = package.get("approval") or {}
+    if not approval.get("reference") or not approval.get("use"):
+        raise AuditError(WORDING["approval"])
+    try:
+        signatures = json.loads(Path(signatures_path).read_text(encoding="utf-8")) if signatures_path else {}
+    except (OSError, ValueError):
+        raise AuditError(WORDING["signatures_unread"].format(name=Path(signatures_path).name)) from None
+    logic = signatures.get("logic") or {}
+    if not logic.get("by") or not logic.get("date"):
+        raise AuditError(WORDING["custodian"])
+    ceiling = set((report.get("admission") or {}).get("ceiling") or [])
+    accepted = set(logic.get("accepts") or [])
+    if ceiling - accepted:
+        raise AuditError(WORDING["ceiling"].format(parts=", ".join(sorted(ceiling - accepted)), by=logic["by"]))
+    if logic.get("use") and logic["use"] != approval["use"]:
+        raise AuditError(WORDING["use"].format(signed=logic["use"], declared=approval["use"]))
 
 
 def _decisions(path):
@@ -288,16 +312,19 @@ def evidence_requests(schema, schema_name, folder_name, sql_sha):
 
 
 def build(schema_path, query_path, out, period=None, decisions_path=None, large=policy.LARGE, date=None, extra=None, admit=None,
-          production=None):
+          production=None, signatures=None):
     """Writes the execution package to out. Returns the manifest. Raises AuditError where it cannot be written. extra,
     when given, is merged into the manifest, as the export of a specification adds its own record. The question passes
     the role-level policy first, whose report the manifest keeps; admit="draft", which only the examiner gives, lets
     the question read a draft part. production, the examination report of a question package, is required for a
     package that will run on production: the report is verified as the examiner's, over this package's bytes, at the
-    level logic examined or above, under the versions in force, or nothing is built."""
+    level logic examined or above, under the versions in force, or nothing is built; with it, signatures, the file the
+    service serves beside a published package, must carry the custodian's signature of the logic, accepting each
+    rehearsed part the package reads for its purpose, and the package must carry the approval reference of the audit
+    or research it serves with its declared use."""
     schema_path, query_path, out = Path(schema_path), Path(query_path), Path(out)
     if production is not None:
-        _examined(query_path, production)
+        _examined(query_path, production, signatures)
     date = date or dt.date.today().isoformat()
     schema = feasibility.Schema.load(schema_path)
     # A question package supplies its SQL and its decisions; a plain .sql file supplies the SQL, and the decisions come
@@ -786,6 +813,7 @@ def main(argv=None):
     one.add_argument("--decisions")
     one.add_argument("--large", type=int, default=policy.LARGE)
     one.add_argument("--production", help="the signed examination report of the question package, required for a package that will run on production")
+    one.add_argument("--signatures", help="the signatures the service serves beside a published package, with the custodian's signature of the logic")
     two = commands.add_parser("plan", help="Review an estimated plan of part 2.")
     two.add_argument("folder")
     two.add_argument("plan")
@@ -814,7 +842,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == "build":
-            manifest = build(args.schema, args.query, args.out, args.period, args.decisions, args.large, production=args.production)
+            manifest = build(args.schema, args.query, args.out, args.period, args.decisions, args.large, production=args.production,
+                             signatures=args.signatures)
             print(WORDING["built"].format(folder=Path(args.out).name, grade=manifest["execution_class"],
                                           outcome="passed" if manifest["policy_outcome"] == "passed" else "failed"))
         elif args.command == "status":
