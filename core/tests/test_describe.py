@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from schemalyser import contract as contract_module
 from schemalyser import describe, evidence, rolemap, roleshadow
 from schemalyser.rolemap import __main__ as rolemap_main
 from schemalyser.describe import __main__ as describe_main
@@ -1292,7 +1293,7 @@ def test_a_saved_schema_opens_under_a_newer_contract_and_the_added_column_and_pa
                            "holds": "The list of wards.", "look_for": ["wards", "units of the hospital"], "key": ["ward_key"], "links": [],
                            "columns": [{"name": "ward_key", "title": "the ward's identifier", "type": "key", "needed_by": [], "meaning": "The ward's key.", "holds": "The ward list.", "look_for": ["ward"]},
                                        {"name": "ward_name", "title": "the ward's name", "type": "text", "needed_by": [], "meaning": "The ward's name.", "holds": "The ward list.", "look_for": ["ward name", "name of the ward"]}]})
-    monkeypatch.setattr(rolemap, "contract", lambda: model)
+    monkeypatch.setattr(contract_module, "contract", lambda: model)
     again = describe.Describe()
     again.version = "test"
     restored = again.restore(files)

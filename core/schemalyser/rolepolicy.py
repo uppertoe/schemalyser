@@ -30,7 +30,7 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.optimizer.scope import traverse_scope
 
-from . import feasibility, policy, rolemap
+from . import contract, feasibility, policy, rolemap
 
 RULES = {
     "parse": "The question is one statement that the parser understands.",
@@ -51,7 +51,8 @@ CHANGES = tuple(getattr(exp, name) for name in ("Insert", "Update", "Delete", "M
 def contract_views():
     """{view: {column, ...}} for the views of the contract, and {view: status} for every view of the role model."""
     model = rolemap.contract()
-    views = {v["name"]: {c["name"] for c in v["columns"]} for v in model["views"] if v.get("status") == "contract"}
+    views = {v["name"]: {c["name"] for c in v["columns"]} for v in model["views"]
+             if contract.admission(v["name"], "question", model) == contract.ADMITTED}
     # A mapping view translates a hospital's codes into standard concepts and names none of them, so any question may
     # read it, as it reads the parts of the contract.
     views.update({name: {c["name"] for c in v["columns"]} for name, v in rolemap.mapping_views(model).items()})
@@ -121,7 +122,7 @@ class _Checker:
                 continue
             if table.this.args.get("temporary") or table.name.startswith("#"):
                 self.fail("tables", f"#{table.name} is a temporary table")
-            elif self.status.get(name) == "draft":
+            elif name in self.status and contract.admission(name, "question") == contract.REFUSED:
                 self.fail("tables", f"{name} is a draft view, which no audit may read until it joins the contract")
             elif name not in self.views:
                 self.fail("tables", f"{table.name} is not a role view of the contract")

@@ -10,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_describe import DATE, fresh  # noqa: E402
 
+from schemalyser import contract as contract_module
 from schemalyser import browser, describe, rolemap
 
 VALIDATED = ["role_patient rows", "role_patient.patient_key", "role_patient.birth_date", "role_anaesthetic rows",
@@ -61,7 +62,7 @@ def test_a_validated_schema_opens_under_a_newer_contract_proposes_the_added_fiel
 
     # The static page moves to the newer contract, and the saved file is opened under it.
     newer = newer_contract()
-    monkeypatch.setattr(rolemap, "contract", lambda: newer)
+    monkeypatch.setattr(contract_module, "contract", lambda: newer)
     again = describe.Describe()
     again.version = "test"
     restored = again.restore(v1)

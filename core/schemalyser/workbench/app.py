@@ -114,7 +114,7 @@ def create_app(project_folder, hosts=None, describe_folder=None):
                 schema = feasibility.Schema.load(project.schema_path(name))
                 board = rolemap.scoreboard(rolemap.read_saved_map(project.schema_path(name)))
                 parts = [{"title": v["title"], "state": (schema.readiness.get("parts") or {}).get(v["name"], {}).get("reached")}
-                         for v in rolemap.contract()["views"] if v.get("required")]
+                         for v in rolemap.contract()["views"] if v.get("status") == "contract"]
                 schemas.append({"name": name, "updated": schema.updated(), "parts": parts, "overall": scoreboard_line(board, "overall"),
                                 "problem": None})
             except (feasibility.FeasibilityError, rolemap.MapError, KeyError, ValueError) as error:

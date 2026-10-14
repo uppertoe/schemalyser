@@ -829,7 +829,7 @@ class Proposer:
                     total += found[0]["score"] if found else 0.0
             scored.append((total, table.name, score, phrase, covered))
         scored.sort(key=lambda item: (-item[0], item[1]))
-        if not view.get("required"):
+        if view.get("status") != "contract":
             # A further view is drafted only where the table's own description fits it and at least half of the
             # view's other columns, less one, fit within its reach.
             own = set(query)
@@ -1123,7 +1123,7 @@ def draft(proposal, dictionary, model=None, date=None, world="the hospital"):
     for name, found in proposal.items():
         view = views[name]
         if found is None:
-            if view.get("required"):
+            if view.get("status") == "contract":
                 raise ProposeError(WORDING["no_rows_says"].format(view=name))
             continue
         rows = found["rows"]

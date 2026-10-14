@@ -69,6 +69,8 @@ def check_contract(model, roles_text=None):
             problems.append(f"{where} is defined more than once.")
         if view.get("status") not in STATUSES:
             problems.append(f"{where} has a status that is not one of {', '.join(STATUSES)}.")
+        if "required" in view:
+            problems.append(f"{where} carries required, which the contract no longer uses: its status says what every gate may do with it.")
         for field in ("title", "description", "one_row_per", "holds"):
             if not _text(view.get(field)):
                 problems.append(f"{where} has no {field.replace('_', ' ')}.")

@@ -122,7 +122,7 @@ Every interface is a file, so that each flow can be inspected and so that a surf
 | Layer 4 | Orchestration | The correctness report | `report.json` |
 | Orchestration | The database analyst | The execution package | A folder with the script, the reports and the manifest |
 | The database analyst | Layer 2 | The outcome of a production run, the plan obtained, the reconciliation of a sample against the clinical record | Evidence import, as above |
-| The public workspace | Layer 3 | A question written by an agent | A folder validated as untrusted input |
+| The public workspace | Layer 3 | A question written by an agent | A question package, one JSON file or an address that serves one, validated as untrusted input (amended 14 October 2026; it was a folder) |
 | Layer 3 | The public workspace | Whether the question is well formed over the contract | A fixed status from the allowlisted vocabulary in invariant 8, and nothing else |
 
 Nothing flows from layer 2, a reference adapter, or the hospital's database to the public repository, the page's code, or the public workspace.
@@ -163,7 +163,7 @@ The owner may show the developer's model a **named summary** of confidential mat
 
 ### The transfer boundary
 
-A question package arriving from the public workspace is untrusted input. The import accepts only declarative files (the question over the roles and the catalogue, a title, a note, and constrained test definitions), refuses any executable content, symlink, archive or dependency declaration, validates the question against the role policy before anything else reads it, and runs nothing the package supplies. The private environment is not reachable from an untrusted computer through any open interface; a package moves through a mechanism the hospital approves, and is scanned and validated on arrival.
+A question package arriving from the public workspace is untrusted input. Amended 14 October 2026: a package is one JSON file, or an address that serves one, and never a folder; it holds the question over the roles and the catalogue, its title, its decisions and its note as fields of that file, and the import accepts that file alone, refuses any executable content, symlink, archive or dependency declaration, validates the question against the role policy before anything else reads it, and runs nothing the package supplies. The private environment is not reachable from an untrusted computer through any open interface; a package moves through a mechanism the hospital approves, and is scanned and validated on arrival.
 
 ### The results boundary
 
@@ -207,8 +207,8 @@ The test reads each module's imports and fails on any edge that breaks these rul
 The contract is met, and the product exists, when this runs end to end on invented material and can be repeated:
 
 1. On a computer with no access to hospital resources, a coding agent is given the exported public workspace and nothing else.
-2. It writes a new clinical question over the roles and the catalogue, checks it, and produces a question package.
-3. The package is transferred into a private Schemalyser project and imported as untrusted input.
+2. It writes a new clinical question over the roles and the catalogue, checks it, and produces a question package, which since 14 October 2026 is one JSON file.
+3. The package is transferred into a private Schemalyser project, as a file or from an address, and imported as untrusted input.
 4. The feasibility report names the capabilities the question requires and the evidence state of each against the project's hospital schema.
 5. The question passes independently specified planted scenarios on made-up rows, held out from the workspace the agent was given.
 6. The compiler produces the two-part script for a private synthetic SQL Server, and the harness executes that exact artefact.

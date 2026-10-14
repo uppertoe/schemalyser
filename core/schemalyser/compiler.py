@@ -17,13 +17,15 @@ import textwrap
 import sqlglot
 from sqlglot import exp
 
-from . import describe, policy, rolemap
+from . import contract, describe, policy, rolemap
 from .blanking import blanking, count_columns
 
 CAP = policy.CAP
 # The views of the record from which part 1 may choose the cohort: the small tables of patients and anaesthetics.
 COHORT_PARTS = ("role_anaesthetic", "role_patient")
 # How each part of the record is reached from #cohort in part 2: (the column that links it, the column of #cohort).
+# Whether a part may be compiled at all is the contract's decision, asked of contract.admission; this table says only
+# by which column an admitted part is reached, and a test holds the two to the same parts.
 REACHED = {"role_reading": ("anaesthetic_key", "anaesthetic_key"), "role_anaesthetic": ("anaesthetic_key", "anaesthetic_key"),
            "role_patient": ("patient_key", "patient_key")}
 # The one column of #cohort that is unique, by its primary key. A part reached through any other column of #cohort, such
@@ -227,6 +229,12 @@ def _period(start, end):
     return first, last
 
 
+def reachable(view):
+    """Whether part 2 may reach a part from #cohort: the contract admits it for compilation, and this module knows the
+    column by which it is reached."""
+    return contract.admission(view, "compile") == contract.ADMITTED and view in REACHED
+
+
 def _reached_cte(schema, view, cohort_columns):
     link, cohort_column = REACHED[view]
     if cohort_column not in cohort_columns:
@@ -330,7 +338,7 @@ def compile_audit(schema, audit_sql, start, end, blank=True, final=None, large=p
     still = [v for v in rolemap.all_views() if v in _reads(tree, set(rolemap.all_views()))]
     added, part2_tables = [], []
     for view in still:
-        if view not in REACHED:
+        if not reachable(view):
             raise AuditError(WORDING["unreached"].format(part=rolemap.view_title(view, False)))
         text, order = _reached_cte(schema, view, [c.lower() for c in columns])
         added.append(exp.CTE(this=sqlglot.parse_one(text, dialect="tsql"), alias=exp.TableAlias(this=exp.to_identifier(view))))
@@ -341,7 +349,7 @@ def compile_audit(schema, audit_sql, start, end, blank=True, final=None, large=p
     if blank and counts:
         text = _blanked_part2(tree, counts)
     part2 = text.replace("   WITH (NOLOCK)", " WITH (NOLOCK)").rstrip().rstrip(";") + ";"
-    coverage, coverage_tables, unmeasured = _coverage(schema, [v for v in still if v in REACHED],
+    coverage, coverage_tables, unmeasured = _coverage(schema, [v for v in still if reachable(v)],
                                                       [c.lower() for c in columns], _large(schema, large))
     return {"count": count, "part1": part1, "coverage": coverage, "coverage_tables": coverage_tables,
             "unmeasured": unmeasured, "part2": part2, "cohort_name": name, "cohort_tables": cohort_tables,

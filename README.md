@@ -1,6 +1,6 @@
 # Schemalyser
 
-Schemalyser helps a clinician write an audit of anaesthetic records and test it on invented data before a database analyst with access to the hospital's database runs it once for real.
+Schemalyser lets a department's anaesthetists get answers from the anaesthesia record through one clinician with database access. A question is a measure chosen from a catalogue, an export of chosen sections for a list of episodes, or a free question settled with a language model on the public side; each is written over a public description of the record, tested on invented data, and compiled through the hospital's own private mapping into SQL that the clinician runs once for real (`docs/product.md`).
 
 The hospital's record system keeps its data in thousands of tables that few people understand, and patient data may not be shown to an AI model. Schemalyser therefore describes the anaesthetic record once, without reference to any vendor, as a set of parts: patients, anaesthetics, readings, drugs, devices, events, notes and outcomes. For each hospital, a clinician and a colleague who can query the database sit together once and confirm the hospital schema: where that hospital's database keeps each part, proposed from the vendor's data dictionary in the browser and confirmed column by column. Audits are then written against the parts, tested on made-up rows, and run once on the real database as scripts that are safe by construction.
 
@@ -10,7 +10,7 @@ Everything in this repository is the tool itself and invented examples. It holds
 
 The page is published at https://uppertoe.github.io/schemalyser/ . It is a static page. Once it has loaded, it runs entirely in the browser, and it will not read a dictionary or a saved schema until the browser tab is offline. The data dictionary that a hospital loads stays in the browser and goes into nothing but the saved hospital schema, which is one file that stays on hospital storage.
 
-The page's first screen, describing the record, is built. The screens for writing an audit and for the OMOP layer are to follow.
+The page's first screen, describing the record, is built. The export screen exists in the local workbench, and the page's opening of a question package is to follow (`docs/work-plan.md`).
 
 ## The parts
 
@@ -19,7 +19,7 @@ The page's first screen, describing the record, is built. The screens for writin
 - `fixtures/` is the invented hospital, with its invented data dictionary, used by the page and the tests.
 - `tools/` holds the harness that checks the tool's SQL on a real SQL Server.
 
-`docs/architecture.md` describes what exists and how the parts fit together, `docs/roadmap.md` sets out the order of the work to come, and `docs/history.md` records the designs that came before.
+`docs/architecture.md` describes what exists and how the parts fit together, `docs/roadmap.md` sets out the shape and the order of proof, `docs/work-plan.md` is the work list, and `docs/history.md` records the designs that came before.
 
 ## Running the tests
 

@@ -79,3 +79,26 @@ def test_the_roles_document_is_checked_against_the_contract():
     model["vocabularies"]["laterality"].append({"kind": "unknown", "meaning": "Not given."})
     assert contractcheck.check_roles(model, text) == [
         "The roles document lists the kinds of laterality as left, right, bilateral, midline, and the contract as left, right, bilateral, midline, unknown."]
+
+
+def test_the_contract_has_no_required_flag_and_admission_decides_each_gate():
+    from schemalyser import contract as model_reader
+    model = shipped()
+    assert all("required" not in v for v in model["views"])
+    found = broken(lambda m: view(m, "role_patient").update({"required": True}))
+    assert found == ["The part role_patient carries required, which the contract no longer uses: its status says what every gate may do with it."]
+    for purpose in model_reader.PURPOSES:
+        assert model_reader.admission("role_patient", purpose, model) == model_reader.ADMITTED
+    assert model_reader.admission("role_fluid", "describe", model) == model_reader.ADMITTED
+    for purpose in ("question", "compile", "conversion"):
+        assert model_reader.admission("role_fluid", purpose, model) == model_reader.REFUSED
+    view(model, "role_fluid")["status"] = "rehearsed"
+    assert model_reader.admission("role_fluid", "question", model) == model_reader.CEILING
+    assert model_reader.admission("role_nothing", "question", model) == model_reader.REFUSED
+    import pytest
+    with pytest.raises(ValueError):
+        model_reader.admission("role_patient", "publishing", model)
+    # The compiler reaches exactly the parts the contract admits for compilation.
+    from schemalyser import compiler
+    admitted = {v["name"] for v in model["views"] if model_reader.admission(v["name"], "compile", model) == model_reader.ADMITTED}
+    assert admitted == set(compiler.REACHED)

@@ -1840,7 +1840,7 @@ class Describe:
                 held = self.codes.get(key, {})
                 lookup = held.get("lookup") or (self._lookup(binding["table"], binding["column"]) if binding else None)
                 found.append({"key": key, "title": rolemap.plain_about(key, True), "view": view_name, "column": column["name"], "vocabulary": vocabulary,
-                              "required": bool(view.get("required")),
+                              "required": view.get("status") == "contract",
                               "kinds": [k for k, _ in kinds], "meanings": dict(kinds),
                               "bound": f"{binding['table']}.{binding['column']}" if binding else "",
                               "lookup": lookup, "reason": reason, "link": link,
@@ -3652,7 +3652,7 @@ ORDER  BY g.kind;"""
         for view in self.model["views"]:
             role = (self.data or {}).get("roles", {}).get(view["name"])
             entry = {"name": view["name"], "title": rolemap.view_title(view["name"]), "description": rolemap.plain(view["description"]),
-                     "required": bool(view.get("required")), "drafted": role is not None, "items": [], "answered": 0,
+                     "required": view.get("status") == "contract", "drafted": role is not None, "items": [], "answered": 0,
                      # The forms that a part with no table proposed offers, which is to give it one.
                      "forms": correction_forms("rows", False, None, None)}
             if role is not None:

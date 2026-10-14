@@ -12,7 +12,7 @@ One clinician has access to the hospital's database and an intermediate knowledg
 
 ## The shape
 
-One private file, the hospital schema, and six layers around it.
+One private file, the hospital schema, and six pieces around it, named rather than numbered, because the contract's numbered layers (`docs/contract.md`) are the code's layers and are a different thing.
 
 1. **The role model.** The public contract of parts, columns, kinds and capabilities, the same at every hospital, with a checker of its shape and a try command for whoever adds to it.
 2. **The hospital schema.** Built once per hospital on the page Describe the record, from the database's own dictionary and a handful of analyst queries, with the evidence for every fact and its readiness. The only private thing.

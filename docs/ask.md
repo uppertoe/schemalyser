@@ -1,10 +1,10 @@
 # Ask: the clinician-facing service
 
-Ask is layer six of the roadmap, the public service for the fifty anaesthetists who want answers from the record and the one clinician who can run queries. It takes a question in the asker's words, settles it in a conversation with a language model, and publishes it as a question package over the public roles at a secret address. The page Describe the record opens the package in the hospital and compiles it through the hospital schema. The service is described in `ask/README.md`, and this page says where it sits.
+Ask is the clinician-facing service of the roadmap, the public service for the fifty anaesthetists who want answers from the record and the one clinician who can run queries. It takes a question in the asker's words, settles it in a conversation with a language model, and publishes it as a question package over the public roles at a secret address. The page Describe the record opens the package in the hospital and compiles it through the hospital schema. The service is described in `ask/README.md`, and this page says where it sits.
 
 ## What it may know
 
-The role contract, embedded at build time from the repository, and nothing else. No hospital schema, no dictionary, no table name and no result ever reaches it. The standing rule that no language model sees anything of a hospital holds because the service has nothing of a hospital to show one.
+The role contract, embedded at build time from the repository, and what clinicians type. No hospital schema, no dictionary and no result ever reaches it, and it holds no table name of its own. What a clinician types is the one way information about the hospital can reach the model, so the page says beside the text box that no patient's details are to be typed, every message is screened for a record number, a date of birth or a table-like name before it is sent, and a message that matches is held back and explained. The rule for whoever uses it: write about groups of patients, in clinical words, and never paste from the hospital's systems.
 
 ## What it produces
 

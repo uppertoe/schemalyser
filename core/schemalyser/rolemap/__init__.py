@@ -68,6 +68,26 @@ import json
 import re
 from pathlib import Path
 
+# The contract's readers live in the layer-1 module contract.py. They are reached here by name so that callers of the
+# hospital-schema layer change gradually, and each call is made at call time, so that a test or the try command that
+# stands in a candidate contract for schemalyser.contract.contract is seen by every caller. New code imports them from
+# schemalyser.contract.
+from .. import contract as _contract
+from ..contract import ADMITTED, CEILING, REFUSED  # noqa: F401
+
+
+def _reader(name):
+    def call(*args, **kwargs):
+        return getattr(_contract, name)(*args, **kwargs)
+    call.__name__, call.__doc__ = name, getattr(_contract, name).__doc__
+    return call
+
+
+for _name in ("admission", "all_views", "anchors", "capabilities", "contract", "event_parts", "kinds", "mapping_columns",
+              "mapping_views", "part_hashes", "public_views", "source_kinds", "statuses", "views"):
+    globals()[_name] = _reader(_name)
+del _name
+
 import sqlglot
 from sqlglot import exp
 from sqlglot.optimizer.scope import traverse_scope
@@ -148,59 +168,6 @@ class MapError(ValueError):
     """A map, a role view or an audit breaks a rule of the contract."""
 
 
-def contract():
-    """The contract: the role views, their columns, types and meanings, and the vocabulary of kinds, as data."""
-    return json.loads((MODEL / "contract.json").read_text(encoding="utf-8"))
-
-
-def part_hashes(model=None):
-    """The hash of each part's definition in the contract, as {view: hash}: the view itself, with the kinds or the
-    vocabularies that its columns of a kind name and the mapping views that its columns of a local key name, and the
-    hash of each mapping view. A change to any of them is a change to the part, which makes the evidence that rested
-    on it stale."""
-    import hashlib
-    model = model or contract()
-    found = {}
-    mappings = {m["name"]: m for m in model.get("mapping_views", [])}
-    for view in model["views"] + model.get("mapping_views", []):
-        named = sorted({c.get("vocabulary") for c in view["columns"] if c.get("vocabulary")})
-        definition = {"view": view, "vocabularies": {n: model["vocabularies"].get(n) for n in named}}
-        mapped = sorted({c["mapping"] for c in view["columns"] if c.get("mapping")})
-        if mapped:
-            definition["mappings"] = {n: mappings.get(n) for n in mapped}
-        if view["name"] == "role_reading":
-            definition["kinds"] = model["kinds"]
-        text = json.dumps(definition, sort_keys=True, ensure_ascii=False)
-        found[view["name"]] = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
-    return found
-
-
-def mapping_views(model=None):
-    """The mapping views of the contract, as {name: view}, each with the same four columns: local_key, concept_id,
-    status and provenance."""
-    return {m["name"]: m for m in (model or contract()).get("mapping_views", [])}
-
-
-def mapping_columns():
-    """The columns of every mapping view, in order."""
-    return [c["name"] for c in next(iter(mapping_views().values()))["columns"]]
-
-
-def source_kinds(model=None):
-    """The kinds of source record that a part which records events may mark its rows with."""
-    return [k["kind"] for k in (model or contract())["vocabularies"]["source_kind"]]
-
-
-def event_parts(model=None):
-    """The parts that record events, which are those with a column of the source kind, as {name: view}."""
-    return {v["name"]: v for v in (model or contract())["views"] if any(c.get("per_pathway") for c in v["columns"])}
-
-
-def capabilities(model=None):
-    """The capability catalogue, as {name: capability}."""
-    return {c["name"]: c for c in (model or contract()).get("capabilities", [])}
-
-
 def concept_key(salt, mapping, code):
     """The opaque local key of a hospital's code in a mapping view: a stable hash of the code with the hospital
     schema's own salt, so that the key names no code and cannot be turned back into one without the schema."""
@@ -226,41 +193,6 @@ def mapping_sql(name, rows):
     lines = [f"SELECT {literal(r['local_key'])} AS local_key, {int(r['concept_id'] or 0)} AS concept_id, "
              f"{literal(r['status'])} AS status, {literal(r['provenance'])} AS provenance" for r in rows]
     return "\nUNION ALL\n".join(lines)
-
-
-def views():
-    """The role views that every map supplies, as {name: [column, ...]}, in the contract's order. These are the
-    three views that the neonatal audit reads."""
-    return {view["name"]: [column["name"] for column in view["columns"]] for view in contract()["views"] if view.get("required")}
-
-
-def all_views():
-    """Every role view of the contract, the further views that a map may supply included, as {name: [column, ...]}."""
-    return {view["name"]: [column["name"] for column in view["columns"]] for view in contract()["views"]}
-
-
-def public_views():
-    """Every view that a query over the roles may name: the role views and the mapping views, as {name: [column]}."""
-    found = all_views()
-    found.update({name: [c["name"] for c in view["columns"]] for name, view in mapping_views().items()})
-    return found
-
-
-def anchors(view):
-    """The columns of a view, as a contract's view gives them, without which a row does not belong in the view: each
-    link that is part of its key, and the anchor that the contract names, as a reading needs its anaesthetic."""
-    links = {link["column"] for link in view.get("links", [])}
-    return ({c for c in view.get("key", []) if c in links} | ({view["anchor"]} if view.get("anchor") else set()))
-
-
-def statuses():
-    """The status of each role view, as {name: "contract" | "draft"}: contract for the views of version 1.0 that the
-    audits read, and draft for a further view that no audit reads yet."""
-    return {view["name"]: view.get("status") or ("contract" if view.get("required") else "draft") for view in contract()["views"]}
-
-
-def kinds():
-    return [item["kind"] for item in contract()["kinds"]]
 
 
 # The plain names of the views and their columns, which a person reads in place of the code names. Each view's title

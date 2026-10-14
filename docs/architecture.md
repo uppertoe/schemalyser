@@ -18,7 +18,7 @@ The role model, the tool, the OMOP side and the invented worlds are public, and 
 The page has three screens, and the hospital schema is the one thing that passes between them.
 
 1. **Describe the record** is built and published at https://uppertoe.github.io/schemalyser/ . It is the only page the site now serves. The clinician, who leads the audit, and the database analyst, who runs the queries, use it once for each hospital to make the hospital schema.
-2. **An audit** is to come. It will read the hospital schema and an audit, build a shadow from the schema, plant the standard cases, run the audit on made-up rows and compile the safe script for production.
+2. **An audit** exists as the workbench's export screen (`docs/workbench.md`) and the command line of the execution package: they read the hospital schema and a question, build a shadow from the schema, plant the standard cases, run the question on made-up rows and compile the safe script for production. The page itself does not yet open a question package; that is the work plan's seventh phase.
 3. **The OMOP layer** is to come. It will read the hospital schema and write the release script for the anaesthesia layer of the hospital's OMOP database.
 
 The page saves the hospital schema as a single file, `hospital-schema-SCHEMA_ID.schemalyser.zip`, which the clinician keeps on the hospital's own storage. Each save is a new version, and the file's name carries the version's identifier, so that no save takes the name of another version. The file holds a copy of the data dictionary, the journal of everything that happened, the evidence of every binding, one SQL view for each part, the exact text of every query offered with each result returned, the chosen codes and the judgement of each count, and a `README.md` that explains each part in plain words. Opening the file at step 3 of the page restores the sitting where it was left, and the next save names it as the version it was made from.
@@ -86,7 +86,7 @@ Two made-up worlds serve different purposes.
 
 **The invented hospital** is public. `fixtures/` holds an invented catalogue, data dictionary, conversion and planted values, and `fixtures/make_hospital.py` writes the invented world's tables to `fixtures/hospital/`. When a person chooses the invented dictionary, the worker builds a DuckDB database from these files that answers every query on the screen as SQL Server would, so the whole of screen 1 can be tried with nothing from any hospital. A schema made this way is marked as practice.
 
-**The realistic stand-in** is private and lives outside version control. It is built from the vendor's public table specification (`tools/ehi_spec_to_reference.py` converts a downloaded copy into a reference catalogue), so that the tool meets tables shaped as a real installation's are. The proposer's agreement with an independently written map on that specification, 13 of 16 bindings for the three contract views, comes from this stand-in, and the test that checks it keeps its expectations in the private folder.
+**The realistic stand-in** is private and lives outside version control. It is built from the vendor's public table specification (`tools/ehi_spec_to_reference.py` converts a downloaded copy into a reference catalogue), so that the tool meets tables shaped as a real installation's are. The proposer's agreement with an independently written map on that specification, 26 of 33 documented bindings exact and the other 7 listed among the alternatives on 14 October 2026 (`docs/success.md`), comes from this stand-in, and the test that checks it keeps its expectations in the private folder.
 
 ## Safe scripts for the real database
 
@@ -151,6 +151,8 @@ Every module in `core/schemalyser` falls into one of four classes. A module of t
 | `normalise.py` | Active workflow | Layer 2 | The named normalisations of `map.json`, written and read at the file's boundary. |
 | `propose.py` | Active workflow | Layer 2 | The proposer, which drafts a map from the role model and the data dictionary by plain matching. |
 | `corrections.py` | Active workflow | Layer 2 | The structured corrections of screen 1, how each is written into the map, and the report of its test on made-up rows, which `roleshadow.py` runs before it is kept. |
+| `contract.py` | Active workflow | Layer 1 | The role contract as data, read in one place: the parts, kinds, vocabularies, mapping views and catalogue, the hashes of the parts, and `admission`, the one function that says what a gate may do with a part for a purpose. |
+| `contractcheck.py` | Active workflow | Layer 1 | The check of the contract's shape and of the roles document against it, run by the tests and by a command. |
 | `rolemap/__init__.py` | Active workflow | Layer 2 | The roles, the maps, the standard counts and the scoreboard. |
 | `rolemap/__main__.py` | Active workflow | Layer 5 | The command line of the roles and the maps, `python -m schemalyser.rolemap`, whose scoreboard command writes the scoreboard's summary. |
 | `hospital.py` | Active workflow | Layer 4 | The invented hospital, on which the page runs its own queries when the invented dictionary is in use. |

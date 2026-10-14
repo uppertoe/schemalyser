@@ -26,7 +26,6 @@
     "death"
    ],
    "title": "Patients",
-   "required": true,
    "status": "contract",
    "description": "One row for each patient, test and training patients included, so that an audit can leave them out.",
    "one_row_per": "patient",
@@ -112,7 +111,6 @@
     "episode"
    ],
    "title": "Anaesthetics",
-   "required": true,
    "status": "contract",
    "description": "One row for each episode of anaesthesia or sedation given by an anaesthetist, including those whose start or stop is missing or out of order, so that the counts can see them.",
    "one_row_per": "anaesthetic",
@@ -199,7 +197,6 @@
     "measurement"
    ],
    "title": "Readings charted during an anaesthetic",
-   "required": true,
    "status": "contract",
    "description": "One row for each value charted in an anaesthetic's own record, with its kind from the vocabulary below, including values that were not accepted and values that are not numbers.",
    "one_row_per": "value charted in an anaesthetic's record",
@@ -341,7 +338,6 @@
     "observation"
    ],
    "title": "The patient's details at birth",
-   "required": false,
    "status": "draft",
    "description": "One row for each patient whose record holds any of these details, for the covariates of an audit.",
    "one_row_per": "patient",
@@ -420,7 +416,6 @@
     "visit_occurrence"
    ],
    "title": "Hospital stays",
-   "required": false,
    "status": "draft",
    "description": "One row for each hospital stay, from admission to discharge, day stays included, for the length of stay and for readmission.",
    "one_row_per": "hospital stay",
@@ -514,7 +509,6 @@
     "procedure_occurrence"
    ],
    "title": "The anaesthetic's details",
-   "required": false,
    "status": "draft",
    "description": "One row for each anaesthetic whose record holds any of these details, for the covariates and outcomes of an audit.",
    "one_row_per": "anaesthetic",
@@ -676,7 +670,6 @@
     "procedure_occurrence"
    ],
    "title": "Procedures done under an anaesthetic",
-   "required": false,
    "status": "draft",
    "description": "One row for each procedure done under an anaesthetic, so that an anaesthetic for several procedures has several rows, with the procedure as the local key of map_procedure_concept.",
    "one_row_per": "procedure done under an anaesthetic",
@@ -771,7 +764,6 @@
     "visit_detail"
    ],
    "title": "Transfers between units",
-   "required": false,
    "status": "draft",
    "description": "One row for each transfer of a patient into or out of a unit during a hospital stay, as the source records it, so that a question works out the time spent in each unit, such as intensive care after an anaesthetic.",
    "one_row_per": "transfer into or out of a unit",
@@ -916,7 +908,6 @@
     "condition_occurrence"
    ],
    "title": "Milestones of an anaesthetic",
-   "required": false,
    "status": "draft",
    "description": "One row for each timed milestone or complication of an anaesthetic, such as induction, intubation, incision, extubation, laryngospasm or arrival in recovery, with its kind from the event vocabulary.",
    "one_row_per": "milestone of an anaesthetic",
@@ -1063,7 +1054,6 @@
     "drug_exposure"
    ],
    "title": "Drugs given",
-   "required": false,
    "status": "draft",
    "description": "One row for each dose given during an anaesthetic, and for each start, change of rate, pause, restart and stop of an infusion, as the source records it, with the drug as the local key of map_drug_concept.",
    "one_row_per": "dose or infusion action",
@@ -1278,7 +1268,6 @@
     "procedure_occurrence"
    ],
    "title": "Techniques of an anaesthetic",
-   "required": false,
    "status": "draft",
    "description": "One row for each technique charted for an anaesthetic, such as a general anaesthetic with an intravenous induction and a caudal block for one anaesthetic, as the record charts them.",
    "one_row_per": "technique charted for an anaesthetic",
@@ -1473,7 +1462,6 @@
     "observation"
    ],
    "title": "Fluids and blood products",
-   "required": false,
    "status": "draft",
    "description": "One row for each volume of fluid or blood product given during an anaesthetic, and for each volume of blood or urine lost, as the source charts it, whether as an amount or as a running total.",
    "one_row_per": "fluid given or lost",
@@ -1653,7 +1641,6 @@
     "device_exposure"
    ],
    "title": "Devices placed",
-   "required": false,
    "status": "draft",
    "description": "One row for each airway device, line or catheter placed for an anaesthetic, with its kind from the device vocabulary.",
    "one_row_per": "device placed",
@@ -1842,7 +1829,6 @@
     "provider"
    ],
    "title": "Staff attending an anaesthetic",
-   "required": false,
    "status": "draft",
    "description": "One row for each person who attended an anaesthetic, for each period in which that person was present, with their role and grade.",
    "one_row_per": "person attending an anaesthetic",
@@ -1972,7 +1958,6 @@
     "measurement"
    ],
    "title": "Laboratory results",
-   "required": false,
    "status": "draft",
    "description": "One row for each laboratory or point-of-care result for the patient, linked to the patient and the stay rather than to an anaesthetic.",
    "one_row_per": "laboratory or point-of-care result",
@@ -2182,7 +2167,6 @@
     "condition_occurrence"
    ],
    "title": "Coded diagnoses",
-   "required": false,
    "status": "draft",
    "description": "One row for each coded diagnosis of the patient, from the coded discharge diagnoses, the problem list or the indication on the theatre booking, with the diagnosis as the local key of map_diagnosis_concept.",
    "one_row_per": "coded diagnosis",
@@ -2351,7 +2335,6 @@
     "note"
    ],
    "title": "Notes in the record",
-   "required": false,
    "status": "draft",
    "identifying": true,
    "description": "One row for each piece of free text in the record, such as a pre-anaesthetic assessment or an anaesthetic summary, with its text joined back into one value. A query that returns its text is an extract of identifying detail, and never a count.",
@@ -2514,7 +2497,6 @@
     "note_nlp"
    ],
    "title": "Facts found in the record",
-   "required": false,
    "status": "draft",
    "description": "One row for each fact that the hospital's own process takes from a note or from a structured field, such as a Mallampati grade or the hours of fasting, with how it was found.",
    "one_row_per": "fact found in the record",

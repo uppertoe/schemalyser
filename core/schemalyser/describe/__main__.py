@@ -499,7 +499,7 @@ def cmd_try(args, version):
     the dictionary the file holds proposes for the parts and columns the candidate added, what it cannot, and how many
     recorded answers stand. Nothing is saved and no query is written: the report is for whoever is writing the new
     part, before the contract is published."""
-    from .. import contractcheck, rolemap
+    from .. import contract as model_reader, contractcheck, rolemap
     try:
         candidate = json.loads(Path(args.contract).read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
@@ -507,8 +507,8 @@ def cmd_try(args, version):
     problems = contractcheck.check_contract(candidate)
     if problems:
         raise Refused(WORDING["cli_try_refused"].format(name=Path(args.contract).name, problems="\n".join(problems)))
-    held, titles = rolemap.contract, rolemap._TITLES
-    rolemap.contract, rolemap._TITLES = (lambda: candidate), None
+    held, titles = model_reader.contract, rolemap._TITLES
+    model_reader.contract, rolemap._TITLES = (lambda: candidate), None
     try:
         sitting, path = _open(args, version)
         found = sitting.restored or {}
@@ -530,7 +530,7 @@ def cmd_try(args, version):
                    for item in [role["rows"], *role["columns"].values()] if item.get("confirmation"))
         print(WORDING["cli_try_kept"].format(answers=kept))
     finally:
-        rolemap.contract, rolemap._TITLES = held, titles
+        model_reader.contract, rolemap._TITLES = held, titles
 
 
 def _count(n, noun):
