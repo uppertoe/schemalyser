@@ -585,3 +585,21 @@ def test_the_invented_map_normalises_the_boundary_history_into_the_role_rows_tha
     # The correction was filed that afternoon, apart from the time of the change of rate that it corrects.
     (correction,) = [row for row in rows if row[5] == "correction"]
     assert str(correction[4])[:16] == "2024-08-06 09:45" and str(correction[8])[:16] == "2024-08-06 16:00"
+
+
+def test_a_division_of_whole_numbers_and_a_median_give_sql_servers_answer_on_the_shadow():
+    # SQL Server divides a whole number by a whole number to give a whole number, and gives a median only as a window
+    # function; the shadow's runner now does both as the server would.
+    con = roleshadow.role_shadow(seed=1, anaesthetics=0, with_planted=False, extra={"role_reading": [
+        ["A1", "map_cuff", "2024-01-01 10:00:00", 50.0, 1, "R1", None],
+        ["A1", "map_cuff", "2024-01-01 10:05:00", 40.0, 1, "R2", None],
+        ["A1", "map_cuff", "2024-01-01 10:10:00", 30.0, 1, "R3", None],
+        ["A2", "map_cuff", "2024-01-01 11:00:00", 20.0, 0, "R4", None],
+        ["A2", "map_cuff", "2024-01-01 11:05:00", 10.0, 1, "R5", None]]})
+    run = roleshadow.duckdb_runner(con)
+    columns, rows = run("SELECT COUNT(*) / 2 AS half, SUM(r.accepted) / 3 AS third FROM role_reading r")
+    assert [tuple(row) for row in rows] == [(2, 1)], rows
+    columns, rows = run("SELECT DISTINCT r.anaesthetic_key, "
+                        "PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY r.value) OVER (PARTITION BY r.anaesthetic_key) AS median "
+                        "FROM role_reading r ORDER BY r.anaesthetic_key")
+    assert [tuple(row) for row in rows] == [("A1", 40.0), ("A2", 15.0)], rows

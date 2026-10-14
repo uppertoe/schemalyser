@@ -14,7 +14,7 @@ The rules, each passed or failed with the fragment that broke it:
     tables             only the tables that the hospital schema names, temporary tables, the script's own common table
                        expressions, and the server's own records of its tables (INFORMATION_SCHEMA and sys)
     functions          only aggregates, date arithmetic, CAST, COALESCE (and ISNULL), NULLIF, ROUND, CASE, CONCAT, and
-                       ROW_NUMBER, LEAD and LAG with a window
+                       ROW_NUMBER, LEAD, LAG and PERCENTILE_CONT (with WITHIN GROUP) with a window
     joins              no cross join, comma join or APPLY, and every join carries an equality between two named columns,
                        one of them of the table joined
     cohort_keys        every join out of a temporary table, the cohort, is on equality of bare columns
@@ -74,8 +74,10 @@ METADATA = ("information_schema", "sys")
 # DATEDIFF or DATEADD reads its arguments through TimeStrToTime and TsOrDsToDate, and ISNULL is read as COALESCE.
 FUNCTIONS = {"Count", "Sum", "Min", "Max", "Avg", "Cast", "TryCast", "Coalesce", "Nullif", "Round", "Floor", "Ceil", "Abs",
              "Case", "Concat", "DateDiff", "DateAdd", "Year", "Month", "Day", "TimeStrToTime", "TsOrDsToDate",
-             "TsOrDsAdd", "TsOrDsDiff", "RowNumber", "Lead", "Lag"}
-WINDOWED = {"RowNumber", "Lead", "Lag"}
+             "TsOrDsAdd", "TsOrDsDiff", "RowNumber", "Lead", "Lag", "PercentileCont"}
+# The functions that need a window. PERCENTILE_CONT, the median, is admitted with its WITHIN GROUP and a window only,
+# because on SQL Server it is a window function and never an aggregate.
+WINDOWED = {"RowNumber", "Lead", "Lag", "PercentileCont"}
 # What a conversion step may use besides: the text functions that shape a source value into a field of the target, and
 # the ranks that number its rows, each with a window. CHARINDEX is read as StrPosition and LEN as Length.
 CONVERSION_FUNCTIONS = {"Left", "Right", "Substring", "Upper", "Lower", "Trim", "Length", "StrPosition", "Replace",
@@ -84,6 +86,14 @@ CONVERSION_WINDOWED = {"DenseRank", "Rank"}
 # Words that never belong in a script, wherever they stand outside a string or a comment.
 FORBIDDEN_WORDS = {"EXEC", "EXECUTE", "SP_EXECUTESQL", "OPENQUERY", "OPENROWSET", "OPENDATASOURCE", "OPENXML", "WAITFOR",
                    "SHUTDOWN", "RECONFIGURE", "GRANT", "REVOKE", "DENY", "BACKUP", "RESTORE", "DBCC", "KILL"}
+
+def _windowed(func):
+    """Whether a function stands under a window, directly or through its WITHIN GROUP clause."""
+    parent = func.parent
+    if isinstance(parent, exp.WithinGroup):
+        parent = parent.parent
+    return isinstance(parent, exp.Window)
+
 
 RULES = {
     "parse": "Every statement is one that the parser understands.",
@@ -345,7 +355,7 @@ class _Checker:
                 continue
             if isinstance(func, exp.Anonymous) or name not in self.functions:
                 self.fail("functions", _fragment(func))
-            elif name in self.windowed and not isinstance(func.parent, exp.Window):
+            elif name in self.windowed and not _windowed(func):
                 self.fail("functions", _fragment(func))
         for select in tree.find_all(exp.Select):
             self.select(select, ctes)

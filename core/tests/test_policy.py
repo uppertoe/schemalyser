@@ -140,3 +140,13 @@ def test_a_script_with_no_cohort_can_be_checked_and_says_what_the_policy_cannot_
         assert _check(sql, purpose="conversion")["execution_class"] == "D"
     with pytest.raises(ValueError):
         _check(step, purpose="release")
+
+
+def test_the_median_is_admitted_with_its_window_and_refused_without_one():
+    windowed = ("SELECT DISTINCT s.EPISODE_KEY, PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY s.VALUE) "
+                "OVER (PARTITION BY s.EPISODE_KEY) AS median FROM SHEET AS s;")
+    found = _check(windowed)
+    assert "functions" not in _failed(found), _fragments(found, "functions")
+    bare = "SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY s.VALUE) AS median FROM SHEET AS s;"
+    found = _check(bare)
+    assert "functions" in _failed(found) and any("PERCENTILE_CONT" in f.upper() for f in _fragments(found, "functions"))

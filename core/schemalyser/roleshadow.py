@@ -43,15 +43,27 @@ from .translate import to_duckdb
 # Running queries over the role views, on a role-level shadow or, compiled through a map, on a world's hospital-shaped
 # shadow.
 
-def duckdb_runner(con, date_columns=frozenset(), roles_map=None):
+def whole_role_columns(model=None):
+    """The names of the role columns that hold whole numbers, as the translation needs them: a column of the type
+    whole, flag or flag_or_empty, in upper case. A division of two of them gives a whole number on SQL Server, and the
+    translation makes DuckDB do the same."""
+    model = model or rolemap.contract()
+    return frozenset(c["name"].upper() for v in model["views"] for c in v["columns"]
+                     if c["type"] in ("whole", "flag", "flag_or_empty"))
+
+
+def duckdb_runner(con, date_columns=frozenset(), roles_map=None, whole_columns=None):
     """A function that runs a T-SQL query over the role views in DuckDB and returns (columns, rows).
 
-    With a map, the query is first compiled with it, so that it runs over a hospital-shaped shadow's source tables;
-    without one, the role views are the tables of a role-level shadow."""
+    With a map, the query is first compiled with it, so that it runs over a hospital-shaped shadow's source tables, and
+    whole_columns are the shadow's; without one, the role views are the tables of a role-level shadow, and the whole
+    columns are the contract's, so that a division of whole numbers gives SQL Server's answer."""
+    if whole_columns is None:
+        whole_columns = whole_role_columns() if roles_map is None else frozenset()
 
     def run(sql):
         text = compiler.compile_query(sql, roles_map) if roles_map is not None else sql
-        statements = to_duckdb(text, date_columns)
+        statements = to_duckdb(text, date_columns, whole_columns)
         if len(statements) != 1:
             raise rolemap.MapError("the query did not translate to one statement")
         cursor = con.execute(statements[0])
@@ -248,7 +260,7 @@ def hospital_run(world, conversion, roles_map, audit_sql=None, rows=500, scenari
     "conversion"}."""
     from . import convert
     converted, report = convert.run(world, conversion, rows, scenarios=scenarios)
-    run = duckdb_runner(converted.con, converted.sandbox.date_columns, roles_map)
+    run = duckdb_runner(converted.con, converted.sandbox.date_columns, roles_map, getattr(converted.sandbox, "whole_columns", None))
     return {"result": result(run, audit_sql), "report": report, "run": run, "conversion": converted}
 
 

@@ -17,7 +17,7 @@ Each rule is reported as passed, or as failed with the fragment of the script th
 - **dynamic.** The script runs no EXEC, no dynamic SQL and no procedure, uses no OPENQUERY, OPENROWSET, OPENDATASOURCE or OPENXML, and holds none of WAITFOR, SHUTDOWN, RECONFIGURE, GRANT, REVOKE, DENY, BACKUP, RESTORE, DBCC or KILL outside a string.
 - **names.** The script names no other database and no linked server, and no schema other than those it is allowed (dbo, unless the caller names others).
 - **tables.** The script reads only the tables that the hospital schema names, temporary tables, its own common table expressions, and the server's own records of its tables in INFORMATION_SCHEMA and sys.
-- **functions.** The script uses only aggregates, date arithmetic, CAST, COALESCE and ISNULL, NULLIF, ROUND, FLOOR, CEILING, ABS, CASE and CONCAT, and uses ROW_NUMBER, LEAD and LAG only with a window.
+- **functions.** The script uses only aggregates, date arithmetic, CAST, COALESCE and ISNULL, NULLIF, ROUND, FLOOR, CEILING, ABS, CASE and CONCAT, and uses ROW_NUMBER, LEAD, LAG and PERCENTILE_CONT only with a window; PERCENTILE_CONT, the median, carries its WITHIN GROUP clause and is never an aggregate, because that is how SQL Server has it.
 - **joins.** The script has no cross join, comma join or APPLY, and every join carries an equality between two named columns, one of them of the table joined.
 - **cohort_keys.** In a SELECT that starts from the cohort, every join carries an equality of bare columns with a source already reached from the cohort.
 - **large_from_cohort.** Every large table is reached from the cohort: it is joined, never read first, in a SELECT that starts from the cohort, by equality with a column already joined.
