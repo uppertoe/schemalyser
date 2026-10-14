@@ -55,6 +55,7 @@ The package names the hospital's tables and local codes, so it stays on the hosp
 schema. Nothing here is checked on a hospital's data: the tests build a saved schema from the invented world.
 """
 import argparse
+import hashlib
 import datetime as dt
 import json
 import sys
@@ -79,6 +80,10 @@ NOT_REVIEWED = "not yet reviewed"
 WORDING = {
     "model": "Schemalyser has stopped, because this question needs parts that the role model does not yet describe. The feasibility report in {folder} lists them, and no script has been written.",
     "role_policy": "Schemalyser has stopped, because the question breaks the role-level policy, and no script has been written: {rules}",
+    "examination_unread": "Schemalyser has not built a package for production, because {name} is not an examination report it can read.",
+    "examination_other": "Schemalyser has not built a package for production, because the report {name} is not over the package {package} as it is now.",
+    "examination_unverified": "Schemalyser has not built a package for production, because the report is not verified: {says}",
+    "examination_level": "Schemalyser has not built a package for production, because the question's examination grants the level {level}, and production needs logic examined or above. {says}",
     "period": "The period is two dates, the first no later than the second, written as YYYY-MM-DD.",
     "decisions": "{name} is not a decisions file that Schemalyser can read: it holds one JSON object with a list of decisions.",
     "package": "{name} is a question package that breaks a rule of its format, so nothing is built from it:\n{problems}",
@@ -227,6 +232,23 @@ def _digest(value):
     return sha256(json.dumps(value, sort_keys=True, ensure_ascii=False))
 
 
+def _examined(query_path, report_path):
+    """Raises AuditError unless the report is the examiner's, over this package, at logic examined or above."""
+    from .examination import status
+    try:
+        report = json.loads(Path(report_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise AuditError(WORDING["examination_unread"].format(name=Path(report_path).name)) from None
+    held = hashlib.sha256(query_path.read_bytes()).hexdigest() if query_path.is_file() else None
+    if (report.get("package") or {}).get("sha256") != held:
+        raise AuditError(WORDING["examination_other"].format(name=Path(report_path).name, package=query_path.name))
+    found = status.verify(report)
+    if not found["verified"]:
+        raise AuditError(WORDING["examination_unverified"].format(name=Path(report_path).name, says=found["says"]))
+    if found["level"] not in status.LEVELS[2:]:
+        raise AuditError(WORDING["examination_level"].format(level=found["level"], says=found["says"]))
+
+
 def _decisions(path):
     if path is None:
         return {"decisions": [], "exact_small_numbers": False}
@@ -265,12 +287,17 @@ def evidence_requests(schema, schema_name, folder_name, sql_sha):
     return {"format": describe.REQUEST_FORMAT, "schema_id": schema.schema_id, "requests": found}
 
 
-def build(schema_path, query_path, out, period=None, decisions_path=None, large=policy.LARGE, date=None, extra=None, admit=None):
+def build(schema_path, query_path, out, period=None, decisions_path=None, large=policy.LARGE, date=None, extra=None, admit=None,
+          production=None):
     """Writes the execution package to out. Returns the manifest. Raises AuditError where it cannot be written. extra,
     when given, is merged into the manifest, as the export of a specification adds its own record. The question passes
     the role-level policy first, whose report the manifest keeps; admit="draft", which only the examiner gives, lets
-    the question read a draft part."""
+    the question read a draft part. production, the examination report of a question package, is required for a
+    package that will run on production: the report is verified as the examiner's, over this package's bytes, at the
+    level logic examined or above, under the versions in force, or nothing is built."""
     schema_path, query_path, out = Path(schema_path), Path(query_path), Path(out)
+    if production is not None:
+        _examined(query_path, production)
     date = date or dt.date.today().isoformat()
     schema = feasibility.Schema.load(schema_path)
     # A question package supplies its SQL and its decisions; a plain .sql file supplies the SQL, and the decisions come
@@ -758,6 +785,7 @@ def main(argv=None):
     one.add_argument("--period", nargs=2, metavar=("FROM", "TO"))
     one.add_argument("--decisions")
     one.add_argument("--large", type=int, default=policy.LARGE)
+    one.add_argument("--production", help="the signed examination report of the question package, required for a package that will run on production")
     two = commands.add_parser("plan", help="Review an estimated plan of part 2.")
     two.add_argument("folder")
     two.add_argument("plan")
@@ -786,7 +814,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == "build":
-            manifest = build(args.schema, args.query, args.out, args.period, args.decisions, args.large)
+            manifest = build(args.schema, args.query, args.out, args.period, args.decisions, args.large, production=args.production)
             print(WORDING["built"].format(folder=Path(args.out).name, grade=manifest["execution_class"],
                                           outcome="passed" if manifest["policy_outcome"] == "passed" else "failed"))
         elif args.command == "status":

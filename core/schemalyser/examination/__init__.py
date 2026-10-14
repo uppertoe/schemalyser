@@ -3,6 +3,7 @@ evidence the writer never saw, and the level each stage grants.
 
     python -m schemalyser.examination run PACKAGE.json [--admit draft] [--case NAME ...] [--seed N]
     python -m schemalyser.examination register NAME [--kind question|capability|audit]
+    python -m schemalyser.examination verify REPORT.json
 
 The first stage, in static.py, reads the package as the import does and asks nothing of any hospital: the package's
 own rules through question.py, the role-level policy with its dialect rule, the two-part form that a hospital compiles,
@@ -12,6 +13,6 @@ run the package on the role-level shadow, apply the metamorphic checks, compare 
 cases, grant the levels above. The examiner runs on the owner's own machine, with the private case root, and its
 report is what the service shows beside a package.
 """
-from . import metamorphic, mutants, oracle, planted, shadow, static  # noqa: F401
+from . import metamorphic, mutants, oracle, planted, shadow, static, status  # noqa: F401
 
 LEVELS = ("not well formed", "well formed")

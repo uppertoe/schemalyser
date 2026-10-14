@@ -387,3 +387,129 @@ def test_every_mutant_of_the_five_capabilities_is_killed_or_is_a_case_nobody_has
 def test_a_question_that_fails_a_stage_itself_has_no_mutation_report():
     report = mutants.run("SELECT COUNT(*) AS n FROM role_patient p WHERE p.patient_key = 'X'", seed=1)
     assert report["outcome"] == "not applied" and "does not pass the stage static" in report["says"]
+
+
+# The status derivation and the signed report.
+
+from schemalyser import audit, signing  # noqa: E402
+from schemalyser.examination import status  # noqa: E402
+
+# A seed with the public key and the signatures that Go's crypto/ed25519, the service's library, derives from it, so
+# that a report signed here is one the service verifies.
+SEED = bytes.fromhex("9d61b19deffd5a60ba844af492ec2c7275d8f1a9bb1f3ba1e4c3da1b66bbd9e8")
+SEED_PUBLIC = bytes.fromhex("a9f0c21626d43f7ea00ab4f6edb221d4748c6f58ae48c9c5429c5eda0f33769b")
+SEED_SIGNATURES = {b"": bytes.fromhex("38e37c54ee59f86316e42b430175d936ab3f0698b92bc45b3cfe8479e6ec197d029b0743325bfd33f2b6cb57daf7c41c922cd82ee761f38da9224a7a33ea710d"),
+                   b"a report": bytes.fromhex("0f42481fa853753b8a9352149f8feb2286236660a578871a5f6b19571e2e408adb4ae60248370ac890168fa828b18e7e4065e60460597c1ac48fba73dfa6fc0e")}
+
+
+def test_the_signing_scheme_is_the_one_the_service_verifies():
+    assert signing.public_key(SEED) == SEED_PUBLIC
+    for message, signature in SEED_SIGNATURES.items():
+        assert signing.sign(SEED, message) == signature and signing.verify(SEED_PUBLIC, message, signature)
+    assert not signing.verify(SEED_PUBLIC, b"x", SEED_SIGNATURES[b""])
+    key = signing.new_key()
+    assert signing.verify(signing.public_key(key), b"a report", signing.sign(key, b"a report"))
+    assert not signing.verify(signing.public_key(signing.new_key()), b"a report", signing.sign(key, b"a report"))
+
+
+def _examined(path, key, cases=(), stages=True):
+    report = static.run(path)
+    if stages:
+        report["shadow"] = shadow.run(path, seeds=(1,))
+        report["metamorphic"] = metamorphic.run(path, seed=1, sample=2)
+        report["oracle"] = oracle.run(path, seeds=(1,))
+        if cases:
+            sql = question.sql_and_decisions(path)[0]
+            report["planted"] = [planted.run_case(sql, name, 1) for name in cases]
+    return status.finish(report, key, examined_at="2026-10-15T09:00:00+11:00")
+
+
+def test_a_report_derives_its_level_from_the_stages_and_a_wrong_signature_is_refused(tmp_path, monkeypatch):
+    key = signing.new_key()
+    public = signing.public_key(key)
+    monkeypatch.setattr(status, "PUBLIC_KEY", tmp_path / "examiner.pub")
+    (tmp_path / "examiner.pub").write_text(public.hex())
+    path = FIXTURES / "neonatal-low-mean-pressure.question.json"
+    report = _examined(path, key, cases=["neonatal_low_mean_pressure"])
+    assert report["status"]["level"] == "examined against held-out cases", report["status"]["says"]
+    assert report["versions"]["contract"] == "1.1" and report["versions"]["examiner"] == "1" and report["versions"]["register_sha256"]
+    found = status.verify(report)
+    assert found["verified"] and found["level"] == "examined against held-out cases"
+    assert status.verify(report, public)["verified"]
+    # Another key's signature, a changed report and a missing signature are each refused.
+    other = dict(report, signature={"public_key": signing.public_key(signing.new_key()).hex(), "signature": report["signature"]["signature"]})
+    assert not status.verify(other)["verified"]
+    changed = dict(report, status={"level": "examined against held-out cases", "says": "changed"})
+    assert not status.verify(changed)["verified"] and status.verify(changed)["level"] == "not well formed"
+    unsigned = {k: v for k, v in report.items() if k != "signature"}
+    assert not status.verify(unsigned)["verified"]
+    # A report with only the static stage is well formed; a case registered today is not yet held out.
+    assert _examined(path, key, stages=False)["status"]["level"] == "well formed"
+    report = _examined(path, key, cases=["neonatal_low_mean_pressure"])
+    today = dict(report)
+    assert status.derive(today, examined_at="2026-10-14T09:00:00")["level"] == "logic examined"
+
+
+def test_a_production_build_needs_a_verified_report_at_logic_examined_and_a_version_change_voids_it(tmp_path, monkeypatch):
+    from schemalyser import describe, roleshadow as shadow_module
+    key = signing.new_key()
+    monkeypatch.setattr(status, "PUBLIC_KEY", tmp_path / "examiner.pub")
+    (tmp_path / "examiner.pub").write_text(signing.public_key(key).hex())
+    package_path = FIXTURES / "neonatal-low-mean-pressure.question.json"
+    examined = tmp_path / "examined.json"
+    examined.write_text(static.to_json(_examined(package_path, key, cases=["neonatal_low_mean_pressure"])), encoding="utf-8")
+    well_formed = tmp_path / "well-formed.json"
+    well_formed.write_text(static.to_json(_examined(package_path, key, stages=False)), encoding="utf-8")
+    # A saved schema of the invented hospital, as the audit tests make one.
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import test_audit as t
+    s = describe.Describe()
+    s.version = "test"
+    s.load_dictionary(t.DICTIONARY.read_bytes(), t.TABLES.read_bytes(), {}, "invented-dictionary.csv", "invented-tables.csv")
+    s.propose(date=t.DATE)
+    s.set_settings("production", 2024, "Australia/Sydney", True)
+    s.tables_query()
+    s.read_tables(t.tables_result({"OBS_READING": t.READINGS}))
+    for about in t.CONFIRMED:
+        s.confirm(about, "yes", date=t.DATE)
+    s.choose_codes("role_reading.kind", {"52": "map_arterial", "51": "map_cuff"}, t.DATE)
+    saved = tmp_path / "hospital-schema.schemalyser.zip"
+    saved.write_bytes(shadow_module.save_zip(s, t.DATE))
+    with pytest.raises(audit.AuditError, match="grants the level well formed, and production needs logic examined"):
+        audit.build(saved, package_path, tmp_path / "one", ("2024-01-01", "2024-12-31"), date=t.DATE, production=well_formed)
+    assert not (tmp_path / "one").exists()
+    manifest = audit.build(saved, package_path, tmp_path / "two", ("2024-01-01", "2024-12-31"), date=t.DATE, production=examined)
+    assert manifest["execution_class"] in ("B", "C")
+    # A report over another package, or one the examiner did not sign, is refused.
+    with pytest.raises(audit.AuditError, match="not over the package"):
+        audit.build(saved, FIXTURES / "ask-fake-backend.question.json", tmp_path / "three", ("2024-01-01", "2024-12-31"), date=t.DATE, production=examined)
+    forged = json.loads(examined.read_text())
+    forged["signature"]["public_key"] = signing.public_key(signing.new_key()).hex()
+    (tmp_path / "forged.json").write_text(json.dumps(forged), encoding="utf-8")
+    with pytest.raises(audit.AuditError, match="not verified"):
+        audit.build(saved, package_path, tmp_path / "four", ("2024-01-01", "2024-12-31"), date=t.DATE, production=tmp_path / "forged.json")
+    # A change of the contract's version voids logic examined, and the production build is refused.
+    changed = json.loads(json.dumps(rolemap.contract()))
+    changed["version"] = "1.2"
+    from schemalyser import contract as contract_module
+    monkeypatch.setattr(contract_module, "contract", lambda: changed)
+    found = status.verify(json.loads(examined.read_text()))
+    assert found["verified"] and found["level"] == "well formed" and "contract changed" in found["says"]
+    with pytest.raises(audit.AuditError, match="production needs logic examined"):
+        audit.build(saved, package_path, tmp_path / "five", ("2024-01-01", "2024-12-31"), date=t.DATE, production=examined)
+
+
+def test_the_command_writes_a_signed_report_and_verifies_it(tmp_path, capsys, monkeypatch):
+    key = signing.new_key()
+    (tmp_path / "examiner.key").write_text(key.hex())
+    (tmp_path / "examiner.pub").write_text(signing.public_key(key).hex())
+    out = tmp_path / "report.json"
+    assert examination_main.main(["run", str(FIXTURES / "ask-fake-backend.question.json"), "--key", str(tmp_path / "examiner.key"), "--out", str(out)]) == 0
+    assert "logic is examined" in capsys.readouterr().out
+    report = json.loads(out.read_text())
+    assert report["status"]["level"] == "logic examined" and report["signature"]["public_key"] == signing.public_key(key).hex()
+    assert examination_main.main(["verify", str(out), "--public-key", str(tmp_path / "examiner.pub")]) == 0
+    assert "grants the level logic examined" in capsys.readouterr().out
+    (tmp_path / "other.pub").write_text(signing.public_key(signing.new_key()).hex())
+    assert examination_main.main(["verify", str(out), "--public-key", str(tmp_path / "other.pub")]) == 1

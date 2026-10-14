@@ -22,6 +22,7 @@
 "schemalyser.selects" = { layer = "shared", note = "The rule that a text of T-SQL is one SELECT that only reads, which the release script (layer 3), the map's own checks (layer 2) and the compilation of a question (layer 3) all apply. It reads T-SQL and nothing else." }
 "schemalyser.vendorspec" = { layer = "adapter", note = "A vendor's published specification of its export, as the zip it offers, read into the dictionary files that screen 1 takes at step 2. It reads one fixed page layout and names no table; the specification stays on the analyst's machine." }
 "schemalyser.datadict" = { layer = "shared", note = "The reader of a data dictionary file, which the hospital schema (layer 2) and the reference adapter's transplant both read. It imports only the shared tier and knows nothing of any layer: it reads a plain table of tables, columns and descriptions." }
+"schemalyser.signing" = { layer = "shared", note = "Signatures over the examination's reports, in the Ed25519 scheme written out so that the core needs no library for it; it reads and writes bytes alone." }
 "schemalyser.summaries" = { layer = "shared", note = "By its purpose it is orchestration, but the reference adapters that write two of the three named summaries may import only layers 1 and 3 and the shared tier, and the scoreboard sits in layer 2, so the exporters import nothing from the package and take each output as data." }
 
 "schemalyser.contract" = { layer = "1", note = "The role contract as data, read in one place, with the hashes of its parts and the one function, admission, that says what a gate may do with a part; it imports nothing of the package." }
@@ -72,6 +73,7 @@
 "schemalyser.examination.metamorphic" = { layer = "orchestration", note = "Stage 3 of the examination: the three metamorphic checks on the role-level shadow (layer 4)." }
 "schemalyser.examination.oracle" = { layer = "orchestration", note = "The oracle of the examination: the expected answer from the examinable object over rows, in Python, and the differential run against the package on the shadow (layer 4)." }
 "schemalyser.examination.mutants" = { layer = "orchestration", note = "The examination of the examination: fixed mutations of a correct question run through the stages, with the stage that killed each." }
+"schemalyser.examination.status" = { layer = "orchestration", note = "The level a package holds, derived from the stages passed, and the signed report that records it." }
 "schemalyser.examination.planted" = { layer = "orchestration", note = "Stage 4 of the examination: the planted cases under a fresh transform, from the register and the private root, run on the role-level shadow (layer 4) and compared as the equivalence tool compares answers." }
 "schemalyser.examination.__main__" = { layer = "5", note = "The command line of the examination." }
 "schemalyser.results" = { layer = "orchestration", note = "The results package, written from an execution package and a production run's output; it stays inside the hospital." }

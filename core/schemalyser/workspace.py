@@ -68,13 +68,13 @@ HOME_PATH = re.compile(rb"(/Users/[A-Za-z0-9._-]+|/home/[a-z][a-z0-9._-]*/|[A-Za
 CORE_MODULES = (
     "__init__", "audit", "blanking", "capability", "catalogue", "compiler", "contract", "contractcheck", "conversion", "convert", "corrections",
     "datadict", "evidence", "extract", "feasibility", "first_ask", "harness", "hospital", "manifests", "mapping", "memo", "normalise",
-    "plan", "policy", "project", "propose", "question", "realistic", "release", "rolepolicy", "roles", "roleshadow", "routes",
+    "plan", "policy", "project", "propose", "question", "realistic", "signing", "release", "rolepolicy", "roles", "roleshadow", "routes",
     "rules", "sample_vocabulary", "sandbox", "selects", "specification", "statements", "summaries", "testbed",
     "translate", "tuning", "vocabulary", "workspace",
 )
 # The modules of the core that are packages, each a folder with its module in __init__.py and its command line in
 # __main__.py, which the same commands import.
-CORE_PACKAGES = ("describe", "rolemap")
+CORE_PACKAGES = ("describe", "examination", "rolemap")
 
 # Each entry is a file, or a folder whose files must all have one of its suffixes.
 ALLOWLIST = tuple(
