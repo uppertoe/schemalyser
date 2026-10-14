@@ -257,6 +257,32 @@ def test_the_example_imports_cleanly_and_the_result_names_nothing_of_the_hospita
     assert request["exit_code"] == 0 and len(request["decisions"]) == 9
 
 
+def test_the_hospital_level_is_mapping_supported_where_the_schema_binds_every_part_and_not_where_it_lacks_one_and_both_imports_return_the_same_word(exported, project, tmp_path):
+    # The invented hospital describes patients, anaesthetics and readings and records no fluids, so the neonatal
+    # package reaches mapping supported there and the red cells package does not. Nothing of that reaches the
+    # workspace: both imports return the same public word.
+    path = _question_file(exported, tmp_path)
+    result, _, record = workspace.import_question(path, project, date=DATE)
+    level = json.loads((record / "import-validation.json").read_text(encoding="utf-8"))["hospital_level"]
+    assert level["level"] == workspace.MAPPING_SUPPORTED and level["reasons"] == [], level
+    assert level["shadow"]["same"] and level["shadow"]["rows_map"] == level["shadow"]["rows_roles"] > 0
+    assert level["requirements"]["short"] == [] and level["execution_class"] in ("B", "C")
+    # The proposer drafted four of the columns the question reads and no person has confirmed them yet, which the
+    # level names without withholding itself, since confirmation is what the levels above add.
+    assert level["requirements"]["awaiting_confirmation"] == ["role_patient.death_date", "role_patient.is_test", "role_reading.accepted", "role_reading.reading_key"]
+    fluids = tmp_path / "ws" / "queries" / f"red_cells{workspace.PACKAGE_SUFFIX}"
+    shutil.copyfile(ROOT / "fixtures" / "packages" / "ask-fake-backend.question.json", fluids)
+    other, checked, record = workspace.import_question(fluids, project, date=DATE)
+    assert other["result"] == result["result"] == "accepted" and sorted(other) == sorted(result)
+    level = json.loads((record / "import-validation.json").read_text(encoding="utf-8"))["hospital_level"]
+    assert level["level"] == workspace.MAPPING_NOT_SUPPORTED and level["shadow"]["same"] is False
+    assert any("not described or not mapped" in r and "role_fluid" in r for r in level["reasons"])
+    assert any("the package did not build" in r for r in level["reasons"])
+    assert "Fluids" in level["shadow"]["problem"] or "fluid" in level["shadow"]["problem"].lower()
+    # The result file beside the package says nothing of the level.
+    assert "hospital_level" not in _result(fluids) and "mapping" not in _result(fluids)
+
+
 def test_a_question_that_names_a_table_outside_the_contract_is_refused_with_the_rule(exported, project, tmp_path):
     before = _project_files(project)
     path = _question_file(exported, tmp_path, sql="SELECT COUNT(*) AS anaesthetics FROM ANAES_RECORD\n")

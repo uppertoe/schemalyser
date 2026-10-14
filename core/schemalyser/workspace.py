@@ -555,6 +555,58 @@ def _write_result(path, result):
     os.replace(temporary, target)
 
 
+# Stage 5, at the hospital: whether this hospital's mapping supports the question. Recorded privately in the project
+# and never returned to the workspace.
+
+MAPPING_SUPPORTED = "mapping supported"
+MAPPING_NOT_SUPPORTED = "mapping not yet supported"
+LEVEL_WORDING = {
+    "no_report": "the feasibility report was not made",
+    "short": "{count} of the question's requirements {verb} not described or not mapped in this hospital schema: {ids}",
+    "not_built": "the package did not build: {says}",
+    "class_d": "the compiled script's class is D, which the policy does not run",
+    "not_run": "the question was not run on the shadow of the hospital schema: {says}",
+    "no_dictionary": "the saved hospital schema holds no copy of the dictionary, so the shadow of the map cannot be built from it",
+}
+
+
+def mapping_supported(schema, assessment, manifest, sql):
+    """Whether this hospital's mapping supports the question, derived from three records and never from a field: the
+    feasibility report with every requirement mapped in the hospital schema, the compiled script's class, and the
+    question compiled through the map giving the same answer on the map's shadow as the question on the role rows
+    directly. A requirement that a person has not yet confirmed is mapped all the same, and is named under
+    awaiting_confirmation, since confirmation and reconciliation are what the levels above this one add. Returns
+    {"level", "reasons", "requirements": {"total", "short", "awaiting_confirmation"}, "execution_class", "shadow"}."""
+    # The shadow brings DuckDB with it, which the import loads only here and never at import.
+    from . import roleshadow
+    reasons = []
+    rows = (assessment or {}).get("states") or []
+    short = [r["id"] for r in rows if feasibility.RANK[r["state"]] < feasibility.RANK[feasibility.PROPOSED]]
+    awaiting = [r["id"] for r in rows if feasibility.RANK[feasibility.PROPOSED] <= feasibility.RANK[r["state"]] < feasibility.RANK[feasibility.CONFIRMED]]
+    if assessment is None:
+        reasons.append(LEVEL_WORDING["no_report"])
+    elif short:
+        reasons.append(LEVEL_WORDING["short"].format(count=len(short), verb="is" if len(short) == 1 else "are", ids=", ".join(short)))
+    execution_class = manifest["execution_class"] if manifest else None
+    if manifest is None:
+        reasons.append(LEVEL_WORDING["not_built"].format(says="see build_failure"))
+    elif execution_class == "D":
+        reasons.append(LEVEL_WORDING["class_d"])
+    shadow = None
+    if not schema.writes:
+        reasons.append(LEVEL_WORDING["no_dictionary"])
+    else:
+        try:
+            shadow = roleshadow.run_question(schema.sitting, sql)
+        except Exception as error:  # noqa: BLE001 - the shadow's own failure is recorded, never raised past the import
+            shadow = {"same": False, "problem": f"{type(error).__name__}: {str(error).splitlines()[0][:200]}"}
+        if not shadow["same"]:
+            reasons.append(LEVEL_WORDING["not_run"].format(says=shadow.get("problem") or "the answers differ"))
+    return {"level": MAPPING_SUPPORTED if not reasons else MAPPING_NOT_SUPPORTED, "reasons": reasons,
+            "requirements": {"total": len(rows), "short": short, "awaiting_confirmation": awaiting},
+            "execution_class": execution_class, "shadow": shadow}
+
+
 def import_question(path, hospital, schema=None, date=None):
     """Imports one question package into a hospital's project. Returns the counts-only result, which is also written
     beside the package as NAME.import-result.json."""
@@ -600,6 +652,12 @@ def import_question(path, hospital, schema=None, date=None):
     except Exception as error:  # noqa: BLE001 - nothing the build meets may reach the status or the workspace
         failure = {"error": type(error).__name__, "says": str(error)}
     built = manifest is not None
+    # Stage 5, at this hospital, from the three records above; it goes to the validation report alone.
+    try:
+        level = mapping_supported(feasibility.Schema.load(schema_path), found, manifest, sql)
+    except Exception as error:  # noqa: BLE001
+        level = {"level": MAPPING_NOT_SUPPORTED, "reasons": [f"{type(error).__name__}: {str(error).splitlines()[0][:200]}"],
+                 "requirements": None, "execution_class": None, "shadow": None}
     states = {}
     for row in (found or {}).get("states", []):
         states[row["state"]] = states.get(row["state"], 0) + 1
@@ -615,6 +673,7 @@ def import_question(path, hospital, schema=None, date=None):
               "feasibility": {"verdict": found["verdict"], "says": found["verdict_text"], "states": states} if found else None,
               "package": "package" if built else None, "build_failure": failure,
               "execution_class": manifest["execution_class"] if manifest else None,
+              "hospital_level": level,
               "returned_to_workspace": result}
     (record / "import-validation.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     _write_result(path, result)

@@ -131,6 +131,11 @@ WORDING = {
     "check_now_breaks": "The hospital schema as it stands has {count}:",
     "placeholders": "The local codes of {kinds} are not chosen yet, so the test on made-up rows gives {them}.",
     "drafts_left_out": "No person has yet answered for {parts}, so the test on made-up rows leaves {parts_them} out until someone does.",
+    # Stage 5 at a hospital: a question compiled through the map on the map's shadow, against the role rows directly.
+    "question_lacks": "The question reads {parts}, which this hospital schema does not describe, so it was not run on the shadow.",
+    "question_map_fails": "The question compiled through this hospital schema did not run on the shadow: {error}",
+    "question_roles_fail": "The question did not run on the role rows directly: {error}",
+    "question_differs": "The question compiled through this hospital schema gives a different answer on the shadow from the question on the role rows directly: {shared} rows the same of {map} through the schema and {roles} directly.",
     "orphans": "In {view}, {count} made-up rows link to an anaesthetic that Anaesthetics does not hold, which can be right where Anaesthetics leaves some anaesthetics out.",
     "contract": "In {view}, {problem}",
     "runs_not": "In {view}, the page could not run this SQL on made-up rows: {error}.",

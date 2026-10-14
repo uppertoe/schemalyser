@@ -166,19 +166,11 @@ class Transform:
 # The comparison.
 
 def comparable(value):
-    if value is None:
-        return None
-    if hasattr(value, "isoformat"):
-        return value.isoformat(sep=" ") if hasattr(value, "hour") else value.isoformat()
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, (int, float)):
-        return round(float(value), 6)
-    return str(value)
+    return equivalence.comparable(value)
 
 
 def _normal(columns, rows):
-    return columns, [[comparable(v) for v in row] for row in rows]
+    return equivalence.normal_answer(columns, rows)
 
 
 def run_case(sql, name, seed=1, register_path=None, final=None, per_grain=None):

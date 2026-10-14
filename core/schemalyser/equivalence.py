@@ -111,6 +111,25 @@ def compare_schemas(hospital, map_a, map_b, questions=()):
     return {"parts": parts, "questions": answers}
 
 
+def comparable(value):
+    """A cell of an answer as it is compared: dates and times as text, booleans as whole numbers, numbers rounded to
+    six places, and everything else as text, so that two engines' types do not make one answer two."""
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat(sep=" ") if hasattr(value, "hour") else value.isoformat()
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return round(float(value), 6)
+    return str(value)
+
+
+def normal_answer(columns, rows):
+    """(columns, rows) with every cell made comparable."""
+    return columns, [[comparable(v) for v in row] for row in rows]
+
+
 def compare_answers(a, b):
     """(columns, rows) of one question answered through two schemas, compared row by row with duplicates kept: an
     answer that gives a row twice where the other gives it once is not the same answer, because the row stands for an

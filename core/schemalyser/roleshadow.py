@@ -1202,6 +1202,12 @@ def _cases(count):
     return _plural(count, "row", "rows")
 
 
+def _parts_read(sql):
+    """The parts of the record that a question over the roles reads, and its common table expressions."""
+    from . import question
+    return question.parts_read(sql)
+
+
 def _error(error):
     """A database's error in plain words, without the name of the kind of error that DuckDB puts first."""
     text = " ".join(str(error).split("\n")[0].split())[:200]
@@ -1224,14 +1230,11 @@ def _contract_problem(error, view, source):
     return _fit(WORDING["contract"].format(view=rolemap.view_title(view, False), problem=rolemap.plain(text)))
 
 
-def run_check(state, seed=SHADOW_SEED, anaesthetics=SHADOW_ANAESTHETICS):
-    """Builds the shadow of the map that state holds and checks it. Returns {"problems": [sentence], "notes":
-    [sentence], "about": {sentence: binding}, "views": number, "seconds": number}. Every sentence names the part of the
-    record in plain words, about gives the binding (role_view rows or role_view.column) that each concerns, and none
-    quotes the dictionary."""
-    began = time.perf_counter()
-    problems, notes = [], []
-    about = {}
+def _shadow_of(state, seed, anaesthetics, problems, notes, about):
+    """Builds the shadow of the map that state holds: the views proposed from its bindings, checked against the
+    dictionary and the database's catalogue, with the parts no person has answered for left out, the made-up rows
+    placed in the shadow's source tables and the database that holds them. Returns (data, views, order, shadow, con,
+    date_columns, drafts), adding to problems, notes and about what the build itself finds."""
     title = lambda name: rolemap.view_title(name, False)  # noqa: E731
     data = copy.deepcopy(state.data)
     kinds = data["kinds"]
@@ -1284,6 +1287,18 @@ def run_check(state, seed=SHADOW_SEED, anaesthetics=SHADOW_ANAESTHETICS):
                     shadow.place(name, decoy, decoy=True, role=role)
     shadow.pair_encounters()
     con, date_columns = shadow.database()
+    return data, views, order, shadow, con, date_columns, drafts
+
+
+def run_check(state, seed=SHADOW_SEED, anaesthetics=SHADOW_ANAESTHETICS):
+    """Builds the shadow of the map that state holds and checks it. Returns {"problems": [sentence], "notes":
+    [sentence], "about": {sentence: binding}, "views": number, "seconds": number}. Every sentence names the part of the
+    record in plain words, about gives the binding (role_view rows or role_view.column) that each concerns, and none
+    quotes the dictionary."""
+    began = time.perf_counter()
+    problems, notes = [], []
+    about = {}
+    data, views, order, shadow, con, date_columns, drafts = _shadow_of(state, seed, anaesthetics, problems, notes, about)
     try:
         return {**_run_views(state, data, views, order, shadow, con, date_columns, problems, notes, about, began),
                 "left_out": drafts}
@@ -1291,6 +1306,50 @@ def run_check(state, seed=SHADOW_SEED, anaesthetics=SHADOW_ANAESTHETICS):
         # The database is in memory and holds every table of the shadow; closing it gives the memory back, which matters
         # in the browser, where a sitting runs many checks.
         con.close()
+
+
+def run_question(state, sql, seed=SHADOW_SEED, anaesthetics=SHADOW_ANAESTHETICS):
+    """Stage 5 at a hospital: the question sql, over the roles, compiled through the map that state holds and run on
+    the shadow of that map, against the same question run directly on the role rows that the shadow's tables should
+    give by the model of its bindings. Returns {"same": whether the two answers agree row for row, "rows_map",
+    "rows_roles", "problem": a sentence where either run failed or a part the question reads is not in the map,
+    "left_out": the parts no person has answered for, "seconds"}. A question that reads a part the map does not
+    supply is not run, and that is the problem."""
+    # The comparison is the equivalence module's, loaded here because it brings the stand-in's engine with it.
+    from . import equivalence
+    began = time.perf_counter()
+    problems, notes = [], []
+    about = {}
+    data, views, order, shadow, con, date_columns, drafts = _shadow_of(state, seed, anaesthetics, problems, notes, about)
+    found = {"same": False, "rows_map": None, "rows_roles": None, "problem": None, "left_out": drafts}
+    try:
+        read, _ = _parts_read(sql)
+        lacking = sorted(p for p in read if p not in views)
+        if lacking:
+            found["problem"] = WORDING["question_lacks"].format(parts=_and([rolemap.view_title(v, False) for v in lacking]))
+            return found
+        try:
+            got_map = duckdb_runner(con, date_columns, {"data": data, "views": views})(sql)
+        except Exception as error:  # noqa: BLE001 - a question that does not run through the map is the finding
+            found["problem"] = WORDING["question_map_fails"].format(error=_error(error))
+            return found
+        extra = {name: shadow.expected(name)[0] for name in views}
+        direct = role_shadow(seed=seed, anaesthetics=0, with_planted=False, extra=extra)
+        try:
+            got_roles = duckdb_runner(direct)(sql)
+        except Exception as error:  # noqa: BLE001
+            found["problem"] = WORDING["question_roles_fail"].format(error=_error(error))
+            return found
+        finally:
+            direct.close()
+        compared = equivalence.compare_answers(equivalence.normal_answer(*got_map), equivalence.normal_answer(*got_roles))
+        found.update(same=compared["same"], rows_map=compared["rows_a"], rows_roles=compared["rows_b"])
+        if not compared["same"]:
+            found["problem"] = WORDING["question_differs"].format(shared=compared["rows_shared"], map=compared["rows_a"], roles=compared["rows_b"])
+        return found
+    finally:
+        con.close()
+        found["seconds"] = round(time.perf_counter() - began, 1)
 
 
 def _run_views(state, data, views, order, shadow, con, date_columns, problems, notes, about, began):

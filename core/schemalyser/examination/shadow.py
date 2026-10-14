@@ -59,5 +59,4 @@ def run(path, admit=None, seeds=SEEDS):
 
 
 def _normal(columns, rows):
-    from .planted import comparable
-    return columns, [[comparable(v) for v in row] for row in rows]
+    return equivalence.normal_answer(columns, rows)
