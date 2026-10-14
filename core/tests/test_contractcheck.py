@@ -103,10 +103,20 @@ def test_the_contract_has_no_required_flag_and_admission_decides_each_gate():
     import pytest
     with pytest.raises(ValueError):
         model_reader.admission("role_patient", "publishing", model)
-    # The compiler reaches exactly the parts the contract admits for compilation.
+    # The compiler reaches every part the contract admits for compilation by the column the contract's links name,
+    # and holds no table of its own.
     from schemalyser import compiler
-    admitted = {v["name"] for v in model["views"] if model_reader.admission(v["name"], "compile", model) == model_reader.ADMITTED}
-    assert admitted == set(compiler.REACHED)
+    assert not hasattr(compiler, "REACHED")
+    fresh = shipped()
+    for v in fresh["views"]:
+        if model_reader.admission(v["name"], "compile", fresh) != model_reader.REFUSED:
+            assert compiler.reachable(v["name"]) == (model_reader.reach(v["name"], fresh) is not None), v["name"]
+    assert model_reader.reach("role_reading", model) == ("anaesthetic_key", "anaesthetic_key")
+    assert model_reader.reach("role_patient", model) == ("patient_key", "patient_key")
+    assert model_reader.reach("role_stay", model) == ("patient_key", "patient_key")
+    assert model_reader.reach("role_fluid", model) == ("anaesthetic_key", "anaesthetic_key")
+    assert model_reader.reach("role_transfer", model) is None and model_reader.reach("role_nothing", model) is None
+    assert compiler.reachable("role_fluid") and not compiler.reachable("role_transfer") and not compiler.reachable("role_lab")
 
 
 def test_the_shipped_contract_is_at_the_versions_its_lock_file_holds():

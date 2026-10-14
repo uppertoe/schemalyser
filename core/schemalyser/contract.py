@@ -152,6 +152,30 @@ def public_views():
     return found
 
 
+# The columns of #cohort by which part 2 of a compiled script reaches a part, in the order a link is preferred: a part
+# linked to the anaesthetic is reached by the anaesthetic's key, and a part linked only to the patient by the patient's.
+COHORT_LINKS = (("role_anaesthetic", "anaesthetic_key"), ("role_patient", "patient_key"))
+
+
+def reach(view, model=None):
+    """By which column a part is reached from #cohort in a compiled script, as (the part's column, the column of
+    #cohort), derived from the contract's links: the anaesthetic and the patient by their own keys, any other part by
+    its link to the anaesthetic, else by its link to the patient; None for a part the contract links to neither, such
+    as one reached only through a stay."""
+    model = model or contract()
+    held = next((v for v in model["views"] if v["name"] == view), None)
+    if held is None:
+        return None
+    for target, key in COHORT_LINKS:
+        if view == target:
+            return key, key
+    for target, key in COHORT_LINKS:
+        for link in held.get("links") or []:
+            if link.get("to") == f"{target}.{key}":
+                return link["column"], key
+    return None
+
+
 def contract_column_types(model=None):
     """{view: {column: type}} over every part and mapping view."""
     model = model or contract()

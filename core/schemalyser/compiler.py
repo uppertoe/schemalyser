@@ -23,11 +23,8 @@ from .blanking import blanking, count_columns
 CAP = policy.CAP
 # The views of the record from which part 1 may choose the cohort: the small tables of patients and anaesthetics.
 COHORT_PARTS = ("role_anaesthetic", "role_patient")
-# How each part of the record is reached from #cohort in part 2: (the column that links it, the column of #cohort).
-# Whether a part may be compiled at all is the contract's decision, asked of contract.admission; this table says only
-# by which column an admitted part is reached, and a test holds the two to the same parts.
-REACHED = {"role_reading": ("anaesthetic_key", "anaesthetic_key"), "role_anaesthetic": ("anaesthetic_key", "anaesthetic_key"),
-           "role_patient": ("patient_key", "patient_key")}
+# How a part of the record is reached from #cohort in part 2 is the contract's: contract.reach gives (the column that
+# links it, the column of #cohort) from the part's links, and contract.admission says whether it may be compiled at all.
 # The one column of #cohort that is unique, by its primary key. A part reached through any other column of #cohort, such
 # as a part at the patient's grain, is reached from that column's distinct values, because a child with several
 # anaesthetics in the cohort appears in #cohort once for each, and a join through the part would otherwise multiply.
@@ -238,17 +235,17 @@ def _period(start, end):
 def reachable(view):
     """Whether part 2 may reach a part from #cohort: the contract admits it for compilation, outright or with a
     ceiling, and this module knows the column by which it is reached."""
-    return contract.admission(view, "compile") in (contract.ADMITTED, contract.CEILING) and view in REACHED
+    return contract.admission(view, "compile") in (contract.ADMITTED, contract.CEILING) and contract.reach(view) is not None
 
 
 def _reached_cte(schema, view, cohort_columns):
-    link, cohort_column = REACHED[view]
+    link, cohort_column = contract.reach(view)
     if cohort_column not in cohort_columns:
         raise AuditError(WORDING["no_link"].format(part=rolemap.view_title(view, False), column=cohort_column))
     role = schema.sitting.data["roles"].get(view) or {}
     if not ((role.get("columns") or {}).get(link) or {}).get("binding"):
         raise AuditError(WORDING["unreached"].format(part=rolemap.view_title(view, False)))
-    columns = [c for c in rolemap.views()[view] if c != link]
+    columns = [c for c in rolemap.all_views()[view] if c != link]
     lines, expressions, order, where = schema.sitting._reached(view, link, cohort_column, columns)
     if cohort_column != COHORT_KEY:
         assert lines[0] == "FROM   #cohort AS c"
@@ -274,7 +271,7 @@ def _coverage(schema, views, cohort_columns, is_large):
     large table and so cannot be measured before the rows are read])."""
     ctes, joins, counts, tables, unmeasured = [], [], ["COUNT(*) AS cohort_anaesthetics"], [], []
     for n, view in enumerate(views, 1):
-        link, cohort_column = REACHED[view]
+        link, cohort_column = contract.reach(view)
         if cohort_column not in cohort_columns:
             continue
         lines, _, order, _ = schema.sitting._reached(view, link, cohort_column, [])

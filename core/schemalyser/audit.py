@@ -64,12 +64,12 @@ from pathlib import Path
 import sqlglot
 from sqlglot import exp
 
-from . import describe, evidence, feasibility, policy, question, rolemap, rolepolicy, roleshadow
+from . import contract, describe, evidence, feasibility, policy, question, rolemap, rolepolicy, roleshadow
 from .manifests import (APPROVAL_SAYS, APPROVAL_STATES, APPROVE, NOT_APPROVED, NOT_RECORDED, TOOL,  # noqa: F401 - read by plan.py and the tests
                         approval as _approval, contract_record as _contract_record, file_hashes as _file_hashes,
                         policy_version, sha256, tool_version)
 # The compilation of the audit is layer 3's (compiler.py), and the package reads it by the same names as before.
-from .compiler import (COHORT_PARTS, DROP, REACHED, SERIES_MARKERS, SESSION, AuditError, _cohort_cte,  # noqa: F401
+from .compiler import (COHORT_PARTS, DROP, SERIES_MARKERS, SESSION, AuditError, _cohort_cte,  # noqa: F401
                        _period, check_audit, compile_audit, schema_tables, script, specification)
 
 CAP = policy.CAP
@@ -724,7 +724,8 @@ def public_form(sql):
         view = table.name.lower()
         if id(table) in inside or view not in rolemap.all_views():
             continue
-        if view not in REACHED or REACHED[view][1] not in carried:
+        reach = contract.reach(view)
+        if reach is None or reach[1] not in carried:
             broken.append("reached")
             break
     final = tree if isinstance(tree, exp.Select) else None

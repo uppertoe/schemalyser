@@ -797,3 +797,16 @@ def test_the_build_runs_the_role_policy_and_keeps_its_report_in_the_manifest(sav
     with pytest.raises(audit.AuditError, match="breaks the role-level policy.*functions"):
         audit.build(saved, query, tmp_path / "out", ("2024-01-01", "2024-12-31"), date=DATE)
     assert not (tmp_path / "out" / "query.sql").exists()
+
+
+def test_an_audit_over_a_rehearsed_part_linked_to_the_anaesthetic_compiles_on_the_invented_hospital(saved, tmp_path):
+    query = tmp_path / "drugs.sql"
+    query.write_text("-- How many anaesthetics of 2024 had a drug charted, and how many drug events were charted?\n"
+                     "WITH chosen AS (SELECT a.anaesthetic_key FROM role_anaesthetic a JOIN role_patient p ON p.patient_key = a.patient_key WHERE p.is_test = 0)\n"
+                     "SELECT COUNT(DISTINCT d.anaesthetic_key) AS anaesthetics_with_a_drug, COUNT(d.drug_event_key) AS drug_events "
+                     "FROM chosen c LEFT JOIN role_drug d ON d.anaesthetic_key = c.anaesthetic_key", encoding="utf-8")
+    manifest = audit.build(saved, query, tmp_path / "drugs", ("2024-01-01", "2024-12-31"), date=DATE)
+    assert manifest["role_policy"]["admission"] == {"ceiling": ["role_drug"], "drafts": []}
+    script = (tmp_path / "drugs" / "query.sql").read_text(encoding="utf-8")
+    assert "role_drug AS (" in script and "#cohort" in script
+    assert manifest["execution_class"] in ("B", "C")
