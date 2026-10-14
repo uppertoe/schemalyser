@@ -783,7 +783,7 @@ def test_the_saved_schema_names_the_state_each_part_has_reached_and_never_calls_
         part = readiness["parts"][view]
         assert part["status"] == "contract" and part["runs"] == DATE and part["checked against the database"] is None
     assert all(part["clinically validated"] is None for part in readiness["parts"].values())
-    assert {p["status"] for v, p in readiness["parts"].items() if v not in rolemap.views()} == {"draft"}
+    assert {p["status"] for v, p in readiness["parts"].items() if v not in rolemap.views()} == {"draft", "rehearsed"}
     tested = s.dimensions["bindings"]["role_patient.birth_date"]["tested"]
     assert tested["entry"] == runs[0]["id"] and tested["run"] == runs[0]["payload"]["run"] and tested["outcome"] == "passed"
     # Counts from a training database check nothing.

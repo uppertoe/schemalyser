@@ -180,11 +180,12 @@ def kinds():
 
 def admission(part, purpose, model=None):
     """What a gate may do with a part for a purpose: ADMITTED, CEILING or REFUSED. Every part may be described. A
-    part at contract status is admitted for every purpose. A rehearsed part, one that runs through a naive schema on
-    the stand-in and agrees with a hand-written reference, is admitted with a ceiling for a question, its compilation
-    and a conversion: the package it serves cannot claim more than the examination on made-up rows gives, until the
-    contract's dated amendment for that part says otherwise. A draft is refused for everything but description. A
-    mapping view is admitted for every purpose, as a contract part is."""
+    part at contract status is admitted for every purpose. A rehearsed part, one that ran through a naive schema on
+    the stand-in and was identical to a hand-written reference, is admitted with a ceiling for a question, its
+    compilation and a conversion, as the contract's amendment of 14 October 2026 has it: a package over it may reach
+    mapping supported and run on production, and it reaches production validated only through a reconciliation that
+    covers each rehearsed part by name. A draft is refused for everything but description. A mapping view is admitted
+    for every purpose, as a contract part is."""
     if purpose not in PURPOSES:
         raise ValueError(f"{purpose} is not a purpose a gate has")
     model = model or contract()

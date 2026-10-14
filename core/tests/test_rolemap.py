@@ -108,14 +108,17 @@ def test_the_contract_is_version_one_and_marks_its_further_views_as_drafts():
     assert model["version"] == "1.1"
     statuses = rolemap.statuses()
     assert {name for name, status in statuses.items() if status == "contract"} == set(rolemap.views())
-    assert len([s for s in statuses.values() if s == "draft"]) == 15 and set(statuses.values()) == {"contract", "draft"}
+    # Five of the fifteen further views are rehearsed on the stand-in's evidence; the other ten stay drafts.
+    assert len([s for s in statuses.values() if s == "draft"]) == 10 and len([s for s in statuses.values() if s == "rehearsed"]) == 5
+    assert set(statuses.values()) == {"contract", "rehearsed", "draft"}
     # A reading is identified by its own key, because two readings may share their anaesthetic, kind and time, and it
     # still belongs in the view only through its anaesthetic.
     reading = next(v for v in model["views"] if v["name"] == "role_reading")
     assert reading["key"] == ["reading_key"] and rolemap.anchors(reading) == {"anaesthetic_key"}
     assert "daylight saving" in model["rules"][1] and "value_text" in model["rules"][7]
     roles = (rolemap.MODEL / "roles.md").read_text()
-    assert "## How each role relates to OMOP" in roles and roles.count("draft, not yet used by any audit") == 15
+    assert "## How each role relates to OMOP" in roles
+    assert roles.count("draft, not yet used by any audit") == 10 and roles.count("This view is rehearsed:") == 5
 
 
 def test_the_count_of_empty_values_gives_each_reason_apart():

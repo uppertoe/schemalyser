@@ -39,7 +39,7 @@
   {
    "name": "role_fluid",
    "version": 1,
-   "admission": "refused"
+   "admission": "admitted with a ceiling"
   },
   {
    "name": "role_patient",

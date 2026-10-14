@@ -138,6 +138,7 @@ WORDING = {
     "map_shape": "{where}: {problem}.",
     "sentence": "{where}: {field} is one sentence of at most 400 characters, on one line, that ends with a full stop and holds no question mark, exclamation mark or $(.",
     "audit_reads": "{where}: an audit reads only the role views and its own common table expressions, and not {table}.",
+    "audit_draft": "{where}: {table} is a draft, which nothing compiles until it is rehearsed or joins the contract; a rehearsal reads it with admit=\"draft\".",
     "audit_select": "{where}: an audit is one SELECT ({reason}).",
     # The compiled query.
     "compiled": "-- Schemalyser compiled this query from the audit above and the map of {world}. Each role view is one SELECT from the map, read WITH (NOLOCK), which takes no row locks but holds a schema lock while it runs, so the query should not run during the nightly load.",

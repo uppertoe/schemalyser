@@ -638,13 +638,18 @@ def check_roles_step(sql, where="step"):
         tree = _single_select(sql, where)
     except Refused as error:
         raise RolesStepError(str(error)) from None
+    from . import contract
     named = {cte.alias.lower() for cte in tree.find_all(exp.CTE)}
     public = set(rolemap.public_views())
     for table in tree.find_all(exp.Table):
         if (table.db or "").upper() == OMOP_SCHEMA.upper() and not table.catalog:
             continue
-        if table.db or table.catalog or table.name.lower() not in public | named:
+        name = table.name.lower()
+        if table.db or table.catalog or name not in public | named:
             raise RolesStepError(f"{where}: a step over the roles reads only the role views, the mapping views and the OMOP "
                                  f"tables, and not {table.sql(dialect='tsql')}")
+        if name not in named and contract.admission(name, "conversion") == contract.REFUSED:
+            raise RolesStepError(f"{where}: a step over the roles reads only the parts the contract admits for a conversion, "
+                                 f"and {name} is a draft that no step reads until it is rehearsed or joins the contract")
     return tree
 

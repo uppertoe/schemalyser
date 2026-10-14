@@ -6,7 +6,7 @@ This page describes what an anaesthetic record holds, written without reference 
 
 ## The version 1 contract, and the drafts
 
-Version 1 of the contract is the three views that the audits read: `role_patient`, `role_anaesthetic` and `role_reading`. Every map supplies them, and an audit may rely on their columns and their rules; a change to any of their columns is a new major version of the contract. The fifteen further views are drafts, not yet used by any audit. A map may supply them, and the owner may still change their columns, so no audit should read one until it joins the contract. In `contract.json`, each view carries the status `contract` or `draft`, and each further view below is marked as a draft under its heading.
+Version 1 of the contract is the three views that the audits read: `role_patient`, `role_anaesthetic` and `role_reading`. Every map supplies them, and an audit may rely on their columns and their rules; a change to any of their columns is a new major version of the contract. The fifteen further views are drafts, not yet used by any audit. A map may supply them, and the owner may still change their columns, so no audit should read one until it joins the contract. In `contract.json`, each view carries the status `contract`, `rehearsed` or `draft`, and each further view below is marked under its heading. A rehearsed view ran through a naive schema on a realistic stand-in and was identical, every row, to a hand-written reference, and its entry carries that evidence; a question over it is admitted with a ceiling, under which its package may reach mapping supported and run on production, and reaches production validated only through a reconciliation that covers the view by name (14 October 2026).
 
 Version 1.1 adds to version 1 without changing it. The three contract views keep their columns. Beside them it adds the mapping views, the vocabulary of source kinds and the capability catalogue, and it reshapes the drafts: each part that records events has a key of its own for each row, carries its source kind, its time of documentation and the row it amends, and carries a stay where its source has no anaesthetic; the drafts that held a hospital's own code now hold a mapping view's local key; the periods in a unit became the transfers as charted; and the technique became a part of its own. The kinds of readings grew in 1.1 as well, which is additive: every earlier kind keeps its meaning.
 
@@ -272,7 +272,7 @@ This view holds one row for each patient whose record holds any of these details
 
 ### role_stay: one row for each hospital stay
 
-This view is a draft, not yet used by any audit.
+This view is rehearsed: on 14 October 2026 it ran through a naive schema on the realistic stand-in and was identical to a hand-written reference, every one of its 237 rows. A question over it is admitted with a ceiling until a hospital's reconciliation covers it.
 
 This view holds one row for each hospital stay, from admission to discharge, day stays included. The hospital usually holds it in its table of hospital encounters or admissions. It links to `role_patient` by `patient_key`, and `role_anaesthetic_detail`, `role_transfer`, `role_lab`, `role_diagnosis` and every part that records events link to it by `stay_key`.
 
@@ -286,7 +286,7 @@ This view holds one row for each hospital stay, from admission to discharge, day
 
 ### role_anaesthetic_detail: the anaesthetic's covariates
 
-This view is a draft, not yet used by any audit.
+This view is rehearsed: on 14 October 2026 it ran through a naive schema on the realistic stand-in and was identical to a hand-written reference, every one of its 237 rows. A question over it is admitted with a ceiling until a hospital's reconciliation covers it.
 
 This view holds one row for each anaesthetic whose record holds any of these details. The hospital holds them partly in the anaesthetic record and partly in the theatre case or surgical log, with the pre-anaesthetic assessment for the grade, the weight and the height. It links to `role_anaesthetic` by `anaesthetic_key` and to `role_stay` by `stay_key`.
 
@@ -306,7 +306,7 @@ The columns `height_cm` and `location` were added to this view on 7 October 2026
 
 ### role_operation: one row for each procedure done under an anaesthetic
 
-This view is a draft, not yet used by any audit.
+This view is rehearsed: on 14 October 2026 it ran through a naive schema on the realistic stand-in and was identical to a hand-written reference, every one of its 200 rows. A question over it is admitted with a ceiling until a hospital's reconciliation covers it.
 
 This view holds one row for each procedure done under an anaesthetic, so that an anaesthetic for several procedures has several rows, and a procedure charted twice has two. The hospital usually holds the procedures of a theatre case or surgical log, with a lookup table of the procedures that it offers. It links to `role_anaesthetic` by `anaesthetic_key`; at many hospitals that link runs from the anaesthetic record to its theatre case, so the map must take care that a case with two anaesthetics does not repeat its procedures.
 
@@ -362,7 +362,7 @@ Like every part that records events, it has a key of its own for each row, so th
 
 ### role_drug: one row for each drug event
 
-This view is a draft, not yet used by any audit.
+This view is rehearsed: on 14 October 2026 it ran through a naive schema on the realistic stand-in and was identical to a hand-written reference, every one of its 206 rows. A question over it is admitted with a ceiling until a hospital's reconciliation covers it.
 
 This view holds one row for each order of a drug, each dose given during an anaesthetic, and each start, change of rate, pause, restart and stop of an infusion, as the source records them. The hospital usually holds them as administrations in its medication record, linked to their orders, and sometimes as drug values charted on the anaesthetic record. It links to `role_anaesthetic` by `anaesthetic_key` and to `role_stay` by `stay_key`.
 
@@ -412,7 +412,7 @@ Like every part that records events, it has a key of its own for each row, a `so
 
 ### role_fluid: one row for each fluid or blood product given or lost
 
-This view is a draft, not yet used by any audit.
+This view is rehearsed: on 14 October 2026 it ran through a naive schema on the realistic stand-in and was identical to a hand-written reference, every one of its 699 rows. A question over it is admitted with a ceiling until a hospital's reconciliation covers it.
 
 This view holds one row for each volume of fluid or blood product given during an anaesthetic, and for each volume of blood or urine lost, as the source charts it. The hospital usually charts intake and output on the anaesthetic record as measurements, with one row for each kind of fluid, and records blood products in its transfusion record as well. It links to `role_anaesthetic` by `anaesthetic_key` and to `role_stay` by `stay_key`.
 

@@ -69,7 +69,7 @@ def test_a_part_needs_a_name_a_status_a_key_and_words_to_look_for():
                            "one_row_per": "case", "holds": "The booking.", "look_for": [], "key": ["case_key"], "links": [],
                            "columns": [{"name": "case_key", "title": "the case", "type": "key", "meaning": "The case.", "holds": "The booking.", "look_for": ["id"]}]})
     found = broken(add)
-    assert "The part role_case has a status that is not one of contract, draft." in found
+    assert "The part role_case has a status that is not one of contract, rehearsed, draft." in found
     assert "The part role_case gives no words to look for, so no proposer can find it." in found
     assert "The column case_key of role_case looks for id, which alone would match half of any dictionary." in found
 
@@ -93,11 +93,12 @@ def test_the_contract_has_no_required_flag_and_admission_decides_each_gate():
     assert found == ["The part role_patient carries required, which the contract no longer uses: its status says what every gate may do with it."]
     for purpose in model_reader.PURPOSES:
         assert model_reader.admission("role_patient", purpose, model) == model_reader.ADMITTED
-    assert model_reader.admission("role_fluid", "describe", model) == model_reader.ADMITTED
+    assert model_reader.admission("role_lab", "describe", model) == model_reader.ADMITTED
     for purpose in ("question", "compile", "conversion"):
-        assert model_reader.admission("role_fluid", purpose, model) == model_reader.REFUSED
-    view(model, "role_fluid")["status"] = "rehearsed"
-    assert model_reader.admission("role_fluid", "question", model) == model_reader.CEILING
+        assert model_reader.admission("role_lab", purpose, model) == model_reader.REFUSED
+        assert model_reader.admission("role_fluid", purpose, model) == model_reader.CEILING
+    view(model, "role_lab")["status"] = "rehearsed"
+    assert model_reader.admission("role_lab", "question", model) == model_reader.CEILING
     assert model_reader.admission("role_nothing", "question", model) == model_reader.REFUSED
     import pytest
     with pytest.raises(ValueError):
@@ -127,7 +128,7 @@ def test_a_part_s_words_leave_its_hash_alone_and_a_changed_definition_needs_a_ra
     patient["columns"][1]["look_for"].append("born on")
     patient["columns"][1]["needed_by"] = []
     patient["columns"][1]["avoid"] = ["death"]
-    view(worded, "role_fluid")["status"] = "contract"
+    view(worded, "role_lab")["status"] = "contract"
     worded["vocabularies"]["technique"][0]["meaning"] = "Reworded."
     assert rolemap.part_hashes(worded) == before
     assert contractcheck.check_contract(worded, lock=lock) == []
@@ -191,3 +192,26 @@ def test_the_command_writes_the_lock_file_and_never_hides_a_change_without_a_rai
     assert "is written from the contract" in out and "Every part is at the version the lock file holds" in out
     assert json.loads(lock.read_text())["parts"]["role_patient"]["version"] == 2
     assert contractcheck.main([str(contract), "--lock", str(lock)]) == 0
+
+
+def test_a_rehearsed_part_carries_the_evidence_of_its_rehearsal_and_a_draft_carries_none():
+    model = shipped()
+    rehearsed = sorted(v["name"] for v in model["views"] if v["status"] == "rehearsed")
+    assert rehearsed == ["role_anaesthetic_detail", "role_drug", "role_fluid", "role_operation", "role_stay"]
+    for name in rehearsed:
+        held = view(model, name)["evidence"]
+        assert set(held) == set(contractcheck.EVIDENCE) and held["identical"] is True and held["rows"] >= 1
+        assert held["stand_in"] == "the realistic stand-in" and held["date"] == "2026-10-14"
+    assert all("evidence" not in v for v in model["views"] if v["status"] != "rehearsed")
+    found = broken(lambda m: view(m, "role_fluid").pop("evidence"))
+    assert found == ["The part role_fluid is rehearsed and carries no evidence: the stand-in, the date, the rows compared, that they were identical, and the commit that recorded it."]
+    found = broken(lambda m: view(m, "role_fluid")["evidence"].pop("rows"))
+    assert found == ["The part role_fluid is rehearsed and its evidence gives no rows."]
+    found = broken(lambda m: view(m, "role_fluid")["evidence"].update({"identical": False}))
+    assert found == ["The part role_fluid is rehearsed, and its evidence does not say that every row was identical; a part that differed is a draft."]
+    found = broken(lambda m: view(m, "role_fluid")["evidence"].update({"stand_in": "QUARTERMAINE_DB"}))
+    assert len(found) == 1 and "looks like a hospital's table" in found[0]
+    found = broken(lambda m: view(m, "role_lab").update({"evidence": dict(view(m, "role_fluid")["evidence"])}))
+    assert found == ["The part role_lab carries evidence of a rehearsal, and its status is not rehearsed."]
+    # The status is not part of a part's definition, so the promotion raised no version.
+    assert contractcheck.check_contract(model, roles_text(), model_reader.read_lock()) == []

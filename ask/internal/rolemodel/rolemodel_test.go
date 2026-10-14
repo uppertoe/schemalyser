@@ -60,7 +60,7 @@ func TestTheContractRendersEveryPartAndVocabularyAndGivesEachPartItsVersionAndAd
 	if c.View("role_patient").Version < 1 || c.MappingView("map_drug_concept") == nil || c.MappingView("map_drug_concept").Version < 1 {
 		t.Fatal("a part or a mapping view has no version")
 	}
-	for name, want := range map[string]string{"role_patient": Admitted, "role_fluid": Refused, "map_drug_concept": Admitted, "role_nothing": Refused} {
+	for name, want := range map[string]string{"role_patient": Admitted, "role_fluid": Ceiling, "role_lab": Refused, "map_drug_concept": Admitted, "role_nothing": Refused} {
 		if got := c.Admission(name); got != want {
 			t.Errorf("%s: admission %q, wanted %q", name, got, want)
 		}

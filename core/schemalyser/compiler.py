@@ -78,13 +78,18 @@ def _and(items):
 
 # Compiling a query over the roles through a map, as one statement.
 
-def check_audit(sql, where="audit"):
-    """Raises MapError unless sql is one SELECT that reads only the role views and its own common table expressions."""
+def check_audit(sql, where="audit", admit=None):
+    """Raises MapError unless sql is one SELECT that reads only the role views the contract admits for compilation,
+    the mapping views and its own common table expressions. With admit="draft", as a rehearsal asks, a draft part is
+    read as well."""
     tree = rolemap._single_select(sql, where)
     named = {cte.alias.lower() for cte in tree.find_all(exp.CTE)}
     for table in tree.find_all(exp.Table):
-        if table.db or table.catalog or table.name.lower() not in set(rolemap.public_views()) | named:
+        name = table.name.lower()
+        if table.db or table.catalog or name not in set(rolemap.public_views()) | named:
             raise rolemap.MapError(rolemap.WORDING["audit_reads"].format(where=where, table=table.sql(dialect="tsql")))
+        if name not in named and contract.admission(name, "compile") == contract.REFUSED and admit != "draft":
+            raise rolemap.MapError(rolemap.WORDING["audit_draft"].format(where=where, table=name))
     return tree
 
 
@@ -137,13 +142,14 @@ def _blanked_query(body, tree):
     return body[:at].rstrip() + ",\nresult AS (\n" + indented + "\n)\n" + rolemap.WORDING["blank"] + "\n" + outer
 
 
-def compile_query(sql, roles_map, blank=False, nolock=True):
+def compile_query(sql, roles_map, blank=False, nolock=True, admit=None):
     """One T-SQL statement: the role views of a map as common table expressions, then a query over the role views.
 
     sql is an audit or a count, one SELECT that reads only the role views. With blank, the final SELECT leaves blank
     any count from 1 to 4, as the project's generated queries do. The audit's own header comment is kept at the top.
+    admit="draft" lets a rehearsal read a draft part, which no package does.
     """
-    tree = check_audit(sql)
+    tree = check_audit(sql, admit=admit)
     header, body = _header(sql)
     if blank:
         body = _blanked_query(body, tree)
@@ -230,9 +236,9 @@ def _period(start, end):
 
 
 def reachable(view):
-    """Whether part 2 may reach a part from #cohort: the contract admits it for compilation, and this module knows the
-    column by which it is reached."""
-    return contract.admission(view, "compile") == contract.ADMITTED and view in REACHED
+    """Whether part 2 may reach a part from #cohort: the contract admits it for compilation, outright or with a
+    ceiling, and this module knows the column by which it is reached."""
+    return contract.admission(view, "compile") in (contract.ADMITTED, contract.CEILING) and view in REACHED
 
 
 def _reached_cte(schema, view, cohort_columns):
@@ -290,13 +296,13 @@ def _coverage(schema, views, cohort_columns, is_large):
     return text, list(dict.fromkeys(tables)), unmeasured
 
 
-def compile_audit(schema, audit_sql, start, end, blank=True, final=None, large=policy.LARGE):
+def compile_audit(schema, audit_sql, start, end, blank=True, final=None, large=policy.LARGE, admit=None):
     """The audit as a two-part script over the hospital's tables, arranged as the series that the policy requires: a
     count of the cohort over the period, the coverage of each link from #cohort, then the rows. final, when given,
     replaces the audit's final SELECT (for a rehearsal that reads one of its steps). Returns {"count", "part1",
     "coverage", "part2", "cohort_tables", "coverage_tables", "unmeasured", "part2_tables", "cohort_columns",
     "cohort_conditions", "counts", "columns"}."""
-    tree = check_audit(audit_sql).copy()
+    tree = check_audit(audit_sql, admit=admit).copy()
     # The counts are read from the audit as written, because part 2 reads the cohort's columns from #cohort, through
     # which the rule for what is a count cannot see.
     counts = count_columns(tree) if final is None else []

@@ -420,7 +420,15 @@
     "visit_occurrence"
    ],
    "title": "Hospital stays",
-   "status": "draft",
+   "status": "rehearsed",
+   "evidence": {
+    "stand_in": "the realistic stand-in",
+    "date": "2026-10-14",
+    "rows": 237,
+    "identical": true,
+    "recorded_in": "4e31d5a",
+    "says": "The part ran through a naive schema on the realistic stand-in and was identical, every row, to a hand-written reference map; the count is of the rows compared."
+   },
    "version": 1,
    "description": "One row for each hospital stay, from admission to discharge, day stays included, for the length of stay and for readmission.",
    "one_row_per": "hospital stay",
@@ -514,7 +522,15 @@
     "procedure_occurrence"
    ],
    "title": "The anaesthetic's details",
-   "status": "draft",
+   "status": "rehearsed",
+   "evidence": {
+    "stand_in": "the realistic stand-in",
+    "date": "2026-10-14",
+    "rows": 237,
+    "identical": true,
+    "recorded_in": "4e31d5a",
+    "says": "The part ran through a naive schema on the realistic stand-in and was identical, every row, to a hand-written reference map; the count is of the rows compared."
+   },
    "version": 1,
    "description": "One row for each anaesthetic whose record holds any of these details, for the covariates and outcomes of an audit.",
    "one_row_per": "anaesthetic",
@@ -676,7 +692,15 @@
     "procedure_occurrence"
    ],
    "title": "Procedures done under an anaesthetic",
-   "status": "draft",
+   "status": "rehearsed",
+   "evidence": {
+    "stand_in": "the realistic stand-in",
+    "date": "2026-10-14",
+    "rows": 200,
+    "identical": true,
+    "recorded_in": "4e31d5a",
+    "says": "The part ran through a naive schema on the realistic stand-in and was identical, every row, to a hand-written reference map; the count is of the rows compared."
+   },
    "version": 1,
    "description": "One row for each procedure done under an anaesthetic, so that an anaesthetic for several procedures has several rows, with the procedure as the local key of map_procedure_concept.",
    "one_row_per": "procedure done under an anaesthetic",
@@ -1063,7 +1087,15 @@
     "drug_exposure"
    ],
    "title": "Drugs given",
-   "status": "draft",
+   "status": "rehearsed",
+   "evidence": {
+    "stand_in": "the realistic stand-in",
+    "date": "2026-10-14",
+    "rows": 206,
+    "identical": true,
+    "recorded_in": "4e31d5a",
+    "says": "The part ran through a naive schema on the realistic stand-in and was identical, every row, to a hand-written reference map; the count is of the rows compared."
+   },
    "version": 1,
    "description": "One row for each dose given during an anaesthetic, and for each start, change of rate, pause, restart and stop of an infusion, as the source records it, with the drug as the local key of map_drug_concept.",
    "one_row_per": "dose or infusion action",
@@ -1473,7 +1505,15 @@
     "observation"
    ],
    "title": "Fluids and blood products",
-   "status": "draft",
+   "status": "rehearsed",
+   "evidence": {
+    "stand_in": "the realistic stand-in",
+    "date": "2026-10-14",
+    "rows": 699,
+    "identical": true,
+    "recorded_in": "4e31d5a",
+    "says": "The part ran through a naive schema on the realistic stand-in and was identical, every row, to a hand-written reference map; the count is of the rows compared."
+   },
    "version": 1,
    "description": "One row for each volume of fluid or blood product given during an anaesthetic, and for each volume of blood or urine lost, as the source charts it, whether as an amount or as a running total.",
    "one_row_per": "fluid given or lost",

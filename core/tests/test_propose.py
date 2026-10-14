@@ -158,7 +158,10 @@ def test_a_map_may_supply_further_views_and_an_audit_may_read_them(drafted):
     consultant = "SELECT a.anaesthetic_key, MAX(CASE WHEN s.role = 'anaesthetist' AND s.grade = 'consultant' THEN 1 ELSE 0 END) " \
                  "AS consultant_present FROM role_anaesthetic a LEFT JOIN role_staff s ON s.anaesthetic_key = a.anaesthetic_key " \
                  "GROUP BY a.anaesthetic_key"
-    assert "role_staff AS (" in compiler.compile_query(consultant, hand)
+    # The staff part is a draft, which the compiler reads only as a rehearsal does.
+    assert "role_staff AS (" in compiler.compile_query(consultant, hand, admit="draft")
+    with pytest.raises(rolemap.MapError, match="role_staff is a draft"):
+        compiler.compile_query(consultant, hand)
     with pytest.raises(rolemap.MapError, match="role_fluid, which the map does not supply"):
         compiler.compile_query("SELECT f.anaesthetic_key FROM role_fluid f WHERE f.kind = 'red_cells'", hand)
 

@@ -70,3 +70,39 @@ def test_the_report_records_the_dialect_s_version():
     found = rolepolicy.check("SELECT COUNT(*) AS n FROM role_patient p")
     assert found["dialect_version"] == rolepolicy.DIALECT_VERSION == 1
     assert "dialect" in rolepolicy.RULES and any(r["id"] == "dialect" for r in found["rules"])
+
+
+TRANSFUSION = ("WITH neonatal AS (SELECT a.anaesthetic_key FROM role_anaesthetic a JOIN role_patient p ON p.patient_key = a.patient_key "
+               "WHERE p.is_test = 0 AND DATEDIFF(day, p.birth_date, a.start_time) < 28)\n"
+               "SELECT COUNT(*) AS anaesthetics, SUM(f.volume_ml) AS red_cells_ml FROM neonatal n "
+               "JOIN role_fluid f ON f.anaesthetic_key = n.anaesthetic_key WHERE f.kind = 'red_cells'")
+
+
+def test_a_rehearsed_part_is_admitted_with_its_ceiling_in_the_report_and_a_draft_only_for_the_examiner():
+    found = rolepolicy.check(TRANSFUSION)
+    assert found["failed"] == [] and found["admission"] == {"ceiling": ["role_fluid"], "drafts": []}
+    over_draft = "SELECT COUNT(*) AS n FROM role_lab l WHERE l.kind = 'haemoglobin'"
+    refused = rolepolicy.check(over_draft)
+    assert refused["failed"] == ["tables"] and "role_lab is a draft" in next(r for r in refused["rules"] if r["id"] == "tables")["fragments"][0]
+    admitted = rolepolicy.check(over_draft, admit="draft")
+    assert admitted["failed"] == [] and admitted["admission"] == {"ceiling": [], "drafts": ["role_lab"]}
+    # A column the draft does not have is refused even for the examiner, as it is on a contract part.
+    invented = rolepolicy.check("SELECT COUNT(*) AS n FROM role_lab l WHERE l.colour = 'red'", admit="draft")
+    assert invented["failed"] == ["columns"]
+
+
+def test_a_conversion_step_over_a_draft_part_is_refused_and_one_over_a_rehearsed_part_passes():
+    from schemalyser import conversion
+    tree = conversion.check_roles_step("SELECT f.fluid_key AS measurement_id, f.volume_ml AS value_as_number FROM role_fluid f")
+    assert tree is not None
+    with pytest.raises(conversion.RolesStepError, match="role_lab is a draft"):
+        conversion.check_roles_step("SELECT l.lab_key AS measurement_id FROM role_lab l")
+
+
+def test_the_compiler_reads_a_draft_only_for_a_rehearsal():
+    from schemalyser import compiler
+    with pytest.raises(rolemap.MapError, match="role_lab is a draft"):
+        compiler.check_audit("SELECT COUNT(*) AS n FROM role_lab l")
+    assert compiler.check_audit("SELECT COUNT(*) AS n FROM role_lab l", admit="draft") is not None
+    assert compiler.check_audit(TRANSFUSION) is not None
+    assert compiler.reachable("role_reading") and not compiler.reachable("role_lab")

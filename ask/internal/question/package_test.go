@@ -39,7 +39,7 @@ func TestAReplysBlockBecomesAPackageInTheSchemasShapeAndTheProseStays(t *testing
 	for _, p := range pkg.Parts {
 		names = append(names, p.Name+" "+p.Admission)
 	}
-	if strings.Join(names, ", ") != "role_anaesthetic admitted, role_fluid refused, role_patient admitted" || strings.Join(pkg.Drafts(), ",") != "role_fluid" {
+	if strings.Join(names, ", ") != "role_anaesthetic admitted, role_fluid admitted with a ceiling, role_patient admitted" || len(pkg.Drafts()) != 0 {
 		t.Fatalf("parts: %v", names)
 	}
 	if pkg.Parts[0].Version < 1 {

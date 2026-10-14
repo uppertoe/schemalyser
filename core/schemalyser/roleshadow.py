@@ -62,7 +62,8 @@ def duckdb_runner(con, date_columns=frozenset(), roles_map=None, whole_columns=N
         whole_columns = whole_role_columns() if roles_map is None else frozenset()
 
     def run(sql):
-        text = compiler.compile_query(sql, roles_map) if roles_map is not None else sql
+        # The shadow is a rehearsal instrument: it reads a draft part, because that is how a draft earns its evidence.
+        text = compiler.compile_query(sql, roles_map, admit="draft") if roles_map is not None else sql
         statements = to_duckdb(text, date_columns, whole_columns)
         if len(statements) != 1:
             raise rolemap.MapError("the query did not translate to one statement")

@@ -112,9 +112,10 @@ def main(argv=None):
             if args.counts:
                 for name, item in rolemap.count_queries().items():
                     print(f"-- {name}: {item['says']}")
-                    print(compiler.compile_query(item["sql"], found, nolock=True).rstrip() + ";\n")
+                    print(compiler.compile_query(item["sql"], found, nolock=True, admit="draft").rstrip() + ";\n")
             else:
-                print(compiler.compile_query(decode(args.audit.read_bytes()), found, blank=not args.exact), end="")
+                # The compile command is the owner's rehearsal instrument, so it reads a draft part.
+                print(compiler.compile_query(decode(args.audit.read_bytes()), found, blank=not args.exact, admit="draft"), end="")
         elif args.command == "rehearse":
             con = roleshadow.role_shadow(args.seed, args.anaesthetics, not args.no_planted)
             _show(roleshadow.result(roleshadow.duckdb_runner(con), decode(args.audit.read_bytes())))

@@ -1314,6 +1314,9 @@ def test_the_step_over_the_roles_reads_only_the_roles_the_mapping_views_and_the_
     assert {("", "role_drug"), ("", "map_drug_concept"), ("omop", "visit_detail")} <= read
     with pytest.raises(convert.RolesStepError, match="DRUG_GIVEN"):
         convert.check_roles_step("SELECT g.GIVEN_KEY AS drug_exposure_id FROM DRUG_GIVEN g")
+    # A draft part is closed to a conversion step, as it is to a question, until it is rehearsed.
+    with pytest.raises(convert.RolesStepError, match="role_lab is a draft"):
+        convert.check_roles_step("SELECT l.lab_key AS measurement_id FROM role_lab l")
 
 
 def test_the_boundary_scenario_passes_against_rows_written_by_hand():

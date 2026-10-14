@@ -33,7 +33,10 @@ KIND = re.compile(r"[a-z][a-z0-9_' ]*")
 # The one kind column whose kinds are the contract's own list of kinds of reading rather than a vocabulary.
 READING_KINDS = ("role_reading", "kind")
 VIEW_NAME = re.compile(r"role_[a-z][a-z0-9_]*")
-STATUSES = ("contract", "draft")
+STATUSES = ("contract", "rehearsed", "draft")
+# What a rehearsed part records of the stand-in it ran on: a neutral name, never a hospital's; the date; the rows
+# compared; that every row was identical; and the commit that recorded the result.
+EVIDENCE = ("stand_in", "date", "rows", "identical", "recorded_in", "says")
 # A phrase of one of these words alone tells a proposer nothing: it matches half of any dictionary.
 GENERIC = {"id", "key", "date", "time", "value", "name", "type", "code", "number", "text", "flag", "record", "table",
            "column", "row", "line", "identifier", "status", "kind"}
@@ -80,6 +83,7 @@ def check_contract(model, roles_text=None, lock=None, published=True):
             problems.append(f"{where} has a status that is not one of {', '.join(STATUSES)}.")
         if "required" in view:
             problems.append(f"{where} carries required, which the contract no longer uses: its status says what every gate may do with it.")
+        problems += _evidence(view, where)
         if not _version(view.get("version")):
             problems.append(f"{where} has no version, or its version is not a whole number from 1.")
         for field in ("title", "description", "one_row_per", "holds"):
@@ -142,6 +146,34 @@ def check_contract(model, roles_text=None, lock=None, published=True):
 
 def _version(value):
     return isinstance(value, int) and not isinstance(value, bool) and value >= 1
+
+
+def _evidence(view, where):
+    """A rehearsed part carries the evidence of its rehearsal, and no other part carries any."""
+    held = view.get("evidence")
+    if view.get("status") != "rehearsed":
+        return [f"{where} carries evidence of a rehearsal, and its status is not rehearsed."] if held is not None else []
+    if not isinstance(held, dict):
+        return [f"{where} is rehearsed and carries no evidence: the stand-in, the date, the rows compared, that they were identical, and the commit that recorded it."]
+    problems = []
+    for field in EVIDENCE:
+        if field not in held:
+            problems.append(f"{where} is rehearsed and its evidence gives no {field.replace('_', ' ')}.")
+    if problems:
+        return problems
+    if not _text(held["stand_in"]) or re.search(r"[A-Z][A-Z0-9]+_[A-Z0-9_]+", held["stand_in"]):
+        problems.append(f"{where} names its stand-in in a way that looks like a hospital's table, or not at all; the name is neutral, such as the realistic stand-in.")
+    if not isinstance(held["date"], str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", held["date"]):
+        problems.append(f"{where} dates its rehearsal as {held['date']!r}, which is not a date written as YYYY-MM-DD.")
+    if not _version(held["rows"]):
+        problems.append(f"{where} gives the rows compared in its rehearsal as {held['rows']!r}, which is not a whole number from 1.")
+    if held["identical"] is not True:
+        problems.append(f"{where} is rehearsed, and its evidence does not say that every row was identical; a part that differed is a draft.")
+    if not isinstance(held["recorded_in"], str) or not re.fullmatch(r"[0-9a-f]{7,40}", held["recorded_in"]):
+        problems.append(f"{where} records its rehearsal in {held['recorded_in']!r}, which is not a commit.")
+    if not _text(held["says"]):
+        problems.append(f"{where} says nothing of its rehearsal.")
+    return problems
 
 
 def check_lock(model, lock, published=True):

@@ -786,3 +786,14 @@ def test_the_build_takes_the_sql_and_the_decisions_from_a_question_package(saved
     with pytest.raises(audit.AuditError, match="breaks a rule of its format"):
         audit.build(saved, broken, tmp_path / "none", ("2024-01-01", "2024-12-31"), date=DATE)
     assert not (tmp_path / "none").exists()
+
+
+def test_the_build_runs_the_role_policy_and_keeps_its_report_in_the_manifest(saved, tmp_path, package):
+    _, manifest = package
+    assert manifest["role_policy"] == {"outcome": "passed", "dialect_version": 1, "admission": {"ceiling": [], "drafts": []}}
+    query = tmp_path / "upper.sql"
+    query.write_text("-- How many?\nSELECT COUNT(*) AS anaesthetics FROM role_anaesthetic a JOIN role_patient p ON p.patient_key = a.patient_key "
+                     "WHERE UPPER(CAST(p.patient_key AS varchar(20))) = 'X'", encoding="utf-8")
+    with pytest.raises(audit.AuditError, match="breaks the role-level policy.*functions"):
+        audit.build(saved, query, tmp_path / "out", ("2024-01-01", "2024-12-31"), date=DATE)
+    assert not (tmp_path / "out" / "query.sql").exists()

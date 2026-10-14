@@ -9,10 +9,12 @@ the text with sqlglot in the SQL Server dialect and checks it against the role c
     dynamic     no EXEC, no dynamic SQL, no procedure, no OPENQUERY, OPENROWSET or OPENDATASOURCE, no variable, and no
                 table read through a function
     names       no name of another database, of a linked server or of a schema: a role view is named alone
-    tables      only the role views of the contract, the mapping views, and the question's own common table
-                expressions; no draft view, temporary table or source table
-    columns     every column read from a role view is a column of that view in the contract, and every column read from
-                one of the question's own steps is a column that the step returns
+    tables      only the role views the contract admits for a question, the mapping views, and the question's own
+                common table expressions; no temporary table or source table. The contract's admission decides: a
+                contract part is admitted, a rehearsed part is admitted with a ceiling, which the report records, and a
+                draft is refused unless the examiner asks for it with admit="draft", which the report records as well
+    columns     every column read from a role view, of whatever status, is a column of that view in the contract, and
+                every column read from one of the question's own steps is a column that the step returns
     functions   only the functions that policy.py allows in a script, with ROW_NUMBER, LEAD and LAG used with a window
     kinds       every literal compared with a column of a kind is a kind that the contract's vocabulary knows
     capabilities  every capability that the question names, in a leading comment -- capability: NAME, is one of the
@@ -61,10 +63,10 @@ CHANGES = tuple(getattr(exp, name) for name in ("Insert", "Update", "Delete", "M
 
 
 def contract_views():
-    """{view: {column, ...}} for the views of the contract, and {view: status} for every view of the role model."""
+    """{view: {column, ...}} for every view of the role model, whatever its status, so that a column is checked on a
+    draft as on a contract part, and {view: status} for every view."""
     model = rolemap.contract()
-    views = {v["name"]: {c["name"] for c in v["columns"]} for v in model["views"]
-             if contract.admission(v["name"], "question", model) == contract.ADMITTED}
+    views = {v["name"]: {c["name"] for c in v["columns"]} for v in model["views"]}
     # A mapping view translates a hospital's codes into standard concepts and names none of them, so any question may
     # read it, as it reads the parts of the contract.
     views.update({name: {c["name"] for c in v["columns"]} for name, v in rolemap.mapping_views(model).items()})
@@ -86,11 +88,14 @@ def column_types():
 
 
 class _Checker:
-    def __init__(self):
+    def __init__(self, admit=None):
         self.views, self.status = contract_views()
         self.types, self.keys, self.whole = column_types()
         self.view_types = rolemap.contract_column_types()
         self.failures = {rule: [] for rule in RULES}
+        # What the examiner asks for: "draft" admits the draft parts, which the report records.
+        self.admit = admit
+        self.admission = {"ceiling": set(), "drafts": set()}
 
     def fail(self, rule, fragment):
         fragment = policy._fragment(fragment)
@@ -149,10 +154,16 @@ class _Checker:
                 continue
             if table.this.args.get("temporary") or table.name.startswith("#"):
                 self.fail("tables", f"#{table.name} is a temporary table")
-            elif name in self.status and contract.admission(name, "question") == contract.REFUSED:
-                self.fail("tables", f"{name} is a draft view, which no audit may read until it joins the contract")
             elif name not in self.views:
                 self.fail("tables", f"{table.name} is not a role view of the contract")
+            elif name in self.status:
+                admission = contract.admission(name, "question")
+                if admission == contract.CEILING:
+                    self.admission["ceiling"].add(name)
+                elif admission == contract.REFUSED and self.admit == "draft":
+                    self.admission["drafts"].add(name)
+                elif admission == contract.REFUSED:
+                    self.fail("tables", f"{name} is a draft, which no question reads until it is rehearsed or joins the contract")
 
     def functions(self, tree):
         for func in tree.find_all(exp.Func):
@@ -299,11 +310,13 @@ class _Checker:
                 self.fail("kinds", f"'{gap['kind']}' is not a kind of {gap['view']}.{gap['column']}")
 
 
-def check(sql, capabilities=()):
+def check(sql, capabilities=(), admit=None):
     """The role-level policy on the text of a question, with the capabilities a package names beside those its leading
-    comment names. Returns {"rules": [{"id", "rule", "passed", "fragments"}], "outcome": "passed" or "failed",
-    "failed": [rule ids]}."""
-    checker = _Checker()
+    comment names. With admit="draft", as the examiner asks, a draft part is admitted and recorded rather than
+    refused. Returns {"rules": [{"id", "rule", "passed", "fragments"}], "outcome": "passed" or "failed", "failed":
+    [rule ids], "dialect_version", "admission": {"ceiling": [the rehearsed parts read], "drafts": [the drafts
+    admitted]}}."""
+    checker = _Checker(admit)
     try:
         tree = checker.tree(sql)
         if tree is not None:
@@ -324,7 +337,8 @@ def check(sql, capabilities=()):
     rules = [{"id": rule, "rule": RULES[rule], "passed": not checker.failures[rule], "fragments": checker.failures[rule]}
              for rule in RULES]
     failed = [r["id"] for r in rules if not r["passed"]]
-    return {"rules": rules, "outcome": "failed" if failed else "passed", "failed": failed, "dialect_version": DIALECT_VERSION}
+    return {"rules": rules, "outcome": "failed" if failed else "passed", "failed": failed, "dialect_version": DIALECT_VERSION,
+            "admission": {key: sorted(held) for key, held in checker.admission.items()}}
 
 
 def main(argv=None):

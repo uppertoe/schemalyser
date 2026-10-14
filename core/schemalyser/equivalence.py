@@ -101,8 +101,9 @@ def compare_schemas(hospital, map_a, map_b, questions=()):
     answers = {}
     for name, sql in questions:
         try:
-            got_a = hospital.run(compiler.compile_query(sql, map_a))
-            got_b = hospital.run(compiler.compile_query(sql, map_b))
+            # The comparison is a rehearsal instrument, so it reads draft parts, which is how a draft earns its evidence.
+            got_a = hospital.run(compiler.compile_query(sql, map_a, admit="draft"))
+            got_b = hospital.run(compiler.compile_query(sql, map_b, admit="draft"))
         except (HospitalError, ValueError, rolemap.MapError) as error:
             answers[name] = {"error": str(error).splitlines()[0][:200]}
             continue

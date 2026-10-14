@@ -80,8 +80,8 @@ def test_each_rule_of_the_shape_names_what_breaks_it():
 def test_the_parts_are_exactly_the_parts_the_sql_reads_at_the_contract_s_versions_and_admissions():
     ids, says = failed(lambda p: p["parts"].pop(0))
     assert ids == ["parts"] and says == ["The package breaks the rule that the parts are exactly the parts the SQL reads: the SQL reads role_anaesthetic, which the parts do not list."]
-    ids, says = failed(lambda p: p["parts"].append({"name": "role_fluid", "version": 1, "admission": "refused"}))
-    assert ids == ["parts"] and says == ["The package breaks the rule that the parts are exactly the parts the SQL reads: the parts list role_fluid, which the SQL does not read."]
+    ids, says = failed(lambda p: p["parts"].append({"name": "role_lab", "version": 1, "admission": "refused"}))
+    assert ids == ["parts"] and says == ["The package breaks the rule that the parts are exactly the parts the SQL reads: the parts list role_lab, which the SQL does not read."]
     ids, says = failed(lambda p: p["parts"].append({"name": "role_booking", "version": 1, "admission": "admitted"}))
     assert ids == ["parts"] and "role_booking is not a part of the contract" in says[0]
     ids, says = failed(lambda p: p["parts"].append(dict(p["parts"][0])))
@@ -96,14 +96,19 @@ def test_the_parts_are_exactly_the_parts_the_sql_reads_at_the_contract_s_version
     assert ids == ["contract_version"] and says == ["The package breaks the rule that the package was written against the contract that Schemalyser holds: the package names contract version 0.9, and Schemalyser holds 1.1."]
     # The model may draft against a draft part, marked refused as the contract gives it: the package is well formed.
     held = package()
-    held["question_sql"] = "SELECT f.anaesthetic_key, SUM(f.volume_ml) AS ml FROM role_fluid f JOIN map_drug_concept m ON m.local_key = f.product GROUP BY f.anaesthetic_key"
-    held["parts"] = [{"name": "map_drug_concept", "version": 1, "admission": "admitted"}, {"name": "role_fluid", "version": 1, "admission": "refused"}]
+    held["question_sql"] = "SELECT l.patient_key, COUNT(*) AS n FROM role_lab l JOIN map_lab_concept m ON m.local_key = l.test GROUP BY l.patient_key"
+    held["parts"] = [{"name": "map_lab_concept", "version": 1, "admission": "admitted"}, {"name": "role_lab", "version": 1, "admission": "refused"}]
     found = question.check(json.dumps(held))
-    assert found["failed"] == []
-    assert question.parts_read(held["question_sql"])[0] == ["map_drug_concept", "role_fluid"]
+    assert found["failed"] == [], question.sentences(found)
+    assert question.parts_read(held["question_sql"])[0] == ["map_lab_concept", "role_lab"]
+    # A rehearsed part is admitted with a ceiling, and the package records that.
+    ceiling = package()
+    ceiling["question_sql"] = "SELECT f.anaesthetic_key, SUM(f.volume_ml) AS ml FROM role_fluid f GROUP BY f.anaesthetic_key"
+    ceiling["parts"] = [{"name": "role_fluid", "version": 1, "admission": "admitted with a ceiling"}]
+    assert question.check(json.dumps(ceiling))["failed"] == []
     # Under a contract that promotes the part, the recorded admission is out of date and the rule says so.
     promoted = json.loads(json.dumps(rolemap.contract()))
-    next(v for v in promoted["views"] if v["name"] == "role_fluid")["status"] = "contract"
+    next(v for v in promoted["views"] if v["name"] == "role_lab")["status"] = "contract"
     found = question.check(json.dumps(held), promoted)
     assert found["failed"] == ["admission"]
     # A common table expression is not a part.
@@ -303,7 +308,7 @@ def test_the_package_the_service_s_fake_backend_writes_is_accepted():
     held = found["package"]
     assert held["produced"]["model"] == "fake" and "status" not in held and "hash" not in held
     assert [(p["name"], p["admission"]) for p in held["parts"]] == [
-        ("role_anaesthetic", "admitted"), ("role_fluid", "refused"), ("role_patient", "admitted")]
+        ("role_anaesthetic", "admitted"), ("role_fluid", "admitted with a ceiling"), ("role_patient", "admitted")]
     assert all(p["version"] == model_reader.part_versions()[p["name"]] for p in held["parts"])
     assert held["decisions"][0]["value"] == 28 and held["decisions"][0]["unit"] == "days" and held["decisions"][1].get("unit") is None
     assert held["decisions"][0]["by"] == "dr@example.test" and held["decisions"][0]["date"] == "2026-10-14"

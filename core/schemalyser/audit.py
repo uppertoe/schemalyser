@@ -64,7 +64,7 @@ from pathlib import Path
 import sqlglot
 from sqlglot import exp
 
-from . import describe, evidence, feasibility, policy, question, rolemap, roleshadow
+from . import describe, evidence, feasibility, policy, question, rolemap, rolepolicy, roleshadow
 from .manifests import (APPROVAL_SAYS, APPROVAL_STATES, APPROVE, NOT_APPROVED, NOT_RECORDED, TOOL,  # noqa: F401 - read by plan.py and the tests
                         approval as _approval, contract_record as _contract_record, file_hashes as _file_hashes,
                         policy_version, sha256, tool_version)
@@ -78,6 +78,7 @@ NOT_REVIEWED = "not yet reviewed"
 
 WORDING = {
     "model": "Schemalyser has stopped, because this question needs parts that the role model does not yet describe. The feasibility report in {folder} lists them, and no script has been written.",
+    "role_policy": "Schemalyser has stopped, because the question breaks the role-level policy, and no script has been written: {rules}",
     "period": "The period is two dates, the first no later than the second, written as YYYY-MM-DD.",
     "decisions": "{name} is not a decisions file that Schemalyser can read: it holds one JSON object with a list of decisions.",
     "package": "{name} is a question package that breaks a rule of its format, so nothing is built from it:\n{problems}",
@@ -264,9 +265,11 @@ def evidence_requests(schema, schema_name, folder_name, sql_sha):
     return {"format": describe.REQUEST_FORMAT, "schema_id": schema.schema_id, "requests": found}
 
 
-def build(schema_path, query_path, out, period=None, decisions_path=None, large=policy.LARGE, date=None, extra=None):
+def build(schema_path, query_path, out, period=None, decisions_path=None, large=policy.LARGE, date=None, extra=None, admit=None):
     """Writes the execution package to out. Returns the manifest. Raises AuditError where it cannot be written. extra,
-    when given, is merged into the manifest, as the export of a specification adds its own record."""
+    when given, is merged into the manifest, as the export of a specification adds its own record. The question passes
+    the role-level policy first, whose report the manifest keeps; admit="draft", which only the examiner gives, lets
+    the question read a draft part."""
     schema_path, query_path, out = Path(schema_path), Path(query_path), Path(out)
     date = date or dt.date.today().isoformat()
     schema = feasibility.Schema.load(schema_path)
@@ -290,7 +293,12 @@ def build(schema_path, query_path, out, period=None, decisions_path=None, large=
     (out / "feasibility.json").write_text(feasibility.to_json(found), encoding="utf-8")
     if found["verdict"] == "model":
         raise AuditError(WORDING["model"].format(folder=out.name))
-    compiled = compile_audit(schema, audit_sql, start, end, blank, large=large)
+    # The role-level policy is the one gate on a question over the roles, here as at the import and the export.
+    role_policy = rolepolicy.check(audit_sql, admit=admit)
+    if role_policy["failed"]:
+        broken = "; ".join(f"{r['id']}: {', '.join(r['fragments'])}" for r in role_policy["rules"] if not r["passed"])
+        raise AuditError(WORDING["role_policy"].format(rules=broken))
+    compiled = compile_audit(schema, audit_sql, start, end, blank, large=large, admit=admit)
     meta = {"date": _day(date), "query": query_path.name, "schema": schema_path.name, "question": found.get("question"),
             "start": start.isoformat(), "end": end.isoformat(), "large": large}
     text = script(compiled, meta, blank)
@@ -325,6 +333,8 @@ def build(schema_path, query_path, out, period=None, decisions_path=None, large=
         "period": {"from": start.isoformat(), "to": end.isoformat()}, "decisions": decisions,
         "execution_class": safety["execution_class"], "policy_outcome": safety["outcome"],
         "policy_version": policy_version(),
+        "role_policy": {"outcome": role_policy["outcome"], "dialect_version": role_policy["dialect_version"],
+                        "admission": role_policy["admission"]},
         "feasibility_verdict": found["verdict"], "planted_match": expected["planted_match"],
         "permissions": {"select_on": sorted(safety.get("tables_read", [])), "temporary_tables": ["#cohort"],
                         "says": MANIFEST_WORDING["permissions"]},

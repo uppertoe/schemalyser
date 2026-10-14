@@ -300,10 +300,10 @@ def test_a_link_a_large_file_and_a_waiting_package_are_each_refused(exported, pr
     result, _, _ = workspace.import_question(large, project, date=DATE)
     assert result["rules_failed"] == ["size"]
     # A package over a draft part, or one with a proposal, waits for the contract and has nothing to build.
-    draft = _question_file(exported, tmp_path, name="draft", sql="SELECT COUNT(*) AS n FROM role_fluid f\n")
+    draft = _question_file(exported, tmp_path, name="draft", sql="SELECT COUNT(*) AS n FROM role_lab l\n")
     result, checked, record = workspace.import_question(draft, project, date=DATE)
     assert result["rules_failed"] == ["waits"] and record is None
-    assert any("role_fluid is refused for a question" in f for r in checked["rules"] for f in r["fragments"])
+    assert any("role_lab is refused for a question" in f for r in checked["rules"] for f in r["fragments"])
     proposing = _question_file(exported, tmp_path, name="proposing", change=lambda p: p["proposals"].append(
         {"kind": "column", "part": "role_technique", "because": "The question needs the block's theatre case.",
          "shape": {"name": "theatre_case", "title": "the theatre case", "type": "key", "meaning": "The surgical case.",
@@ -347,7 +347,7 @@ def test_the_role_policy_lets_a_question_read_a_mapping_view_and_checks_the_capa
     unknown = rolepolicy.check("-- capability: minutes_of_unicorns\nSELECT a.anaesthetic_key FROM role_anaesthetic a")
     assert unknown["failed"] == ["capabilities"]
     # A draft part stays closed to a question, whatever capability it names.
-    assert "tables" in rolepolicy.check("-- capability: transfusion\nSELECT f.volume_ml FROM role_fluid f")["failed"]
+    assert "tables" in rolepolicy.check("-- capability: principal_diagnosis\nSELECT l.value FROM role_lab l")["failed"]
 
 
 def test_the_export_holds_the_mapping_views_and_the_catalogue_and_no_hospital_s_translation(exported):
