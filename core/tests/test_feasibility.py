@@ -63,8 +63,9 @@ def test_the_requirements_of_the_neonatal_audit_are_read_from_its_sql():
     needs = feasibility.requirements(AUDIT, "neonatal_low_mean_pressure.sql")
     assert needs["question"].startswith("Among neonates who had an anaesthetic") and needs["question"].endswith("?")
     assert needs["parts"] == ["role_patient", "role_anaesthetic", "role_reading"]
-    assert set(needs["columns"]) == {f"{v}.{c}" for v, cs in rolemap.views().items() for c in cs} - {
-        "role_reading.reading_key", "role_reading.value_text"}
+    # The audit reads every column of the three parts but the reading's text; the reading's key breaks ties when it
+    # chooses among readings at one time, as the dialect rule asks.
+    assert set(needs["columns"]) == {f"{v}.{c}" for v, cs in rolemap.views().items() for c in cs} - {"role_reading.value_text"}
     assert [l["id"] for l in needs["links"]] == [PATIENT_LINK, LINK]
     assert [k["kind"] for k in needs["kinds"]] == ["map_arterial", "map_cuff"]
     assert not needs["gaps"]
@@ -118,9 +119,11 @@ def test_the_neonatal_audit_asks_for_the_smallest_investigation_of_each_gap(neon
     requests = neonatal["requests"]
     assert [(r["form"], r["role"]) for r in requests] == [
         ("answer", "database analyst"), ("values", "database analyst"), ("question", "clinician"),
-        ("counts", "database analyst"), ("test query", "database analyst"), ("pathway coverage", "clinician")]
-    answer, values, question, counts, probe, coverage = requests
+        ("answer", "database analyst"), ("counts", "database analyst"), ("test query", "database analyst"), ("pathway coverage", "clinician")]
+    answer, values, question, key, counts, probe, coverage = requests
     assert answer["moves"] == ["role_patient.death_date"] and answer["step"] == "6. Confirm each column"
+    # The reading's key, by which the audit breaks ties between readings at one time, is a requirement of its own.
+    assert key["moves"] == ["role_reading.reading_key"]
     assert answer["question"] == ("The page proposes PERSON_MASTER_2.DEATH_TS as the date of death in Patients. Is that right, "
                                   "and if not, which column holds it?")
     assert values["moves"] == ["role_patient.is_test"] and "TEST_PERSON_FLAG" in values["sql"] and "TOP (50)" in values["sql"]

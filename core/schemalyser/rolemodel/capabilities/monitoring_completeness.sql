@@ -37,10 +37,11 @@ anaesthetic AS (
       AND  (a.stop_time IS NULL OR a.stop_time >= a.start_time)
 ),
 reading AS (
-    SELECT DISTINCT n.anaesthetic_key,
+    SELECT n.anaesthetic_key,
            n.window_from,
            n.window_until,
-           r.reading_time
+           r.reading_time,
+           MIN(r.reading_key) AS reading_key
     FROM   anaesthetic n
            JOIN role_reading r
              ON r.anaesthetic_key = n.anaesthetic_key
@@ -49,6 +50,7 @@ reading AS (
             AND r.reading_time >= n.window_from
             AND (n.window_until IS NULL OR r.reading_time <= n.window_until)
            JOIN kinds k ON k.kind = r.kind
+    GROUP  BY n.anaesthetic_key, n.window_from, n.window_until, r.reading_time
 ),
 spaced AS (
     SELECT anaesthetic_key,
@@ -56,7 +58,7 @@ spaced AS (
            window_until,
            reading_time,
            COALESCE(LEAD(reading_time) OVER (PARTITION BY anaesthetic_key ORDER BY reading_time), window_until) AS next_time,
-           ROW_NUMBER() OVER (PARTITION BY anaesthetic_key ORDER BY reading_time) AS position
+           ROW_NUMBER() OVER (PARTITION BY anaesthetic_key ORDER BY reading_time, reading_key) AS position
     FROM   reading
 ),
 summed AS (

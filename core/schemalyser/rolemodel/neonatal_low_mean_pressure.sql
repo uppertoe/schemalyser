@@ -44,7 +44,7 @@ reading AS (
            r.reading_time,
            r.value,
            ROW_NUMBER() OVER (PARTITION BY n.anaesthetic_key, r.reading_time
-                              ORDER BY CASE WHEN r.kind = 'map_arterial' THEN 0 ELSE 1 END, r.value) AS kept_at_time
+                              ORDER BY CASE WHEN r.kind = 'map_arterial' THEN 0 ELSE 1 END, r.value, r.reading_key) AS kept_at_time
     FROM   neonatal n
            JOIN role_reading r
              ON r.anaesthetic_key = n.anaesthetic_key

@@ -53,7 +53,8 @@ anaesthetic AS (
 flow AS (
     SELECT n.anaesthetic_key,
            r.reading_time,
-           MIN(r.value) AS value
+           MIN(r.value) AS value,
+           MIN(r.reading_key) AS reading_key
     FROM   anaesthetic n
            JOIN role_reading r
              ON r.anaesthetic_key = n.anaesthetic_key
@@ -68,7 +69,8 @@ agent AS (
     SELECT n.anaesthetic_key,
            r.kind,
            r.reading_time,
-           MIN(r.value) AS value
+           MIN(r.value) AS value,
+           MIN(r.reading_key) AS reading_key
     FROM   anaesthetic n
            JOIN role_reading r
              ON r.anaesthetic_key = n.anaesthetic_key
@@ -102,13 +104,13 @@ stretch AS (
 ),
 flow_at AS (
     SELECT s.anaesthetic_key, s.kind, s.at_time, f.reading_time, f.value,
-           ROW_NUMBER() OVER (PARTITION BY s.anaesthetic_key, s.kind, s.at_time ORDER BY f.reading_time DESC) AS position
+           ROW_NUMBER() OVER (PARTITION BY s.anaesthetic_key, s.kind, s.at_time ORDER BY f.reading_time DESC, f.reading_key DESC) AS position
     FROM   stretch s
            JOIN flow f ON f.anaesthetic_key = s.anaesthetic_key AND f.reading_time <= s.at_time
 ),
 agent_at AS (
     SELECT s.anaesthetic_key, s.kind, s.at_time, g.reading_time, g.value,
-           ROW_NUMBER() OVER (PARTITION BY s.anaesthetic_key, s.kind, s.at_time ORDER BY g.reading_time DESC) AS position
+           ROW_NUMBER() OVER (PARTITION BY s.anaesthetic_key, s.kind, s.at_time ORDER BY g.reading_time DESC, g.reading_key DESC) AS position
     FROM   stretch s
            JOIN agent g ON g.anaesthetic_key = s.anaesthetic_key AND g.kind = s.kind AND g.reading_time <= s.at_time
 ),

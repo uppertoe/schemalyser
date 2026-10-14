@@ -42,7 +42,7 @@ reading AS (
            CASE WHEN n.stop_time IS NOT NULL THEN n.window_until END AS last_until,
            r.reading_time,
            r.value,
-           ROW_NUMBER() OVER (PARTITION BY n.anaesthetic_key, r.reading_time ORDER BY r.value) AS kept_at_time
+           ROW_NUMBER() OVER (PARTITION BY n.anaesthetic_key, r.reading_time ORDER BY r.value, r.reading_key) AS kept_at_time
     FROM   anaesthetic n
            JOIN role_reading r
              ON r.anaesthetic_key = n.anaesthetic_key
@@ -76,7 +76,7 @@ arrival AS (
     SELECT n.anaesthetic_key,
            r.reading_time,
            r.value,
-           ROW_NUMBER() OVER (PARTITION BY n.anaesthetic_key ORDER BY r.reading_time, r.value) AS position
+           ROW_NUMBER() OVER (PARTITION BY n.anaesthetic_key ORDER BY r.reading_time, r.value, r.reading_key) AS position
     FROM   anaesthetic n
            JOIN role_reading r
              ON r.anaesthetic_key = n.anaesthetic_key

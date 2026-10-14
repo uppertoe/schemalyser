@@ -17,6 +17,12 @@ the text with sqlglot in the SQL Server dialect and checks it against the role c
     kinds       every literal compared with a column of a kind is a kind that the contract's vocabulary knows
     capabilities  every capability that the question names, in a leading comment -- capability: NAME, is one of the
                 catalogue's
+    dialect     the question keeps the portable dialect, at DIALECT_VERSION, so that the role-level shadow on DuckDB
+                and SQL Server give one answer: a division has one side cast to float or written as a fraction, AVG
+                takes a number or a cast, text is compared with = only where it is a kind or a key, text is joined
+                with CONCAT and never +, a ROW_NUMBER window and a TOP carry an ORDER BY that ends in a key column so
+                that the row chosen is the same on every engine, LEAD and LAG carry an ORDER BY, and DATEDIFF counts
+                days, minutes or seconds; each refusal says what to write instead
 
 Each rule is passed, or failed with the fragment that broke it. Anything the parser cannot understand is refused.
 
@@ -30,7 +36,7 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.optimizer.scope import traverse_scope
 
-from . import contract, feasibility, policy, rolemap
+from . import contract, feasibility, policy, rolemap, translate
 
 RULES = {
     "parse": "The question is one statement that the parser understands.",
@@ -42,7 +48,13 @@ RULES = {
     "functions": "The question uses only the functions of the allowlist.",
     "kinds": "Every kind that the question names is a kind of the contract's vocabularies.",
     "capabilities": "Every capability that the question names is one of the catalogue's.",
+    "dialect": "The question keeps the portable dialect: a division with one side cast or a fraction, AVG of a number or a cast, "
+               "text equality only on kinds and keys, CONCAT for text, a chosen row's order ending in a key, and DATEDIFF in days, minutes or seconds.",
 }
+# The version of the dialect rule, recorded in every report, so that a package examined under one version says so.
+DIALECT_VERSION = 1
+DATEDIFF_UNITS = ("day", "minute", "second")
+FLOAT_TYPES = {"FLOAT", "DOUBLE", "DECIMAL", "NUMERIC", "REAL"}
 # Statements that change something, wherever they appear inside the one statement.
 CHANGES = tuple(getattr(exp, name) for name in ("Insert", "Update", "Delete", "Merge", "Create", "Drop", "Alter",
                                                 "Command", "TruncateTable") if hasattr(exp, name))
@@ -60,9 +72,24 @@ def contract_views():
     return views, status
 
 
+def column_types():
+    """{column name: {type, ...}} over every part and mapping view of the contract, by which a column of a question is
+    read where its source is a view, and the names of the key columns and of the whole-number columns."""
+    model = rolemap.contract()
+    types = {}
+    for view in model["views"] + model.get("mapping_views", []):
+        for column in view["columns"]:
+            types.setdefault(column["name"].lower(), set()).add(column["type"])
+    keys = {name for name, held in types.items() if "key" in held}
+    whole = {name.upper() for name, held in types.items() if held <= {"whole", "flag", "flag_or_empty"}}
+    return types, keys, whole
+
+
 class _Checker:
     def __init__(self):
         self.views, self.status = contract_views()
+        self.types, self.keys, self.whole = column_types()
+        self.view_types = rolemap.contract_column_types()
         self.failures = {rule: [] for rule in RULES}
 
     def fail(self, rule, fragment):
@@ -193,6 +220,74 @@ class _Checker:
                 outputs.add(projection.alias_or_name.lower())
         return name in outputs
 
+    # The dialect rule.
+
+    def dialect(self, tree):
+        aliases = {}
+        for table in tree.find_all(exp.Table):
+            if table.name.lower() in self.views and table.alias:
+                aliases.setdefault(table.alias.lower(), set()).add(table.name.lower())
+        for node in tree.find_all(exp.Div):
+            if translate._whole(node.this, tree, self.whole) and translate._whole(node.expression, tree, self.whole):
+                self.fail("dialect", f"{node.sql(dialect='tsql')} divides two whole numbers, which SQL Server rounds down: "
+                                     f"write CAST({node.this.sql(dialect='tsql')} AS float) / {node.expression.sql(dialect='tsql')} for a fraction")
+        for node in tree.find_all(exp.Avg):
+            if translate._whole(node.this, tree, self.whole):
+                self.fail("dialect", f"{node.sql(dialect='tsql')} averages a whole number, which SQL Server truncates: "
+                                     f"write AVG(CAST({node.this.sql(dialect='tsql')} AS float))")
+        for node in tree.find_all(exp.EQ, exp.NEQ):
+            for side in (node.this, node.expression):
+                if self._column_type(side, aliases) == "text":
+                    self.fail("dialect", f"{node.sql(dialect='tsql')} compares free text with =, which the engines read differently: "
+                                         f"read free text with LIKE, and compare only a kind with its word or a key with a key")
+                    break
+        for node in tree.find_all(exp.Add):
+            if isinstance(node.parent, exp.Add):
+                continue
+            if any((isinstance(side, exp.Literal) and side.is_string) or self._column_type(side, aliases) in ("text", "kind")
+                   for side in (node.this, node.expression)):
+                self.fail("dialect", f"{node.sql(dialect='tsql')} joins text with +, which DuckDB refuses: "
+                                     f"write CONCAT({node.this.sql(dialect='tsql')}, {node.expression.sql(dialect='tsql')})")
+        for node in tree.find_all(exp.Window):
+            function = node.this
+            order = node.args.get("order")
+            if isinstance(function, exp.RowNumber):
+                if not self._ends_in_key(order, aliases):
+                    self.fail("dialect", f"{node.sql(dialect='tsql')} chooses a row: end its ORDER BY in a key column of the row's part, "
+                                         f"such as reading_key, so that every engine chooses the same row")
+            elif isinstance(function, (exp.Lead, exp.Lag)) and order is None:
+                self.fail("dialect", f"{node.sql(dialect='tsql')} reads a neighbouring row, so it carries an ORDER BY")
+        for select in tree.find_all(exp.Select):
+            if select.args.get("limit") is not None and not self._ends_in_key(select.args.get("order"), aliases):
+                self.fail("dialect", f"TOP chooses rows, so the ORDER BY of {select.sql(dialect='tsql')[:60]} ends in a key column of the row's part")
+        for node in tree.find_all(exp.DateDiff):
+            unit = node.args.get("unit")
+            name = (unit.name if isinstance(unit, exp.Expression) else str(unit or "")).lower()
+            if name not in DATEDIFF_UNITS:
+                self.fail("dialect", f"{node.sql(dialect='tsql')} counts {name or 'an unnamed unit'}: write DATEDIFF with day, minute or second")
+
+    def _column_type(self, node, aliases):
+        """The contract's type of a column of a question, where it can be read: the one type the column has in the
+        views its alias names, or in every view where it has no alias; None where it cannot be read."""
+        if not isinstance(node, exp.Column):
+            return None
+        name = node.name.lower()
+        if node.table:
+            views = aliases.get(node.table.lower())
+            if not views:
+                return None
+            held = {self.view_types.get(view, {}).get(name) for view in views} - {None}
+        else:
+            held = self.types.get(name) or set()
+        return next(iter(held)) if len(held) == 1 else None
+
+    def _ends_in_key(self, order, aliases):
+        if order is None or not order.expressions:
+            return False
+        last = order.expressions[-1]
+        last = last.this if isinstance(last, exp.Ordered) else last
+        return isinstance(last, exp.Column) and last.name.lower() in self.keys
+
     def kinds(self, sql):
         try:
             needs = feasibility.requirements(sql)
@@ -216,6 +311,7 @@ def check(sql, capabilities=()):
             checker.tables(tree, ctes)
             checker.functions(tree)
             checker.columns(tree, ctes)
+            checker.dialect(tree)
             if not any(checker.failures[r] for r in ("parse", "statements", "dynamic")):
                 checker.kinds(sql)
     except (RecursionError, sqlglot.errors.SqlglotError):
@@ -228,7 +324,7 @@ def check(sql, capabilities=()):
     rules = [{"id": rule, "rule": RULES[rule], "passed": not checker.failures[rule], "fragments": checker.failures[rule]}
              for rule in RULES]
     failed = [r["id"] for r in rules if not r["passed"]]
-    return {"rules": rules, "outcome": "failed" if failed else "passed", "failed": failed}
+    return {"rules": rules, "outcome": "failed" if failed else "passed", "failed": failed, "dialect_version": DIALECT_VERSION}
 
 
 def main(argv=None):

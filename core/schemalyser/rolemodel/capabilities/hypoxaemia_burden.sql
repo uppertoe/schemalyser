@@ -70,7 +70,8 @@ reading AS (
            r.value,
            ROW_NUMBER() OVER (PARTITION BY b.anaesthetic_key, r.reading_time
                               ORDER BY k.preference,
-                                       CASE WHEN {{direction}} = 'below' THEN r.value ELSE 0 - r.value END) AS kept_at_time
+                                       CASE WHEN {{direction}} = 'below' THEN r.value ELSE 0 - r.value END,
+                                       r.reading_key) AS kept_at_time
     FROM   banded b
            JOIN role_reading r
              ON r.anaesthetic_key = b.anaesthetic_key

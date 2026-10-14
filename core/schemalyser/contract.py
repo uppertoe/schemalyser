@@ -152,6 +152,12 @@ def public_views():
     return found
 
 
+def contract_column_types(model=None):
+    """{view: {column: type}} over every part and mapping view."""
+    model = model or contract()
+    return {v["name"]: {c["name"]: c["type"] for c in v["columns"]} for v in model["views"] + model.get("mapping_views", [])}
+
+
 def anchors(view):
     """The columns of a view, as a contract's view gives them, without which a row does not belong in the view: each
     link that is part of its key, and the anchor that the contract names, as a reading needs its anaesthetic."""
