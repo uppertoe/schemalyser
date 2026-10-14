@@ -24,6 +24,7 @@
 "schemalyser.datadict" = { layer = "shared", note = "The reader of a data dictionary file, which the hospital schema (layer 2) and the reference adapter's transplant both read. It imports only the shared tier and knows nothing of any layer: it reads a plain table of tables, columns and descriptions." }
 "schemalyser.summaries" = { layer = "shared", note = "By its purpose it is orchestration, but the reference adapters that write two of the three named summaries may import only layers 1 and 3 and the shared tier, and the scoreboard sits in layer 2, so the exporters import nothing from the package and take each output as data." }
 
+"schemalyser.contractcheck" = { layer = "1", note = "The check of the contract's shape and of the roles document against it, for whoever adds a part, a column or a kind; it reads the role model's files and imports nothing of the package." }
 "schemalyser.rolemap" = { layer = "2", note = "It loads contract.json (layer 1) and reads and writes maps (layer 2). The compilation of a query through a map is compiler.py's, the role-level shadow is roleshadow.py's, and the command line is rolemap/__main__.py's." }
 "schemalyser.describe" = { layer = "2", note = "The saved hospital schema and every operation that writes it; it is also the core behind the Describe screen." }
 "schemalyser.propose" = { layer = "2" }

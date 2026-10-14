@@ -111,3 +111,31 @@ def test_a_validated_schema_opens_under_a_newer_contract_proposes_the_added_fiel
     assert bridged["proposed_for_contract"]["proposed"] == ["role_technique.theatre_case"]
     assert bridged["proposed_for_contract"]["unproposed"] == ["role_technique.block_note"]
     assert bridged["contract_report"] == restored["contract_report"]
+
+
+def test_the_try_command_reports_what_a_candidate_contract_would_get_from_a_saved_schema_without_saving(tmp_path, capsys):
+    from schemalyser.describe import __main__ as describe_main
+    s = fresh()
+    for about in VALIDATED:
+        s.confirm(about, "yes", date=DATE, actor="Dr A Clinician")
+    saved = tmp_path / "schema"
+    saved.mkdir()
+    (saved / s.file_name()).write_bytes(s.save_zip(DATE))
+    before = sorted(p.name for p in saved.iterdir())
+    candidate = tmp_path / "contract.json"
+    candidate.write_text(json.dumps(newer_contract()), encoding="utf-8")
+    assert describe_main.main(["try", str(saved), str(candidate)]) == 0
+    out = capsys.readouterr().out
+    assert "Techniques of an anaesthetic has changed" in out
+    assert "The theatre case in Techniques of an anaesthetic: proposed from ANAES_RECORD.CASE_KEY by OBS_SHEET.ANAES_KEY = ANAES_RECORD.ANAES_KEY, with high confidence" in out
+    assert "The block's note in Techniques of an anaesthetic: nothing in the dictionary fits." in out
+    assert f"Recorded answers that stand as they were: {len(VALIDATED)}. No query was written and nothing was saved." in out
+    assert sorted(p.name for p in saved.iterdir()) == before
+    # The contract in force is untouched once the command has run, and a candidate that breaks a rule is refused.
+    assert rolemap.contract()["version"] == json.loads(candidate.read_text())["version"]
+    assert "theatre_case" not in json.dumps(rolemap.contract())
+    broken = newer_contract()
+    next(v for v in broken["views"] if v["name"] == "role_technique")["columns"][-1]["look_for"] = []
+    candidate.write_text(json.dumps(broken), encoding="utf-8")
+    assert describe_main.main(["try", str(saved), str(candidate)]) != 0
+    assert "gives no words to look for" in capsys.readouterr().err

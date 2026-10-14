@@ -163,9 +163,11 @@ def _open(args, version):
         raise Refused(WORDING["cli_needs_dictionary"].format(name=path.name))
     if sitting.dictionary is None:
         raise Refused(WORDING["cli_unreadable"].format(name=path.name), 2)
-    # A file opened under a contract that changed since it was saved says so, beside any command's own output.
-    for line in found.get("contract_report") or []:
-        print(line, file=sys.stderr)
+    # A file opened under a contract that changed since it was saved says so, beside any command's own output; the
+    # try command prints the same report itself, as its output.
+    if args.command != "try":
+        for line in found.get("contract_report") or []:
+            print(line, file=sys.stderr)
     return sitting, path
 
 
@@ -490,6 +492,65 @@ def cmd_show(args, version):
 def cmd_check(args, version):
     sitting, _ = _open(args, version)
     print(json.dumps(sitting.check(), indent=2, ensure_ascii=False, default=str))
+
+
+def cmd_try(args, version):
+    """Opens a saved hospital schema under a candidate contract, as a later version of the page would, and reports what
+    the dictionary the file holds proposes for the parts and columns the candidate added, what it cannot, and how many
+    recorded answers stand. Nothing is saved and no query is written: the report is for whoever is writing the new
+    part, before the contract is published."""
+    from .. import contractcheck, rolemap
+    try:
+        candidate = json.loads(Path(args.contract).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise Refused(WORDING["cli_try_unreadable"].format(name=Path(args.contract).name, error=error), 2) from None
+    problems = contractcheck.check_contract(candidate)
+    if problems:
+        raise Refused(WORDING["cli_try_refused"].format(name=Path(args.contract).name, problems="\n".join(problems)))
+    held, titles = rolemap.contract, rolemap._TITLES
+    rolemap.contract, rolemap._TITLES = (lambda: candidate), None
+    try:
+        sitting, path = _open(args, version)
+        found = sitting.restored or {}
+        report = found.get("proposed_for_contract") or {}
+        if not (found.get("contract_changed") or report.get("columns_added") or report.get("parts_added")):
+            print(WORDING["cli_try_same"].format(name=path.name))
+        for line in found.get("contract_report") or []:
+            print(line)
+        for about in report.get("proposed") or []:
+            item = _item(sitting, about)
+            print(WORDING["cli_try_proposed"].format(about=rolemap.plain_about(about, True), where=_where(item.get("binding")),
+                                                     confidence=item.get("confidence") or "none",
+                                                     alternatives=_count(len(item.get("candidates") or []), "alternative")))
+        for about in report.get("unproposed") or []:
+            near = [c.get("replacement") for c in (_item(sitting, about).get("candidates") or [])[:3] if c.get("replacement")]
+            print(WORDING["cli_try_unproposed"].format(about=rolemap.plain_about(about, True),
+                                                       near=WORDING["cli_try_near"].format(near=", ".join(near)) if near else ""))
+        kept = sum(1 for role in sitting.data["roles"].values()
+                   for item in [role["rows"], *role["columns"].values()] if item.get("confirmation"))
+        print(WORDING["cli_try_kept"].format(answers=kept))
+    finally:
+        rolemap.contract, rolemap._TITLES = held, titles
+
+
+def _count(n, noun):
+    return f"no {noun}s" if n == 0 else f"one {noun}" if n == 1 else f"{n} {noun}s"
+
+
+def _item(sitting, about):
+    if about.endswith(" rows"):
+        return sitting.data["roles"][about[:-5]]["rows"]
+    name, _, column = about.partition(".")
+    return sitting.data["roles"][name]["columns"][column]
+
+
+def _where(binding):
+    if not binding:
+        return "nothing"
+    place = f"{binding.get('table')}.{binding.get('column')}" if binding.get("column") else str(binding.get("table"))
+    if binding.get("path"):
+        place += " by " + ", then ".join(f"{a}.{b} = {c}.{d}" for a, b, c, d, *_ in binding["path"])
+    return place
 
 
 def cmd_compare(args, version):
@@ -883,6 +944,9 @@ def parser():
                                                          "the journal and the files as JSON")
     add("check", "propose the hospital schema again from its dictionary and its answers, and say whether it is the same",
         [schema])
+    one = add("try", "open a saved hospital schema under a candidate contract and report what its dictionary proposes "
+                     "for the parts and columns the candidate added, without saving", [schema])
+    one.add_argument("contract", help="the candidate contract.json, which the contract checker must pass")
     one = add("compare", "compare a new result of a query with the result that the hospital schema holds", [schema])
     one.add_argument("name")
     one.add_argument("result")

@@ -56,7 +56,7 @@ HOME_PATH = re.compile(rb"(/Users/[A-Za-z0-9._-]+|/home/[a-z][a-z0-9._-]*/|[A-Za
 # The modules of the core that the feasibility report, the audit's package and the testbed import, with the role
 # policy and this module, so that an agent can check a question before handing it back.
 CORE_MODULES = (
-    "__init__", "audit", "blanking", "capability", "catalogue", "compiler", "conversion", "convert", "corrections",
+    "__init__", "audit", "blanking", "capability", "catalogue", "compiler", "contractcheck", "conversion", "convert", "corrections",
     "datadict", "evidence", "extract", "feasibility", "first_ask", "harness", "hospital", "manifests", "mapping", "memo", "normalise",
     "plan", "policy", "project", "propose", "realistic", "release", "rolepolicy", "roles", "roleshadow", "routes",
     "rules", "sample_vocabulary", "sandbox", "selects", "specification", "statements", "summaries", "testbed",
