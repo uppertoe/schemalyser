@@ -134,7 +134,7 @@ class _Checker:
                 continue
             if isinstance(func, exp.Anonymous) or name not in policy.FUNCTIONS:
                 self.fail("functions", func)
-            elif name in policy.WINDOWED and not isinstance(func.parent, exp.Window):
+            elif name in policy.WINDOWED and not policy._windowed(func):
                 self.fail("functions", func)
 
     def columns(self, tree, ctes):
@@ -204,9 +204,10 @@ class _Checker:
                 self.fail("kinds", f"'{gap['kind']}' is not a kind of {gap['view']}.{gap['column']}")
 
 
-def check(sql):
-    """The role-level policy on the text of a question. Returns {"rules": [{"id", "rule", "passed", "fragments"}],
-    "outcome": "passed" or "failed", "failed": [rule ids]}."""
+def check(sql, capabilities=()):
+    """The role-level policy on the text of a question, with the capabilities a package names beside those its leading
+    comment names. Returns {"rules": [{"id", "rule", "passed", "fragments"}], "outcome": "passed" or "failed",
+    "failed": [rule ids]}."""
     checker = _Checker()
     try:
         tree = checker.tree(sql)
@@ -221,7 +222,7 @@ def check(sql):
         # A question built to exhaust the parser, such as one nested thousands of brackets deep, is refused as one the
         # policy cannot read, and the error itself goes nowhere.
         checker.fail("parse", "the policy cannot read the question, which may be nested more deeply than it reads")
-    for name in feasibility.named_capabilities(sql):
+    for name in dict.fromkeys(list(feasibility.named_capabilities(sql)) + list(capabilities)):
         if name not in rolemap.capabilities():
             checker.fail("capabilities", f"{name} is not a capability of the catalogue")
     rules = [{"id": rule, "rule": RULES[rule], "passed": not checker.failures[rule], "fragments": checker.failures[rule]}

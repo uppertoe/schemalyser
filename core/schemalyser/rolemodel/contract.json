@@ -4905,6 +4905,13 @@
    "unit": "minutes",
    "window": "from window_from_minutes after the anaesthetic's start to window_until_minutes after it, or to its stop",
    "output_class": "row_per_anaesthetic",
+   "columns": [
+    "anaesthetic_key",
+    "age_days",
+    "threshold",
+    "readings",
+    "minutes_beyond"
+   ],
    "requires": {
     "parts": [
      "role_reading",
@@ -5006,6 +5013,13 @@
    "unit": "minutes",
    "window": "from window_from_minutes after the anaesthetic's start to window_until_minutes after it, or to its stop",
    "output_class": "row_per_anaesthetic",
+   "columns": [
+    "anaesthetic_key",
+    "age_days",
+    "threshold",
+    "readings",
+    "minutes_beyond"
+   ],
    "requires": {
     "parts": [
      "role_reading",
@@ -5073,6 +5087,14 @@
    "unit": "minutes and degrees Celsius",
    "window": "from window_from_minutes after the anaesthetic's start to window_until_minutes after it, or to its stop, and for the arrival, from just after the stop to recovery_window_minutes after it",
    "output_class": "row_per_anaesthetic",
+   "columns": [
+    "anaesthetic_key",
+    "readings",
+    "minutes_below",
+    "lowest",
+    "arrival_time",
+    "arrival_temperature"
+   ],
    "requires": {
     "parts": [
      "role_reading",
@@ -5140,6 +5162,14 @@
    "unit": "a share of the window, and minutes",
    "window": "from window_from_minutes after the anaesthetic's start to window_until_minutes after it, or to its stop",
    "output_class": "row_per_anaesthetic",
+   "columns": [
+    "anaesthetic_key",
+    "window_minutes",
+    "readings",
+    "covered_minutes",
+    "share_covered",
+    "longest_gap_minutes"
+   ],
    "requires": {
     "parts": [
      "role_reading",
@@ -5225,6 +5255,14 @@
    "unit": "mL of liquid, and kg of carbon dioxide equivalent",
    "window": "from window_from_minutes after the anaesthetic's start to window_until_minutes after it, or to its stop",
    "output_class": "row_per_anaesthetic",
+   "columns": [
+    "anaesthetic_key",
+    "agent",
+    "minutes",
+    "vapour_ml",
+    "liquid_ml",
+    "co2e_kg"
+   ],
    "requires": {
     "parts": [
      "role_reading",

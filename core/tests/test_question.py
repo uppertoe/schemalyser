@@ -111,19 +111,95 @@ def test_the_parts_are_exactly_the_parts_the_sql_reads_at_the_contract_s_version
     assert question.parts_read("")[0] == []
 
 
-def test_capabilities_are_in_the_catalogue_at_their_version_with_their_parameters():
-    named = {"name": "minutes_beyond_threshold", "version": 1, "parameters": {"kind": "map_arterial", "direction": "below", "threshold": 40, "window": "anaesthetic"}}
+PLANTED = json.loads((Path(question.__file__).parent / "rolemodel" / "capabilities" / "planted.json").read_text(encoding="utf-8"))
+COMPOSED = {"name": "hypoxaemia_burden", "version": 1, "parameters": PLANTED["hypoxaemia_burden"]["parameters"]}
+OVER_CAPABILITY = ("-- The hypoxaemia burden of each anaesthetic, from the catalogue.\n"
+                   "SELECT h.anaesthetic_key, h.age_days, h.threshold, h.readings, h.minutes_beyond FROM hypoxaemia_burden h\n")
+
+
+def composed_package(sql=OVER_CAPABILITY, capabilities=(COMPOSED,)):
     held = package()
-    held["capabilities"] = [named]
-    assert question.check(json.dumps(held))["failed"] == []
-    ids, says = failed(lambda p: p["capabilities"].append({**named, "name": "minutes_above_everything"}))
-    assert ids == ["capabilities"] and says == ["The package breaks the rule that each capability is in the catalogue at its version, with its parameters: minutes_above_everything is not a capability of the catalogue."]
-    ids, says = failed(lambda p: p["capabilities"].append({**named, "version": 2}))
+    held["capabilities"] = list(capabilities)
+    held["question_sql"] = sql
+    held["parts"] = [{"name": n, "version": 1, "admission": "admitted"} for n in ("role_anaesthetic", "role_patient", "role_reading")]
+    return held
+
+
+def test_capabilities_are_in_the_catalogue_at_their_version_with_their_parameters():
+    assert question.check(json.dumps(composed_package()))["failed"] == []
+    ids, says = failed(lambda p: p["capabilities"].append({**COMPOSED, "name": "minutes_above_everything"}))
+    assert ids == ["capabilities"] and says[0].startswith("The package breaks the rule that each capability is in the catalogue at its version, with its parameters, and its SQL can be filled: minutes_above_everything is not a capability of the catalogue.")
+    ids, says = failed(lambda p: p["capabilities"].append({**COMPOSED, "version": 2}))
     assert ids == ["capabilities"] and "is at version 1 in the catalogue, and the package names version 2" in says[0]
-    ids, says = failed(lambda p: p["capabilities"].append({**named, "parameters": {"kind": "map_arterial", "limit": 40}}))
+    ids, says = failed(lambda p: p["capabilities"].append({**COMPOSED, "parameters": {"kinds": [["spo2", 1]], "limit": 40}}))
     assert ids == ["capabilities"]
-    assert "minutes_beyond_threshold has no parameter named limit" in says[0]
-    assert "minutes_beyond_threshold is given no value for direction, threshold, window" in says[1]
+    assert "hypoxaemia_burden has no parameter named limit" in says[0]
+    assert "hypoxaemia_burden is given no value for direction, reading_stands_minutes, threshold_by_age_band, window_from_minutes, window_until_minutes" in says[1]
+    # A capability the catalogue declares without SQL cannot be composed, and a value of the wrong type is refused.
+    ids, says = failed(lambda p: p["capabilities"].append({"name": "transfusion", "version": 1, "parameters": {}}))
+    assert ids == ["capabilities"] and "transfusion: the catalogue entry names no SQL" in says[0]
+    ids, says = failed(lambda p: p["capabilities"].append({**COMPOSED, "parameters": {**COMPOSED["parameters"], "direction": "sideways"}}))
+    assert ids == ["capabilities"] and "one of below, above" in says[0]
+
+
+def test_a_package_composes_a_capability_as_a_common_table_expression_that_the_policy_accepts_and_gives_the_held_out_answer():
+    from schemalyser import rolepolicy, roleshadow
+    from schemalyser.translate import to_duckdb
+    held = composed_package()
+    found = question.check(json.dumps(held))
+    assert found["failed"] == [], question.sentences(found)
+    expanded = found["sql"]
+    assert expanded == question.expand(held)
+    # The capability is a common table expression named after it, its own steps carried under its name, and the
+    # question's leading comment is kept.
+    assert expanded.startswith("-- The hypoxaemia burden of each anaesthetic, from the catalogue.\n")
+    assert "hypoxaemia_burden AS (" in expanded and "hypoxaemia_burden__anaesthetic AS (" in expanded
+    assert "FROM hypoxaemia_burden AS h" in expanded or "FROM hypoxaemia_burden h" in expanded
+    assert question.parts_read(expanded)[0] == ["role_anaesthetic", "role_patient", "role_reading"]
+    assert question.parts_read(held["question_sql"], composed=["hypoxaemia_burden"])[0] == []
+    checked = rolepolicy.check(expanded, ["hypoxaemia_burden"])
+    assert checked["failed"] == [], checked
+    # On the planted rows, the composed question gives the capability's held-out answer.
+    expected = json.loads((Path(question.__file__).resolve().parents[2] / "fixtures" / "held-out" / "capabilities" / "hypoxaemia_burden" / "expected.json").read_text())
+    con = roleshadow.role_shadow(seed=1, anaesthetics=0, with_planted=False, extra=PLANTED["hypoxaemia_burden"]["rows"])
+    statements = to_duckdb(expanded)
+    assert len(statements) == 1
+    cursor = con.execute(statements[0])
+    columns = [d[0] for d in cursor.description]
+    rows = cursor.fetchall()
+    assert columns == expected["columns"]
+
+    def comparable(v):
+        return round(float(v), 6) if isinstance(v, (int, float)) else v
+    assert sorted([comparable(v) for v in row] for row in rows) == sorted([comparable(v) for v in row] for row in expected["rows"])
+    # The parts a composed package reads are the capability's, and a package that lists them differently is refused.
+    short = composed_package()
+    short["parts"] = short["parts"][:1]
+    assert question.check(json.dumps(short))["failed"] == ["parts"]
+    # A question's own common table expressions keep their place after the capability's.
+    own = composed_package("WITH kept AS (SELECT h.anaesthetic_key, h.minutes_beyond FROM hypoxaemia_burden h WHERE h.minutes_beyond IS NOT NULL)\n"
+                           "SELECT COUNT(*) AS anaesthetics, SUM(k.minutes_beyond) AS minutes FROM kept k\n")
+    found = question.check(json.dumps(own))
+    assert found["failed"] == [] and "kept AS (" in found["sql"] and rolepolicy.check(found["sql"])["failed"] == []
+    # The build reads the composed SQL from a package file.
+    import tempfile
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "composed.question.json"
+        path.write_text(json.dumps(own), encoding="utf-8")
+        sql, decisions, read = question.sql_and_decisions(path)
+        assert sql == found["sql"] and len(decisions["decisions"]) == 9 and read["title"] == own["title"]
+
+
+def test_the_package_the_service_writes_over_a_capability_is_accepted():
+    from schemalyser import rolepolicy
+    fixture = FIXTURE.parent / "ask-fake-backend-capability.question.json"
+    found = question.check(fixture.read_text(encoding="utf-8"))
+    assert found["failed"] == [], question.sentences(found)
+    held = found["package"]
+    assert [c["name"] for c in held["capabilities"]] == ["hypoxaemia_burden"]
+    assert [p["name"] for p in held["parts"]] == ["role_anaesthetic", "role_patient", "role_reading"]
+    assert "PERCENTILE_CONT" in held["question_sql"]
+    assert rolepolicy.check(found["sql"], ["hypoxaemia_burden"])["failed"] == []
 
 
 def test_a_proposal_keeps_the_contract_s_shape_or_the_checker_s_sentence_names_what_it_lacks():

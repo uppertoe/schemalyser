@@ -153,7 +153,7 @@ func Parse(raw string, contract *rolemodel.Contract, produced Produced, date str
 	}
 	pkg := &Package{Format: Format, Title: strings.TrimSpace(in.Title), ContractVersion: contract.Version.String(),
 		Statement: in.Statement, Decisions: in.Decisions, Examinable: in.Examinable, Capabilities: in.Capabilities,
-		QuestionSQL: sqlText, Parts: partsIn(sqlText, contract), Proposals: in.Proposals, Note: strings.TrimSpace(in.Note),
+		QuestionSQL: sqlText, Parts: partsIn(sqlText, contract, in.Capabilities), Proposals: in.Proposals, Note: strings.TrimSpace(in.Note),
 		Produced: produced}
 	if pkg.Decisions == nil {
 		pkg.Decisions = []Decision{}
@@ -200,8 +200,12 @@ func Parse(raw string, contract *rolemodel.Contract, produced Produced, date str
 		}
 	}
 	for _, c := range pkg.Capabilities {
-		if contract.Capability(c.Name) == nil {
+		entry := contract.Capability(c.Name)
+		if entry == nil {
 			return nil, nil, fmt.Errorf("capabilities names %s, which the catalogue does not have", c.Name)
+		}
+		if !entry.Composable() {
+			return nil, nil, fmt.Errorf("capabilities names %s, which the catalogue declares without its SQL yet, so a question computes it over the parts instead", c.Name)
 		}
 	}
 	return pkg, data, nil
@@ -209,21 +213,28 @@ func Parse(raw string, contract *rolemodel.Contract, produced Produced, date str
 
 var partName = regexp.MustCompile(`\b(role|map)_[a-z][a-z0-9_]*\b`)
 
-// partsIn gives the parts and mapping views the SQL names, each at its version with its admission, in name order.
-func partsIn(sqlText string, contract *rolemodel.Contract) []Part {
+// partsIn gives the parts and mapping views the SQL names, with the parts each composed capability reads, each at
+// its version with its admission, in name order.
+func partsIn(sqlText string, contract *rolemodel.Contract, capabilities []Capability) []Part {
+	names := partName.FindAllString(stripCommentsAndStrings(sqlText), -1)
+	for _, c := range capabilities {
+		if entry := contract.Capability(c.Name); entry != nil {
+			names = append(names, entry.Requires.Parts...)
+		}
+	}
 	found := map[string]Part{}
-	for _, name := range partName.FindAllString(stripCommentsAndStrings(sqlText), -1) {
+	for _, name := range names {
 		if v := contract.Part(name); v != nil {
 			found[name] = Part{Name: name, Version: v.Version, Admission: contract.Admission(name)}
 		}
 	}
-	names := make([]string, 0, len(found))
+	ordered := make([]string, 0, len(found))
 	for name := range found {
-		names = append(names, name)
+		ordered = append(ordered, name)
 	}
-	sort.Strings(names)
-	parts := make([]Part, 0, len(names))
-	for _, name := range names {
+	sort.Strings(ordered)
+	parts := make([]Part, 0, len(ordered))
+	for _, name := range ordered {
 		parts = append(parts, found[name])
 	}
 	return parts

@@ -36,7 +36,7 @@ On 14 October 2026 the owner took the first three decisions as recommended. The 
 
 ## Progress
 
-On 14 October 2026 packages 4, 5, 6 and 13 were done, and packages 7, 8 and 9 the same day: parts carry semantic hashes and versions with the lock file `core/schemalyser/rolemodel/parts.lock.json`, the question package has its schema beside the contract and its one reader `question.py`, and Ask writes that package and publishes each version at an address of its own with the hash of its bytes. Package 10 followed the same day: the workspace import and the audit build read the package file, and the folder form is gone. The next package in order is 11, Ask's prompt matching what the core admits.
+On 14 October 2026 packages 4, 5, 6 and 13 were done, and packages 7, 8 and 9 the same day: parts carry semantic hashes and versions with the lock file `core/schemalyser/rolemodel/parts.lock.json`, the question package has its schema beside the contract and its one reader `question.py`, and Ask writes that package and publishes each version at an address of its own with the hash of its bytes. Package 10 followed the same day: the workspace import and the audit build read the package file, and the folder form is gone. Packages 11 and 12 followed: the prompt renders the mapping views, the catalogue with each capability's columns and parameters, the parts' standing and the two-part rule, and a package composes a composable capability as a common table expression named after it, which the role policy checks as one question and which gives the capability's held-out answer on its planted rows. The next package in order is 14, the first of Phase 2.
 
 ## Decisions for the owner
 

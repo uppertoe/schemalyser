@@ -498,24 +498,25 @@ def check_question(path):
     and accepted otherwise. No hospital schema is read, so the workspace's own check and the import give the same
     status for the same package, whichever hospital the project holds."""
     rules, text = read_file(path)
-    package, form = None, []
+    package, sql, form = None, None, []
     if text is not None:
         found = question.check(text)
         rules = rules + found["rules"]
-        package = found["package"] if not found["failed"] else None
+        package, sql = (found["package"], found["sql"]) if not found["failed"] else (None, None)
     if package is not None:
         waiting = [f"the package holds {len(package['proposals'])} proposal(s)"] if package["proposals"] else []
         waiting += [f"{p['name']} is refused for a question" for p in package["parts"] if p["admission"] == question.REFUSED]
         rules = rules + _rules({"waits": waiting} if waiting else {}, WAITS_RULE)
         if not waiting:
-            rules = rules + rolepolicy.check(package["question_sql"])["rules"]
+            # The policy reads the SQL with its capabilities composed, as the hospital compiles it.
+            rules = rules + rolepolicy.check(sql, [c["name"] for c in package["capabilities"]])["rules"]
     failed = [r["id"] for r in rules if not r["passed"]]
     if failed:
         status = "malformed"
     else:
-        form = audit.public_form(package["question_sql"])
+        form = audit.public_form(sql)
         status = "requires_private_review" if form else "accepted"
-    return {"rules": rules, "failed": failed, "status": status, "form": form, "package": package}
+    return {"rules": rules, "failed": failed, "status": status, "form": form, "package": package, "sql": sql}
 
 
 def _schema_path(project, name):
@@ -572,7 +573,7 @@ def import_question(path, hospital, schema=None, date=None):
     except (ProjectError, feasibility.FeasibilityError) as error:
         raise WorkspaceError(str(error)) from None
     title = " ".join(package["title"].split())
-    sql = package["question_sql"]
+    sql = checked["sql"]
     held = project.add_question(title, sql)
     question_path = project.question_path(held)
     audit_name = project.unique("audits", f"{Path(held).stem}_{date}")

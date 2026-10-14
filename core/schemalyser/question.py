@@ -30,6 +30,7 @@ from pathlib import Path
 import sqlglot
 from sqlglot import exp
 
+from . import capability
 from . import contract as model_reader
 from . import contractcheck, rolemap
 
@@ -46,7 +47,7 @@ RULES = {
     "parts": "the parts are exactly the parts the SQL reads",
     "part_version": "each part is at its version in the contract",
     "admission": "each part's admission is what the contract gives it for a question",
-    "capabilities": "each capability is in the catalogue at its version, with its parameters",
+    "capabilities": "each capability is in the catalogue at its version, with its parameters, and its SQL can be filled",
     "proposals": "each proposal keeps the contract's shape",
     "dates": "every date and time reads",
     "examinable": "the examinable object names its oracle or says why it has none",
@@ -71,9 +72,11 @@ def read(path, model=None):
 
 def check(text, model=None):
     """The rules applied to the text of a package. Returns {"rules": [{"id", "rule", "passed", "fragments"}],
-    "failed": [rule ids], "package": the package as read, or None where it is not JSON}."""
+    "failed": [rule ids], "package": the package as read, or None where it is not JSON, "sql": the package's SQL with
+    its capabilities composed, or None where a rule stopped that}."""
     model = model or rolemap.contract()
     failures = {rule: [] for rule in RULES}
+    composed = {"sql": None}
 
     def fail(rule, fragment):
         if fragment not in failures[rule]:
@@ -91,9 +94,10 @@ def check(text, model=None):
         for where, problem in validate(package, schema()):
             fail("format" if where == "format" else "schema", f"{where}: {problem}")
         if not failures["schema"] and not failures["format"]:
-            _check_content(package, model, fail)
+            composed["sql"] = _check_content(package, model, fail)
     rules = [{"id": rule, "rule": RULES[rule], "passed": not failures[rule], "fragments": failures[rule]} for rule in RULES]
-    return {"rules": rules, "failed": [r["id"] for r in rules if not r["passed"]], "package": package}
+    failed = [r["id"] for r in rules if not r["passed"]]
+    return {"rules": rules, "failed": failed, "package": package, "sql": composed["sql"] if not failed else None}
 
 
 def sentences(found):
@@ -109,8 +113,10 @@ def sql_and_decisions(path, model=None):
     rule."""
     path = Path(path)
     if path.name.endswith(PACKAGE_SUFFIX):
-        package = read(path, model)
-        return package["question_sql"], audit_decisions(package), package
+        found = check(path.read_text(encoding="utf-8"), model)
+        if found["failed"]:
+            raise QuestionError("\n".join(sentences(found)))
+        return found["sql"], audit_decisions(found["package"]), found["package"]
     return path.read_text(encoding="utf-8"), None, None
 
 
@@ -121,6 +127,8 @@ def audit_decisions(package):
 
 
 def _check_content(package, model, fail):
+    """The rules beyond the shape. Returns the package's SQL with its capabilities composed, or None where that
+    failed."""
     if package["contract_version"] != model.get("version"):
         fail("contract_version", f"the package names contract version {package['contract_version']}, and Schemalyser holds {model.get('version')}")
     versions = model_reader.part_versions(model)
@@ -128,7 +136,18 @@ def _check_content(package, model, fail):
     for name in named:
         if named.count(name) > 1:
             fail("parts", f"{name} is listed more than once")
-    read_by_sql, unreadable = parts_read(package["question_sql"], model)
+    catalogue = rolemap.capabilities(model)
+    for found in package["capabilities"]:
+        _check_capability(found, catalogue, fail, "capabilities")
+    composed = None
+    try:
+        composed = expand(package, model)
+    except (capability.CapabilityError, QuestionError) as error:
+        fail("capabilities", str(error))
+    if composed is not None:
+        read_by_sql, unreadable = parts_read(composed, model)
+    else:
+        read_by_sql, unreadable = parts_read(package["question_sql"], model, {c["name"] for c in package["capabilities"]})
     if unreadable:
         fail("parts", unreadable)
     for name in sorted(set(named) - set(versions)):
@@ -147,9 +166,6 @@ def _check_content(package, model, fail):
         wanted = model_reader.admission(name, "question", model)
         if part["admission"] != wanted:
             fail("admission", f"the contract gives {name} the admission '{wanted}' for a question, and the package says '{part['admission']}'")
-    catalogue = rolemap.capabilities(model)
-    for capability in package["capabilities"]:
-        _check_capability(capability, catalogue, fail, "capabilities")
     for n, proposal in enumerate(package["proposals"], 1):
         for problem in _proposal_problems(proposal, model):
             fail("proposals", f"proposal {n}: {problem}")
@@ -173,6 +189,53 @@ def _check_content(package, model, fail):
             part = (examinable.get("outcome") or {}).get("part")
             if part is not None and part not in versions:
                 fail("examinable", f"the outcome's part {part} is not a part of the contract")
+    return composed
+
+
+def expand(package, model=None):
+    """The package's SQL with each capability it composes inlined as a common table expression named after it, so that
+    the SQL reads the capability as a table: the capability's SQL is filled with the package's parameters, its own
+    common table expressions are carried over under the capability's name as a prefix, and its final SELECT becomes
+    the expression the question reads. The question's leading comment is kept. Raises CapabilityError for a
+    capability the catalogue cannot fill, and QuestionError for SQL that cannot be read."""
+    sql = package["question_sql"]
+    if not package["capabilities"]:
+        return sql
+    try:
+        question = sqlglot.parse_one(sql, dialect="tsql", error_level=sqlglot.ErrorLevel.RAISE)
+    except (RecursionError, sqlglot.errors.SqlglotError):
+        raise QuestionError("the SQL cannot be read as one statement, so no capability can be composed into it") from None
+    if question is None:
+        raise QuestionError("the SQL holds no statement")
+    ctes = []
+    for found in package["capabilities"]:
+        name = found["name"]
+        # The capability's own leading comment stays in its file; the composed SQL carries the question's.
+        text = "\n".join(line for line in capability.fill(name, found["parameters"], model).splitlines() if not line.lstrip().startswith("--"))
+        filled = sqlglot.parse_one(text, dialect="tsql")
+        held = filled.args.get("with_")
+        inner = list(held.expressions) if held is not None else []
+        renamed = {cte.alias.lower(): f"{name}__{cte.alias}" for cte in inner}
+
+        def rename(node, renamed=renamed):
+            if isinstance(node, exp.Table) and isinstance(node.this, exp.Identifier) and node.name.lower() in renamed:
+                node.set("this", exp.to_identifier(renamed[node.name.lower()]))
+            return node
+
+        for cte in inner:
+            body = cte.this.transform(rename)
+            ctes.append(exp.CTE(this=body, alias=exp.TableAlias(this=exp.to_identifier(renamed[cte.alias.lower()]))))
+        filled.set("with_", None)
+        ctes.append(exp.CTE(this=filled.transform(rename), alias=exp.TableAlias(this=exp.to_identifier(name))))
+    own = question.args.get("with_")
+    question.set("with_", exp.With(expressions=ctes + (list(own.expressions) if own is not None else [])))
+    leading = []
+    for line in sql.splitlines():
+        if line.strip().startswith("--") or not line.strip():
+            leading.append(line)
+        else:
+            break
+    return "\n".join(leading + [question.sql(dialect="tsql", pretty=True)]) + "\n"
 
 
 def _check_capability(capability, catalogue, fail, rule):
@@ -218,10 +281,10 @@ def _proposal_problems(proposal, model):
     return [problem.rstrip('.') for problem in contractcheck.check_contract(candidate)]
 
 
-def parts_read(sql, model=None):
+def parts_read(sql, model=None, composed=()):
     """The public views a question's SQL reads, as a sorted list, and the reason it could not be read, or None. A
-    common table expression is not a view; a name that is no view of the contract is reported as read, so that the
-    rule names it."""
+    common table expression is not a view, nor is a capability the question composes under its name; a name that is
+    no view of the contract is reported as read, so that the rule names it."""
     if not sql.strip():
         return [], None
     try:
@@ -230,7 +293,7 @@ def parts_read(sql, model=None):
         return [], "the SQL cannot be read as one statement, which the role policy says more about"
     if tree is None:
         return [], "the SQL holds no statement"
-    ctes = {cte.alias.lower() for cte in tree.find_all(exp.CTE)}
+    ctes = {cte.alias.lower() for cte in tree.find_all(exp.CTE)} | {name.lower() for name in composed}
     found = set()
     for table in tree.find_all(exp.Table):
         if isinstance(table.this, exp.Identifier) and table.name.lower() not in ctes:

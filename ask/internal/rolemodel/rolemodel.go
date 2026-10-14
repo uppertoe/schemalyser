@@ -82,10 +82,15 @@ type Capability struct {
 	Unit        string      `json:"unit"`
 	Window      string      `json:"window"`
 	OutputClass string      `json:"output_class"`
+	Columns     []string    `json:"columns"` // the columns a composable capability gives, one row per its grain
+	SQL         string      `json:"sql"`     // the file of its SQL, present only where the capability can be composed
 	Requires    struct {
 		Parts []string `json:"parts"`
 	} `json:"requires"`
 }
+
+// Composable says whether a question may compose the capability: the catalogue holds its SQL.
+func (c *Capability) Composable() bool { return c.SQL != "" }
 
 // Contract is the public contract as the service reads it.
 type Contract struct {
@@ -228,9 +233,13 @@ func (c *Contract) Render() string {
 	for _, m := range c.MappingViews {
 		fmt.Fprintf(&b, "- %s (%s; domain %s; version %d): joined from %s. %s\n", m.Name, m.Title, m.Domain, m.Version, strings.Join(m.UsedBy, ", "), m.Description)
 	}
-	b.WriteString("\nThe capability catalogue. Each capability is a named clinical measure over the parts, at a version, with parameters where it takes them. Where a capability fits the question, name it in the package's capabilities list with its version and a value for each parameter, and write free SQL only for what the catalogue does not cover; the hospital's own tooling fills the capability's SQL.\n")
+	b.WriteString("\nThe capability catalogue. Each capability is a named clinical measure over the parts, at a version, with parameters where it takes them. A capability marked composable has its SQL in the catalogue: where one fits the question, name it in the package's capabilities list with its version and a value for each parameter, and read it in the SQL as a table named after it, with the columns listed, one row per its grain; the service composes its SQL into the question, so write free SQL only for what the catalogue does not cover. A capability marked declared is a measure the catalogue names and has not yet written, so a question computes it over the parts.\n")
 	for _, cap := range c.Capabilities {
-		fmt.Fprintf(&b, "- %s (version %d): %s Grain: %s; unit: %s; window: %s; over %s.", cap.Name, cap.Version, cap.Meaning, cap.Grain, cap.Unit, cap.Window, strings.Join(cap.Requires.Parts, ", "))
+		standing := "declared"
+		if cap.Composable() {
+			standing = "composable, giving " + strings.Join(cap.Columns, ", ")
+		}
+		fmt.Fprintf(&b, "- %s (version %d; %s): %s Grain: %s; unit: %s; window: %s; over %s.", cap.Name, cap.Version, standing, cap.Meaning, cap.Grain, cap.Unit, cap.Window, strings.Join(cap.Requires.Parts, ", "))
 		if len(cap.Parameters) > 0 {
 			words := make([]string, 0, len(cap.Parameters))
 			for _, p := range cap.Parameters {

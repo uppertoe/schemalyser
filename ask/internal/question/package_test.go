@@ -152,12 +152,43 @@ func TestAProposalMakesTheQuestionWaitForTheContract(t *testing.T) {
 	}
 }
 
+func TestAPackageOverACapabilityReadsTheCapabilitysPartsAndIsCommittedAsAFixture(t *testing.T) {
+	pkg, data, err := Parse(OverCapability, contract(t), produced, "2026-10-14")
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := []string{}
+	for _, p := range pkg.Parts {
+		names = append(names, p.Name)
+	}
+	if strings.Join(names, ",") != "role_anaesthetic,role_patient,role_reading" || len(pkg.Capabilities) != 1 {
+		t.Fatalf("parts %v capabilities %v", names, pkg.Capabilities)
+	}
+	const path = "../../../fixtures/packages/ask-fake-backend-capability.question.json"
+	if os.Getenv("ASK_WRITE_FIXTURE") == "1" {
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	held, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("the fixture is not beside the service: %v", err)
+	}
+	if !bytes.Equal(held, data) {
+		t.Fatal("the fixture has fallen behind what the service writes; run the test with ASK_WRITE_FIXTURE=1")
+	}
+	declared := strings.Replace(OverCapability, `"name": "hypoxaemia_burden"`, `"name": "transfusion"`, 1)
+	if _, _, err := Parse(declared, contract(t), produced, "2026-10-14"); err == nil || !strings.Contains(err.Error(), "without its SQL yet") {
+		t.Fatalf("a declared capability was composed: %v", err)
+	}
+}
+
 func TestACapabilityMustBeInTheCatalogue(t *testing.T) {
-	raw := strings.Replace(Block, `"proposals": []`, `"proposals": [], "capabilities": [{"name": "transfusion", "version": 1, "parameters": {}}]`, 1)
+	raw := strings.Replace(Block, `"proposals": []`, `"proposals": [], "capabilities": [{"name": "hypothermia", "version": 1, "parameters": {}}]`, 1)
 	if _, _, err := Parse(raw, contract(t), produced, "2026-10-14"); err != nil {
 		t.Fatal(err)
 	}
-	raw = strings.Replace(raw, `"name": "transfusion"`, `"name": "transfusions"`, 1)
+	raw = strings.Replace(raw, `"name": "hypothermia"`, `"name": "transfusions"`, 1)
 	if _, _, err := Parse(raw, contract(t), produced, "2026-10-14"); err == nil || !strings.Contains(err.Error(), "transfusions") {
 		t.Fatalf("an unknown capability was accepted: %v", err)
 	}

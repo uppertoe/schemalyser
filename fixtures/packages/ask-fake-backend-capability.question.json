@@ -1,0 +1,83 @@
+{
+ "format": "schemalyser-question/1",
+ "title": "Median minutes below a saturation of 90 in the first half hour",
+ "contract_version": "1.1",
+ "statement": {
+  "cohort": "Every anaesthetic of a child, leaving out test patients.",
+  "outcome": "The minutes between ten and forty minutes after the start during which the saturation lay below 90 per cent.",
+  "result": "One row with the median of those minutes over the anaesthetics that had a saturation reading in the window."
+ },
+ "decisions": [
+  {
+   "about": "the threshold",
+   "choice": "below 90 per cent at every age",
+   "value": 90,
+   "unit": "per cent",
+   "decision": "The threshold is a saturation below 90 per cent, the same at every age.",
+   "by": "dr@example.test",
+   "date": "2026-10-14"
+  },
+  {
+   "about": "the window",
+   "choice": "ten to forty minutes after the start",
+   "value": [
+    10,
+    40
+   ],
+   "unit": "minutes",
+   "decision": "The window runs from ten to forty minutes after the start of the anaesthetic.",
+   "by": "dr@example.test",
+   "date": "2026-10-14"
+  }
+ ],
+ "capabilities": [
+  {
+   "name": "hypoxaemia_burden",
+   "version": 1,
+   "parameters": {
+    "direction": "below",
+    "kinds": [
+     [
+      "spo2",
+      1
+     ]
+    ],
+    "reading_stands_minutes": 2,
+    "threshold_by_age_band": [
+     [
+      0,
+      null,
+      90.0
+     ]
+    ],
+    "window_from_minutes": 10,
+    "window_until_minutes": 40
+   }
+  }
+ ],
+ "question_sql": "WITH measured AS (SELECT h.anaesthetic_key, h.minutes_beyond FROM hypoxaemia_burden h WHERE h.minutes_beyond IS NOT NULL)\nSELECT DISTINCT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY m.minutes_beyond) OVER () AS median_minutes_below_90 FROM measured m",
+ "parts": [
+  {
+   "name": "role_anaesthetic",
+   "version": 1,
+   "admission": "admitted"
+  },
+  {
+   "name": "role_patient",
+   "version": 1,
+   "admission": "admitted"
+  },
+  {
+   "name": "role_reading",
+   "version": 1,
+   "admission": "admitted"
+  }
+ ],
+ "proposals": [],
+ "note": "The median is over anaesthetics with at least one saturation reading in the window; those with none are left out rather than counted as zero.",
+ "produced": {
+  "model": "fake",
+  "at": "2026-10-14T09:00:00Z",
+  "by": "dr@example.test"
+ }
+}

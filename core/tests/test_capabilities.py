@@ -113,3 +113,11 @@ def test_the_planted_cases_name_no_table_of_any_hospital_and_keep_to_the_planted
     keys = {row[0] for case in PLANTED.values() if isinstance(case, dict) for row in case["rows"]["role_anaesthetic"]}
     assert keys and all(990_000_000 <= int(key) <= 990_999_999 for key in keys)
     assert "OBS_" not in text and "ANAES_" not in text
+
+
+def test_the_catalogue_names_the_columns_that_each_composable_capability_gives():
+    import sqlglot
+    for name in FIRST_FIVE:
+        tree = sqlglot.parse_one(capability.fill(name, PLANTED[name]["parameters"]), dialect="tsql")
+        assert rolemap.capabilities()[name]["columns"] == [e.alias_or_name for e in tree.expressions], name
+    assert all("columns" not in c for c in rolemap.capabilities().values() if not c.get("sql"))
