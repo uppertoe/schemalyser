@@ -60,6 +60,9 @@ func Open(path string) (*Store, error) {
 		`CREATE TABLE IF NOT EXISTS reports (id INTEGER PRIMARY KEY, question_id INTEGER NOT NULL REFERENCES questions(id),
 		   version INTEGER NOT NULL, json TEXT NOT NULL, level TEXT NOT NULL, created TEXT NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS reports_by_question ON reports(question_id, version)`,
+		`CREATE TABLE IF NOT EXISTS confirmations (id INTEGER PRIMARY KEY, question_id INTEGER NOT NULL REFERENCES questions(id),
+		   version INTEGER NOT NULL, example TEXT NOT NULL, verdict TEXT NOT NULL, by TEXT NOT NULL, note TEXT NOT NULL, created TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS confirmations_by_question ON confirmations(question_id, version)`,
 		`CREATE INDEX IF NOT EXISTS messages_by_question ON messages(question_id, id)`,
 		`CREATE INDEX IF NOT EXISTS packages_by_question ON packages(question_id, version)`,
 	} {
@@ -259,4 +262,40 @@ func (s *Store) Examinations(ctx context.Context, id int64) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM reports WHERE question_id = ?`, id).Scan(&n)
 	return n, err
+}
+
+// Confirmation is the asker's word on one worked example of one version: confirmed, or rejected with a note.
+type Confirmation struct {
+	Example string
+	Verdict string
+	By      string
+	Note    string
+	Created time.Time
+}
+
+// AddConfirmation records the asker's word on an example; a later word on the same example stands over an earlier.
+func (s *Store) AddConfirmation(ctx context.Context, id int64, version int, example, verdict, by, note string, now time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO confirmations (question_id, version, example, verdict, by, note, created) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, version, example, verdict, by, note, stamp(now))
+	return err
+}
+
+// Confirmations gives the latest word on each example of a version, by example id.
+func (s *Store) Confirmations(ctx context.Context, id int64, version int) (map[string]Confirmation, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT example, verdict, by, note, created FROM confirmations WHERE question_id = ? AND version = ? ORDER BY id`, id, version)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	found := map[string]Confirmation{}
+	for rows.Next() {
+		var c Confirmation
+		var created string
+		if err := rows.Scan(&c.Example, &c.Verdict, &c.By, &c.Note, &created); err != nil {
+			return nil, err
+		}
+		c.Created = parse(created)
+		found[c.Example] = c
+	}
+	return found, rows.Err()
 }

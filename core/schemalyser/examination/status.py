@@ -65,11 +65,15 @@ def canonical(report):
     return json.dumps(held, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
-def finish(report, key=None, examined_at=None):
-    """The report completed: the versions, the time, the derived level, and, with a key, the examiner's signature."""
+def finish(report, key=None, examined_at=None, examinable=None):
+    """The report completed: the versions, the time, the worked examples where an examinable is given, the derived
+    level, and, with a key, the examiner's signature."""
     report = dict(report)
     report["examined_at"] = examined_at or dt.datetime.now().astimezone().isoformat(timespec="seconds")
     report["versions"] = versions()
+    if examinable is not None and "examples" not in report:
+        from . import examples
+        report["examples"] = examples.public(examples.generate(examinable))
     derived = derive(report, report["examined_at"])
     report["status"] = derived
     if key is not None:

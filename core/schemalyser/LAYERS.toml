@@ -74,6 +74,7 @@
 "schemalyser.examination.oracle" = { layer = "orchestration", note = "The oracle of the examination: the expected answer from the examinable object over rows, in Python, and the differential run against the package on the shadow (layer 4)." }
 "schemalyser.examination.mutants" = { layer = "orchestration", note = "The examination of the examination: fixed mutations of a correct question run through the stages, with the stage that killed each." }
 "schemalyser.examination.status" = { layer = "orchestration", note = "The level a package holds, derived from the stages passed, and the signed report that records it." }
+"schemalyser.examination.examples" = { layer = "orchestration", note = "Worked examples for the asker: cases at each boundary of the examinable, valued by the oracle and written as sentences." }
 "schemalyser.examination.planted" = { layer = "orchestration", note = "Stage 4 of the examination: the planted cases under a fresh transform, from the register and the private root, run on the role-level shadow (layer 4) and compared as the equivalence tool compares answers." }
 "schemalyser.examination.__main__" = { layer = "5", note = "The command line of the examination." }
 "schemalyser.results" = { layer = "orchestration", note = "The results package, written from an execution package and a production run's output; it stays inside the hospital." }

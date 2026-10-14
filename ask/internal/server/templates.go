@@ -73,6 +73,20 @@ const conversationHTML = `{{define "conversation"}}
   <p><code>{{.Address}}</code></p>
   <p class="state">The latest version is always at <code>{{.Latest}}</code>.</p>{{else}}
   <p class="state">The package is published at its address once the examiner's report puts it at logic examined or above.</p>{{end}}
+  {{if .Examples}}<h3>What the question means, in examples</h3>
+  <p>The examiner worked these cases out from the decisions. Confirm each that is what you mean, or say what is wrong with one and the assistant will change the decision it rests on.</p>
+  <ul class="examples">{{range .Examples}}
+    <li><span class="example">{{.Says}}</span>
+      {{if eq .Verdict "confirmed"}}<span class="state">Confirmed by {{.By}} on {{.Date}}.</span>
+      {{else if eq .Verdict "rejected"}}<span class="state">Rejected by {{.By}} on {{.Date}}: {{.Note}}</span>
+      {{else}}<form hx-post="/questions/{{$.Question.ID}}/examples" hx-target="#conversation" hx-swap="innerHTML" method="post" action="/questions/{{$.Question.ID}}/examples" class="verdict" x-data="{rejecting: false}">
+        <input type="hidden" name="example" value="{{.ID}}">
+        <button type="submit" name="verdict" value="confirmed">That is what I mean</button>
+        <button type="button" @click="rejecting = !rejecting">Something is wrong</button>
+        <span x-show="rejecting" x-cloak><input type="text" name="note" placeholder="What is wrong with it"> <button type="submit" name="verdict" value="rejected">Send</button></span>
+      </form>{{end}}
+    </li>{{end}}
+  </ul>{{end}}
   {{if .Admin}}<form hx-post="/questions/{{.Question.ID}}/report" hx-target="#conversation" hx-swap="innerHTML" hx-encoding="multipart/form-data" method="post" action="/questions/{{.Question.ID}}/report" enctype="multipart/form-data" class="report">
     <label for="report">The examiner's report of this version, signed ({{.Examinations}} of {{.ExaminationsAllowed}} examinations used)</label>
     <input id="report" type="file" name="report" accept="application/json" required>

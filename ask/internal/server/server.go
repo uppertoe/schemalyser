@@ -79,6 +79,7 @@ func New(cfg *config.Config, st *store.Store, m model.Model) (*Server, error) {
 	mux.HandleFunc("POST /questions/{id}/messages", s.withUser(s.reply))
 	mux.HandleFunc("GET /questions/{id}/package.json", s.withUser(s.download))
 	mux.HandleFunc("POST /questions/{id}/report", s.withUser(s.report))
+	mux.HandleFunc("POST /questions/{id}/examples", s.withUser(s.confirm))
 	s.handler = secure(mux)
 	return s, nil
 }
@@ -129,6 +130,13 @@ type pageData struct {
 	Level, LevelSays                           string
 	Published                                  bool
 	Examinations, ExaminationsAllowed          int
+	Examples                                   []exampleView
+	Unconfirmed                                int
+}
+
+// exampleView is one worked example with the asker's word on it.
+type exampleView struct {
+	ID, About, Says, Verdict, By, Note, Date string
 }
 
 func (s *Server) home(w http.ResponseWriter, r *http.Request, user string) {
@@ -254,8 +262,10 @@ func (s *Server) converse(ctx context.Context, q *store.Question, user, text str
 		}
 		return nil, fmt.Errorf("%w: %s", ErrHeldBack, why)
 	}
-	if err := s.store.AddMessage(ctx, q.ID, "user", text, now); err != nil {
-		return nil, err
+	if text != "" {
+		if err := s.store.AddMessage(ctx, q.ID, "user", text, now); err != nil {
+			return nil, err
+		}
 	}
 	history, err := s.store.Messages(ctx, q.ID)
 	if err != nil {
@@ -366,13 +376,113 @@ func (s *Server) pageOf(ctx context.Context, q *store.Question, user, problem st
 		if report != nil {
 			verified, err := examination.Verify([]byte(report.JSON), s.cfg.ExaminerPublicKey)
 			if err == nil {
-				data.Level, data.LevelSays, data.Published = verified.Level, verified.Says, examination.Publishable(verified.Level)
+				data.Level, data.LevelSays = verified.Level, verified.Says
+				data.Examples, data.Unconfirmed, err = s.examples(ctx, q.ID, latest.Version, verified)
+				if err != nil {
+					return pageData{}, err
+				}
+				data.Published = examination.Publishable(verified.Level) && data.Unconfirmed == 0
+				if examination.Publishable(verified.Level) && data.Unconfirmed > 0 {
+					data.LevelSays += fmt.Sprintf(" The package is published once the %d worked examples not yet confirmed are confirmed.", data.Unconfirmed)
+				}
 			}
 		}
 		data.Examinations, _ = s.store.Examinations(ctx, q.ID)
 		data.ExaminationsAllowed = s.cfg.Examinations
 	}
 	return data, nil
+}
+
+// examples joins a report's worked examples with the asker's word on each, and counts those not yet confirmed.
+func (s *Server) examples(ctx context.Context, id int64, version int, verified *examination.Report) ([]exampleView, int, error) {
+	held, err := s.store.Confirmations(ctx, id, version)
+	if err != nil {
+		return nil, 0, err
+	}
+	var views []exampleView
+	unconfirmed := 0
+	for _, e := range verified.Examples {
+		view := exampleView{ID: e.ID, About: e.About, Says: e.Says}
+		if c, ok := held[e.ID]; ok {
+			view.Verdict, view.By, view.Note, view.Date = c.Verdict, c.By, c.Note, c.Created.Format("2 January 2006")
+		}
+		if view.Verdict != "confirmed" {
+			unconfirmed++
+		}
+		views = append(views, view)
+	}
+	return views, unconfirmed, nil
+}
+
+// confirm records the asker's word on a worked example of the latest version: confirmed, with the asker's name and
+// the date, which is the signature of meaning, or rejected with a note, which returns to the model as a change of
+// decision on the next turn.
+func (s *Server) confirm(w http.ResponseWriter, r *http.Request, user string) {
+	q, err := s.owned(r, user)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	problem, err := s.takeConfirmation(r.Context(), q, user, r)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	if r.Header.Get("HX-Request") == "" {
+		http.Redirect(w, r, fmt.Sprintf("/questions/%d", q.ID), http.StatusSeeOther)
+		return
+	}
+	data, err := s.pageOf(r.Context(), q, user, problem)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.render(w, s.turns, data)
+}
+
+func (s *Server) takeConfirmation(ctx context.Context, q *store.Question, user string, r *http.Request) (string, error) {
+	example, verdict, note := strings.TrimSpace(r.FormValue("example")), strings.TrimSpace(r.FormValue("verdict")), strings.TrimSpace(r.FormValue("note"))
+	if verdict != "confirmed" && verdict != "rejected" {
+		return "An example is confirmed or rejected, and nothing else.", nil
+	}
+	latest, err := s.store.LatestPackage(ctx, q.ID)
+	if err != nil || latest == nil {
+		return "The question has no package yet.", err
+	}
+	report, err := s.store.ReportFor(ctx, q.ID, latest.Version)
+	if err != nil || report == nil {
+		return "The question has no examination report yet, so there are no examples to confirm.", err
+	}
+	verified, err := examination.Verify([]byte(report.JSON), s.cfg.ExaminerPublicKey)
+	if err != nil {
+		return "The report is not verified, so its examples cannot be confirmed.", nil
+	}
+	var found *examination.Example
+	for i := range verified.Examples {
+		if verified.Examples[i].ID == example {
+			found = &verified.Examples[i]
+		}
+	}
+	if found == nil {
+		return "The example named is not one of the report's.", nil
+	}
+	if verdict == "rejected" && note == "" {
+		return "To reject an example, say in a few words what is wrong with it, so that the assistant can change the decision.", nil
+	}
+	if err := s.store.AddConfirmation(ctx, q.ID, latest.Version, example, verdict, user, note, s.now()); err != nil {
+		return "", err
+	}
+	if verdict == "rejected" {
+		// The rejection is the asker's own words on a decision, so it reaches the model as the asker's next turn.
+		text := "This worked example of the question is wrong: \"" + found.Says + "\" " + note + " Please change the decision it rests on and write the question again."
+		if err := s.store.AddMessage(ctx, q.ID, "user", text, s.now()); err != nil {
+			return "", err
+		}
+		if _, err := s.converse(ctx, q, user, ""); err != nil && !errors.Is(err, ErrHeldBack) {
+			return "The assistant could not reply: " + err.Error(), nil
+		}
+	}
+	return "", nil
 }
 
 // report takes the examiner's signed report of the latest version of a question's package, uploaded by the owner,
@@ -509,6 +619,13 @@ func (s *Server) servePackage(w http.ResponseWriter, r *http.Request, q *store.Q
 	}
 	if verified == nil || !examination.Publishable(verified.Level) {
 		http.Error(w, "This version of the question has not been examined to the level that publishes it; the owner uploads the examiner's report first.", http.StatusNotFound)
+		return
+	}
+	if _, unconfirmed, err := s.examples(r.Context(), q.ID, held.Version, verified); err != nil {
+		s.fail(w, err)
+		return
+	} else if unconfirmed > 0 {
+		http.Error(w, "This version of the question is published once the asker has confirmed each of its worked examples.", http.StatusNotFound)
 		return
 	}
 	w.Header().Set("content-type", "application/json; charset=utf-8")

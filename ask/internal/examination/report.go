@@ -32,7 +32,16 @@ type Report struct {
 	Level         string
 	Says          string
 	ExaminedAt    string
-	Feedback      string // what may return to the model: bounded, with no case detail
+	Feedback      string    // what may return to the model: bounded, with no case detail
+	Examples      []Example // the worked examples the asker confirms, in clinical words
+}
+
+// Example is one worked example of the report: a case at a boundary of the question, valued by the examiner's own
+// reading, as a sentence the asker confirms or rejects.
+type Example struct {
+	ID    string
+	About string
+	Says  string
 }
 
 // Verify reads a report's bytes, checks that its signature is the examiner's over the canonical form, and gives the
@@ -71,7 +80,19 @@ func Verify(data []byte, publicKeyHex string) (*Report, error) {
 	if sha == "" || order[level] == 0 && level != NotWellFormed {
 		return nil, fmt.Errorf("the report names no package or no level the service knows")
 	}
-	return &Report{PackageSHA256: sha, Level: level, Says: says, ExaminedAt: at, Feedback: feedback(held)}, nil
+	var examples []Example
+	if held, ok := held["examples"].([]any); ok {
+		for _, e := range held {
+			item, _ := e.(map[string]any)
+			id, _ := item["id"].(string)
+			about, _ := item["about"].(string)
+			text, _ := item["says"].(string)
+			if id != "" && text != "" {
+				examples = append(examples, Example{ID: id, About: about, Says: text})
+			}
+		}
+	}
+	return &Report{PackageSHA256: sha, Level: level, Says: says, ExaminedAt: at, Feedback: feedback(held), Examples: examples}, nil
 }
 
 // Canonical writes a value as the examiner's Python writes the bytes it signs: keys sorted, no spaces, numbers as

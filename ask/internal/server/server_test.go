@@ -103,8 +103,20 @@ func TestAClinicianAsksTheAssistantClarifiesAndThePackageIsPublishedAtASecretAdd
 	upload(t, ts, page, s.signed(t, hash, "logic examined", "The package's logic is examined."))
 	req, _ = http.NewRequest(http.MethodGet, ts.URL+page, nil)
 	_, body = do(t, as("owner@example.test", req))
-	if !strings.Contains(body, "stands at <strong>logic examined</strong>") {
-		t.Fatalf("the level is not shown:\n%s", body)
+	if !strings.Contains(body, "stands at <strong>logic examined</strong>") || !strings.Contains(body, "A child aged 27 days is counted.") {
+		t.Fatalf("the level or the example is not shown:\n%s", body)
+	}
+	// Until the asker confirms the worked example, the address serves nothing.
+	q0, _ := s.store.Question(context.Background(), 1)
+	req, _ = http.NewRequest(http.MethodGet, ts.URL+"/q/"+q0.Token+"/1", nil)
+	if resp, _ := do(t, req); resp.StatusCode != 404 {
+		t.Fatalf("an unconfirmed package was published: %d", resp.StatusCode)
+	}
+	confirm(t, ts, page, "age-27", "confirmed", "")
+	req, _ = http.NewRequest(http.MethodGet, ts.URL+page, nil)
+	_, body = do(t, as("dr@example.test", req))
+	if !strings.Contains(body, "Confirmed by dr@example.test on 14 October 2026") {
+		t.Fatalf("the confirmation is not recorded with the name and the date:\n%s", body)
 	}
 	// The address the asker copies names version 1 and carries the hash of its bytes.
 	address := regexp.MustCompile(`https://ask\.example\.test/q/[0-9a-f]{48}/1#sha256=[0-9a-f]{64}`).FindString(body)
@@ -246,6 +258,7 @@ func (s *Server) signed(t *testing.T, hash, level, says string) []byte {
 	report := map[string]any{
 		"package":     map[string]any{"path": "package.json", "sha256": hash, "title": "A question"},
 		"status":      map[string]any{"level": level, "says": says},
+		"examples":    []any{map[string]any{"id": "age-27", "about": "the age bound", "says": "A child aged 27 days is counted."}},
 		"rules":       []any{map[string]any{"id": "schema", "rule": "The package has the fields of the format.", "passed": true, "fragments": []any{}}},
 		"planted":     []any{map[string]any{"name": "secret_case", "outcome": "failed", "says": "row 990002400 differs"}, map[string]any{"name": "other_case", "outcome": "passed", "says": "fine"}},
 		"examined_at": "2026-10-15T09:00:00+11:00",
@@ -265,6 +278,48 @@ func (s *Server) latestHash(t *testing.T, page string) string {
 		t.Fatalf("no package: %v", err)
 	}
 	return latest.Hash
+}
+
+func confirm(t *testing.T, ts *httptest.Server, page, example, verdict, note string) (*http.Response, string) {
+	t.Helper()
+	form := url.Values{"example": {example}, "verdict": {verdict}, "note": {note}}
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+page+"/examples", strings.NewReader(form.Encode()))
+	req.Header.Set("content-type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	return do(t, as("dr@example.test", req))
+}
+
+func TestARejectedExampleReachesTheModelAsAChangeOfDecision(t *testing.T) {
+	fake := &model.Fake{Replies: []string{settled, "I have changed the decision.\n\n```schemalyser-question\n" + question.Block + "\n```"}}
+	s, ts := testServer(t, fake)
+	form := url.Values{"message": {"How much red cell volume do neonates get?"}}
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/questions", strings.NewReader(form.Encode()))
+	req.Header.Set("content-type", "application/x-www-form-urlencoded")
+	resp, _ := do(t, as("dr@example.test", req))
+	page := resp.Header.Get("Location")
+	upload(t, ts, page, s.signed(t, s.latestHash(t, page), "logic examined", "Examined."))
+	if _, body := confirm(t, ts, page, "age-27", "rejected", ""); !strings.Contains(body, "say in a few words what is wrong") {
+		t.Fatalf("a rejection without a note was taken:\n%s", body)
+	}
+	_, body := confirm(t, ts, page, "age-27", "rejected", "A baby of 28 days is a neonate too.")
+	// The rejection is recorded against version 1 with the asker's name and the date; the assistant's reply has
+	// written version 2, which waits for an examination of its own.
+	held, err := s.store.Confirmations(context.Background(), 1, 1)
+	if err != nil || held["age-27"].Verdict != "rejected" || held["age-27"].By != "dr@example.test" || held["age-27"].Note != "A baby of 28 days is a neonate too." ||
+		held["age-27"].Created.Format("2006-01-02") != "2026-10-14" {
+		t.Fatalf("the rejection is not recorded: %+v %v", held, err)
+	}
+	if !strings.Contains(body, "version 2 of the question package") || !strings.Contains(body, "stands at <strong>drafted</strong>") {
+		t.Fatalf("the new version is not shown as unexamined:\n%s", body)
+	}
+	last := fake.Calls[len(fake.Calls)-1]
+	heard := last[len(last)-1].Content
+	if last[len(last)-1].Role != "user" || !strings.Contains(heard, "This worked example of the question is wrong") || !strings.Contains(heard, "A baby of 28 days is a neonate too.") {
+		t.Fatalf("the model did not hear the rejection as the asker's turn: %q", heard)
+	}
+	if !strings.Contains(body, "I have changed the decision.") {
+		t.Fatalf("the assistant's reply to the rejection is not shown:\n%s", body)
+	}
 }
 
 func upload(t *testing.T, ts *httptest.Server, page string, report []byte) (*http.Response, string) {
@@ -381,6 +436,7 @@ func TestASecondVersionLeavesTheFirstsBytesAndAddressUnchanged(t *testing.T) {
 	req, _ = http.NewRequest(http.MethodGet, ts.URL+page, nil)
 	_, body := do(t, as("dr@example.test", req))
 	upload(t, ts, page, s.signed(t, s.latestHash(t, page), "logic examined", "Examined."))
+	confirm(t, ts, page, "age-27", "confirmed", "")
 	req, _ = http.NewRequest(http.MethodGet, ts.URL+page, nil)
 	_, body = do(t, as("dr@example.test", req))
 	first := regexp.MustCompile(`/q/[0-9a-f]{48}/1#sha256=[0-9a-f]{64}`).FindString(body)
@@ -394,6 +450,7 @@ func TestASecondVersionLeavesTheFirstsBytesAndAddressUnchanged(t *testing.T) {
 	req.Header.Set("content-type", "application/x-www-form-urlencoded")
 	do(t, as("dr@example.test", req))
 	upload(t, ts, page, s.signed(t, s.latestHash(t, page), "logic examined", "Examined again."))
+	confirm(t, ts, page, "age-27", "confirmed", "")
 	req, _ = http.NewRequest(http.MethodGet, ts.URL+page, nil)
 	_, body = do(t, as("dr@example.test", req))
 	second2 := regexp.MustCompile(`/q/[0-9a-f]{48}/2#sha256=[0-9a-f]{64}`).FindString(body)

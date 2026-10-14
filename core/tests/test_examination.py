@@ -513,3 +513,50 @@ def test_the_command_writes_a_signed_report_and_verifies_it(tmp_path, capsys, mo
     assert "grants the level logic examined" in capsys.readouterr().out
     (tmp_path / "other.pub").write_text(signing.public_key(signing.new_key()).hex())
     assert examination_main.main(["verify", str(out), "--public-key", str(tmp_path / "other.pub")]) == 1
+
+
+# Worked examples for the asker.
+
+from schemalyser.examination import examples  # noqa: E402
+
+TRANSFUSION_EXAMINABLE = {
+    "cohort": {"grain": "anaesthetic", "age_days": [0, 27], "period": ["2024-01-01", "2024-12-31"], "exclude": ["test_patient", "no_start", "stop_before_start"]},
+    "outcome": {"part": "role_fluid", "kinds": ["red_cells"], "forms": ["amount"], "measure": "sum", "of": "volume_ml", "per": "weight_kg",
+                "window": {"from": "start", "to": "stop"}, "duplicates": "keep", "amended": "replaced", "absent": "excluded"},
+    "result": {"statistic": "median", "over": "anaesthetic", "columns": ["median_ml_per_kg"]}}
+
+
+def test_the_transfusion_question_yields_one_example_per_decision_boundary_each_valued_by_the_oracle():
+    found = examples.generate(TRANSFUSION_EXAMINABLE)
+    by_id = {e["id"]: e for e in found}
+    assert {"age-26", "age-27", "age-28", "period-first-1", "period-first+0", "period-last+0", "period-last+1", "test-patient",
+            "no-start", "stop-before-start", "nothing-given", "no-weight", "duplicate", "amended", "before-window"} <= set(by_id)
+    assert by_id["age-27"]["counted"] and not by_id["age-28"]["counted"]
+    assert by_id["age-27"]["says"] == "A child aged 27 days on the day of the anaesthetic, given 10 ml of red cells, is counted, and gives 3.333 ml per kg."
+    assert by_id["age-28"]["says"] == "A child aged 28 days on the day of the anaesthetic, given 10 ml of red cells, is left out."
+    assert by_id["test-patient"]["says"].endswith("is left out.") and by_id["no-start"]["says"].endswith("is left out.")
+    assert by_id["period-first-1"]["says"].startswith("An anaesthetic started on 31 December 2023") and not by_id["period-first-1"]["counted"]
+    assert by_id["period-last+1"]["counted"] is False and by_id["period-last+0"]["counted"]
+    # Nothing given is excluded under absent: excluded, and so is an anaesthetic with no weight, which has no value per
+    # kilogram; two rows both count; a correction replaces.
+    assert not by_id["nothing-given"]["counted"] and by_id["nothing-given"]["says"].endswith("is left out.")
+    assert not by_id["no-weight"]["counted"] and by_id["no-weight"]["says"] == "An anaesthetic with no weight recorded, given 10 ml of red cells, is left out."
+    assert by_id["duplicate"]["value"] == 20 / 3.0 and by_id["amended"]["value"] == 15 / 3.0
+    assert not by_id["before-window"]["counted"] or by_id["before-window"]["value"] is None
+    public = examples.public(found)
+    assert all(set(e) == {"id", "about", "says"} for e in public)
+    assert examples.generate({"oracle": "none", "because": "words"}) == [] and examples.generate(None) == []
+
+
+def test_the_report_carries_the_examples_and_the_command_writes_them(tmp_path, capsys):
+    held = base()
+    held["examinable"] = {"cohort": {"grain": "anaesthetic", "age_days": [0, 27], "exclude": ["test_patient", "no_start", "stop_before_start"]},
+                          "outcome": {"part": "role_reading", "kinds": ["map_arterial", "map_cuff"], "flags": {"accepted": 1},
+                                      "window": {"from": "start", "to": "stop"}, "measure": "count", "duplicates": "collapse", "absent": "zero"},
+                          "result": {"statistic": "count", "over": "anaesthetic", "columns": ["minutes_below_40", "anaesthetics", "died_within_90_days", "children", "children_died_within_90_days"]}}
+    path = write(tmp_path, "examples", held)
+    out = tmp_path / "report.json"
+    examination_main.main(["run", str(path), "--out", str(out)])
+    report = json.loads(out.read_text())
+    assert report["examples"] and all(e["says"] for e in report["examples"]) and "rows" not in report["examples"][0]
+    assert any(e["id"] == "age-27" and e["counted"] is not False for e in examples.generate(held["examinable"]))

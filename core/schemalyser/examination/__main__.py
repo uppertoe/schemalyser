@@ -61,7 +61,11 @@ def main(argv=None):
                 print(report[stage]["says"])
         for case in report.get("planted", []):
             print(case["says"])
-    report = status.finish(report, status.read_key(args.key) if args.key else None)
+    examinable = None
+    if report["level"] == "well formed":
+        from .. import question
+        examinable = question.sql_and_decisions(args.package)[2].get("examinable")
+    report = status.finish(report, status.read_key(args.key) if args.key else None, examinable=examinable)
     if args.out:
         Path(args.out).write_text(static.to_json(report), encoding="utf-8")
     if not args.json:
