@@ -2,7 +2,7 @@
 import argparse
 import sys
 
-from . import metamorphic, planted, shadow, static
+from . import metamorphic, oracle, planted, shadow, static
 
 
 def main(argv=None):
@@ -27,6 +27,7 @@ def main(argv=None):
         report["shadow"] = shadow.run(args.package, admit=args.admit)
         if report["shadow"]["outcome"] == "passed":
             report["metamorphic"] = metamorphic.run(args.package, seed=args.seed)
+            report["oracle"] = oracle.run(args.package)
         if args.case:
             from .. import question
             sql = question.sql_and_decisions(args.package)[0]
@@ -36,13 +37,14 @@ def main(argv=None):
     else:
         for line in static.sentences(report):
             print(line)
-        for stage in ("shadow", "metamorphic"):
+        for stage in ("shadow", "metamorphic", "oracle"):
             if stage in report:
                 print(report[stage]["says"])
         for case in report.get("planted", []):
             print(case["says"])
     passed = (report["level"] == "well formed" and report.get("shadow", {}).get("outcome") == "passed"
               and report.get("metamorphic", {}).get("outcome") == "passed"
+              and report.get("oracle", {}).get("outcome") in ("passed", "not applied")
               and all(c["outcome"] == "passed" for c in report.get("planted", [])))
     return 0 if passed else 1
 

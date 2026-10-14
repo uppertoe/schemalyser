@@ -262,3 +262,85 @@ def test_the_six_questions_pass_the_metamorphic_checks_on_two_seeds(tmp_path):
     for name in capability.with_sql():
         report = metamorphic.run(write(tmp_path, name, capability_package(name)), seed=2, sample=3)
         assert report["outcome"] == "passed", (name, report["says"])
+
+
+# The oracle.
+
+from schemalyser import roleshadow  # noqa: E402
+from schemalyser.examination import oracle  # noqa: E402
+
+SATURATION_EXAMINABLE = {
+    "cohort": {"grain": "anaesthetic", "exclude": ["test_patient", "no_start", "stop_before_start"]},
+    "outcome": {"part": "role_reading", "kinds": ["spo2"], "flags": {"accepted": 1},
+                "measure": {"name": "hypoxaemia_burden", "version": 1,
+                            "parameters": {"kinds": [["spo2", 1]], "direction": "below", "threshold_by_age_band": [[0, None, 90.0]],
+                                           "window_from_minutes": 0, "window_until_minutes": None, "reading_stands_minutes": 5}},
+                "of": "minutes_beyond", "absent": "null"},
+    "result": {"statistic": "count", "over": "anaesthetic",
+               "by": [{"band": "no saturation recorded", "absent": True}, {"band": "none", "from": 0, "to": 0},
+                      {"band": "under 5 minutes", "from": 0, "to": 5}, {"band": "5 to 14 minutes", "from": 5, "to": 15},
+                      {"band": "15 minutes or more", "from": 15, "to": None}],
+               "columns": ["minutes_below_90", "anaesthetics", "children"]}}
+
+
+def test_the_oracle_reproduces_the_saturation_question_s_held_out_rows_and_answer():
+    rows = json.loads((planted.PUBLIC_ROWS / "saturation_below_90" / "rows.json").read_text(encoding="utf-8"))["roles"]
+    expected = json.loads((planted.HELD_OUT / "questions" / "saturation_below_90" / "expected.json").read_text(encoding="utf-8"))
+    found = oracle.evaluate(SATURATION_EXAMINABLE, rows)
+    per = sorted((str(k), None if v is None else round(float(v), 6)) for k, v in found["units"])
+    want = sorted((str(k), None if v is None else round(float(v), 6)) for k, v in expected["per_anaesthetic"]["rows"])
+    assert per == want, expected["says"]
+    assert found["answer"]["columns"] == expected["answer"]["columns"]
+    assert found["answer"]["rows"] == expected["answer"]["rows"], expected["answer"]["says"]
+
+
+def test_the_oracle_s_per_anaesthetic_rows_agree_with_the_compiled_specification_for_the_neonatal_cohort(tmp_path):
+    from schemalyser import specification
+    from schemalyser.translate import to_duckdb
+    con = roleshadow.role_shadow(seed=1, anaesthetics=80)
+    try:
+        model = rolemap.contract()
+        rows = {v["name"]: [list(r) for r in con.execute(f"SELECT * FROM {v['name']}").fetchall()] for v in model["views"]}
+        examinable = {"cohort": {"grain": "anaesthetic", "age_days": [0, 27], "exclude": ["test_patient", "no_start", "stop_before_start"]},
+                      "outcome": {"part": "role_reading", "kinds": ["map_arterial", "map_cuff"], "flags": {"accepted": 1},
+                                  "window": {"from": "start", "from_minutes": -15, "to": "stop", "to_minutes": 15}, "measure": "count", "absent": "zero"},
+                      "result": {"statistic": "rows", "over": "anaesthetic", "columns": ["anaesthetic_key", "readings"]}}
+        found = oracle.evaluate(examinable, rows)
+        counts = {str(k): v for k, v in found["units"]}
+        assert counts and sum(counts.values()) > 0
+        # The same cohort as an episode list, through the specification's section of the readings in the window.
+        episodes = tmp_path / "episodes.csv"
+        episodes.write_text("anaesthetic_key\n" + "".join(f"{k}\n" for k in counts), encoding="utf-8")
+        spec, digest = specification.load(Path(specification.__file__).resolve().parents[2] / "fixtures" / "export" / "neonatal-pressures.specification.json")
+        compiled = specification.compile(spec, specification.read_episodes(episodes, "anaesthetic_keys"), digest)
+        section = next(s for s in compiled["sections"] if s["name"] == "mean_pressures")
+        keyed = next(s for s in compiled["sections"] if s["name"] == "episode_key")
+        got = con.execute(to_duckdb(section["sql"])[0]).fetchall()
+        numbers = {n: k for n, k in con.execute(to_duckdb(keyed["sql"])[0]).fetchall()}
+    finally:
+        con.close()
+    by_key = {}
+    for row in got:
+        by_key[str(numbers[row[0]])] = by_key.get(str(numbers[row[0]]), 0) + 1
+    assert {k: v for k, v in counts.items() if v} == by_key
+
+
+def test_the_differential_run_agrees_for_a_correct_question_and_disagrees_for_a_wrong_one_and_waits_without_an_oracle():
+    examinable = {"cohort": {"grain": "anaesthetic", "age_days": [0, 27], "exclude": ["test_patient", "no_start"]},
+                  "outcome": {"part": "role_fluid", "kinds": ["red_cells"], "forms": ["amount"], "measure": "sum", "of": "volume_ml",
+                              "duplicates": "keep", "amended": "replaced", "absent": "excluded"},
+                  "result": {"statistic": "median", "over": "anaesthetic", "columns": ["median_red_cells_ml"]}}
+    correct = ("WITH neonatal AS (SELECT a.anaesthetic_key FROM role_anaesthetic a JOIN role_patient p ON p.patient_key = a.patient_key "
+               "WHERE p.is_test = 0 AND a.start_time IS NOT NULL AND DATEDIFF(day, p.birth_date, a.start_time) BETWEEN 0 AND 27),\n"
+               "given AS (SELECT n.anaesthetic_key, SUM(f.volume_ml) AS ml FROM neonatal n JOIN role_fluid f ON f.anaesthetic_key = n.anaesthetic_key "
+               "WHERE f.kind = 'red_cells' AND f.volume_form = 'amount' AND NOT EXISTS (SELECT 1 FROM role_fluid g WHERE g.amends_key = f.fluid_key) "
+               "GROUP BY n.anaesthetic_key)\n"
+               "SELECT DISTINCT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY g.ml) OVER () AS median_red_cells_ml FROM given g")
+    report = oracle.differential(correct, examinable, seeds=(1, 2))
+    assert report["outcome"] == "passed", report["says"]
+    wrong = correct.replace("AND f.volume_form = 'amount' ", "")
+    report = oracle.differential(wrong, examinable, seeds=(1,))
+    assert report["outcome"] == "failed" and "differs from the oracle" in report["says"]
+    report = oracle.differential(correct, {"oracle": "none", "because": "A sequence of events."}, seeds=(1,))
+    assert report["outcome"] == "not applied" and "cases written by hand" in report["says"]
+    assert oracle.run(FIXTURES / "neonatal-low-mean-pressure.question.json")["outcome"] == "not applied"
