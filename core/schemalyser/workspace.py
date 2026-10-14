@@ -68,7 +68,7 @@ HOME_PATH = re.compile(rb"(/Users/[A-Za-z0-9._-]+|/home/[a-z][a-z0-9._-]*/|[A-Za
 CORE_MODULES = (
     "__init__", "audit", "blanking", "capability", "catalogue", "compiler", "contract", "contractcheck", "conversion", "convert", "corrections",
     "datadict", "evidence", "extract", "feasibility", "first_ask", "harness", "hospital", "manifests", "mapping", "memo", "normalise",
-    "plan", "policy", "project", "propose", "question", "realistic", "signing", "release", "rolepolicy", "roles", "roleshadow", "routes",
+    "plan", "policy", "project", "propose", "question", "realistic", "signing", "equivalence", "release", "rolepolicy", "roles", "roleshadow", "routes",
     "rules", "sample_vocabulary", "sandbox", "selects", "specification", "statements", "summaries", "testbed",
     "translate", "tuning", "vocabulary", "workspace",
 )
