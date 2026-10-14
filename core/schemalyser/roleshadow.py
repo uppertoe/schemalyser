@@ -200,11 +200,144 @@ def generated_rows(seed=1, anaesthetics=400, first_year=2019, last_year=2025):
     return {"role_patient": patients, "role_anaesthetic": rows_a, "role_reading": rows_r}
 
 
-def role_shadow(seed=1, anaesthetics=400, with_planted=True, extra=None):
+# The further parts on the role-level shadow, written from the contract alone: plausible rows for every part that
+# records more than the three views of version 1, so that a question over any admitted part runs with no sitting.
+
+def generated_further(seed, generated, model=None):
+    """Plausible rows of every further part, and readings of the further kinds, for the anaesthetics and patients of
+    generated_rows: {view: [row, ...]} with each row in the contract's column order. Every anaesthetic has a stay,
+    its details with an ASA grade and a weight by age, an operation with a specialty, a technique, movements into
+    and out of theatre, the events of its course, a few drugs, fluids charted as amounts and, for some, as a running
+    total, with red cells in a share of the neonates, an airway device under a general anaesthetic, its staff, a
+    summary note with a finding, and, for some, laboratory results and a diagnosis; a few rows are amended by a later
+    correction. Nothing here comes from any hospital."""
+    rng = random.Random(seed * 7919)
+    model = model or rolemap.contract()
+    shape = {view["name"]: [c["name"] for c in view["columns"]] for view in model["views"]}
+    found = {name: [] for name in shape if name not in ("role_patient", "role_anaesthetic")}
+    found["role_reading"] = []
+
+    def row(view, **values):
+        found[view].append([values.get(c) for c in shape[view]])
+
+    def when(value):
+        return dt.datetime.fromisoformat(value) if isinstance(value, str) else value
+
+    patients = {p[0]: p for p in generated["role_patient"]}
+    stays, number = {}, 0
+    for key, patient, start, stop in generated["role_anaesthetic"]:
+        number += 1
+        start, stop = when(start), when(stop) if stop else None
+        end = stop if stop and stop > start else start + dt.timedelta(minutes=90)
+        birth = dt.date.fromisoformat(patients[patient][1])
+        age_days = (start.date() - birth).days
+        neonate = age_days < 28
+        # One stay for each anaesthetic, admitted the day before and discharged a few days after.
+        stay = f"S{number:06d}"
+        stays[key] = stay
+        row("role_stay", stay_key=stay, patient_key=patient, admit_time=start - dt.timedelta(hours=rng.randrange(2, 30)),
+            discharge_time=end + dt.timedelta(hours=rng.randrange(6, 120)), unplanned=rng.choice((0, 0, 1, None)))
+        if patient not in {r[0] for r in found["role_patient_detail"]}:
+            gestation = rng.choice((38, 39, 40, 36, 32, 28)) if neonate else None
+            row("role_patient_detail", patient_key=patient, sex=rng.choice(("female", "male")),
+                gestation_weeks=gestation, birth_weight_grams=(rng.randrange(900, 4200) if neonate else None))
+        weight = round(rng.uniform(1.5, 4.5), 2) if neonate else round(3 + age_days / 365 * 2.5 + rng.uniform(-1, 1), 1)
+        row("role_anaesthetic_detail", anaesthetic_key=key, stay_key=stay, asa_grade=rng.choice((1, 2, 2, 3, 3, 4)),
+            is_emergency=rng.choice((0, 0, 0, 1, None)), weight_kg=weight, planned_icu=rng.choice((0, 0, 1, None)),
+            unplanned_return=rng.choice((0, 0, 0, None)), height_cm=(None if neonate else round(50 + age_days / 365 * 6, 1)),
+            location=rng.choice(("theatre", "theatre", "theatre", "imaging", "catheter_laboratory")))
+        specialty = rng.choice(("general", "general", "cardiac", "orthopaedic", "ear_nose_throat", "urology", "neurosurgery"))
+        row("role_operation", operation_key=f"O{number:06d}", anaesthetic_key=key, procedure=f"procedure-{rng.randrange(1, 40):02d}",
+            specialty=specialty, is_cardiac=1 if specialty == "cardiac" else 0)
+        technique = "general_inhalational" if neonate or rng.random() < 0.6 else rng.choice(("general_intravenous", "sedation", "caudal", "spinal"))
+        row("role_technique", anaesthetic_key=key, technique_key=f"T{number:06d}", kind=technique,
+            laterality=(rng.choice(("left", "right")) if technique.endswith("_block") else None),
+            guidance=("ultrasound" if technique.endswith("_block") else None), catheter=(0 if technique in ("caudal", "spinal") else None),
+            recorded_time=start + dt.timedelta(minutes=5), documented_time=start + dt.timedelta(minutes=6), performer=f"D{rng.randrange(1, 12):03d}",
+            source_kind="charted_value", amends_key=None)
+        for n, (direction, unit, at) in enumerate(((("in", "theatre", start - dt.timedelta(minutes=10)), ("out", "theatre", end + dt.timedelta(minutes=5)),
+                                                     ("in", "recovery", end + dt.timedelta(minutes=6))))):
+            row("role_transfer", transfer_key=f"X{number:06d}{n}", stay_key=stay, unit_kind=unit, direction=direction, transfer_time=at,
+                source_kind="transfer", documented_time=at, amends_key=None)
+        for n, (kind, minutes) in enumerate((("anaesthesia_start", 0), ("induction", 4), ("airway_secured", 9), ("incision", 20),
+                                             ("surgery_end", -8), ("anaesthesia_stop", 0))):
+            at = start + dt.timedelta(minutes=minutes) if minutes >= 0 or kind == "anaesthesia_stop" else end + dt.timedelta(minutes=minutes)
+            at = end if kind == "anaesthesia_stop" else at
+            row("role_event", event_key=f"E{number:06d}{n}", anaesthetic_key=key, stay_key=stay, kind=kind, event_time=at,
+                source_kind="procedure_log", documented_time=at, amends_key=None)
+        for n in range(rng.randrange(2, 5)):
+            at = start + dt.timedelta(minutes=rng.randrange(2, 40))
+            row("role_drug", drug_event_key=f"G{number:06d}{n}", anaesthetic_key=key, stay_key=stay, order_key=None,
+                drug=f"drug-{rng.randrange(1, 30):02d}", action="dose", amount=round(rng.uniform(0.5, 50), 1), unit="unit-mg",
+                route=rng.choice(("intravenous", "intravenous", "inhaled", "oral")), given_time=at, source_kind="administration",
+                documented_time=at, amends_key=None)
+        fluids = []
+        volume = 0.0
+        for n in range(rng.randrange(1, 4)):
+            at = start + dt.timedelta(minutes=10 + 20 * n)
+            amount = float(rng.randrange(5, 60) * (1 if neonate else 5))
+            volume += amount
+            fluids.append(("crystalloid", amount, "amount", at))
+        if neonate and rng.random() < 0.35:
+            at = start + dt.timedelta(minutes=rng.randrange(20, 60))
+            red = float(rng.randrange(10, 60))
+            if rng.random() < 0.5:
+                fluids.append(("red_cells", red, "amount", at))
+            else:
+                fluids += [("red_cells", red / 2, "running_total", at), ("red_cells", red, "running_total", at + dt.timedelta(minutes=20))]
+        if rng.random() < 0.3:
+            fluids.append(("blood_loss", float(rng.randrange(5, 150)), "amount", end - dt.timedelta(minutes=5)))
+        for n, (kind, amount, form, at) in enumerate(fluids):
+            row("role_fluid", fluid_key=f"F{number:06d}{n}", anaesthetic_key=key, stay_key=stay, kind=kind, volume_ml=amount, volume_form=form,
+                given_time=at, source_kind="charted_value", documented_time=at, amends_key=None)
+        if fluids and rng.random() < 0.1:
+            # A correction of the first fluid row, which amends it.
+            kind, amount, form, at = fluids[0]
+            row("role_fluid", fluid_key=f"F{number:06d}C", anaesthetic_key=key, stay_key=stay, kind=kind, volume_ml=amount * 1.1, volume_form=form,
+                given_time=at, source_kind="correction", documented_time=at + dt.timedelta(hours=1), amends_key=f"F{number:06d}0")
+        if technique.startswith("general"):
+            row("role_device", device_key=f"V{number:06d}", anaesthetic_key=key, stay_key=stay,
+                kind=("endotracheal_tube" if neonate or rng.random() < 0.6 else "supraglottic_airway"),
+                placed_time=start + dt.timedelta(minutes=9), removed_time=end - dt.timedelta(minutes=2), size=rng.choice(("3.0", "3.5", "4.0", "5.0")),
+                site=None, source_kind="device_record", documented_time=start + dt.timedelta(minutes=10), amends_key=None)
+        for person, role, grade in ((f"D{rng.randrange(1, 12):03d}", "anaesthetist", rng.choice(("consultant", "consultant", "registrar", "fellow"))),
+                                    (f"S{rng.randrange(1, 20):03d}", "surgeon", "consultant")):
+            row("role_staff", anaesthetic_key=key, person_key=person, role=role, grade=grade, present_from=start, present_to=end)
+        row("role_note", note_key=f"N{number:06d}", anaesthetic_key=key, patient_key=patient, stay_key=stay, kind="anaesthetic_summary",
+            written_time=end + dt.timedelta(minutes=15), author_role="registrar",
+            text=f"Uneventful {technique.replace('_', ' ')} anaesthetic for a {specialty} procedure. Fasted {rng.randrange(2, 9)} hours.")
+        row("role_finding", note_key=f"N{number:06d}", anaesthetic_key=key, patient_key=patient, kind="fasting_hours",
+            value=str(rng.randrange(2, 9)), method="rule", confidence=0.9, found_time=end + dt.timedelta(minutes=16))
+        if rng.random() < 0.4:
+            for n, at in enumerate((start - dt.timedelta(hours=2), end + dt.timedelta(hours=4))):
+                row("role_lab", lab_key=f"L{number:06d}{n}", patient_key=patient, stay_key=stay, kind="haemoglobin", test="test-hb",
+                    value=round(rng.uniform(80, 160), 0), unit="unit-g-per-l", taken_time=at, source_kind="result", documented_time=at, amends_key=None)
+        if rng.random() < 0.5:
+            row("role_diagnosis", diagnosis_key=f"Y{number:06d}", patient_key=patient, stay_key=stay, diagnosis=f"diagnosis-{rng.randrange(1, 25):02d}",
+                is_principal=1, recorded_time=end + dt.timedelta(days=1), source_kind="coded_record", documented_time=end + dt.timedelta(days=1), amends_key=None)
+        # Readings of the further kinds: saturation and temperature through the anaesthetic, and the gas flow and the
+        # expired agent at intervals.
+        moment, count = start, 0
+        while moment <= end:
+            count += 1
+            row("role_reading", anaesthetic_key=key, kind="spo2", reading_time=moment, value=float(rng.randrange(88, 101)), accepted=1,
+                reading_key=f"R{number:06d}S{count}", value_text=None)
+            row("role_reading", anaesthetic_key=key, kind="temperature", reading_time=moment, value=round(rng.uniform(35.4, 37.6), 1), accepted=1,
+                reading_key=f"R{number:06d}T{count}", value_text=None)
+            if count % 3 == 1:
+                row("role_reading", anaesthetic_key=key, kind="fresh_gas_flow", reading_time=moment, value=rng.choice((0.5, 1.0, 2.0)), accepted=1,
+                    reading_key=f"R{number:06d}F{count}", value_text=None)
+                row("role_reading", anaesthetic_key=key, kind="expired_sevoflurane", reading_time=moment, value=round(rng.uniform(1.5, 3.0), 1), accepted=1,
+                    reading_key=f"R{number:06d}A{count}", value_text=None)
+            moment += dt.timedelta(minutes=5)
+    return found
+
+
+def role_shadow(seed=1, anaesthetics=400, with_planted=True, extra=None, further=False):
     """A DuckDB database that holds the role views and the mapping views as tables, the three that every map supplies
     filled from a seed and, with_planted, with the planted neonates and the planted rows of the mapping views and the
-    drug events that name them, and the further views otherwise empty. extra, when given, is
-    {view: [row, ...]} of further rows for any view. Returns the connection."""
+    drug events that name them, and the further views otherwise empty unless further asks for generated_further's rows
+    of every part. extra, when given, is {view: [row, ...]} of further rows for any view. Returns the connection."""
     import duckdb
     con = duckdb.connect()
     model = rolemap.contract()
@@ -214,6 +347,9 @@ def role_shadow(seed=1, anaesthetics=400, with_planted=True, extra=None):
     rows = {name: [] for name in shape}
     if anaesthetics:
         rows.update(generated_rows(seed, anaesthetics))
+        if further:
+            for name, more in generated_further(seed, rows, model).items():
+                rows[name] = rows[name] + more
     if with_planted:
         for cases in (planted(), planted_concepts()):
             for name in shape:
@@ -239,6 +375,12 @@ def _role_literal(value, kind):
         return repr(float(value)) if kind == "DOUBLE" else str(int(value))
     text = "'" + str(value).replace("'", "''") + "'"
     return f"CAST({text} AS {kind})" if kind in ("DATE", "TIMESTAMP") else text
+
+
+def answer(run, sql):
+    """A question's answer on the shadow, as (columns, rows), for a question that is not the neonatal audit: the SQL is
+    run as written, with no banding and no coverage."""
+    return run(sql)
 
 
 def per_anaesthetic(run, audit_sql=None):

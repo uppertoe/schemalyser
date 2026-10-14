@@ -609,3 +609,56 @@ def test_a_division_of_whole_numbers_and_a_median_give_sql_servers_answer_on_the
                         "PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY r.value) OVER (PARTITION BY r.anaesthetic_key) AS median "
                         "FROM role_reading r ORDER BY r.anaesthetic_key")
     assert [tuple(row) for row in rows] == [("A1", 40.0), ("A2", 15.0)], rows
+
+
+
+# Every part on the role-level shadow, from the contract alone.
+
+TRANSFUSION_SQL = """WITH neonatal AS (
+    SELECT a.anaesthetic_key FROM role_anaesthetic a JOIN role_patient p ON p.patient_key = a.patient_key
+    WHERE p.is_test = 0 AND DATEDIFF(day, p.birth_date, a.start_time) < 28
+)
+SELECT COUNT(DISTINCT n.anaesthetic_key) AS neonatal_anaesthetics, COUNT(DISTINCT f.anaesthetic_key) AS given_red_cells,
+       SUM(CASE WHEN f.volume_form = 'amount' THEN f.volume_ml END) AS red_cells_ml
+FROM neonatal n LEFT JOIN role_fluid f ON f.anaesthetic_key = n.anaesthetic_key AND f.kind = 'red_cells'"""
+
+
+def test_every_part_has_rows_on_a_seeded_shadow_with_the_further_parts_and_a_question_over_any_part_runs():
+    import json
+    from schemalyser import capability, rolepolicy
+    con = roleshadow.role_shadow(seed=1, anaesthetics=120, further=True)
+    for view in rolemap.all_views():
+        (count,) = con.execute(f"SELECT COUNT(*) FROM {view}").fetchone()
+        assert count > 0, view
+    # The rows keep the contract's keys and links: every further row names an anaesthetic or a stay that exists.
+    (orphans,) = con.execute("SELECT COUNT(*) FROM role_fluid f LEFT JOIN role_anaesthetic a ON a.anaesthetic_key = f.anaesthetic_key WHERE a.anaesthetic_key IS NULL").fetchone()
+    (stayless,) = con.execute("SELECT COUNT(*) FROM role_anaesthetic_detail d LEFT JOIN role_stay s ON s.stay_key = d.stay_key WHERE s.stay_key IS NULL").fetchone()
+    assert orphans == 0 and stayless == 0
+    (amended,) = con.execute("SELECT COUNT(*) FROM role_fluid WHERE amends_key IS NOT NULL").fetchone()
+    assert amended >= 1
+    kinds = {k for (k,) in con.execute("SELECT DISTINCT kind FROM role_reading").fetchall()}
+    assert {"map_cuff", "spo2", "temperature", "fresh_gas_flow", "expired_sevoflurane"} <= kinds
+    # The five capabilities and the transfusion question give a non-empty answer.
+    run = roleshadow.duckdb_runner(con)
+    planted = json.loads((capability.FOLDER / "capabilities" / "planted.json").read_text())
+    for name in capability.with_sql():
+        columns, rows = roleshadow.answer(run, capability.fill(name, planted[name]["parameters"]))
+        assert rows and columns, name
+    assert rolepolicy.check(TRANSFUSION_SQL)["failed"] == []
+    columns, rows = roleshadow.answer(run, TRANSFUSION_SQL)
+    assert columns == ["neonatal_anaesthetics", "given_red_cells", "red_cells_ml"]
+    (neonatal, given, millilitres), = rows
+    assert neonatal > 0 and 0 < given <= neonatal and millilitres > 0
+    # The same seed gives the same rows.
+    again = roleshadow.role_shadow(seed=1, anaesthetics=120, further=True)
+    assert again.execute("SELECT COUNT(*), SUM(volume_ml) FROM role_fluid").fetchone() == con.execute("SELECT COUNT(*), SUM(volume_ml) FROM role_fluid").fetchone()
+
+
+def test_the_rehearse_command_runs_a_question_that_is_not_the_neonatal_audit(tmp_path):
+    question = tmp_path / "transfusion.sql"
+    question.write_text(TRANSFUSION_SQL, encoding="utf-8")
+    out = io.StringIO()
+    with redirect_stdout(out):
+        rolemap_main.main(["rehearse", "--question", str(question), "--anaesthetics", "60", "--seed", "3"])
+    text = out.getvalue()
+    assert "neonatal_anaesthetics" in text and "red_cells_ml" in text and "Coverage by year" not in text

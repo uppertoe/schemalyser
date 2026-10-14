@@ -52,6 +52,8 @@ def main(argv=None):
     rehearse.add_argument("--seed", type=int, default=1)
     rehearse.add_argument("--anaesthetics", type=int, default=400)
     rehearse.add_argument("--no-planted", action="store_true")
+    rehearse.add_argument("--question", type=Path, help="run this question as written, over every part, instead of the audit with its banding")
+    rehearse.add_argument("--further", action="store_true", help="fill every further part with generated rows")
     shadow = commands.add_parser("shadow", help="run an audit and the counts through a map on a world's hospital-shaped shadow")
     shadow.add_argument("world", type=Path)
     shadow.add_argument("conversion", type=Path)
@@ -117,8 +119,12 @@ def main(argv=None):
                 # The compile command is the owner's rehearsal instrument, so it reads a draft part.
                 print(compiler.compile_query(decode(args.audit.read_bytes()), found, blank=not args.exact, admit="draft"), end="")
         elif args.command == "rehearse":
-            con = roleshadow.role_shadow(args.seed, args.anaesthetics, not args.no_planted)
-            _show(roleshadow.result(roleshadow.duckdb_runner(con), decode(args.audit.read_bytes())))
+            con = roleshadow.role_shadow(args.seed, args.anaesthetics, not args.no_planted, further=args.further or args.question is not None)
+            if args.question is not None:
+                columns, rows = roleshadow.answer(roleshadow.duckdb_runner(con), decode(args.question.read_bytes()))
+                print(_table(columns, rows))
+            else:
+                _show(roleshadow.result(roleshadow.duckdb_runner(con), decode(args.audit.read_bytes())))
         elif args.command == "shadow":
             found = rolemap.read_map(args.map)
             done = roleshadow.hospital_run(harness.World.from_folder(args.world), args.conversion, found, decode(args.audit.read_bytes()),
