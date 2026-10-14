@@ -2,6 +2,8 @@
 
 This is the plan of record from 14 October 2026. It replaces the roadmap of 9 October, which was written around a first meeting on the hospital's production database. That meeting is not available for now, so the plan below is built to go as far as it can on what exists: the public role contract, the invented world, the realistic stand-in built from the vendor's published specification of its export, and the knowledge that the hospital's real database follows that specification closely. Each item states what done means, and an item is done only when that statement is true.
 
+On the evening of 14 October three reviews of this roadmap were written, of the architecture, of the goals and product, and of the examination (`docs/reviews/2026-10-14/`), and an implementation plan was drawn from them (`docs/work-plan.md`): forty-seven work packages in ten phases, each with what done means, and seven decisions for the owner. The plan is the work list; this roadmap remains the statement of the shape and the order of proof.
+
 The architecture contract (`docs/contract.md`) remains the standard the code is held to, and `docs/alignment.md` remains the register of where the code falls short of it. This roadmap says what is built, in what order the rest is built, and where each layer of the intended product sits.
 
 ## The problem
