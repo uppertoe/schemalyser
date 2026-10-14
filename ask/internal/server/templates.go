@@ -24,6 +24,7 @@ const layoutHTML = `<!doctype html>
 const indexHTML = `{{define "body"}}
 <h1>Ask a question of the anaesthesia record</h1>
 <p>Write the clinical question you want answered, in your own words. The assistant will ask what it needs to pin the question down, and will then write it in the terms of the record so that the hospital can run it.</p>
+<p class="notice">Do not type any patient's details. A question is about groups of patients, and what you write here leaves the hospital. Leave out names, record numbers, dates of birth and dates of admission; a message that looks as though it holds one is held back.</p>
 <form method="post" action="/questions">
   <label for="first">Your question</label>
   <textarea id="first" name="message" rows="4" required placeholder="For example: what is the median red cell volume given to neonates having surgery?"></textarea>
@@ -91,7 +92,7 @@ button { font: inherit; padding: 8px 16px; background: var(--accent); color: whi
 table { width: 100%; border-collapse: collapse; margin-top: 8px; } th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
 .turn { padding: 10px 12px; margin: 8px 0; border-radius: 6px; background: var(--soft); } .turn.user { background: white; border: 1px solid var(--line); }
 .speaker { font-size: 13px; color: #666; margin-bottom: 2px; } .text { white-space: pre-wrap; }
-.state { color: #666; } .problem { color: #8a2f2f; }
+.state { color: #666; } .problem { color: #8a2f2f; } .notice { color: #5a4a1a; background: #fbf3dc; padding: 8px 12px; border-radius: 4px; }
 .package { margin-top: 24px; padding: 16px; border: 1px solid var(--line); border-radius: 6px; background: white; }
 code { word-break: break-all; } pre { white-space: pre-wrap; background: var(--soft); padding: 12px; border-radius: 4px; font-size: 14px; }
 .htmx-indicator { display: none; margin-left: 12px; color: #666; } .htmx-request .htmx-indicator, .htmx-request.htmx-indicator { display: inline; }

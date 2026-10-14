@@ -25,7 +25,8 @@ func testServer(t *testing.T, fake *model.Fake) (*Server, *httptest.Server) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	cfg := &config.Config{PublicURL: "https://ask.example.test", Backend: "fake", BrandName: "Schemalyser", AdminEmails: []string{"owner@example.test"}}
+	cfg := &config.Config{PublicURL: "https://ask.example.test", Backend: "fake", BrandName: "Schemalyser",
+		AdminEmails: []string{"owner@example.test"}, AllowedEmails: []string{"dr@example.test", "other@example.test"}}
 	s, err := New(cfg, st, fake)
 	if err != nil {
 		t.Fatal(err)
@@ -127,5 +128,51 @@ func TestABlockThatBreaksARuleIsShownAsAProblemAndNoPackageIsWritten(t *testing.
 	_, body := do(t, as("dr@example.test", req))
 	if !strings.Contains(body, "role_person") || strings.Contains(body, "The question, written") {
 		t.Fatalf("the problem was not shown, or a package was written:\n%s", body)
+	}
+}
+
+func TestAMessageWithAPatientsIdentifierIsHeldBackAndNeverReachesTheModel(t *testing.T) {
+	fake := &model.Fake{Replies: []string{"Which years?"}}
+	_, ts := testServer(t, fake)
+	form := url.Values{"message": {"How many anaesthetics did patient 12345678 have?"}}
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/questions", strings.NewReader(form.Encode()))
+	req.Header.Set("content-type", "application/x-www-form-urlencoded")
+	resp, _ := do(t, as("dr@example.test", req))
+	req, _ = http.NewRequest(http.MethodGet, ts.URL+resp.Header.Get("Location"), nil)
+	_, body := do(t, as("dr@example.test", req))
+	if len(fake.Calls) != 0 {
+		t.Fatal("the model received a held-back message")
+	}
+	if !strings.Contains(body, "could be a record number") {
+		t.Fatalf("the clinician was not told why:\n%s", body)
+	}
+	// The next message, clean, goes to the model without the held-back one.
+	form = url.Values{"message": {"How many anaesthetics did children under one year have in 2025?"}}
+	req, _ = http.NewRequest(http.MethodPost, ts.URL+resp.Header.Get("Location")+"/messages", strings.NewReader(form.Encode()))
+	req.Header.Set("content-type", "application/x-www-form-urlencoded")
+	do(t, as("dr@example.test", req))
+	if len(fake.Calls) != 1 || len(fake.Calls[0]) != 1 || strings.Contains(fake.Calls[0][0].Content, "12345678") {
+		t.Fatalf("the model saw the wrong turns: %v", fake.Calls)
+	}
+	for _, held := range []string{"the child born 3/4/2019", "look in SOME_TABLE for it"} {
+		if screen(held) == "" {
+			t.Errorf("%q was not held back", held)
+		}
+	}
+	if screen("children under 28 days in 2024 and 2025") != "" {
+		t.Error("a clean message was held back")
+	}
+}
+
+func TestOnlyTheAllowedAddressesMaySignIn(t *testing.T) {
+	fake := &model.Fake{}
+	s, ts := testServer(t, fake)
+	s.cfg.AllowedEmails = []string{"dr@example.test"}
+	// Only the allowed addresses and the admins; the development user is also admitted where one is set.
+	for email, want := range map[string]int{"dr@example.test": 200, "owner@example.test": 200, "other@example.test": 403} {
+		req, _ := http.NewRequest(http.MethodGet, ts.URL+"/", nil)
+		if resp, _ := do(t, as(email, req)); resp.StatusCode != want {
+			t.Errorf("%s: %d, wanted %d", email, resp.StatusCode, want)
+		}
 	}
 }

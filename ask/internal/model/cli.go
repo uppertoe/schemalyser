@@ -27,6 +27,15 @@ func NewCLI(model string) *CLI {
 
 func (c *CLI) Name() string { return c.Model + " (cli)" }
 
+// Arguments are the command line's flags for one headless completion with nothing but the prompt: no tools, no
+// external servers, no skills, no settings files, no session kept, one turn. Minimal mode is not used, because it
+// drops the subscription login.
+func Arguments(system, model string) []string {
+	return []string{"-p", "--system-prompt", system, "--model", model, "--output-format", "json", "--max-turns", "1",
+		"--tools", "", "--strict-mcp-config", "--disable-slash-commands", "--setting-sources", "",
+		"--exclude-dynamic-system-prompt-sections", "--no-session-persistence"}
+}
+
 // Reply runs one headless completion.
 func (c *CLI) Reply(ctx context.Context, system string, turns []Turn) (string, error) {
 	var prompt strings.Builder
@@ -40,8 +49,15 @@ func (c *CLI) Reply(ctx context.Context, system string, turns []Turn) (string, e
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.Timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, c.Command, "-p", "--system-prompt", system, "--model", c.Model,
-		"--output-format", "json", "--max-turns", "1", "--exclude-dynamic-system-prompt-sections", "--no-session-persistence")
+	// The command line runs with no tools, no external servers, no skills, none of the developer's settings or memory,
+	// and in an empty folder of its own, so that the model can only read the prompt and write its reply.
+	dir, err := os.MkdirTemp("", "schemalyser-ask-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(dir)
+	cmd := exec.CommandContext(ctx, c.Command, Arguments(system, c.Model)...)
+	cmd.Dir = dir
 	// The key is emptied so that the command line can only bill the subscription, never the metered API.
 	cmd.Env = append(os.Environ(), "ANTHROPIC_API_KEY=")
 	cmd.Stdin = strings.NewReader(prompt.String())

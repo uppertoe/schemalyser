@@ -30,6 +30,10 @@ References to a review are written as A (architecture), G (goals) and E (examina
 
 **OMOP.** The goals review would defer it (G11); the architecture review would gate conversion steps on part status now and re-scope the source binding as a round-trip test (A12). Both are adopted: the gate is a few lines inside package 18, the conventions a third-party OMOP must meet are written down in package 46, and the source binding waits for a second site or a research need.
 
+## Decisions taken
+
+On 14 October 2026 the owner took the first three decisions as recommended. The rehearsed ceiling is option (b): a package over a rehearsed part may reach mapping supported and run on production, and production validated requires a reconciliation that covers each rehearsed part by name, to be written into the contract as a dated amendment under package 17. The examiner runs on the owner's own machine for now, with its signed report uploaded to the service, and moves to a container beside the service once colleagues use it. The service opens to colleagues only once package 34 runs the examination on its output and package 35 records the asker's signature of meaning; until then the owner uses it alone. The question log began the same day with six requests, classified in `docs/demand.md`.
+
 ## Decisions for the owner
 
 1. **The rehearsed ceiling.** Option (a): a package over a rehearsed part can reach "logic examined" but cannot be compiled for any hospital. Option (b): it can reach "mapping supported" and run on production, and "production validated" requires a reconciliation that covers each rehearsed part by name. Option (c): rehearsed parts are admitted on the stand-in only until a dated contract amendment says otherwise. I recommend (b), written as the dated amendment that (c) asks for, because (a) means the transfusion question can never run, and (b) puts the check where it belongs, in a person's reconciliation. Package 17 needs the choice.

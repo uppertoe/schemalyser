@@ -17,6 +17,10 @@ The service sees the role contract and the invented world and nothing of any hos
 
 A question package is `schemalyser-question/1`: the title, the contract version, a specification in the clinician's terms with a cohort, an outcome and a result, the decisions made in the conversation, the SQL over the roles, a note, the parts used with the drafts marked, the proposals, the status, which model wrote it and when, and a hash of what it says. Its status is `drafted` until the examination of the roadmap exists, or `waits for the contract` while it holds a proposal.
 
+## Who may use it, and what may be typed
+
+Until the owner opens the service to colleagues, only the admin addresses and the addresses in `ASK_ALLOWED_EMAILS` may sign in; everyone else is refused with a sentence saying so. Every message is screened before it reaches the model: a run of six or more digits, a date written as a date of birth, or an upper-case name with an underscore holds the message back, records it as not sent, and tells the clinician why. The page says beside the text box that no patient's details are to be typed, because what is typed leaves the hospital. The development backend runs the command line with no tools, no external servers, no skills and none of the developer's settings, in an empty folder of its own.
+
 ## Running it
 
     cd ask

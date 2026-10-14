@@ -7,11 +7,13 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
 	"log"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -93,6 +95,10 @@ func (s *Server) withUser(next func(http.ResponseWriter, *http.Request, string))
 		}
 		if email == "" {
 			http.Error(w, "No one is signed in. The service runs behind the login wall, which says who you are.", http.StatusUnauthorized)
+			return
+		}
+		if !s.cfg.MaySignIn(email) {
+			http.Error(w, "This service is not yet open to you. The owner opens it to colleagues once the examination of questions exists.", http.StatusForbidden)
 			return
 		}
 		next(w, r, email)
@@ -177,7 +183,7 @@ func (s *Server) reply(w http.ResponseWriter, r *http.Request, user string) {
 	text := strings.TrimSpace(r.FormValue("message"))
 	problem := ""
 	if text != "" {
-		if _, err := s.converse(r.Context(), q, user, text); err != nil {
+		if _, err := s.converse(r.Context(), q, user, text); err != nil && !errors.Is(err, ErrHeldBack) {
 			problem = "The assistant could not reply: " + err.Error()
 		}
 	}
@@ -193,9 +199,45 @@ func (s *Server) reply(w http.ResponseWriter, r *http.Request, user string) {
 	s.render(w, s.turns, data)
 }
 
-// converse records the clinician's message, asks the model, records its prose, and keeps any package it wrote.
+// Patterns that a message about a group of patients never needs: a run of digits long enough to be a record number, a
+// date written as a person's date of birth, and an upper-case name with an underscore, which is how a hospital's table
+// is named. A message that matches is held back before it reaches the model, and the clinician is told why.
+var (
+	recordNumberLike = regexp.MustCompile(`\b\d{6,}\b`)
+	birthDateLike    = regexp.MustCompile(`(?i)\b(born|dob|date of birth|d\.o\.b)\b.{0,20}\d|\b\d{1,2}[/.-]\d{1,2}[/.-](19|20)\d{2}\b`)
+	tableLike        = regexp.MustCompile(`\b[A-Z][A-Z0-9]+_[A-Z0-9_]+\b`)
+	heldBack         = "(held back, not sent) "
+)
+
+// screen says why a message is held back, or gives an empty string where it may go to the model.
+func screen(text string) string {
+	switch {
+	case recordNumberLike.MatchString(text):
+		return "The message holds a run of digits that could be a record number, so it has not been sent. A question is about groups of patients; please write it without any patient's identifiers."
+	case birthDateLike.MatchString(text):
+		return "The message holds what looks like a date of birth or another date of a patient's, so it has not been sent. Give ages or age ranges instead of dates."
+	case tableLike.MatchString(text):
+		return "The message holds what looks like the name of a table in the hospital's database, so it has not been sent. The assistant works from the public description of the record and never from the hospital's tables; describe what the table records instead."
+	}
+	return ""
+}
+
+// ErrHeldBack says that a message was not sent to the model.
+var ErrHeldBack = errors.New("held back")
+
+// converse records the clinician's message, asks the model, records its prose, and keeps any package it wrote. A
+// message the screen holds back is recorded with the reason and never reaches the model.
 func (s *Server) converse(ctx context.Context, q *store.Question, user, text string) (*question.Package, error) {
 	now := s.now()
+	if why := screen(text); why != "" {
+		if err := s.store.AddMessage(ctx, q.ID, "user", heldBack+text, now); err != nil {
+			return nil, err
+		}
+		if err := s.store.AddMessage(ctx, q.ID, "assistant", why, s.now()); err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: %s", ErrHeldBack, why)
+	}
 	if err := s.store.AddMessage(ctx, q.ID, "user", text, now); err != nil {
 		return nil, err
 	}
@@ -203,8 +245,18 @@ func (s *Server) converse(ctx context.Context, q *store.Question, user, text str
 	if err != nil {
 		return nil, err
 	}
+	// A held-back message and the sentence that answered it stay in the record but are not shown to the model.
 	turns := make([]model.Turn, 0, len(history))
+	skipAnswer := false
 	for _, m := range history {
+		if strings.HasPrefix(m.Content, heldBack) {
+			skipAnswer = true
+			continue
+		}
+		if skipAnswer && m.Role == "assistant" {
+			skipAnswer = false
+			continue
+		}
 		turns = append(turns, model.Turn{Role: m.Role, Content: m.Content})
 	}
 	reply, err := s.model.Reply(ctx, s.system, turns)

@@ -9,15 +9,16 @@ import (
 
 // Config is everything the service is told from outside.
 type Config struct {
-	ListenAddr  string   // where the service listens; Caddy is in front of it
-	SQLitePath  string   // the one file that holds the questions
-	PublicURL   string   // the address the service is reached at, for the secret addresses it hands out
-	Backend     string   // api, cli or fake: how the model is reached
-	Model       string   // the model's name
-	APIKey      string   // the key for the api backend, never written anywhere
-	DevUser     string   // an email to act as when no login wall is in front, for development only
-	AdminEmails []string // who may see every question rather than their own
-	BrandName   string
+	ListenAddr    string   // where the service listens; Caddy is in front of it
+	SQLitePath    string   // the one file that holds the questions
+	PublicURL     string   // the address the service is reached at, for the secret addresses it hands out
+	Backend       string   // api, cli or fake: how the model is reached
+	Model         string   // the model's name
+	APIKey        string   // the key for the api backend, never written anywhere
+	DevUser       string   // an email to act as when no login wall is in front, for development only
+	AdminEmails   []string // who may see every question rather than their own
+	AllowedEmails []string // who may sign in at all; the admins always may, and no one else when the list is empty
+	BrandName     string
 }
 
 func getenv(key, fallback string) string {
@@ -44,6 +45,11 @@ func Load() (*Config, error) {
 			c.AdminEmails = append(c.AdminEmails, e)
 		}
 	}
+	for _, e := range strings.Split(getenv("ASK_ALLOWED_EMAILS", ""), ",") {
+		if e = strings.ToLower(strings.TrimSpace(e)); e != "" {
+			c.AllowedEmails = append(c.AllowedEmails, e)
+		}
+	}
 	switch c.Backend {
 	case "api":
 		if c.APIKey == "" {
@@ -54,6 +60,21 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("ASK_MODEL_BACKEND must be api, cli or fake, not %q", c.Backend)
 	}
 	return c, nil
+}
+
+// MaySignIn says whether an email may use the service at all: the admins, the allowed addresses, and the development
+// user. Until the owner opens the service to colleagues, the lists hold the owner's address alone.
+func (c *Config) MaySignIn(email string) bool {
+	email = strings.ToLower(email)
+	if c.IsAdmin(email) || (c.DevUser != "" && email == c.DevUser) {
+		return true
+	}
+	for _, e := range c.AllowedEmails {
+		if e == email {
+			return true
+		}
+	}
+	return false
 }
 
 // IsAdmin says whether an email may see every question.

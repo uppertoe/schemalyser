@@ -3,7 +3,11 @@
 # any hospital.
 ask.{$DOMAIN} {
 	handle /q/* {
-		reverse_proxy ask:8080
+		reverse_proxy ask:8080 {
+			header_up -Remote-Email
+			header_up -Remote-User
+			header_up -Remote-Groups
+		}
 	}
 	handle {
 		import protected
