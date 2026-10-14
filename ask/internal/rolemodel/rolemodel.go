@@ -45,6 +45,8 @@ type View struct {
 	Title       string   `json:"title"`
 	Status      string   `json:"status"`
 	Version     int      `json:"version"`
+	Domain      string   `json:"domain"`  // a mapping view's domain of concepts
+	UsedBy      []string `json:"used_by"` // the columns of parts that a mapping view translates
 	Description string   `json:"description"`
 	OneRowPer   string   `json:"one_row_per"`
 	Key         []string `json:"key"`
@@ -66,15 +68,23 @@ type Kind struct {
 type Parameter struct {
 	Name    string `json:"name"`
 	Type    string `json:"type"`
+	Unit    string `json:"unit"`
 	Meaning string `json:"meaning"`
 }
 
 // Capability is one entry of the catalogue.
 type Capability struct {
-	Name       string      `json:"name"`
-	Version    int         `json:"version"`
-	Meaning    string      `json:"meaning"`
-	Parameters []Parameter `json:"parameters"`
+	Name        string      `json:"name"`
+	Version     int         `json:"version"`
+	Meaning     string      `json:"meaning"`
+	Parameters  []Parameter `json:"parameters"`
+	Grain       string      `json:"grain"`
+	Unit        string      `json:"unit"`
+	Window      string      `json:"window"`
+	OutputClass string      `json:"output_class"`
+	Requires    struct {
+		Parts []string `json:"parts"`
+	} `json:"requires"`
 }
 
 // Contract is the public contract as the service reads it.
@@ -187,9 +197,9 @@ func (c *Contract) Render() string {
 		}
 		fmt.Fprintf(&b, "%s: %s", n, c.Types[n])
 	}
-	b.WriteString("\n\nParts. Each is a view named role_x, one row per what it says. A part whose status is draft may be used; the service marks it in the package so that the hospital knows it is not yet in the contract.\n")
+	b.WriteString("\n\nParts. Each is a view named role_x, one row per what it says, with its standing: a contract part is admitted for any question; a rehearsed part runs through a naive schema on the stand-in and agrees with a hand-written reference, so a question over it is admitted with a ceiling on what it may claim; a draft part may be used, but a question over it waits until the part joins the contract, and the service marks it in the package so that the hospital knows.\n")
 	for _, v := range c.Views {
-		fmt.Fprintf(&b, "\n%s (%s; status %s): one row per %s. %s\n", v.Name, v.Title, v.Status, v.OneRowPer, v.Description)
+		fmt.Fprintf(&b, "\n%s (%s; %s, version %d): one row per %s. %s\n", v.Name, v.Title, standing(v.Status), v.Version, v.OneRowPer, v.Description)
 		fmt.Fprintf(&b, "  key: %s", strings.Join(v.Key, ", "))
 		if len(v.Links) > 0 {
 			parts := make([]string, 0, len(v.Links))
@@ -214,6 +224,26 @@ func (c *Contract) Render() string {
 			fmt.Fprintf(&b, "  - %s (%s%s): %s\n", col.Name, t, opt, col.Meaning)
 		}
 	}
+	b.WriteString("\nMapping views. Each translates a hospital's local codes of an open domain into standard concepts, with four columns: local_key (the opaque key that a part's column of the type local_key holds), concept_id (the standard concept), status (mapped, unmapped or ambiguous) and provenance. A question joins a part's local_key column to the view on local_key and names drugs, procedures, diagnoses, tests and units by concept, never by a hospital's code; a key whose status is unmapped or ambiguous, or that the view does not list, is an ordinary outcome to handle. Any question may read a mapping view.\n")
+	for _, m := range c.MappingViews {
+		fmt.Fprintf(&b, "- %s (%s; domain %s; version %d): joined from %s. %s\n", m.Name, m.Title, m.Domain, m.Version, strings.Join(m.UsedBy, ", "), m.Description)
+	}
+	b.WriteString("\nThe capability catalogue. Each capability is a named clinical measure over the parts, at a version, with parameters where it takes them. Where a capability fits the question, name it in the package's capabilities list with its version and a value for each parameter, and write free SQL only for what the catalogue does not cover; the hospital's own tooling fills the capability's SQL.\n")
+	for _, cap := range c.Capabilities {
+		fmt.Fprintf(&b, "- %s (version %d): %s Grain: %s; unit: %s; window: %s; over %s.", cap.Name, cap.Version, cap.Meaning, cap.Grain, cap.Unit, cap.Window, strings.Join(cap.Requires.Parts, ", "))
+		if len(cap.Parameters) > 0 {
+			words := make([]string, 0, len(cap.Parameters))
+			for _, p := range cap.Parameters {
+				word := p.Name + " (" + p.Type
+				if p.Unit != "" {
+					word += ", " + p.Unit
+				}
+				words = append(words, word+"): "+p.Meaning)
+			}
+			fmt.Fprintf(&b, " Parameters: %s", strings.Join(words, "; "))
+		}
+		b.WriteString("\n")
+	}
 	b.WriteString("\nKinds of reading (role_reading.kind), with the unit each is given in:\n")
 	for _, k := range c.Kinds {
 		fmt.Fprintf(&b, "- %s (%s): %s\n", k.Kind, k.Unit, k.Meaning)
@@ -232,4 +262,15 @@ func (c *Contract) Render() string {
 		fmt.Fprintf(&b, "- %s: %s\n", n, strings.Join(kinds, ", "))
 	}
 	return b.String()
+}
+
+// standing words a part's status as the prompt states it.
+func standing(status string) string {
+	switch status {
+	case "contract":
+		return "in the contract"
+	case "rehearsed":
+		return "rehearsed, admitted with a ceiling"
+	}
+	return "a draft, over which a question waits"
 }

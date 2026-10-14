@@ -271,7 +271,7 @@ def test_the_query_lifecycle_runs_end_to_end_on_invented_material(tmp_path):
     # 2. It writes a new clinical question over the roles and the catalogue, checks it with the workspace's own check,
     # and produces a question package.
     package = work / "queries" / f"{NAME}{workspace.PACKAGE_SUFFIX}"
-    package.parent.mkdir(parents=True)
+    package.parent.mkdir(parents=True, exist_ok=True)
     package.write_text(json.dumps(_package(TITLE.strip(), QUESTION, NOTE.strip()), indent=1) + "\n", encoding="utf-8")
     checked = _in_workspace(work, "-m", "schemalyser.workspace", "check", f"queries/{NAME}{workspace.PACKAGE_SUFFIX}")
     assert checked.returncode == 0, checked.stdout + checked.stderr
@@ -279,7 +279,7 @@ def test_the_query_lifecycle_runs_end_to_end_on_invented_material(tmp_path):
     own = workspace.check_question(package)
     assert own["status"] == "accepted" and own["failed"] == [] and own["form"] == []
     assert feasibility.named_capabilities(QUESTION) == ["hypoxaemia_burden"]
-    assert sorted(p.name for p in package.parent.iterdir()) == [package.name]
+    assert package.name in {p.name for p in package.parent.iterdir()} and not workspace.result_path(package).exists()
 
     # 3. The package is transferred into a private Schemalyser project built on the invented hospital schema and
     # imported as untrusted input.
@@ -355,7 +355,7 @@ def test_the_query_lifecycle_runs_end_to_end_on_invented_material(tmp_path):
     assert result["result"] == own["status"]
     returned = workspace.result_path(transferred).read_text(encoding="utf-8")
     assert json.loads(returned) == result
-    assert sorted(p.name for p in transferred.iterdir()) == ["import-result.json", "note.md", "question.sql", "title.txt"]
+    assert sorted(p.name for p in transferred.parent.iterdir()) == [f"{NAME}.import-result.json", transferred.name]
     assert not [n for n in _catalogue_names() if n in returned] and str(project) not in returned
 
     # 9. A database analyst inspects the package and records approval or refusal in its manifest; a change to an input

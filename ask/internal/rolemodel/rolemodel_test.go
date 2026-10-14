@@ -31,9 +31,26 @@ func TestTheContractRendersEveryPartAndVocabularyAndGivesEachPartItsVersionAndAd
 		t.Fatal(err)
 	}
 	text := c.Render()
-	for _, want := range []string{"role_patient", "role_technique (", "status draft", "- technique:", "map_cuff"} {
+	for _, want := range []string{"role_patient", "role_technique (", "a draft, over which a question waits", "in the contract, version 1", "- technique:", "map_cuff",
+		"Mapping views.", "The capability catalogue."} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the rendered contract lacks %q", want)
+		}
+	}
+	// Every mapping view and every capability of the embedded contract is named, with its parameters and purpose.
+	for _, m := range c.MappingViews {
+		if !strings.Contains(text, "- "+m.Name+" (") || !strings.Contains(text, "domain "+m.Domain) {
+			t.Errorf("the rendered contract lacks the mapping view %s", m.Name)
+		}
+	}
+	for _, cap := range c.Capabilities {
+		if !strings.Contains(text, "- "+cap.Name+" (version ") || !strings.Contains(text, cap.Meaning) {
+			t.Errorf("the rendered contract lacks the capability %s", cap.Name)
+		}
+		for _, p := range cap.Parameters {
+			if !strings.Contains(text, p.Name+" ("+p.Type) {
+				t.Errorf("the capability %s lacks its parameter %s", cap.Name, p.Name)
+			}
 		}
 	}
 	// A hospital's table is an upper-case name with an underscore; the contract's names are lower-case.
