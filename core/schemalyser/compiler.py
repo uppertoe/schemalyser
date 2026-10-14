@@ -232,27 +232,88 @@ def _period(start, end):
     return first, last
 
 
+# The stay route. A part that records events carries a stay where its source has no anaesthetic, so a row of it may be
+# reached only through the stay. Where the contract links the part to the stay and the schema binds the stay on the
+# part and on the anaesthetic's detail, #cohort carries stay_key from the detail, and the part is reached by the stay's
+# distinct values as well as by the anaesthetic, each row once.
+STAY_PART, STAY_KEY, STAY_DETAIL = "role_stay", "stay_key", "role_anaesthetic_detail"
+
+
+def stay_link(view, model=None):
+    """The column by which the contract links a part to the stay, the stay's own key for the stay itself, or None."""
+    if view == STAY_PART:
+        return STAY_KEY
+    held = next((v for v in (model or rolemap.contract())["views"] if v["name"] == view), None)
+    for link in (held or {}).get("links") or []:
+        if link.get("to") == f"{STAY_PART}.{STAY_KEY}":
+            return link["column"]
+    return None
+
+
+def _bound(schema, view, column):
+    role = schema.sitting.data["roles"].get(view) or {}
+    return bool(((role.get("rows") or {}).get("binding")) and ((role.get("columns") or {}).get(column) or {}).get("binding"))
+
+
+def stay_routed(schema, view):
+    """The column by which a part is reached through the stay in a compiled script, or None: the contract links the
+    part to the stay, the part is not the stay or the detail itself, and the schema binds that column on the part and
+    the stay and the anaesthetic on the anaesthetic's detail, from which #cohort takes the stay."""
+    link = stay_link(view)
+    if link is None or view == STAY_DETAIL:
+        return None
+    if not (_bound(schema, view, link) and _bound(schema, STAY_DETAIL, STAY_KEY) and _bound(schema, STAY_DETAIL, "anaesthetic_key")):
+        return None
+    return link
+
+
 def reachable(view):
     """Whether part 2 may reach a part from #cohort: the contract admits it for compilation, outright or with a
-    ceiling, and this module knows the column by which it is reached."""
-    return contract.admission(view, "compile") in (contract.ADMITTED, contract.CEILING) and contract.reach(view) is not None
+    ceiling, and the contract links it to the anaesthetic, the patient or the stay."""
+    admitted = contract.admission(view, "compile") in (contract.ADMITTED, contract.CEILING)
+    return admitted and (contract.reach(view) is not None or stay_link(view) is not None)
 
 
-def _reached_cte(schema, view, cohort_columns):
-    link, cohort_column = contract.reach(view)
-    if cohort_column not in cohort_columns:
-        raise AuditError(WORDING["no_link"].format(part=rolemap.view_title(view, False), column=cohort_column))
-    role = schema.sitting.data["roles"].get(view) or {}
-    if not ((role.get("columns") or {}).get(link) or {}).get("binding"):
-        raise AuditError(WORDING["unreached"].format(part=rolemap.view_title(view, False)))
-    columns = [c for c in rolemap.all_views()[view] if c != link]
+def _route_lines(schema, view, link, cohort_column, columns):
+    """The joins and the expressions of a part reached from #cohort by one of its links: #cohort's rows for the
+    anaesthetic's key, and its distinct values for any other column."""
     lines, expressions, order, where = schema.sitting._reached(view, link, cohort_column, columns)
     if cohort_column != COHORT_KEY:
         assert lines[0] == "FROM   #cohort AS c"
-        lines = [f"FROM   (SELECT DISTINCT {cohort_column} FROM #cohort) AS c"] + lines[1:]
-    text = ("SELECT " + ",\n       ".join([f"c.{cohort_column} AS {link}"] + [f"{expressions[c]} AS {c}" for c in columns])
-            + "\n" + "\n".join(lines + describe._where(where)))
-    return text, order
+        lines = [f"FROM   (SELECT DISTINCT {cohort_column} FROM #cohort WHERE {cohort_column} IS NOT NULL) AS c"] + lines[1:]
+    return lines, expressions, order, where
+
+
+def _reached_cte(schema, view, cohort_columns):
+    """The part's rows reached from #cohort, as the text of one SELECT and the tables it reads in order: by the
+    anaesthetic or the patient where the contract links the part to them, and, where the stay route is open, the union
+    with the rows reached by the stay's distinct values, each column in the contract's order so that a row reached
+    both ways appears once."""
+    all_columns = list(rolemap.all_views()[view])
+    direct = contract.reach(view)
+    stay = stay_routed(schema, view) if STAY_KEY in cohort_columns else None
+    if direct is None and stay is None:
+        raise AuditError(WORDING["no_link"].format(part=rolemap.view_title(view, False), column=STAY_KEY))
+    selects, order = [], []
+    if direct is not None and direct[1] not in cohort_columns and stay is not None:
+        # The stay's own route carries a part whose link to the anaesthetic or the patient #cohort does not carry.
+        direct = None
+    if direct is not None:
+        link, cohort_column = direct
+        if cohort_column not in cohort_columns:
+            raise AuditError(WORDING["no_link"].format(part=rolemap.view_title(view, False), column=cohort_column))
+        if not _bound(schema, view, link):
+            raise AuditError(WORDING["unreached"].format(part=rolemap.view_title(view, False)))
+        lines, expressions, tables, where = _route_lines(schema, view, link, cohort_column, [c for c in all_columns if c != link])
+        picked = [f"c.{cohort_column} AS {link}" if c == link else f"{expressions[c]} AS {c}" for c in all_columns]
+        selects.append("SELECT " + ",\n       ".join(picked) + "\n" + "\n".join(lines + describe._where(where)))
+        order += tables
+    if stay is not None:
+        lines, expressions, tables, where = _route_lines(schema, view, stay, STAY_KEY, [c for c in all_columns if c != stay])
+        picked = [f"c.{STAY_KEY} AS {stay}" if c == stay else f"{expressions[c]} AS {c}" for c in all_columns]
+        selects.append("SELECT " + ",\n       ".join(picked) + "\n" + "\n".join(lines + describe._where(where)))
+        order += tables
+    return "\nUNION\n".join(selects), list(dict.fromkeys(order))
 
 
 def _large(schema, large):
@@ -270,8 +331,14 @@ def _coverage(schema, views, cohort_columns, is_large):
     not large, so that the step reads no large table. Returns (statement, tables read, [parts whose link begins at a
     large table and so cannot be measured before the rows are read])."""
     ctes, joins, counts, tables, unmeasured = [], [], ["COUNT(*) AS cohort_anaesthetics"], [], []
-    for n, view in enumerate(views, 1):
-        link, cohort_column = contract.reach(view)
+    routes = []
+    for view in views:
+        if contract.reach(view) is not None:
+            routes.append((view, *contract.reach(view), ""))
+        stay = stay_routed(schema, view) if STAY_KEY in cohort_columns else None
+        if stay is not None:
+            routes.append((view, stay, STAY_KEY, "_by_stay"))
+    for n, (view, link, cohort_column, suffix) in enumerate(routes, 1):
         if cohort_column not in cohort_columns:
             continue
         lines, _, order, _ = schema.sitting._reached(view, link, cohort_column, [])
@@ -279,15 +346,16 @@ def _coverage(schema, views, cohort_columns, is_large):
         while small < len(order) and not is_large(order[small]):
             small += 1
         if small == 0:
-            unmeasured.append(view)
+            if view not in unmeasured:
+                unmeasured.append(view)
             continue
         tables += order[:small]
-        name = f"reach_{view[len('role_'):]}"
+        name = f"reach_{view[len('role_'):]}{suffix}"
         body = "\n".join(lines[:small + 1])
         ctes.append(f"{name} AS (\n  SELECT DISTINCT c.{cohort_column} AS {cohort_column}\n"
                     + "\n".join("  " + line for line in body.splitlines()) + "\n)")
         joins.append(f"LEFT JOIN {name} AS r{n} ON r{n}.{cohort_column} = c.{cohort_column}")
-        counts.append(f"COUNT(r{n}.{cohort_column}) AS cohort_reaching_{view[len('role_'):]}")
+        counts.append(f"COUNT(r{n}.{cohort_column}) AS cohort_reaching_{view[len('role_'):]}{suffix}")
     text = (("WITH " + ",\n".join(ctes) + "\n") if ctes else "") + "SELECT " + ",\n       ".join(counts) + \
         "\nFROM   #cohort AS c" + "".join("\n" + j for j in joins) + ";"
     return text, list(dict.fromkeys(tables)), unmeasured
@@ -313,8 +381,17 @@ def compile_audit(schema, audit_sql, start, end, blank=True, final=None, large=p
     if "start_time" not in [c.lower() for c in body.named_selects]:
         # The count of the series bounds #cohort by the period, so #cohort carries the start of each anaesthetic.
         body.select(f"{alias}.start_time", dialect="tsql", copy=False)
+    # Where part 2 reads a part whose rows may carry only the stay, and the schema binds the stay on it and on the
+    # anaesthetic's detail, #cohort carries the stay from the detail, so that the part is reached through the stay too.
+    inside = {id(t) for t in cohort.this.find_all(exp.Table)}
+    outside = {t.name.lower() for t in tree.find_all(exp.Table) if id(t) not in inside and t.name.lower() in rolemap.all_views()}
+    with_stay = any(stay_routed(schema, v) for v in outside) and STAY_KEY not in [c.lower() for c in body.named_selects]
+    if with_stay:
+        body.join(f"{STAY_DETAIL} AS stay_of", on=f"stay_of.anaesthetic_key = {alias}.anaesthetic_key", join_type="LEFT",
+                  dialect="tsql", copy=False)
+        body.select(f"stay_of.{STAY_KEY} AS {STAY_KEY}", dialect="tsql", copy=False)
     columns = list(body.named_selects)
-    views_one = [v for v in COHORT_PARTS[::-1] if v in _reads(body, set(COHORT_PARTS))]
+    views_one = [v for v in COHORT_PARTS[::-1] if v in _reads(body, set(COHORT_PARTS))] + ([STAY_DETAIL] if with_stay else [])
     tables = schema_tables(schema)
     cohort_tables = list(dict.fromkeys(t for v in views_one for t in tables.get(v, [])))
     ctes = ",\n".join(f"{v} AS (\n" + "\n".join("  " + line for line in _view_sql(schema, v).splitlines()) + "\n)"

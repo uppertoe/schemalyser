@@ -810,3 +810,83 @@ def test_an_audit_over_a_rehearsed_part_linked_to_the_anaesthetic_compiles_on_th
     script = (tmp_path / "drugs" / "query.sql").read_text(encoding="utf-8")
     assert "role_drug AS (" in script and "#cohort" in script
     assert manifest["execution_class"] in ("B", "C")
+
+
+BY_STAY = """-- How many drug events were charted during the stays of the anaesthetics, and how many of those name no anaesthetic?
+WITH chosen AS (
+    SELECT a.anaesthetic_key
+    FROM   role_anaesthetic a
+           JOIN role_patient p ON p.patient_key = a.patient_key
+    WHERE  p.is_test = 0
+)
+SELECT COUNT(*) AS drug_events,
+       SUM(CASE WHEN d.anaesthetic_key IS NULL THEN 1 ELSE 0 END) AS without_an_anaesthetic
+FROM   chosen c
+       JOIN role_anaesthetic_detail t ON t.anaesthetic_key = c.anaesthetic_key
+       JOIN role_stay s ON s.stay_key = t.stay_key
+       JOIN role_drug d ON d.stay_key = s.stay_key"""
+
+
+def _planted_by_stay(schema):
+    """The hospital-shaped shadow with one more drug row, charted on the stay of one of the cohort's anaesthetics and
+    naming no anaesthetic, and that anaesthetic's key."""
+    sitting = schema.sitting
+    data = copy.deepcopy(sitting.data)
+    vocabularies = {name: sitting._vocabulary_codes(name) for name in data["roles"]}
+    views = {name: propose.view_sql(name, dict(data["roles"][name], _date=""), data["kinds"], sitting.model, vocabularies[name])
+             for name in data["roles"]}
+    held = copy.copy(sitting)
+    held.data = data
+    shadow = roleshadow.Shadow(held, views, data["kinds"], vocabularies)
+    shadow.register()
+    rows = roleshadow.role_rows(held)
+    for name in ["role_patient", "role_anaesthetic"] + [v for v in data["roles"] if v not in ("role_patient", "role_anaesthetic")]:
+        for values in rows.get(name, []):
+            shadow.place(name, values)
+    detail = next(r for r in rows["role_anaesthetic_detail"] if any(str(a["anaesthetic_key"]) == str(r["anaesthetic_key"])
+                                                                   and a["start_time"].year == 2024 for a in rows["role_anaesthetic"]))
+    key = detail["anaesthetic_key"]
+    # One drug row of the stay that names no anaesthetic, and one that names the anaesthetic as well as the stay.
+    shadow.place("role_drug", dict(rows["role_drug"][0], drug_event_key="KPLANTED", anaesthetic_key=None, stay_key=detail["stay_key"]))
+    shadow.place("role_drug", dict(rows["role_drug"][0], drug_event_key="KPLANTED2", anaesthetic_key=key, stay_key=detail["stay_key"]))
+    shadow.pair_encounters()
+    # The shadow gives each table its own numbers for a stay, so the drug rows of that anaesthetic's stay are given the
+    # number the anaesthetic's record carries, as a hospital's tables carry one visit key.
+    record = next(r for r in shadow.source.table("ANAES_RECORD")["rows"] if str(r.get("ANAES_KEY")) == str(key))
+    drugs = shadow.source.table("DRUG_GIVEN")["rows"]
+    for row in drugs:
+        if row.get("ANAES_KEY") is None or str(row.get("ANAES_KEY")) == str(key):
+            row["VISIT_KEY"] = record["VISIT_KEY"]
+    con, date_columns = shadow.database()
+    return con, date_columns, views, key
+
+
+def test_a_drug_row_with_no_anaesthetic_is_reached_through_the_stay_and_counted_in_the_coverage(schema, saved, tmp_path):
+    con, date_columns, _, anaesthetic = _planted_by_stay(schema)
+    compiled = audit.compile_audit(schema, BY_STAY, dt.date(2024, 1, 1), dt.date(2024, 12, 31), blank=False)
+    # #cohort carries the stay from the anaesthetic's detail, the drugs are the union of the two routes, and the coverage
+    # counts the route by the stay beside the route by the anaesthetic.
+    assert "stay_of.stay_key AS stay_key" in compiled["part1"] and "role_anaesthetic_detail AS (" in compiled["part1"]
+    part2 = compiled["part2"]
+    assert "UNION" in part2 and "SELECT DISTINCT" in part2 and "NOT stay_key IS NULL" in part2
+    assert "ON t0.ANAES_KEY = c.anaesthetic_key" in part2 and "ON t0.VISIT_KEY = c.stay_key" in part2
+    assert "cohort_reaching_drug_by_stay" in compiled["coverage"] and "cohort_reaching_drug," in compiled["coverage"] + ","
+    (events, without), = _two_parts(con, date_columns, compiled)
+    # The question's own join counts the stay's rows once for each anaesthetic of the stay, which is its decision; the
+    # anaesthetic planted here has a twin in the same stay, so the row without an anaesthetic is counted for each.
+    assert without in (1, 2) and events > without
+    keys = _two_parts(con, date_columns, audit.compile_audit(schema, BY_STAY, dt.date(2024, 1, 1), dt.date(2024, 12, 31), blank=False,
+                                                           final="SELECT x.drug_event_key, x.anaesthetic_key FROM role_drug x"))
+    held = [k for k, _ in keys]
+    assert sum(1 for _, a in keys if a is None) == 1
+    # A row reached both by the anaesthetic and by the stay, and a stay that two anaesthetics share, each give the row
+    # once in the part.
+    assert len(held) == len(set(held)) and "KPLANTED" not in held or len(held) == len(set(held))
+    # The whole script passes the policy at class B.
+    query = tmp_path / "by_stay.sql"
+    query.write_text(BY_STAY, encoding="utf-8")
+    manifest = audit.build(saved, query, tmp_path / "by_stay", ("2024-01-01", "2024-12-31"), date=DATE)
+    assert manifest["execution_class"] == "B", manifest.get("policy_outcome")
+    assert manifest["role_policy"]["admission"]["ceiling"] == ["role_anaesthetic_detail", "role_drug", "role_stay"]
+    # The stay itself is reached by its own key, which #cohort carries, and its coverage is counted.
+    assert "role_stay AS (" in compiled["part2"] and "cohort_reaching_stay_by_stay" in compiled["coverage"]
