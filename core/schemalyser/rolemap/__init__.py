@@ -83,8 +83,9 @@ def _reader(name):
     return call
 
 
-for _name in ("admission", "all_views", "anchors", "capabilities", "contract", "event_parts", "kinds", "mapping_columns",
-              "mapping_views", "part_hashes", "public_views", "source_kinds", "statuses", "views"):
+for _name in ("admission", "all_views", "anchors", "capabilities", "column_vocabulary", "contract", "event_parts", "kinds",
+              "mapping_columns", "mapping_views", "part_hashes", "part_versions", "public_views", "source_kinds", "statuses",
+              "views", "vocabulary_hashes"):
     globals()[_name] = _reader(_name)
 del _name
 

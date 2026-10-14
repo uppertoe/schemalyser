@@ -23,6 +23,7 @@ def newer_contract():
     block and the text of the block's procedure note."""
     model = json.loads(json.dumps(rolemap.contract()))
     technique = next(v for v in model["views"] if v["name"] == "role_technique")
+    technique["version"] += 1
     technique["columns"].append({"name": "theatre_case", "title": "the theatre case", "type": "key", "needed_by": [],
                                  "meaning": "The surgical case during which the block was done.",
                                  "holds": "The anaesthetic record, which names its surgical case.",
@@ -112,6 +113,34 @@ def test_a_validated_schema_opens_under_a_newer_contract_proposes_the_added_fiel
     assert bridged["proposed_for_contract"]["proposed"] == ["role_technique.theatre_case"]
     assert bridged["proposed_for_contract"]["unproposed"] == ["role_technique.block_note"]
     assert bridged["contract_report"] == restored["contract_report"]
+
+
+def test_a_promotion_from_draft_to_contract_leaves_every_binding_of_the_part_current(monkeypatch):
+    from schemalyser import contractcheck
+    s = fresh()
+    for about in VALIDATED:
+        s.confirm(about, "yes", date=DATE, actor="Dr A Clinician")
+    kept = answered(s.data)
+    v1 = s.save(date=DATE)
+    assert rolemap.statuses()["role_technique"] == "draft"
+    # The techniques part is promoted: its status changes and nothing of what it is, so its version stands and the
+    # checker, with the committed lock file, asks for no raised version.
+    promoted = json.loads(json.dumps(rolemap.contract()))
+    next(v for v in promoted["views"] if v["name"] == "role_technique")["status"] = "contract"
+    assert contractcheck.check_contract(promoted, lock=contract_module.read_lock()) == []
+    assert rolemap.part_hashes(promoted) == rolemap.part_hashes()
+    monkeypatch.setattr(contract_module, "contract", lambda: promoted)
+    again = describe.Describe()
+    again.version = "test"
+    restored = again.restore(v1)
+    assert restored["contract_changed"] == [] and restored["contract_report"] == []
+    assert again.stale_evidence() == []
+    assert answered(again.data) == kept
+    assert contract_module.admission("role_technique", "question", promoted) == contract_module.ADMITTED
+    for about in VALIDATED:
+        if about.startswith("role_technique"):
+            subject = about.replace(" rows", " rows") if about.endswith(" rows") else about
+            assert again.dimensions_of("bindings", subject)["confirmed"]["stale"] == []
 
 
 def test_the_try_command_reports_what_a_candidate_contract_would_get_from_a_saved_schema_without_saving(tmp_path, capsys):

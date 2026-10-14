@@ -2,8 +2,8 @@
 mapping views and the capability catalogue, and the one function that says what a gate may do with a part.
 
 This module is layer 1. It imports nothing of the package, so that every layer reads the contract through it and the
-hospital-schema layer no longer stands in for the contract. The hashes of the parts, which the saved hospital schema
-records to know when its evidence went stale, are made here as well.
+hospital-schema layer no longer stands in for the contract. The semantic hashes of the parts, which the saved hospital
+schema records to know when its evidence went stale, and the lock of their versions are made here as well.
 """
 import hashlib
 import json
@@ -26,26 +26,85 @@ def contract():
     return json.loads((MODEL / "contract.json").read_text(encoding="utf-8"))
 
 
-def part_hashes(model=None):
-    """The hash of each part's definition in the contract, as {view: hash}: the view itself, with the kinds or the
-    vocabularies that its columns of a kind name and the mapping views that its columns of a local key name, and the
-    hash of each mapping view. A change to any of them is a change to the part, which makes the evidence that rested
-    on it stale."""
-    import hashlib
-    model = model or contract()
-    found = {}
-    mappings = {m["name"]: m for m in model.get("mapping_views", [])}
-    for view in model["views"] + model.get("mapping_views", []):
-        named = sorted({c.get("vocabulary") for c in view["columns"] if c.get("vocabulary")})
-        definition = {"view": view, "vocabularies": {n: model["vocabularies"].get(n) for n in named}}
-        mapped = sorted({c["mapping"] for c in view["columns"] if c.get("mapping")})
-        if mapped:
-            definition["mappings"] = {n: mappings.get(n) for n in mapped}
-        if view["name"] == "role_reading":
-            definition["kinds"] = model["kinds"]
-        text = json.dumps(definition, sort_keys=True, ensure_ascii=False)
-        found[view["name"]] = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+# The fields of a part and of a column that give the part its meaning to a hospital schema and to a question: what the
+# part is called, what identifies a row, how it links to the other parts, and what each column holds. A description, a
+# title, a word a proposer searches for or a word it avoids, the audits that need a column and the part's status change
+# none of that, so a change to them leaves every piece of evidence that rested on the part current.
+SEMANTIC_PART_FIELDS = ("name", "key", "key_may_combine", "anchor", "links", "source_kinds", "domain", "identifying")
+SEMANTIC_COLUMN_FIELDS = ("name", "type", "vocabulary", "mapping", "optional", "per_pathway", "if_empty", "same_source_as",
+                          "identifying", "held_text")
+# The one kind column whose kinds are the contract's own list of kinds of reading rather than a vocabulary, and the name
+# under which vocabulary_hashes() gives that list.
+READING_KINDS = ("role_reading", "kind")
+READING_VOCABULARY = "kinds"
+LOCK = MODEL / "parts.lock.json"
+
+
+def part_definition(view):
+    """The projection of a part or a mapping view that its hash is made from: the semantic fields of the part and of
+    each of its columns, in the contract's order of columns, and nothing of its wording."""
+    found = {field: view[field] for field in SEMANTIC_PART_FIELDS if field in view}
+    found["columns"] = [{field: c[field] for field in SEMANTIC_COLUMN_FIELDS if field in c} for c in view.get("columns") or []]
     return found
+
+
+def _digest(value):
+    text = json.dumps(value, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def part_hashes(model=None):
+    """The semantic hash of each part and of each mapping view, as {name: hash}: the hash of part_definition(), which
+    changes when a part's name, key, links or columns change in what they are, and not when its words change. A
+    change to it makes the evidence that rested on the part stale; a change to a vocabulary is a change to the
+    translation of the columns that name it, which vocabulary_hashes() serves, and not to the part."""
+    model = model or contract()
+    return {view["name"]: _digest(part_definition(view)) for view in model["views"] + model.get("mapping_views", [])}
+
+
+def vocabulary_hashes(model=None):
+    """The hash of each closed vocabulary's kinds, as {vocabulary: hash}, with the contract's own kinds of reading
+    under READING_VOCABULARY. The kinds are hashed by name: a kind added, removed or renamed is a change to what a
+    column's codes translate to, and a kind's meaning reworded is not."""
+    model = model or contract()
+    found = {name: _digest([k.get("kind") for k in kinds]) for name, kinds in model["vocabularies"].items()}
+    found[READING_VOCABULARY] = _digest([k.get("kind") for k in model["kinds"]])
+    return found
+
+
+def column_vocabulary(part, column, model=None):
+    """The vocabulary that a column of a part names, as vocabulary_hashes() names it, or None where the column holds no
+    kind."""
+    if (part, column) == READING_KINDS:
+        return READING_VOCABULARY
+    for view in (model or contract())["views"]:
+        if view["name"] == part:
+            return next((c.get("vocabulary") for c in view["columns"] if c["name"] == column), None)
+    return None
+
+
+def part_versions(model=None):
+    """The version of each part and of each mapping view, as {name: version}: a whole number that whoever changes a
+    part's definition raises, which the lock file holds beside the part's hash and a question names for each part it
+    reads."""
+    model = model or contract()
+    return {view["name"]: view.get("version") for view in model["views"] + model.get("mapping_views", [])}
+
+
+def lock(model=None):
+    """The lock of the parts, as parts.lock.json holds it: the contract's version and, for each part and mapping
+    view, its version and its semantic hash. The checker compares the contract with the committed lock and refuses a
+    changed definition whose version was not raised."""
+    model = model or contract()
+    hashes, versions = part_hashes(model), part_versions(model)
+    return {"contract_version": model.get("version"),
+            "parts": {name: {"version": versions[name], "hash": hashes[name]} for name in sorted(hashes)}}
+
+
+def read_lock(path=None):
+    """The committed lock file, or None where there is none."""
+    path = Path(path) if path else LOCK
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
 
 
 def mapping_views(model=None):
@@ -118,10 +177,15 @@ def admission(part, purpose, model=None):
     part at contract status is admitted for every purpose. A rehearsed part, one that runs through a naive schema on
     the stand-in and agrees with a hand-written reference, is admitted with a ceiling for a question, its compilation
     and a conversion: the package it serves cannot claim more than the examination on made-up rows gives, until the
-    contract's dated amendment for that part says otherwise. A draft is refused for everything but description."""
+    contract's dated amendment for that part says otherwise. A draft is refused for everything but description. A
+    mapping view is admitted for every purpose, as a contract part is."""
     if purpose not in PURPOSES:
         raise ValueError(f"{purpose} is not a purpose a gate has")
-    status = {v["name"]: v.get("status") for v in (model or contract())["views"]}.get(part)
+    model = model or contract()
+    if part in mapping_views(model):
+        # A mapping view translates a hospital's codes and names none of them: any question may read it.
+        return ADMITTED
+    status = {v["name"]: v.get("status") for v in model["views"]}.get(part)
     if status is None:
         return REFUSED
     if purpose == "describe":

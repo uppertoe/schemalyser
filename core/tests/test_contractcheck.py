@@ -2,7 +2,11 @@
 what breaks it."""
 import copy
 import json
+import shutil
 
+import pytest
+
+from schemalyser import contract as model_reader
 from schemalyser import contractcheck, rolemap
 
 
@@ -102,3 +106,88 @@ def test_the_contract_has_no_required_flag_and_admission_decides_each_gate():
     from schemalyser import compiler
     admitted = {v["name"] for v in model["views"] if model_reader.admission(v["name"], "compile", model) == model_reader.ADMITTED}
     assert admitted == set(compiler.REACHED)
+
+
+def test_the_shipped_contract_is_at_the_versions_its_lock_file_holds():
+    lock = model_reader.read_lock()
+    assert lock == model_reader.lock(shipped())
+    assert contractcheck.check_contract(shipped(), roles_text(), lock) == []
+    assert all(isinstance(v, int) and v >= 1 for v in model_reader.part_versions().values())
+
+
+def test_a_part_s_words_leave_its_hash_alone_and_a_changed_definition_needs_a_raised_version():
+    before = rolemap.part_hashes()
+    lock = model_reader.read_lock()
+    worded = shipped()
+    patient = view(worded, "role_patient")
+    patient["description"] += " Reworded."
+    patient["title"] = "The patients"
+    patient["look_for"].append("person master")
+    patient["columns"][1]["meaning"] += " Reworded."
+    patient["columns"][1]["look_for"].append("born on")
+    patient["columns"][1]["needed_by"] = []
+    patient["columns"][1]["avoid"] = ["death"]
+    view(worded, "role_fluid")["status"] = "contract"
+    worded["vocabularies"]["technique"][0]["meaning"] = "Reworded."
+    assert rolemap.part_hashes(worded) == before
+    assert contractcheck.check_contract(worded, lock=lock) == []
+    # A renamed column is a change to what the part is, and the lock file holds it to version 1.
+    renamed = shipped()
+    column = next(c for c in view(renamed, "role_patient")["columns"] if c["name"] == "death_date")
+    column["name"] = "date_of_death"
+    assert rolemap.part_hashes(renamed)["role_patient"] != before["role_patient"]
+    assert {k: v for k, v in rolemap.part_hashes(renamed).items() if k != "role_patient"} == {k: v for k, v in before.items() if k != "role_patient"}
+    assert contractcheck.check_contract(renamed, lock=lock) == [
+        "The part role_patient has changed in what it is and its version is still 1: raise it to 2."]
+    assert contractcheck.check_contract(renamed, lock=lock, published=False) == [
+        "The part role_patient has changed in what it is and its version is still 1: raise it to 2."]
+    view(renamed, "role_patient")["version"] = 2
+    assert contractcheck.check_contract(renamed, lock=lock) == [
+        "The part role_patient has changed to version 2: write the lock file with --write-lock."]
+    # A candidate that is not yet published, as the try command reads one, is held to the raised version alone.
+    assert contractcheck.check_contract(renamed, lock=lock, published=False) == []
+    view(renamed, "role_patient")["version"] = 0
+    assert "The part role_patient has no version, or its version is not a whole number from 1." in contractcheck.check_contract(renamed, lock=lock)
+    # A kind's optionality, its vocabulary or its type is part of the definition as well.
+    for change in (lambda c: c.update({"optional": True}), lambda c: c.update({"type": "text"})):
+        altered = shipped()
+        change(next(c for c in view(altered, "role_patient")["columns"] if c["name"] == "death_date"))
+        assert rolemap.part_hashes(altered)["role_patient"] != before["role_patient"]
+    # A new part is written to the lock file before it is published, and a version is never lowered.
+    added = shipped()
+    added["views"].append({**copy.deepcopy(view(added, "role_fluid")), "name": "role_fluid_detail", "version": 1})
+    assert "The part role_fluid_detail is not in the lock file: write it there with --write-lock once the part is as it should be." in contractcheck.check_contract(added, lock=lock)
+    lowered = shipped()
+    view(lowered, "role_patient")["version"] = 1
+    higher = json.loads(json.dumps(lock))
+    higher["parts"]["role_patient"]["version"] = 2
+    assert contractcheck.check_contract(lowered, lock=higher) == [
+        "The part role_patient has version 1, and the lock file has 2: a version is never lowered."]
+
+
+def test_the_command_writes_the_lock_file_and_never_hides_a_change_without_a_raised_version(tmp_path, capsys):
+    contract = tmp_path / "contract.json"
+    shutil.copy(contractcheck.CONTRACT, contract)
+    lock = tmp_path / "parts.lock.json"
+    # With no lock file yet, every part is unwritten, and --write-lock writes them.
+    assert contractcheck.main([str(contract), "--lock", str(lock)]) == 1
+    assert "is not in the lock file" in capsys.readouterr().out
+    assert contractcheck.main([str(contract), "--lock", str(lock), "--write-lock"]) == 0
+    assert json.loads(lock.read_text()) == model_reader.read_lock()
+    # A column renamed without a raised version is refused, and the lock file is left as it was.
+    model = json.loads(contract.read_text())
+    next(c for c in view(model, "role_patient")["columns"] if c["name"] == "death_date")["name"] = "date_of_death"
+    contract.write_text(json.dumps(model), encoding="utf-8")
+    held = lock.read_text()
+    assert contractcheck.main([str(contract), "--lock", str(lock), "--write-lock"]) == 1
+    assert "raise it to 2" in capsys.readouterr().out and lock.read_text() == held
+    with pytest.raises(ValueError):
+        contractcheck.write_lock(model, lock)
+    # With the version raised, --write-lock records the new definition.
+    view(model, "role_patient")["version"] = 2
+    contract.write_text(json.dumps(model), encoding="utf-8")
+    assert contractcheck.main([str(contract), "--lock", str(lock), "--write-lock"]) == 0
+    out = capsys.readouterr().out
+    assert "is written from the contract" in out and "Every part is at the version the lock file holds" in out
+    assert json.loads(lock.read_text())["parts"]["role_patient"]["version"] == 2
+    assert contractcheck.main([str(contract), "--lock", str(lock)]) == 0

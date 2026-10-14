@@ -504,7 +504,7 @@ def cmd_try(args, version):
         candidate = json.loads(Path(args.contract).read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
         raise Refused(WORDING["cli_try_unreadable"].format(name=Path(args.contract).name, error=error), 2) from None
-    problems = contractcheck.check_contract(candidate)
+    problems = contractcheck.check_contract(candidate, lock=model_reader.read_lock(), published=False)
     if problems:
         raise Refused(WORDING["cli_try_refused"].format(name=Path(args.contract).name, problems="\n".join(problems)))
     held, titles = model_reader.contract, rolemap._TITLES

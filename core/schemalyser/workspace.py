@@ -1,8 +1,8 @@
 """The public workspace for a coding agent, and the one-way import of a question from it into a hospital's project.
 
     python -m schemalyser.workspace export --profile public --out FOLDER [--include PATH ...]
-    python -m schemalyser.workspace check WORKSPACE/queries/NAME
-    python -m schemalyser.workspace import WORKSPACE/queries/NAME --hospital PROJECT [--schema NAME]
+    python -m schemalyser.workspace check WORKSPACE/queries/NAME.question.json
+    python -m schemalyser.workspace import WORKSPACE/queries/NAME.question.json --hospital PROJECT [--schema NAME]
 
 export writes a workspace from an explicit allowlist of public sources in this repository, and never by copying a
 project and taking things out of it. Every file comes from an entry of ALLOWLIST, or is written here from public
@@ -11,17 +11,19 @@ question. A path outside the allowlist, a path under DENIED whatever the allowli
 kind that its folder is not allowed to hold, and text that names an absolute home folder each stop the export with
 the offending path. manifest.json records every file with its source in the repository, its checksum and the profile.
 
-check applies the import's rules to a folder of the workspace without any hospital, so that an agent can see whether
-its question would be accepted.
+check applies the import's rules to a question package in the workspace without any hospital, so that an agent can
+see whether its question would be accepted.
 
-import treats the folder as untrusted. It accepts question.sql, title.txt and note.md and nothing else, refuses a
-symbolic link, a subfolder, a file over SIZE_LIMIT, an executable file and any declaration of dependencies, and applies the role-level
-policy of rolepolicy.py to question.sql. A question that passes is copied into the project's questions/, the
-feasibility report is made against the saved hospital schema, and the audit's package is built into the project's
-audits/, beside a private validation report. The only thing written back into the workspace is import-result.json,
-which holds a fixed status from RESULTS with the names of any rules broken, and nothing that the hospital supports. The
-status is decided by check_folder from the package and the public contract alone, before the private build runs, so
-the workspace's own check gives the same status, and the same package gives the same status whichever hospital the
+import treats the package as untrusted. A question arrives as one file, NAME.question.json, in the shape of
+schemalyser-question/1, which question.py reads and validates; the import refuses a link, a folder, a file over
+SIZE_LIMIT, an executable file and a file that is not UTF-8 text, then applies the package's rules, refuses a package
+that waits for the contract, and applies the role-level policy of rolepolicy.py to its SQL. A question that passes is
+copied into the project's questions/, the feasibility report is made against the saved hospital schema, and the
+audit's package is built into the project's audits/ with the package's own decisions, beside a private validation
+report. The only thing written back into the workspace is NAME.import-result.json beside the package, which holds a
+fixed status from RESULTS with the names of any rules broken, and nothing that the hospital supports. The status is
+decided by check_question from the package and the public contract alone, before the private build runs, so the
+workspace's own check gives the same status, and the same package gives the same status whichever hospital the
 project holds. The export denies fixtures/held-out/ and the planted answers and values whatever the allowlist says.
 """
 import argparse
@@ -37,7 +39,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import audit, feasibility, rolemap, rolepolicy
+from . import audit, feasibility, question, rolemap, rolepolicy
 
 ROOT = Path(__file__).resolve().parents[2]
 PROFILES = ("public",)
@@ -58,7 +60,7 @@ HOME_PATH = re.compile(rb"(/Users/[A-Za-z0-9._-]+|/home/[a-z][a-z0-9._-]*/|[A-Za
 CORE_MODULES = (
     "__init__", "audit", "blanking", "capability", "catalogue", "compiler", "contract", "contractcheck", "conversion", "convert", "corrections",
     "datadict", "evidence", "extract", "feasibility", "first_ask", "harness", "hospital", "manifests", "mapping", "memo", "normalise",
-    "plan", "policy", "project", "propose", "realistic", "release", "rolepolicy", "roles", "roleshadow", "routes",
+    "plan", "policy", "project", "propose", "question", "realistic", "release", "rolepolicy", "roles", "roleshadow", "routes",
     "rules", "sample_vocabulary", "sandbox", "selects", "specification", "statements", "summaries", "testbed",
     "translate", "tuning", "vocabulary", "workspace",
 )
@@ -83,6 +85,8 @@ ALLOWLIST = tuple(
         {"path": "fixtures/invented-checks.csv", "why": "the invented world's check results"},
         {"path": "fixtures/invented-design.sql", "why": "the invented world's design"},
         {"path": "fixtures/invented-site-rules.json", "why": "the invented world's site rules"},
+        {"path": "fixtures/packages/neonatal-low-mean-pressure.question.json",
+         "why": "the neonatal audit written as a question package, the example of what a question hands back"},
         {"path": "fixtures/testbed.json", "why": "what the testbed expects of the invented conversion"},
         {"path": "fixtures/dqd-expectations.json", "why": "the dashboard findings that the invented world permits"},
         {"path": "fixtures/make_hospital.py", "why": "writes the invented hospital's tables"},
@@ -97,6 +101,7 @@ ALLOWLIST = tuple(
 
 EXAMPLE = "neonatal_low_mean_pressure"
 EXAMPLE_SOURCE = "core/schemalyser/rolemodel/neonatal_low_mean_pressure.sql"
+EXAMPLE_PACKAGE = "fixtures/packages/neonatal-low-mean-pressure.question.json"
 SCHEMA_NAME = "invented-hospital-schema.schemalyser.zip"
 # The confirmations and codes with which the tests make a saved schema from the invented dictionary.
 CONFIRMED = ("role_patient rows", "role_patient.patient_key", "role_patient.birth_date", "role_patient.is_test",
@@ -105,25 +110,20 @@ CONFIRMED = ("role_patient rows", "role_patient.patient_key", "role_patient.birt
              "role_reading.kind", "role_reading.reading_time", "role_reading.value")
 CODES = {"52": "map_arterial", "51": "map_cuff"}
 
-# The folder of a question.
-QUESTION, TITLE, NOTE, RESULT = "question.sql", "title.txt", "note.md", "import-result.json"
-ACCEPTED_FILES = (QUESTION, TITLE, NOTE)
-SIZE_LIMIT = 64 * 1024
-TITLE_LIMIT = 120
+# A question is one file, NAME.question.json, and the import answers beside it with NAME.import-result.json.
+PACKAGE_SUFFIX = question.PACKAGE_SUFFIX
+RESULT_SUFFIX = ".import-result.json"
+SIZE_LIMIT = 256 * 1024
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
-DEPENDENCY_NAMES = re.compile(r"^(requirements.*\.(txt|in)|pyproject\.toml|setup\.(py|cfg)|pipfile(\.lock)?|poetry\.lock|"
-                              r"uv\.lock|package(-lock)?\.json|yarn\.lock|pnpm-lock\.yaml|environment\.ya?ml|conda\.ya?ml|"
-                              r"gemfile(\.lock)?|go\.(mod|sum)|cargo\.(toml|lock)|.*\.(whl|egg|tar\.gz))$", re.I)
-FOLDER_RULES = {
-    "folder": "The question's folder is a folder with a plain name, not a link.",
-    "links": "The folder holds no link, symbolic or hard.",
-    "dependencies": "The folder declares no dependency.",
-    "files": "The folder holds question.sql, title.txt and note.md, and nothing else.",
-    "size": f"Each file is at most {SIZE_LIMIT // 1024} KB.",
-    "text": "Each file is UTF-8 text.",
-    "title": f"The title is one line of at most {TITLE_LIMIT} characters.",
-    "executable": "No file is executable.",
+FILE_RULES = {
+    "file": "The question is one plain file named NAME.question.json, with a plain name, and not a folder.",
+    "links": "The file is not a link, symbolic or hard, and nothing beside it where the result is written is a link.",
+    "executable": "The file is not executable.",
+    "size": f"The file is at most {SIZE_LIMIT // 1024} KB.",
+    "text": "The file is UTF-8 text.",
 }
+# The rule the import adds to the package's own: a question that waits for the contract has nothing to build yet.
+WAITS_RULE = {"waits": "The package waits for nothing: it holds no proposal and reads no part the contract refuses for a question."}
 # What returns to the workspace: a fixed status from RESULTS and nothing else. A verdict, a class or a count of
 # requirements in each state would tell the agent what the hospital supports, so none of them returns.
 RESULT_FIELDS = ("query", "result", "rules_failed", "says")
@@ -135,7 +135,7 @@ WORDING = {
     "printed_accepted": "Schemalyser has imported the question into the hospital's project, made its feasibility report "
                         "and built its package there, beside a private validation report.",
     "printed_refused": "Schemalyser has not imported the question, and the hospital's project is unchanged.",
-    "printed_nothing": "Schemalyser has written only import-result.json into the workspace, and nothing else returns to it.",
+    "printed_nothing": "Schemalyser has written only the import result beside the question, and nothing else returns to the workspace.",
 }
 
 
@@ -293,7 +293,7 @@ This folder is a workspace in which a person or a coding agent can write a clini
 - `core/schemalyser/omop/cdm54_fields.csv` is the published field list of OMOP CDM 5.4, `core/schemalyser/sample_vocabulary.py` writes the sample vocabulary when the testbed runs, and `tools/sqlserver/harness.py` is the SQL Server harness that the testbed runs for its SQL Server stage.
 - `core/` holds a copy of the public modules of Schemalyser that the feasibility report, the audit's package and the testbed need.
 - `schemas/{schema}` is a saved hospital schema made from the invented dictionary, as the page makes one, so that the commands have a schema to read.
-- `queries/` holds the questions, one folder each, beginning with the example, `queries/{example}/`.
+- `queries/` holds the questions, one file each, beginning with the example, `queries/{example}.question.json`.
 - `QUERIES.md` says how to write a question, which functions it may use, and what each command does.
 
 ## What it does not hold
@@ -310,13 +310,9 @@ The role views are a public interface, so anyone may read a question written ove
 
 ## Handing a question back
 
-Each finished question goes in a folder of its own, `queries/NAME/`, which holds three files and nothing else:
+Each finished question is one file, `queries/NAME.question.json`, a question package in the shape of `core/schemalyser/rolemodel/question.schema.json`: its title, the statement of its cohort, outcome and result in plain words, its decisions, its SQL over the role views, the parts the SQL reads at their versions in the contract, and nothing else. `QUERIES.md` says how to write one, and the example is one to copy.
 
-- `question.sql`, the question as one SELECT over the role views;
-- `title.txt`, its title on one line;
-- `note.md`, a short note of what the question measures.
-
-Before you hand a folder back, you can check it with `PYTHONPATH=core python -m schemalyser.workspace check queries/NAME`, which applies the same rules as the import. The person who keeps the hospital's project then imports the folder on the hospital's side. The import refuses any other file, any link and any large file, and it writes back into the folder only `import-result.json`. That file holds one status and nothing more: `accepted` or `requires_private_review` once the question is in the hospital's private project, or `malformed` with the names of the rules it broke. It says nothing of what the hospital's schema supports, and nothing else returns from the hospital.
+Before you hand a package back, you can check it with `PYTHONPATH=core python -m schemalyser.workspace check queries/NAME.question.json`, which applies the same rules as the import. The person who keeps the hospital's project then imports the file on the hospital's side. The import refuses a link, a folder, a large file and a package that breaks a rule of its shape, and it writes back beside the package only `NAME.import-result.json`. That file holds one status and nothing more: `accepted` or `requires_private_review` once the question is in the hospital's private project, or `malformed` with the names of the rules it broke. It says nothing of what the hospital's schema supports, and nothing else returns from the hospital.
 """
 
 QUERIES = """# Writing a question
@@ -347,34 +343,34 @@ A question may name the capabilities of the catalogue in `contract.json` that it
 
 `core/schemalyser/rolepolicy.py` applies these rules, and the import applies them again on the hospital's side.
 
+## The question package
+
+A question is handed back as one file, `queries/NAME.question.json`, in the shape of `core/schemalyser/rolemodel/question.schema.json`: the format `schemalyser-question/1`, a title on one line, the contract version, a `statement` of the cohort, the outcome and the result in plain words, the `decisions` behind it, each with what it is about, the choice, a value and unit where one exists, the sentence, who made it and when, the SQL in `question_sql`, the `parts` the SQL reads, each with its version in the contract and the contract's admission for a question, an empty list of `capabilities` and of `proposals` unless the question composes a capability or needs what the contract lacks, a short `note`, and `produced`, which says who wrote it and when. `python -m schemalyser.question check queries/NAME.question.json` names every rule a package breaks, and the import applies the same rules. A package carries no status: what it may claim is decided by the evidence recorded about it.
+
 ## How the example is built
 
-`queries/{example}/question.sql` is the neonatal audit. Its leading comment states the question and every decision behind it, and the first sentence of that comment, up to the first question mark or full stop, is what the reports show as the question. The query then works in steps. `neonatal` joins each anaesthetic to its patient and keeps the neonates. `reading` joins the mean pressures to those anaesthetics by key, with the kinds named as `'map_arterial'` and `'map_cuff'`. `stood` and `low` work out how long each reading stands, and `banded` puts each anaesthetic in a band of minutes below 40. The final SELECT returns counts alone, one row for each band.
+`queries/{example}.question.json` is the neonatal audit as a package, and its SQL is `core/schemalyser/rolemodel/{example}.sql`. The SQL's leading comment states the question and every decision behind it, and the first sentence of that comment, up to the first question mark or full stop, is what the reports show as the question. The query then works in steps. `neonatal` joins each anaesthetic to its patient and keeps the neonates. `reading` joins the mean pressures to those anaesthetics by key, with the kinds named as `'map_arterial'` and `'map_cuff'`. `stood` and `low` work out how long each reading stands, and `banded` puts each anaesthetic in a band of minutes below 40. The final SELECT returns counts alone, one row for each band.
 
-A new question is best written in the same way: a leading comment that states the question and its decisions, steps that each do one thing, and a final SELECT that returns counts rather than rows of patients.
+A new question is best written in the same way: a leading comment that states the question and its decisions, steps that each do one thing, and a final SELECT that returns counts rather than rows of patients, with each decision of the comment written as a decision of the package.
 
 ## The commands
 
 Run each command from this folder with `core` on the Python path, using Python 3.13 with sqlglot 30.21.0 and duckdb 1.5.1.
 
 ```sh
-PYTHONPATH=core python -m schemalyser.workspace check queries/NAME
-PYTHONPATH=core python -m schemalyser.feasibility report schemas/{schema} queries/NAME/question.sql
-PYTHONPATH=core python -m schemalyser.audit build schemas/{schema} queries/NAME/question.sql --out audits/NAME
+PYTHONPATH=core python -m schemalyser.workspace check queries/NAME.question.json
+PYTHONPATH=core python -m schemalyser.feasibility report schemas/{schema} queries/NAME.question.json
+PYTHONPATH=core python -m schemalyser.audit build schemas/{schema} queries/NAME.question.json --out audits/NAME
 PYTHONPATH=core python -m schemalyser.testbed run --world fixtures --out runs/first
 ```
 
-- `check` applies the import's rules to the folder and lists each rule with any fragment that broke it.
+- `check` applies the import's rules to the package and lists each rule with any fragment that broke it.
 - `feasibility report` reads the question against the invented hospital schema and says, for each requirement, how far that schema supplies it, with the investigation that would move each one that falls short.
 - `audit build` compiles the question through the invented hospital schema into the package that a database analyst would run, with the answer on made-up rows, and the safety report with its execution class.
 - `testbed run` builds the invented world, runs its conversion to OMOP, checks the planted scenarios and reconciles source with target, all on invented data.
 
 Every table that these reports name is a table of the invented world. On the hospital's side the same commands name the hospital's tables, which is why their reports stay there.
 """
-
-NOTE_TEXT = """The neonatal low mean pressure audit measures, for each neonatal anaesthetic, how many minutes the mean arterial pressure spent below 40, and how many of the children died within 90 days. It reports counts for each band of minutes and no row of any patient.
-"""
-
 
 def planted_inputs(repo=ROOT):
     """The planted neonates as rows of the role views, which are development fixtures, without the expected answers,
@@ -409,9 +405,7 @@ def export(out, profile="public", repo=ROOT, allowlist=ALLOWLIST, include=(), da
     written["QUERIES.md"] = (QUERIES.format(**words).encode("utf-8"), None)
     written[f"schemas/{SCHEMA_NAME}"] = (invented_schema(repo, date), None)
     written[PLANTED_NEONATES] = (planted_inputs(repo), None)
-    written[f"queries/{EXAMPLE}/{QUESTION}"] = ((repo / EXAMPLE_SOURCE).read_bytes(), EXAMPLE_SOURCE)
-    written[f"queries/{EXAMPLE}/{TITLE}"] = (b"Neonatal low mean pressure\n", None)
-    written[f"queries/{EXAMPLE}/{NOTE}"] = (NOTE_TEXT.encode("utf-8"), None)
+    written[f"queries/{EXAMPLE}{PACKAGE_SUFFIX}"] = ((repo / EXAMPLE_PACKAGE).read_bytes(), EXAMPLE_PACKAGE)
     for relative, (data, _) in written.items():
         if HOME_PATH.search(data):
             raise WorkspaceError(f"{relative} names a folder on someone's own computer, so the workspace cannot hold it.")
@@ -428,102 +422,100 @@ def export(out, profile="public", repo=ROOT, allowlist=ALLOWLIST, include=(), da
     return manifest
 
 
-# A question's folder.
+# A question's package file.
 
 def _rules(failures, names):
     return [{"id": rule, "rule": names[rule], "passed": not failures.get(rule), "fragments": failures.get(rule, [])}
             for rule in names]
 
 
-def read_folder(folder):
-    """Applies the folder's rules. Returns (rules, {name: text}) with the texts of the accepted files that were read."""
-    folder = Path(folder)
-    failures, texts = {}, {}
+def query_name(path):
+    """The name of a question from its file's name, NAME.question.json with a plain NAME, or None."""
+    name = Path(path).name
+    if not name.endswith(PACKAGE_SUFFIX):
+        return None
+    stem = name[:-len(PACKAGE_SUFFIX)]
+    return stem if SAFE_NAME.match(stem) else None
+
+
+def read_file(path):
+    """Applies the file's rules. Returns (rules, text), where text is None where a rule stopped the read."""
+    path = Path(path)
+    failures = {}
 
     def fail(rule, fragment):
         failures.setdefault(rule, []).append(fragment)
 
-    if folder.is_symlink() or not folder.is_dir():
-        fail("folder", f"{folder.name} is not a folder")
-        return _rules(failures, FOLDER_RULES), texts
-    if not SAFE_NAME.match(folder.name):
-        fail("folder", "the folder's name uses characters other than letters, digits, full stops, hyphens and underscores")
-    present = set()
-    for entry in sorted(os.scandir(folder), key=lambda e: e.name):
-        name = entry.name
-        if entry.is_symlink():
-            fail("links", f"{name} is a symbolic link")
-            continue
-        if entry.is_dir(follow_symlinks=False):
-            fail("files", f"{name} is a folder")
-            continue
-        if name == RESULT:
-            # The import's own result from an earlier import, which is never read.
-            continue
-        if DEPENDENCY_NAMES.match(name):
-            fail("dependencies", f"{name} declares dependencies")
-            continue
-        if name not in ACCEPTED_FILES:
-            fail("files", f"{name} is not one of question.sql, title.txt and note.md")
-            continue
-        present.add(name)
-        held = entry.stat(follow_symlinks=False)
-        if not stat.S_ISREG(held.st_mode):
-            # A pipe would hold the read for ever, and a device or socket is not a file of a question.
-            fail("files", f"{name} is not a plain file")
-            continue
-        if held.st_nlink > 1:
-            # A hard link to a file elsewhere would make the rules read that file.
-            fail("links", f"{name} is linked to another file")
-            continue
-        if held.st_mode & 0o111:
-            fail("executable", f"{name} is executable")
-            continue
-        size = held.st_size
-        if size > SIZE_LIMIT:
-            fail("size", f"{name} holds {size:,} bytes")
-            continue
-        data = Path(entry.path).read_bytes()
-        try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError:
-            fail("text", f"{name} is not UTF-8 text")
-            continue
-        if "\0" in text:
-            fail("text", f"{name} holds a NUL character")
-            continue
-        texts[name] = text
-    for name in ACCEPTED_FILES:
-        if name not in present:
-            fail("files", f"{name} is missing")
-    title = texts.get(TITLE)
-    if title is not None:
-        lines = [line for line in title.splitlines() if line.strip()]
-        if len(lines) != 1 or len(lines[0].strip()) > TITLE_LIMIT or any(ord(c) < 32 for c in lines[0]):
-            fail("title", "the title is not one line of plain text" if len(lines) != 1 else f"the title holds {len(lines[0].strip())} characters")
-    return _rules(failures, FOLDER_RULES), texts
+    if path.is_symlink():
+        fail("links", f"{path.name} is a symbolic link")
+        return _rules(failures, FILE_RULES), None
+    if path.is_dir():
+        fail("file", f"{path.name} is a folder")
+        return _rules(failures, FILE_RULES), None
+    if not path.exists():
+        fail("file", f"{path.name} does not exist")
+        return _rules(failures, FILE_RULES), None
+    if query_name(path) is None:
+        fail("file", f"{path.name} is not named NAME.question.json with a name of letters, digits, full stops, hyphens and underscores")
+    held = path.stat(follow_symlinks=False)
+    if not stat.S_ISREG(held.st_mode):
+        # A pipe would hold the read for ever, and a device or socket is not a file of a question.
+        fail("file", f"{path.name} is not a plain file")
+        return _rules(failures, FILE_RULES), None
+    if held.st_nlink > 1:
+        # A hard link to a file elsewhere would make the rules read that file.
+        fail("links", f"{path.name} is linked to another file")
+        return _rules(failures, FILE_RULES), None
+    if result_path(path).is_symlink():
+        # A link planted where the result is written would be replaced, never followed; the package is refused all the
+        # same, because nothing beside it is a link by accident.
+        fail("links", f"{result_path(path).name} beside the package is a link")
+        return _rules(failures, FILE_RULES), None
+    if held.st_mode & 0o111:
+        fail("executable", f"{path.name} is executable")
+    if held.st_size > SIZE_LIMIT:
+        fail("size", f"{path.name} holds {held.st_size:,} bytes")
+        return _rules(failures, FILE_RULES), None
+    data = path.read_bytes()
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        fail("text", f"{path.name} is not UTF-8 text")
+        return _rules(failures, FILE_RULES), None
+    if "\0" in text:
+        fail("text", f"{path.name} holds a NUL character")
+        return _rules(failures, FILE_RULES), None
+    return _rules(failures, FILE_RULES), (text if not failures else None)
 
 
-def check_folder(folder):
-    """The folder's rules and, when they pass, the role-level policy on question.sql, with the status that the import
-    returns, as {"rules", "failed", "status", "form", "texts"}.
+def check_question(path):
+    """The file's rules, the package's rules, the rule that it waits for nothing and, when they pass, the role-level
+    policy on its SQL, with the status that the import returns, as {"rules", "failed", "status", "form", "package"}.
 
     The status is a function of the package and the public contract alone: malformed where a rule fails,
     requires_private_review where the question passes every rule but lacks the form of the two-part script (a step
     that chooses the anaesthetics, every part reached from it by key, and counts in the result; audit.public_form),
     and accepted otherwise. No hospital schema is read, so the workspace's own check and the import give the same
     status for the same package, whichever hospital the project holds."""
-    rules, texts = read_folder(folder)
-    form = []
-    if all(r["passed"] for r in rules):
-        rules = rules + rolepolicy.check(texts[QUESTION])["rules"]
+    rules, text = read_file(path)
+    package, form = None, []
+    if text is not None:
+        found = question.check(text)
+        rules = rules + found["rules"]
+        package = found["package"] if not found["failed"] else None
+    if package is not None:
+        waiting = [f"the package holds {len(package['proposals'])} proposal(s)"] if package["proposals"] else []
+        waiting += [f"{p['name']} is refused for a question" for p in package["parts"] if p["admission"] == question.REFUSED]
+        rules = rules + _rules({"waits": waiting} if waiting else {}, WAITS_RULE)
+        if not waiting:
+            rules = rules + rolepolicy.check(package["question_sql"])["rules"]
     failed = [r["id"] for r in rules if not r["passed"]]
     if failed:
         status = "malformed"
     else:
-        form = audit.public_form(texts[QUESTION])
+        form = audit.public_form(package["question_sql"])
         status = "requires_private_review" if form else "accepted"
-    return {"rules": rules, "failed": failed, "status": status, "form": form, "texts": texts}
+    return {"rules": rules, "failed": failed, "status": status, "form": form, "package": package}
 
 
 def _schema_path(project, name):
@@ -536,54 +528,65 @@ def _schema_path(project, name):
     return project.schema_path(held[0])
 
 
-def _write_result(folder, result):
+def result_path(path):
+    """Where the import's result is written: NAME.import-result.json beside the package."""
+    path = Path(path)
+    name = path.name[:-len(PACKAGE_SUFFIX)] if path.name.endswith(PACKAGE_SUFFIX) else path.name
+    return path.parent / f"{name}{RESULT_SUFFIX}"
+
+
+def _write_result(path, result):
     """Writes the result beside the question, whole or not at all: it is written to a file of its own in the folder
     and then put in place, so that nothing can swap a link in between."""
-    folder = Path(folder)
-    handle, temporary = tempfile.mkstemp(prefix=".import-result-", suffix=".json", dir=str(folder))
+    target = result_path(path)
+    handle, temporary = tempfile.mkstemp(prefix=".import-result-", suffix=".json", dir=str(target.parent))
     with os.fdopen(handle, "w", encoding="utf-8") as f:
         f.write(json.dumps(result, indent=2) + "\n")
-    os.replace(temporary, folder / RESULT)
+    os.replace(temporary, target)
 
 
-def import_question(folder, hospital, schema=None, date=None):
-    """Imports one question's folder into a hospital's project. Returns the counts-only result, which is also written
-    into the folder as import-result.json."""
+def import_question(path, hospital, schema=None, date=None):
+    """Imports one question package into a hospital's project. Returns the counts-only result, which is also written
+    beside the package as NAME.import-result.json."""
     from .project import Project, ProjectError
-    folder = Path(folder)
+    path = Path(path)
     date = date or dt.date.today().isoformat()
-    name = folder.name if SAFE_NAME.match(folder.name) else None
-    checked = check_folder(folder)
+    name = query_name(path)
+    checked = check_question(path)
     result = {"query": name, "result": "malformed", "rules_failed": checked["failed"], "says": WORDING["malformed"]}
     if checked["failed"]:
-        if not folder.is_symlink() and folder.is_dir():
-            _write_result(folder, result)
+        if path.parent.is_dir():
+            _write_result(path, result)
         return result, checked, None
-    texts = checked["texts"]
+    package = checked["package"]
     # The status is decided here, from the package and the public contract alone, before the hospital's project or
     # schema is read for anything, and nothing that follows changes it. It is written beside the question now, so that
     # whether a result comes back never depends on the project either.
     status = checked["status"]
     result.update(result=status, rules_failed=[], says=WORDING[status])
-    _write_result(folder, result)
+    _write_result(path, result)
     try:
         project = Project(hospital)
         schema_path = _schema_path(project, schema)
         feasibility.Schema.load(schema_path)
     except (ProjectError, feasibility.FeasibilityError) as error:
         raise WorkspaceError(str(error)) from None
-    title = " ".join(texts[TITLE].split())
-    question = project.add_question(title, texts[QUESTION])
-    question_path = project.question_path(question)
-    audit_name = project.unique("audits", f"{Path(question).stem}_{date}")
+    title = " ".join(package["title"].split())
+    sql = package["question_sql"]
+    held = project.add_question(title, sql)
+    question_path = project.question_path(held)
+    audit_name = project.unique("audits", f"{Path(held).stem}_{date}")
     record = project.folder("audits") / audit_name
     record.mkdir()
+    # The package itself is kept with the record, and the build takes its SQL and its decisions from it.
+    kept = record / f"{name}{PACKAGE_SUFFIX}"
+    kept.write_bytes(path.read_bytes())
     # The private build runs after the status is decided. What it finds, and any error it meets, goes to the owner's
     # feasibility report and validation report in the project, never to the status.
     found, manifest, failure = None, None, None
     try:
-        found = feasibility.assess(feasibility.Schema.load(schema_path), question_path.read_text(encoding="utf-8"), question)
-        manifest = audit.build(schema_path, question_path, record / "package", date=date)
+        found = feasibility.assess(feasibility.Schema.load(schema_path), sql, held)
+        manifest = audit.build(schema_path, kept, record / "package", date=date)
     except Exception as error:  # noqa: BLE001 - nothing the build meets may reach the status or the workspace
         failure = {"error": type(error).__name__, "says": str(error)}
     built = manifest is not None
@@ -591,19 +594,20 @@ def import_question(folder, hospital, schema=None, date=None):
     for row in (found or {}).get("states", []):
         states[row["state"]] = states.get(row["state"], 0) + 1
     stamp = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+    decisions = question.audit_decisions(package)
     (record / "request.json").write_text(json.dumps(
-        {"schema": schema_path.name, "question": question, "period": None, "decisions": [], "exact_small_numbers": False,
-         "imported_from": f"queries/{name}", "exit_code": 0 if built else 1, "finished": stamp}, indent=2) + "\n",
-        encoding="utf-8")
-    report = {"imported": date, "from": f"queries/{name}", "files": {k: sha256(v) for k, v in sorted(texts.items())},
-              "title": title, "question": question, "schema": schema_path.name, "rules": checked["rules"],
-              "public_form": checked["form"],
+        {"schema": schema_path.name, "question": held, "period": None, "decisions": decisions["decisions"],
+         "exact_small_numbers": False, "imported_from": f"queries/{name}{PACKAGE_SUFFIX}", "exit_code": 0 if built else 1,
+         "finished": stamp}, indent=2) + "\n", encoding="utf-8")
+    report = {"imported": date, "from": f"queries/{name}{PACKAGE_SUFFIX}", "package_sha256": sha256(path.read_bytes()),
+              "title": title, "question": held, "schema": schema_path.name, "rules": checked["rules"],
+              "public_form": checked["form"], "parts": package["parts"], "contract_version": package["contract_version"],
               "feasibility": {"verdict": found["verdict"], "says": found["verdict_text"], "states": states} if found else None,
               "package": "package" if built else None, "build_failure": failure,
               "execution_class": manifest["execution_class"] if manifest else None,
               "returned_to_workspace": result}
     (record / "import-validation.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    _write_result(folder, result)
+    _write_result(path, result)
     return result, checked, record
 
 
@@ -625,10 +629,10 @@ def main(argv=None):
     one.add_argument("--profile", required=True, choices=PROFILES)
     one.add_argument("--out", required=True)
     one.add_argument("--include", action="append", default=[], help="a further path, which must be on the allowlist")
-    two = commands.add_parser("check", help="Apply the import's rules to a question's folder.")
-    two.add_argument("folder")
-    three = commands.add_parser("import", help="Import a question's folder into a hospital's project.")
-    three.add_argument("folder")
+    two = commands.add_parser("check", help="Apply the import's rules to a question package.")
+    two.add_argument("package")
+    three = commands.add_parser("import", help="Import a question package into a hospital's project.")
+    three.add_argument("package")
     three.add_argument("--hospital", required=True)
     three.add_argument("--schema")
     args = parser.parse_args(argv)
@@ -640,13 +644,13 @@ def main(argv=None):
                   f"to {Path(args.out).name}, with manifest.json listing each one.")
             return 0
         if args.command == "check":
-            found = check_folder(args.folder)
+            found = check_question(args.package)
             _print_rules(found["rules"])
-            print("The folder passes every rule of the import." if not found["failed"] else
-                  f"The folder fails {len(found['failed'])} of the import's rules.")
+            print("The package passes every rule of the import." if not found["failed"] else
+                  f"The package fails {len(found['failed'])} of the import's rules.")
             print(f"The import would return the status {found['status']}.")
             return 0 if not found["failed"] else 1
-        result, checked, _ = import_question(args.folder, args.hospital, args.schema)
+        result, checked, _ = import_question(args.package, args.hospital, args.schema)
         _print_rules(checked["rules"])
         print(WORDING["printed_refused"] if result["result"] == "malformed" else WORDING["printed_accepted"])
         print(json.dumps(result, indent=2))

@@ -44,7 +44,7 @@ KINDS = ("dictionary loaded", "vendor descriptions added", "reference lineage lo
 DIMENSIONS = ("confirmed", "present", "tested", "reconciled", "validated")
 # Why a dimension is stale, by the part of what it rested on that changed.
 REASONS = {"binding": "the binding changed", "link": "the link changed", "codes": "the codes changed",
-           "contract": "the contract changed"}
+           "contract": "the contract changed", "vocabulary": "the vocabulary changed"}
 
 
 class EvidenceError(ValueError):

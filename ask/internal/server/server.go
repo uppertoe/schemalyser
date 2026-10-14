@@ -5,7 +5,9 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,6 +64,7 @@ func New(cfg *config.Config, st *store.Store, m model.Model) (*Server, error) {
 	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("ok")) })
 	mux.HandleFunc("GET /q/{token}", s.published)
+	mux.HandleFunc("GET /q/{token}/{version}", s.published)
 	mux.HandleFunc("GET /{$}", s.withUser(s.home))
 	mux.HandleFunc("POST /questions", s.withUser(s.start))
 	mux.HandleFunc("GET /questions/{id}", s.withUser(s.show))
@@ -106,13 +109,13 @@ func (s *Server) withUser(next func(http.ResponseWriter, *http.Request, string))
 }
 
 type pageData struct {
-	Brand, Title, User, Address, Error string
-	Admin                              bool
-	Questions                          []store.Question
-	Question                           *store.Question
-	Messages                           []store.Message
-	Package                            *store.Package
-	Pkg                                *question.Package
+	Brand, Title, User, Address, Latest, Error string
+	Admin                                      bool
+	Questions                                  []store.Question
+	Question                                   *store.Question
+	Messages                                   []store.Message
+	Package                                    *store.Package
+	Pkg                                        *question.Package
 }
 
 func (s *Server) home(w http.ResponseWriter, r *http.Request, user string) {
@@ -265,8 +268,10 @@ func (s *Server) converse(ctx context.Context, q *store.Question, user, text str
 	}
 	prose, raw := question.Split(reply)
 	var pkg *question.Package
+	var data []byte
 	if raw != "" {
-		pkg, err = question.Parse(raw, s.contract, question.Produced{Model: s.model.Name(), At: now.UTC().Format(time.RFC3339), By: user})
+		pkg, data, err = question.Parse(raw, s.contract, question.Produced{Model: s.model.Name(), At: now.UTC().Format(time.RFC3339), By: user},
+			now.UTC().Format("2006-01-02"))
 		if err != nil {
 			// The model's block broke a rule: the clinician sees the prose, and the rule goes back to the model as the
 			// next turn so that it writes the block again.
@@ -280,15 +285,24 @@ func (s *Server) converse(ctx context.Context, q *store.Question, user, text str
 		return nil, err
 	}
 	if pkg != nil {
-		encoded, _ := json.MarshalIndent(pkg, "", " ")
-		if _, err := s.store.AddPackage(ctx, q.ID, string(encoded), pkg.Hash, s.now()); err != nil {
+		// The bytes are saved exactly as the schema validated them and served exactly as saved; the hash is theirs.
+		if _, err := s.store.AddPackage(ctx, q.ID, string(data), hashOf(data), s.now()); err != nil {
 			return nil, err
 		}
-		if err := s.store.SetTitleAndStatus(ctx, q.ID, pkg.Title, pkg.Status, s.now()); err != nil {
+		state := "drafted"
+		if pkg.Waits() {
+			state = "waits for the contract"
+		}
+		if err := s.store.SetTitleAndStatus(ctx, q.ID, pkg.Title, state, s.now()); err != nil {
 			return nil, err
 		}
 	}
 	return pkg, nil
+}
+
+func hashOf(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // rememberBlock keeps the model's block in the stored turn, so that the model sees its own earlier package on the
@@ -317,8 +331,10 @@ func (s *Server) pageOf(ctx context.Context, q *store.Question, user, problem st
 		return pageData{}, err
 	}
 	data := pageData{Brand: s.cfg.BrandName, Title: q.Title, User: user, Admin: s.cfg.IsAdmin(user), Question: q,
-		Messages: messages, Package: latest, Error: problem, Address: s.cfg.PublicURL + "/q/" + q.Token}
+		Messages: messages, Package: latest, Error: problem, Latest: s.cfg.PublicURL + "/q/" + q.Token}
 	if latest != nil {
+		// The address the asker copies names one version, which never changes, and carries the hash of its bytes.
+		data.Address = fmt.Sprintf("%s/q/%s/%d#sha256=%s", s.cfg.PublicURL, q.Token, latest.Version, latest.Hash)
 		var pkg question.Package
 		if err := json.Unmarshal([]byte(latest.JSON), &pkg); err == nil {
 			data.Pkg = &pkg
@@ -333,35 +349,52 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request, user string) {
 		http.NotFound(w, r)
 		return
 	}
-	s.servePackage(w, r, q)
+	s.servePackage(w, r, q, 0)
 }
 
-// published serves a question's latest package at its secret address, with no login, so that the page in a hospital
-// can fetch it. The address is a 48-character secret, and the package holds nothing of any hospital.
+// published serves a question's package at its secret address, with no login, so that the page in a hospital can
+// fetch it: /q/TOKEN/N is one version, whose bytes never change once written, and /q/TOKEN is the latest, as a
+// convenience on the asker's own screen. The token is a 48-character secret, and the package holds nothing of any
+// hospital.
 func (s *Server) published(w http.ResponseWriter, r *http.Request) {
 	q, err := s.store.QuestionByToken(r.Context(), r.PathValue("token"))
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	s.servePackage(w, r, q)
+	version := 0
+	if held := r.PathValue("version"); held != "" {
+		if version, err = strconv.Atoi(held); err != nil || version < 1 {
+			http.NotFound(w, r)
+			return
+		}
+	}
+	s.servePackage(w, r, q, version)
 }
 
-func (s *Server) servePackage(w http.ResponseWriter, r *http.Request, q *store.Question) {
-	latest, err := s.store.LatestPackage(r.Context(), q.ID)
+func (s *Server) servePackage(w http.ResponseWriter, r *http.Request, q *store.Question, version int) {
+	var held *store.Package
+	var err error
+	if version > 0 {
+		held, err = s.store.PackageVersion(r.Context(), q.ID, version)
+	} else {
+		held, err = s.store.LatestPackage(r.Context(), q.ID)
+	}
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	if latest == nil {
-		http.Error(w, "This question has no package yet: the conversation is still settling it.", http.StatusNotFound)
+	if held == nil {
+		http.Error(w, "This question has no package at this address: the conversation is still settling it, or this version was never written.", http.StatusNotFound)
 		return
 	}
 	w.Header().Set("content-type", "application/json; charset=utf-8")
 	w.Header().Set("cache-control", "no-store")
 	w.Header().Set("access-control-allow-origin", "*")
-	w.Header().Set("x-schemalyser-question-hash", latest.Hash)
-	_, _ = w.Write([]byte(latest.JSON))
+	w.Header().Set("access-control-expose-headers", "x-schemalyser-question-hash, x-schemalyser-question-version")
+	w.Header().Set("x-schemalyser-question-hash", held.Hash)
+	w.Header().Set("x-schemalyser-question-version", strconv.Itoa(held.Version))
+	_, _ = w.Write([]byte(held.JSON))
 }
 
 func (s *Server) render(w http.ResponseWriter, t *template.Template, data pageData) {

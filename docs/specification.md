@@ -8,6 +8,10 @@
     python -m schemalyser.specification write FIELDS.json --out SPECIFICATION.json
     python -m schemalyser.audit export hospital-schema.schemalyser.zip SPECIFICATION.json --episodes EPISODES.csv --out FOLDER
 
+## Two formats, kept apart
+
+A specification, `schemalyser-specification/1`, is an export of sections of the record for a list of episodes, and it holds no SQL: the sections and the derived capabilities are compiled into SQL over the roles by `specification.py`. A question package, `schemalyser-question/1`, is one question in a clinician's words with the SQL over the roles that answers it, as the clinician-facing service writes it; its shape is `core/schemalyser/rolemodel/question.schema.json`, its one reader in Python is `question.py`, and `python -m schemalyser.question check PACKAGE.json` names every rule a package breaks. A package names the parts its SQL reads, each at its version in the contract and with its admission, the capabilities of the catalogue it composes, its typed decisions and any proposal for what the contract lacks. The two formats share the contract version and the catalogue and nothing else, and neither carries a status: what either may claim is decided by the evidence recorded about it.
+
 ## The two files
 
 The specification is a small public file. It names the clinician's choices and holds no SQL and no hospital material, so it can be saved, reused for another list of episodes, shared with another hospital and recorded by its hash in every package made from it.

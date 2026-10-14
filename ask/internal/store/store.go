@@ -196,10 +196,19 @@ func (s *Store) AddPackage(ctx context.Context, id int64, jsonText, hash string,
 
 // LatestPackage gives the question's latest package, or nil where none has been written.
 func (s *Store) LatestPackage(ctx context.Context, id int64) (*Package, error) {
+	return s.package_(ctx, `SELECT id, version, json, hash, created FROM packages WHERE question_id = ? ORDER BY version DESC LIMIT 1`, id)
+}
+
+// PackageVersion gives one version of the question's package, or nil where it was never written. A version is a row
+// that nothing updates, so its bytes are the bytes that were saved.
+func (s *Store) PackageVersion(ctx context.Context, id int64, version int) (*Package, error) {
+	return s.package_(ctx, `SELECT id, version, json, hash, created FROM packages WHERE question_id = ? AND version = ?`, id, version)
+}
+
+func (s *Store) package_(ctx context.Context, query string, args ...any) (*Package, error) {
 	var p Package
 	var created string
-	err := s.db.QueryRowContext(ctx, `SELECT id, version, json, hash, created FROM packages WHERE question_id = ? ORDER BY version DESC LIMIT 1`, id).
-		Scan(&p.ID, &p.Version, &p.JSON, &p.Hash, &created)
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(&p.ID, &p.Version, &p.JSON, &p.Hash, &created)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

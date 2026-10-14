@@ -761,3 +761,28 @@ def test_the_results_package_shows_the_output_s_shape_and_the_resolution_of_pair
                                          "share": 75.0, "blank": []}
     blank = results.resolution({"columns": list(results.RESOLUTION), "data": [["40", "", "6", ""]]})
     assert blank["share"] is None and blank["blank"] == ["resolved_to_one", "resolved_to_none"]
+
+
+def test_the_build_takes_the_sql_and_the_decisions_from_a_question_package(saved, tmp_path):
+    from schemalyser import question
+    fixture = Path(__file__).resolve().parent.parent.parent / "fixtures" / "packages" / "neonatal-low-mean-pressure.question.json"
+    out = tmp_path / "from-package"
+    manifest = audit.build(saved, fixture, out, ("2024-01-01", "2024-12-31"), date=DATE)
+    held = json.loads((out / "decisions.json").read_text(encoding="utf-8"))
+    assert held == question.audit_decisions(question.read(fixture))
+    assert len(held["decisions"]) == 9 and held["decisions"][0]["about"] == "who is a neonate" and not held["exact_small_numbers"]
+    assert manifest["decisions"]["decisions"][0]["by"] == "Dr A Clinician"
+    assert (out / "question.sql").read_text(encoding="utf-8") == rolemap.AUDIT.read_text(encoding="utf-8")
+    assert "who is a neonate" in (out / "specification.md").read_text(encoding="utf-8")
+    # A decisions file given beside the package takes precedence, and a package that breaks a rule builds nothing.
+    decisions = tmp_path / "decisions.json"
+    decisions.write_text(json.dumps({"decisions": [{"about": "The period", "decision": "2024.", "by": "a person", "date": DATE}]}), encoding="utf-8")
+    manifest = audit.build(saved, fixture, tmp_path / "with-file", ("2024-01-01", "2024-12-31"), decisions, date=DATE)
+    assert manifest["decisions"]["decisions"][0]["about"] == "The period"
+    broken = tmp_path / "broken.question.json"
+    held = json.loads(fixture.read_text(encoding="utf-8"))
+    held["parts"] = held["parts"][:1]
+    broken.write_text(json.dumps(held), encoding="utf-8")
+    with pytest.raises(audit.AuditError, match="breaks a rule of its format"):
+        audit.build(saved, broken, tmp_path / "none", ("2024-01-01", "2024-12-31"), date=DATE)
+    assert not (tmp_path / "none").exists()

@@ -43,6 +43,7 @@
 "schemalyser.manifests" = { layer = "3", note = "The primitives of an execution package's manifest, which the release (layer 3) and the audit's package (orchestration) both write and the package's status and approval read back." }
 "schemalyser.mapping" = { layer = "3", note = "It proposes mapping rows for a conversion; the conversion steps are layer 3's." }
 "schemalyser.routes" = { layer = "3", note = "It chooses a route for each step of a conversion, which is part of writing the steps." }
+"schemalyser.question" = { layer = "3", note = "The question package, schemalyser-question/1, and its one reader and validator in Python: the shape against the schema beside the contract, the parts against the SQL and the contract, the capabilities against the catalogue and the proposals against the checker." }
 "schemalyser.capability" = { layer = "3", note = "It reads the SQL of a capability of the catalogue and fills its parameters, which is the first stage of compiling a derived section." }
 "schemalyser.specification" = { layer = "3", note = "The first stage of compilation: a specification of an export into SQL over the roles." }
 

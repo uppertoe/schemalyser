@@ -1,0 +1,97 @@
+{
+ "contract_version": "1.1",
+ "parts": {
+  "map_diagnosis_concept": {
+   "version": 1,
+   "hash": "bb860bbe28f99dcd"
+  },
+  "map_drug_concept": {
+   "version": 1,
+   "hash": "a2888341b476f8c7"
+  },
+  "map_lab_concept": {
+   "version": 1,
+   "hash": "e8c82f8bedafa23e"
+  },
+  "map_procedure_concept": {
+   "version": 1,
+   "hash": "2bc40be527a3bb59"
+  },
+  "map_unit_concept": {
+   "version": 1,
+   "hash": "9de69ba98b4c292c"
+  },
+  "role_anaesthetic": {
+   "version": 1,
+   "hash": "85477657ac057bfd"
+  },
+  "role_anaesthetic_detail": {
+   "version": 1,
+   "hash": "31ef98cadf3e27b0"
+  },
+  "role_device": {
+   "version": 1,
+   "hash": "a02a0b94aa7483da"
+  },
+  "role_diagnosis": {
+   "version": 1,
+   "hash": "e344209713937b99"
+  },
+  "role_drug": {
+   "version": 1,
+   "hash": "f75d00e38930bc5a"
+  },
+  "role_event": {
+   "version": 1,
+   "hash": "b6af9194b6fa260a"
+  },
+  "role_finding": {
+   "version": 1,
+   "hash": "e3d57528b064191c"
+  },
+  "role_fluid": {
+   "version": 1,
+   "hash": "6b3d2260a3560d40"
+  },
+  "role_lab": {
+   "version": 1,
+   "hash": "e75875a98944b487"
+  },
+  "role_note": {
+   "version": 1,
+   "hash": "34cda04091a4a21b"
+  },
+  "role_operation": {
+   "version": 1,
+   "hash": "80806c2841c49567"
+  },
+  "role_patient": {
+   "version": 1,
+   "hash": "6ccf57afb0425e51"
+  },
+  "role_patient_detail": {
+   "version": 1,
+   "hash": "bc44ed5059dd8264"
+  },
+  "role_reading": {
+   "version": 1,
+   "hash": "9fad369202608a49"
+  },
+  "role_staff": {
+   "version": 1,
+   "hash": "afb9ac7fd52e1edd"
+  },
+  "role_stay": {
+   "version": 1,
+   "hash": "6b43f3e9b81d89be"
+  },
+  "role_technique": {
+   "version": 1,
+   "hash": "62d83d0702857b41"
+  },
+  "role_transfer": {
+   "version": 1,
+   "hash": "d29fa055bb750d69"
+  }
+ }
+}

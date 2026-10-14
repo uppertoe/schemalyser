@@ -566,6 +566,7 @@ class Describe:
         self.identity = {"schema_id": None, "parent_id": None, "lineage": []}
         self.contract_saved = None
         self.parts = rolemap.part_hashes(self.model)
+        self.vocabulary_hashes = rolemap.vocabulary_hashes(self.model)
         self._tested = None
         # The state of the sitting when it was last saved, and whether that save was a draft, which step 9 shows.
         self._saved = None
@@ -2719,7 +2720,7 @@ ORDER  BY g.kind;"""
 
     def _current(self, kind, subject):
         """The hashes of what a subject's evidence rests on now: its binding (or both ends of a link), the codes of
-        its part, and the contract's definition of its part."""
+        its part, the contract's definition of its part, and, for a translation, the vocabulary of its column."""
         if kind == "parts":
             # An assessment of a part's recording pathways rests on the pathways that the hospital schema maps for it.
             role = ((self.data or {}).get("roles") or {}).get(subject) or {}
@@ -2735,8 +2736,12 @@ ORDER  BY g.kind;"""
             return {"codes": evidence.digest(((((self.data or {}).get("concepts") or {}).get("views") or {}).get(subject) or {}).get("rows")),
                     "contract": self.parts.get(subject)}
         if kind == "translations":
+            # A translation of a column's codes rests on the vocabulary the column names as well: a kind added or
+            # renamed is a change to what the codes translate to, and a reworded meaning or description is not.
+            vocabulary = rolemap.column_vocabulary(view, subject.split(".", 1)[1].split(" ")[0].split("@")[0], self.model)
             return {"codes": evidence.digest((self.codes.get(subject) or {}).get("chosen")),
-                    "binding": evidence.digest(self._binding_of(subject)), "contract": self.parts.get(view)}
+                    "binding": evidence.digest(self._binding_of(subject)), "contract": self.parts.get(view),
+                    "vocabulary": self.vocabulary_hashes.get(vocabulary)}
         return {"binding": evidence.digest(self._binding_of(subject)), "codes": evidence.digest(self._part_codes(view)),
                 "contract": self.parts.get(view)}
 

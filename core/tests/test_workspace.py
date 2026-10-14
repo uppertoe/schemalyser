@@ -15,11 +15,11 @@ from pathlib import Path
 
 import pytest
 
-from schemalyser import audit, describe, rolemap, rolepolicy, roleshadow, workspace
+from schemalyser import audit, describe, question, rolemap, rolepolicy, roleshadow, workspace
 
 ROOT = workspace.ROOT
 DATE = "2026-10-07"
-EXAMPLE = f"queries/{workspace.EXAMPLE}"
+EXAMPLE = f"queries/{workspace.EXAMPLE}{workspace.PACKAGE_SUFFIX}"
 
 
 def _catalogue_names():
@@ -67,15 +67,35 @@ def project(tmp_path):
     return folder
 
 
-def _question_folder(exported, tmp_path, name="low_pressure", sql=None, extra=None):
+def _parts_of(sql):
+    """The parts a package lists for its SQL, as the service works them out: each part the SQL reads that the contract
+    has, at its version and with its admission."""
+    versions = rolemap.part_versions()
+    return [{"name": n, "version": versions[n], "admission": rolemap.admission(n, "question")}
+            for n in question.parts_read(sql)[0] if n in versions]
+
+
+def _question_file(exported, tmp_path, name="low_pressure", sql=None, change=None, text=None):
+    """A question package in a workspace's queries folder, made from the example: with other SQL, with a change to the
+    package, or with raw text in place of the package."""
     out, _ = exported
-    folder = tmp_path / "ws" / "queries" / name
-    shutil.copytree(out / EXAMPLE, folder)
+    path = tmp_path / "ws" / "queries" / f"{name}{workspace.PACKAGE_SUFFIX}"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if text is not None:
+        path.write_text(text, encoding="utf-8")
+        return path
+    held = json.loads((out / EXAMPLE).read_text(encoding="utf-8"))
     if sql is not None:
-        (folder / "question.sql").write_text(sql, encoding="utf-8")
-    for file_name, text in (extra or {}).items():
-        (folder / file_name).write_text(text, encoding="utf-8")
-    return folder
+        held["question_sql"] = sql
+        held["parts"] = _parts_of(sql)
+    if change is not None:
+        change(held)
+    path.write_text(json.dumps(held, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    return path
+
+
+def _result(path):
+    return workspace.result_path(path).read_text(encoding="utf-8")
 
 
 def _project_files(project):
@@ -98,7 +118,7 @@ def test_the_export_holds_the_allowlisted_sources_and_a_manifest_of_every_file(e
                    "core/schemalyser/omop/cdm54_fields.csv", "fixtures/invented-catalogue.csv",
                    "fixtures/dictionary/invented-dictionary.csv", "fixtures/conversion/person.sql", "fixtures/map/map.json",
                    "tools/sqlserver/harness.py", "README.md", "QUERIES.md", f"schemas/{workspace.SCHEMA_NAME}",
-                   f"{EXAMPLE}/question.sql", f"{EXAMPLE}/title.txt", f"{EXAMPLE}/note.md"):
+                   workspace.EXAMPLE_PACKAGE, EXAMPLE):
         assert wanted in listed, wanted
     assert not any(p.split("/")[0] in ("reference", "etl", "notes", "docs", "site", "spike") for p in on_disk)
     readme = (out / "README.md").read_text(encoding="utf-8")
@@ -199,66 +219,97 @@ def test_an_agent_in_the_workspace_can_check_assess_and_build_the_example_on_inv
     assert Path(found.stdout.strip()).resolve().is_relative_to(work.resolve())
     assert run("-m", "schemalyser.workspace", "check", EXAMPLE).returncode == 0
     schema = f"schemas/{workspace.SCHEMA_NAME}"
-    report = run("-m", "schemalyser.feasibility", "report", schema, f"{EXAMPLE}/question.sql")
+    report = run("-m", "schemalyser.feasibility", "report", schema, EXAMPLE)
     assert report.returncode == 0 and "expressible" in report.stdout, report.stderr
-    built = run("-m", "schemalyser.audit", "build", schema, f"{EXAMPLE}/question.sql", "--out", "audits/example")
+    built = run("-m", "schemalyser.audit", "build", schema, EXAMPLE, "--out", "audits/example")
     assert built.returncode == 0, built.stderr
     manifest = json.loads((work / "audits" / "example" / "manifest.json").read_text(encoding="utf-8"))
     # The planted neonates' expected answers are held out, so the workspace's package checks no planted case.
     assert manifest["execution_class"] == "B" and manifest["planted_match"] is None
+    # The build took the package's decisions.
+    assert manifest["decisions"]["decisions"][0]["about"] == "who is a neonate"
 
 
 # The import.
 
 def test_the_example_imports_cleanly_and_the_result_names_nothing_of_the_hospital(exported, project, tmp_path):
-    folder = _question_folder(exported, tmp_path)
-    result, _, record = workspace.import_question(folder, project, date=DATE)
-    assert result["result"] == "accepted" and result["rules_failed"] == []
+    path = _question_file(exported, tmp_path)
+    result, _, record = workspace.import_question(path, project, date=DATE)
+    assert result["result"] == "accepted" and result["rules_failed"] == [] and result["query"] == "low_pressure"
     assert sorted(result) == ["query", "result", "rules_failed", "says"]
     assert result["says"] == workspace.WORDING["accepted"]
-    text = (folder / "import-result.json").read_text(encoding="utf-8")
+    text = _result(path)
     assert json.loads(text) == result
     leaked = [name for name in _catalogue_names() if name in text]
     assert not leaked, leaked
-    assert sorted(p.name for p in folder.iterdir()) == ["import-result.json", "note.md", "question.sql", "title.txt"]
-    # The private project gains the question, the package and the validation report.
+    assert sorted(p.name for p in path.parent.iterdir()) == ["low_pressure.import-result.json", "low_pressure.question.json"]
+    # The private project gains the question, the package with the question's own decisions, and the validation report.
     questions = list((project / "questions").glob("*.sql"))
-    assert [q.name for q in questions] == ["neonatal_low_mean_pressure.sql"]
-    assert questions[0].read_text(encoding="utf-8").startswith("-- Neonatal low mean pressure.\n")
+    assert len(questions) == 1 and questions[0].read_text(encoding="utf-8").startswith("-- Minutes of low mean arterial pressure")
     assert (record / "package" / "query.sql").is_file() and (record / "package" / "manifest.json").is_file()
+    assert (record / "low_pressure.question.json").read_bytes() == path.read_bytes()
+    decisions = json.loads((record / "package" / "decisions.json").read_text(encoding="utf-8"))["decisions"]
+    assert len(decisions) == 9 and decisions[0]["about"] == "who is a neonate" and decisions[0]["by"] == "Dr A Clinician"
     validation = json.loads((record / "import-validation.json").read_text(encoding="utf-8"))
     assert validation["returned_to_workspace"] == result and all(r["passed"] for r in validation["rules"])
-    assert json.loads((record / "request.json").read_text(encoding="utf-8"))["exit_code"] == 0
+    assert [p["name"] for p in validation["parts"]] == ["role_anaesthetic", "role_patient", "role_reading"]
+    request = json.loads((record / "request.json").read_text(encoding="utf-8"))
+    assert request["exit_code"] == 0 and len(request["decisions"]) == 9
 
 
 def test_a_question_that_names_a_table_outside_the_contract_is_refused_with_the_rule(exported, project, tmp_path):
     before = _project_files(project)
-    folder = _question_folder(exported, tmp_path, sql="SELECT COUNT(*) AS anaesthetics FROM ANAES_RECORD\n")
-    result, checked, record = workspace.import_question(folder, project, date=DATE)
-    assert result["result"] == "malformed" and result["rules_failed"] == ["tables"] and record is None
+    path = _question_file(exported, tmp_path, sql="SELECT COUNT(*) AS anaesthetics FROM ANAES_RECORD\n")
+    result, checked, record = workspace.import_question(path, project, date=DATE)
+    # The parts rule of the package names the table, before the role policy is reached.
+    assert result["result"] == "malformed" and result["rules_failed"] == ["parts"] and record is None
     assert sorted(result) == ["query", "result", "rules_failed", "says"]
-    assert json.loads((folder / "import-result.json").read_text(encoding="utf-8")) == result
+    assert json.loads(_result(path)) == result
     assert _project_files(project) == before
+    # The same SQL in a package whose parts list only what the contract has, with a part the SQL does not read.
+    path = _question_file(exported, tmp_path, name="policy", change=lambda p: p.update(
+        {"question_sql": "SELECT COUNT(*) AS anaesthetics FROM role_patient p WHERE p.sex = 'f'\n", "parts": _parts_of("SELECT 1 FROM role_patient p")}))
+    result, checked, record = workspace.import_question(path, project, date=DATE)
+    assert result["result"] == "malformed" and result["rules_failed"] == ["columns"] and record is None
 
 
-def test_a_folder_with_an_extra_python_file_is_refused(exported, project, tmp_path):
+def test_a_folder_a_misnamed_file_and_an_extra_field_are_each_refused(exported, project, tmp_path):
     before = _project_files(project)
-    folder = _question_folder(exported, tmp_path, extra={"helper.py": "import os\n"})
+    folder = tmp_path / "ws" / "queries" / "helper.question.json"
+    folder.mkdir(parents=True)
     result, checked, _ = workspace.import_question(folder, project, date=DATE)
-    assert result["result"] == "malformed" and result["rules_failed"] == ["files"]
-    assert any("helper.py" in f for r in checked["rules"] for f in r["fragments"])
+    assert result["result"] == "malformed" and result["rules_failed"] == ["file"]
+    assert any("is a folder" in f for r in checked["rules"] for f in r["fragments"])
+    misnamed = _question_file(exported, tmp_path).rename(tmp_path / "ws" / "queries" / "question.sql")
+    result, checked, _ = workspace.import_question(misnamed, project, date=DATE)
+    assert result["result"] == "malformed" and result["rules_failed"] == ["file"] and result["query"] is None
+    extra = _question_file(exported, tmp_path, name="extra", change=lambda p: p.update({"helper": "import os"}))
+    result, checked, _ = workspace.import_question(extra, project, date=DATE)
+    assert result["result"] == "malformed" and result["rules_failed"] == ["schema"]
+    assert any("helper: is not a field of the package" in f for r in checked["rules"] for f in r["fragments"])
     assert _project_files(project) == before
 
 
-def test_a_link_a_dependency_and_a_large_file_are_each_refused(exported, project, tmp_path):
-    folder = _question_folder(exported, tmp_path, name="linked", extra={"requirements.txt": "requests\n"})
-    (folder / "note.md").unlink()
-    (folder / "note.md").symlink_to(project / "schemas" / "hospital-schema.schemalyser.zip")
-    result, _, _ = workspace.import_question(folder, project, date=DATE)
-    assert set(result["rules_failed"]) == {"links", "dependencies", "files"}
-    large = _question_folder(exported, tmp_path, name="large", sql="-- " + "x" * workspace.SIZE_LIMIT + "\nSELECT 1 AS one\n")
+def test_a_link_a_large_file_and_a_waiting_package_are_each_refused(exported, project, tmp_path):
+    linked = tmp_path / "ws" / "queries" / "linked.question.json"
+    linked.parent.mkdir(parents=True)
+    linked.symlink_to(project / "schemas" / "hospital-schema.schemalyser.zip")
+    result, _, _ = workspace.import_question(linked, project, date=DATE)
+    assert result["rules_failed"] == ["links"]
+    large = _question_file(exported, tmp_path, name="large", text="{" + " " * workspace.SIZE_LIMIT + "}")
     result, _, _ = workspace.import_question(large, project, date=DATE)
     assert result["rules_failed"] == ["size"]
+    # A package over a draft part, or one with a proposal, waits for the contract and has nothing to build.
+    draft = _question_file(exported, tmp_path, name="draft", sql="SELECT COUNT(*) AS n FROM role_fluid f\n")
+    result, checked, record = workspace.import_question(draft, project, date=DATE)
+    assert result["rules_failed"] == ["waits"] and record is None
+    assert any("role_fluid is refused for a question" in f for r in checked["rules"] for f in r["fragments"])
+    proposing = _question_file(exported, tmp_path, name="proposing", change=lambda p: p["proposals"].append(
+        {"kind": "column", "part": "role_technique", "because": "The question needs the block's theatre case.",
+         "shape": {"name": "theatre_case", "title": "the theatre case", "type": "key", "meaning": "The surgical case.",
+                   "holds": "The anaesthetic record.", "look_for": ["surgical case"]}}))
+    result, _, _ = workspace.import_question(proposing, project, date=DATE)
+    assert result["rules_failed"] == ["waits"]
 
 
 # The role-level policy.
@@ -385,11 +436,11 @@ def test_the_held_out_fixtures_the_planted_answers_and_the_planted_values_never_
 
 def test_a_file_with_the_executable_bit_is_refused(exported, project, tmp_path):
     before = _project_files(project)
-    folder = _question_folder(exported, tmp_path, name="executable")
-    (folder / "note.md").chmod(0o755)
-    result, checked, record = workspace.import_question(folder, project, date=DATE)
+    path = _question_file(exported, tmp_path, name="executable")
+    path.chmod(0o755)
+    result, checked, record = workspace.import_question(path, project, date=DATE)
     assert result["result"] == "malformed" and result["rules_failed"] == ["executable"] and record is None
-    assert any("note.md is executable" in f for r in checked["rules"] for f in r["fragments"])
+    assert any("executable.question.json is executable" in f for r in checked["rules"] for f in r["fragments"])
     assert _project_files(project) == before
 
 
@@ -428,11 +479,11 @@ def test_one_package_returns_the_same_status_from_a_hospital_that_supports_it_an
     _schema_without_the_readings_link(without / "schemas" / "hospital-schema.schemalyser.zip")
     results, records = [], []
     for name, hospital in (("supports", project), ("lacks", without)):
-        folder = _question_folder(exported, tmp_path / name, sql=sql)
-        result, _, record = workspace.import_question(folder, hospital, date=DATE)
+        path = _question_file(exported, tmp_path / name, sql=sql)
+        result, _, record = workspace.import_question(path, hospital, date=DATE)
         results.append(result)
         records.append(json.loads((record / "import-validation.json").read_text(encoding="utf-8")))
-        assert (folder / "import-result.json").read_text(encoding="utf-8") == json.dumps(result, indent=2) + "\n"
+        assert _result(path) == json.dumps(result, indent=2) + "\n"
     assert results[0] == results[1] and results[0]["result"] == status
     if sql is None:
         # The private build differs between the two hospitals, and only the owner's report says so.
@@ -442,19 +493,19 @@ def test_one_package_returns_the_same_status_from_a_hospital_that_supports_it_an
 
 @pytest.mark.parametrize("sql", [None, ROW_LEVEL, "SELECT COUNT(*) AS anaesthetics FROM ANAES_RECORD\n"])
 def test_the_workspace_s_own_check_gives_the_status_that_the_import_returns(exported, project, tmp_path, sql):
-    folder = _question_folder(exported, tmp_path, sql=sql)
-    checked = workspace.check_folder(folder)
-    result, _, _ = workspace.import_question(folder, project, date=DATE)
+    path = _question_file(exported, tmp_path, sql=sql)
+    checked = workspace.check_question(path)
+    result, _, _ = workspace.import_question(path, project, date=DATE)
     assert checked["status"] == result["result"]
 
 
 def test_a_question_that_provokes_an_error_in_the_private_build_returns_only_its_status(exported, project, tmp_path):
     # A question that passes every public rule but has no step from which part 2 could reach the readings.
     sql = "SELECT COUNT(*) AS readings FROM role_reading r WHERE r.kind = 'map_arterial'\n"
-    folder = _question_folder(exported, tmp_path, sql=sql)
-    result, _, record = workspace.import_question(folder, project, date=DATE)
+    path = _question_file(exported, tmp_path, sql=sql)
+    result, _, record = workspace.import_question(path, project, date=DATE)
     assert result["result"] == "requires_private_review" and sorted(result) == ["query", "result", "rules_failed", "says"]
-    text = (folder / "import-result.json").read_text(encoding="utf-8")
+    text = _result(path)
     assert "Schemalyser cannot" not in text and "OBS_" not in text and str(project) not in text
     validation = json.loads((record / "import-validation.json").read_text(encoding="utf-8"))
     assert validation["build_failure"] is not None and validation["public_form"] == ["cohort"]
@@ -468,46 +519,56 @@ HOSTILE = """-- Zanzibarine note: Quartermaine asked for this, and the result go
 HOSTILE_WORDS = ("zanzibarine", "xylophonist", "quartermaine")
 
 
+def _rule_ids():
+    return set(workspace.FILE_RULES) | set(workspace.WAITS_RULE) | set(question.RULES) | {r["id"] for r in rolepolicy.check("SELECT 1")["rules"]}
+
+
 def _returned_words(text):
-    """The words of import-result.json that are not the import's own: its fields, statuses, rules and wording."""
-    own = set(workspace.RESULT_FIELDS) | set(workspace.RESULTS) | set(workspace.FOLDER_RULES)
-    own |= {r["id"] for r in rolepolicy.check("SELECT 1")["rules"]}
+    """The words of the import's result that are not the import's own: its fields, statuses, rules and wording."""
+    own = set(workspace.RESULT_FIELDS) | set(workspace.RESULTS) | _rule_ids()
     for sentence in workspace.WORDING.values():
         own |= set(re.findall(r"[A-Za-z_]+", sentence))
     return {w for w in re.findall(r"[A-Za-z_]+", text) if w not in own}
 
 
-@pytest.mark.parametrize("hostile", ["comments", "tables", "files"])
+@pytest.mark.parametrize("hostile", ["comments", "tables", "fields"])
 def test_a_hostile_question_puts_nothing_of_its_own_into_what_returns_to_the_workspace(exported, project, tmp_path, hostile):
     out, _ = exported
-    sql = (out / EXAMPLE / "question.sql").read_text(encoding="utf-8")
-    extra = {}
+    sql = json.loads((out / EXAMPLE).read_text(encoding="utf-8"))["question_sql"]
+    change = None
     if hostile == "comments":
-        # A question that passes every rule, with hostile words in its comment, its title and its note.
+        # A question that passes every rule, with hostile words in its comment, its title, its statement and its note.
         sql = HOSTILE + sql
-        extra = {"title.txt": "Zanzibarine Xylophonist\n", "note.md": "Quartermaine wrote this for Xylophonist.\n"}
+
+        def change(p):
+            p["title"] = "Zanzibarine Xylophonist"
+            p["statement"]["cohort"] = "Quartermaine wrote this for Xylophonist."
+            p["note"] = "Quartermaine wrote this for Xylophonist."
+            p["decisions"][0]["decision"] = "Zanzibarine decided."
     elif hostile == "tables":
         sql = HOSTILE + ("SELECT 'Zanzibarine' AS Xylophonist, z.Quartermaine FROM Zanzibarine_Table AS z;\n"
                          "EXEC('SELECT * FROM Zanzibarine_Secret');\n")
     else:
-        extra = {"Zanzibarine.sql": "SELECT 1 AS Xylophonist\n", "requirements.txt": "quartermaine\n"}
-    folder = _question_folder(exported, tmp_path, sql=sql, extra=extra)
-    before = sorted(p.name for p in folder.iterdir())
-    result, _, _ = workspace.import_question(folder, project, date=DATE)
+        def change(p):
+            p["Zanzibarine"] = "SELECT 1 AS Xylophonist"
+            p["produced"]["Quartermaine"] = "quartermaine"
+    path = _question_file(exported, tmp_path, sql=sql, change=change)
+    before = sorted(p.name for p in path.parent.iterdir())
+    result, _, _ = workspace.import_question(path, project, date=DATE)
     assert result["result"] == ("accepted" if hostile == "comments" else "malformed")
-    text = (folder / workspace.RESULT).read_text(encoding="utf-8")
+    text = _result(path)
     assert not [word for word in HOSTILE_WORDS if word in text.lower()]
-    # The one word that is not the import's own is the folder's name, which the agent chose.
+    # The one word that is not the import's own is the file's name, which the agent chose.
     assert _returned_words(text) == {"low_pressure"}
-    # Nothing returns to the workspace but import-result.json.
-    assert sorted(p.name for p in folder.iterdir()) == sorted(before + [workspace.RESULT])
+    # Nothing returns to the workspace but the result beside the package.
+    assert sorted(p.name for p in path.parent.iterdir()) == sorted(before + ["low_pressure.import-result.json"])
 
 
 def test_the_module_and_an_import_open_no_network_module(exported, project, tmp_path):
     # What the interpreter and the parser import is not the tool's doing: on Linux, sqlglot reads its own version
     # through a standard module that pulls in the email package, which imports socket without opening a connection.
     # So only what the import adds beyond its dependency is counted.
-    folder = _question_folder(exported, tmp_path)
+    folder = _question_file(exported, tmp_path)
     code = (
         "import sys\n"
         "network = ('socket', 'ssl', 'http.client', 'urllib.request', 'urllib3', 'requests', 'httpx')\n"
@@ -515,7 +576,7 @@ def test_the_module_and_an_import_open_no_network_module(exported, project, tmp_
         "at_start = {m for m in network if m in sys.modules}\n"
         "import schemalyser.workspace as w\n"
         "assert 'duckdb' not in sys.modules, 'duckdb at import'\n"
-        f"assert w.check_folder({str(folder)!r})['status'] == 'accepted'\n"
+        f"assert w.check_question({str(folder)!r})['status'] == 'accepted'\n"
         f"result, _, _ = w.import_question({str(folder)!r}, {str(project)!r}, date={DATE!r})\n"
         "assert result['result'] == 'accepted', result\n"
         "print(sorted(m for m in network if m in sys.modules and m not in at_start))\n"
@@ -600,9 +661,9 @@ def planted_schema():
 
 
 def _fixed_status(result, name):
-    """Asserts that a status is the fixed one of the contract and nothing else: the folder's own name, a word of RESULTS,
+    """Asserts that a status is the fixed one of the contract and nothing else: the file's own name, a word of RESULTS,
     the names of rules, and the fixed sentence for the status."""
-    rules = set(workspace.FOLDER_RULES) | {r["id"] for r in rolepolicy.check("SELECT 1")["rules"]}
+    rules = _rule_ids()
     assert sorted(result) == sorted(workspace.RESULT_FIELDS)
     assert result["query"] == name and result["result"] in workspace.RESULTS
     assert set(result["rules_failed"]) <= rules and bool(result["rules_failed"]) == (result["result"] == "malformed")
@@ -634,15 +695,15 @@ def test_a_private_schema_with_planted_names_reaches_neither_the_export_nor_any_
     leaked = {p.relative_to(out).as_posix(): _planted_in(p.read_bytes()) for p in out.rglob("*") if p.is_file()}
     assert {path: names for path, names in leaked.items() if names} == {}
     # Each status, provoked in turn, names nothing of the hospital, no path and no diagnostic.
-    folder = _question_folder(exported, tmp_path, name="planted_question", sql=sql)
-    checked = workspace.check_folder(folder)
-    result, _, record = workspace.import_question(folder, project, date=DATE)
+    path = _question_file(exported, tmp_path, name="planted_question", sql=sql)
+    checked = workspace.check_question(path)
+    result, _, record = workspace.import_question(path, project, date=DATE)
     assert result["result"] == checked["status"] == status
     _fixed_status(result, "planted_question")
-    text = (folder / workspace.RESULT).read_text(encoding="utf-8")
+    text = _result(path)
     assert json.loads(text) == result
     assert _leaks(text, project, tmp_path, planted) == [] and _leaks(json.dumps(result), project, tmp_path) == []
-    assert sorted(p.name for p in folder.iterdir()) == sorted(list(workspace.ACCEPTED_FILES) + [workspace.RESULT])
+    assert sorted(p.name for p in path.parent.iterdir()) == ["planted_question.import-result.json", "planted_question.question.json"]
     if status != "malformed":
         # The private side does hold the planted names, which is where they belong.
         validation = (record / "import-validation.json").read_bytes()
@@ -707,12 +768,12 @@ def test_a_hostile_question_is_refused_end_to_end_without_running_anything_or_re
         exported, project, tmp_path, sentinel, executions, kind, sql):
     path, held, written = sentinel
     before = _project_files(project)
-    folder = _question_folder(exported, tmp_path, name="hostile", sql=sql.format(sentinel=path, folder=path.parent))
-    result, checked, record = workspace.import_question(folder, project, date=DATE)
+    package = _question_file(exported, tmp_path, name="hostile", sql=sql.format(sentinel=path, folder=path.parent))
+    result, checked, record = workspace.import_question(package, project, date=DATE)
     assert result["result"] in ("malformed", "requires_private_review") and record is None
     assert result["result"] == checked["status"] == "malformed"
     _fixed_status(result, "hostile")
-    text = (folder / workspace.RESULT).read_text(encoding="utf-8")
+    text = _result(package)
     assert _leaks(text, path, project, tmp_path) == [] and "PLANTED" not in text and "sentinel" not in text
     # Nothing ran: no engine was opened, no process or shell started, the sentinel is as it was, and the project too.
     assert executions == []
@@ -720,26 +781,45 @@ def test_a_hostile_question_is_refused_end_to_end_without_running_anything_or_re
     assert _project_files(project) == before
 
 
-def _deep_folder(folder):
-    nested = folder
+def _deep_path(package):
+    """A path forty folders deep given as the question, in place of the package."""
+    nested = package.parent
     for depth in range(40):
         nested = nested / f"d{depth}"
     nested.mkdir(parents=True)
-    (nested / "question.sql").write_text("SELECT 1 AS one\n", encoding="utf-8")
+    deep = nested / package.name
+    deep.write_text("{}", encoding="utf-8")
+    return deep
 
 
+def _folder_as_package(package):
+    package.unlink()
+    package.mkdir()
+    return package
+
+
+# Each provocation changes the package, or gives another path in its place, and returns the path to import.
 PROVOCATIONS = {
-    "a malformed JSON file": lambda folder, path: (folder / "package.json").write_text("{not json", encoding="utf-8"),
-    "a JSON file it never asked for": lambda folder, path: (folder / "question.json").write_text('{"sql": ', encoding="utf-8"),
-    "an oversize file": lambda folder, path: (folder / "question.sql").write_bytes(b"-- " + b"x" * (workspace.SIZE_LIMIT + 1) + b"\nSELECT 1 AS one\n"),
-    "a deep path": lambda folder, path: _deep_folder(folder),
-    "an invalid encoding": lambda folder, path: (folder / "question.sql").write_bytes("SELECT 1 AS one".encode("utf-16")),
-    "a byte that is no text": lambda folder, path: (folder / "note.md").write_bytes(b"\xff\xfe\xfa planted"),
-    "a NUL character": lambda folder, path: (folder / "title.txt").write_bytes(b"A title\x00 with a NUL\n"),
-    "a question nested past the parser's depth": lambda folder, path: (folder / "question.sql").write_text(
-        "SELECT " + "(" * 3000 + "1" + ")" * 3000 + " AS one FROM role_patient p\n", encoding="utf-8"),
-    "a result file that links to the sentinel": lambda folder, path: (folder / workspace.RESULT).symlink_to(path),
+    "a malformed JSON file": lambda package, path: package.write_text("{not json", encoding="utf-8") and package,
+    "a JSON object that is not a package": lambda package, path: package.write_text('{"sql": "SELECT 1"}', encoding="utf-8") and package,
+    "a JSON list": lambda package, path: package.write_text('[1, 2]', encoding="utf-8") and package,
+    "an oversize file": lambda package, path: package.write_bytes(b"{" + b" " * (workspace.SIZE_LIMIT + 1) + b"}") and package,
+    "a deep path": lambda package, path: _deep_path(package),
+    "a folder in place of the file": lambda package, path: _folder_as_package(package),
+    "an invalid encoding": lambda package, path: package.write_bytes('{"title": "one"}'.encode("utf-16")) and package,
+    "a byte that is no text": lambda package, path: package.write_bytes(b"\xff\xfe\xfa planted") and package,
+    "a NUL character": lambda package, path: package.write_bytes(b'{"title": "A title\x00 with a NUL"}') and package,
+    "a question nested past the parser's depth": lambda package, path: _with_sql(
+        package, "SELECT " + "(" * 3000 + "1" + ")" * 3000 + " AS one FROM role_patient p\n"),
+    "a result file that links to the sentinel": lambda package, path: workspace.result_path(package).symlink_to(path) or package,
 }
+
+
+def _with_sql(package, sql):
+    held = json.loads(package.read_text(encoding="utf-8"))
+    held["question_sql"] = sql
+    package.write_text(json.dumps(held), encoding="utf-8")
+    return package
 
 
 @pytest.mark.parametrize("provocation", list(PROVOCATIONS))
@@ -747,23 +827,21 @@ def test_a_package_built_to_provoke_an_error_in_the_import_returns_only_a_fixed_
         exported, project, tmp_path, sentinel, executions, provocation):
     path, held, written = sentinel
     before = _project_files(project)
-    folder = _question_folder(exported, tmp_path, name="provoking")
-    PROVOCATIONS[provocation](folder, path)
-    result, checked, record = workspace.import_question(folder, project, date=DATE)
+    package = PROVOCATIONS[provocation](_question_file(exported, tmp_path, name="provoking"), path)
+    result, checked, record = workspace.import_question(package, project, date=DATE)
     assert result["result"] == checked["status"] == "malformed" and record is None
     _fixed_status(result, "provoking")
-    text = (folder / workspace.RESULT).read_text(encoding="utf-8")
-    assert not (folder / workspace.RESULT).is_symlink()
+    text = _result(package)
+    assert not workspace.result_path(package).is_symlink()
     assert _leaks(text, path, project, tmp_path) == []
     assert executions == []
     assert path.read_bytes() == held and path.stat().st_mtime_ns == written
     assert _project_files(project) == before
     # The command line, given the same package afresh, refuses it with the status and no trace of the error.
-    again = _question_folder(exported, tmp_path / "command", name="provoking")
-    PROVOCATIONS[provocation](again, path)
+    again = PROVOCATIONS[provocation](_question_file(exported, tmp_path / "command", name="provoking"), path)
     done = subprocess.run([sys.executable, "-m", "schemalyser.workspace", "import", str(again), "--hospital", str(project)],
                           capture_output=True, text=True, cwd=ROOT / "core", timeout=300,
                           env={**os.environ, "PYTHONPATH": str(ROOT / "core")})
     assert done.returncode == 1 and "Traceback" not in done.stdout + done.stderr
-    assert json.loads((again / workspace.RESULT).read_text(encoding="utf-8"))["result"] == "malformed"
+    assert json.loads(_result(again))["result"] == "malformed"
     assert path.read_bytes() == held and _project_files(project) == before

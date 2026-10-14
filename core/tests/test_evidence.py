@@ -195,6 +195,24 @@ def test_a_change_to_the_contract_marks_the_evidence_of_the_changed_part_stale(m
     assert again.readiness()["parts"]["role_patient"]["runs"] is None and again.readiness()["parts"]["role_reading"]["runs"] == DATE
 
 
+def test_a_change_to_a_vocabulary_marks_only_the_translation_of_the_columns_that_name_it_stale(monkeypatch):
+    s = fresh()
+    s.confirm("role_patient.birth_date", "yes", date=DATE)
+    s.confirm("role_reading.kind", "yes", date=DATE)
+    s.choose_codes("role_reading.kind", {"52": "map_arterial"}, DATE)
+    assert s.dimensions["translations"]["role_reading.kind"]["confirmed"]["rests_on"]["vocabulary"] == rolemap.vocabulary_hashes()["kinds"]
+    files = roleshadow.save(s, DATE)
+    changed = dict(rolemap.vocabulary_hashes(), kinds="0" * 16)
+    monkeypatch.setattr(rolemap, "vocabulary_hashes", lambda model=None: changed)
+    again = opened(files)
+    # The part itself is as it was: a kind added to the vocabulary changes no definition of a part.
+    assert again.restored["contract_changed"] == []
+    stale = {(e["subject"], e["dimension"]): e["reasons"] for e in again.stale_evidence()}
+    assert stale == {("role_reading.kind", "confirmed"): ["the vocabulary changed"], ("role_reading.kind", "tested"): ["the vocabulary changed"]}
+    assert again.dimensions_of("bindings", "role_reading.kind")["confirmed"]["stale"] == []
+    assert again.dimensions_of("bindings", "role_patient.birth_date")["confirmed"]["stale"] == []
+
+
 # A14: named normalisations.
 
 def test_a_route_through_several_tables_and_rows_joined_into_one_text_are_saved_as_named_normalisations():

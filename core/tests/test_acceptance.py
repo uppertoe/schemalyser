@@ -228,6 +228,20 @@ def _seek_plan(part2):
         "PART_2", escape(part2, {'"': "&quot;", "\n": "&#10;"}))
 
 
+def _package(title, sql, note):
+    """A question package over the roles, as the service writes one: the SQL with the parts it reads at their versions
+    and admissions, a statement in plain words and no decisions beyond the comment's."""
+    from schemalyser import question
+    versions = rolemap.part_versions()
+    return {"format": question.FORMAT, "title": title, "contract_version": rolemap.contract()["version"],
+            "statement": {"cohort": "Every anaesthetic of a child.", "outcome": "The minutes below a saturation of 90.",
+                          "result": "Counts of anaesthetics and children in bands of minutes."},
+            "decisions": [], "capabilities": [], "question_sql": sql,
+            "parts": [{"name": n, "version": versions[n], "admission": rolemap.admission(n, "question")}
+                      for n in question.parts_read(sql)[0] if n in versions],
+            "proposals": [], "note": note, "produced": {"model": "a person", "at": f"{DATE}T09:00:00+11:00", "by": "a person"}}
+
+
 def _in_workspace(work, *args, code=None):
     env = dict(os.environ, PYTHONPATH="core", PYTHONDONTWRITEBYTECODE="1")
     command = [sys.executable, "-c", code] if code is not None else [sys.executable, *args]
@@ -256,26 +270,24 @@ def test_the_query_lifecycle_runs_end_to_end_on_invented_material(tmp_path):
 
     # 2. It writes a new clinical question over the roles and the catalogue, checks it with the workspace's own check,
     # and produces a question package.
-    package = work / "queries" / NAME
-    package.mkdir(parents=True)
-    (package / "question.sql").write_text(QUESTION, encoding="utf-8")
-    (package / "title.txt").write_text(TITLE, encoding="utf-8")
-    (package / "note.md").write_text(NOTE, encoding="utf-8")
-    checked = _in_workspace(work, "-m", "schemalyser.workspace", "check", f"queries/{NAME}")
+    package = work / "queries" / f"{NAME}{workspace.PACKAGE_SUFFIX}"
+    package.parent.mkdir(parents=True)
+    package.write_text(json.dumps(_package(TITLE.strip(), QUESTION, NOTE.strip()), indent=1) + "\n", encoding="utf-8")
+    checked = _in_workspace(work, "-m", "schemalyser.workspace", "check", f"queries/{NAME}{workspace.PACKAGE_SUFFIX}")
     assert checked.returncode == 0, checked.stdout + checked.stderr
     assert "The import would return the status accepted." in checked.stdout
-    own = workspace.check_folder(package)
+    own = workspace.check_question(package)
     assert own["status"] == "accepted" and own["failed"] == [] and own["form"] == []
     assert feasibility.named_capabilities(QUESTION) == ["hypoxaemia_burden"]
-    assert sorted(p.name for p in package.iterdir()) == ["note.md", "question.sql", "title.txt"]
+    assert sorted(p.name for p in package.parent.iterdir()) == [package.name]
 
     # 3. The package is transferred into a private Schemalyser project built on the invented hospital schema and
     # imported as untrusted input.
     project = tmp_path / "hospital-project"
     schema_path = _private_schema(project / "schemas" / "hospital-schema.schemalyser.zip")
-    transferred = tmp_path / "transfer" / NAME
+    transferred = tmp_path / "transfer" / package.name
     transferred.parent.mkdir()
-    shutil.copytree(package, transferred)
+    shutil.copyfile(package, transferred)
     result, imported, record = workspace.import_question(transferred, project, date=DATE)
     assert record is not None and imported["status"] == own["status"]
     built = record / "package"
@@ -341,7 +353,7 @@ def test_the_query_lifecycle_runs_end_to_end_on_invented_material(tmp_path):
         assert (built / name).is_file(), name
     assert result == {"query": NAME, "result": "accepted", "rules_failed": [], "says": workspace.WORDING["accepted"]}
     assert result["result"] == own["status"]
-    returned = (transferred / workspace.RESULT).read_text(encoding="utf-8")
+    returned = workspace.result_path(transferred).read_text(encoding="utf-8")
     assert json.loads(returned) == result
     assert sorted(p.name for p in transferred.iterdir()) == ["import-result.json", "note.md", "question.sql", "title.txt"]
     assert not [n for n in _catalogue_names() if n in returned] and str(project) not in returned

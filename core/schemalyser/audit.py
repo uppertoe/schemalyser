@@ -33,6 +33,7 @@ The two-part script and its specification are compiled by compiler.py, which is 
 package from what the layers above it write.
 
     python -m schemalyser.audit build SCHEMA.zip QUERY.sql --out FOLDER [--period FROM TO] [--decisions decisions.json]
+    python -m schemalyser.audit build SCHEMA.zip NAME.question.json --out FOLDER [--period FROM TO]
     python -m schemalyser.audit plan FOLDER plan.sqlplan
     python -m schemalyser.audit status FOLDER [--schema SCHEMA.zip]
     python -m schemalyser.audit approve FOLDER --by NAME [--refuse] [--note TEXT] [--date YYYY-MM-DD]
@@ -47,7 +48,8 @@ each section: its package, its class, the feasibility report's two claims, the s
 
 decisions.json is {"decisions": [{"about": "...", "decision": "...", "by": "...", "date": "..."}],
 "exact_small_numbers": false}; with exact_small_numbers true, the audit's result keeps counts from 1 to 4, which only
-the audit's approval can allow.
+the audit's approval can allow. A question package, NAME.question.json, given as the query supplies its SQL and its
+decisions in that shape, unless --decisions names a file.
 
 The package names the hospital's tables and local codes, so it stays on the hospital's own storage with the hospital
 schema. Nothing here is checked on a hospital's data: the tests build a saved schema from the invented world.
@@ -62,7 +64,7 @@ from pathlib import Path
 import sqlglot
 from sqlglot import exp
 
-from . import describe, evidence, feasibility, policy, rolemap, roleshadow
+from . import describe, evidence, feasibility, policy, question, rolemap, roleshadow
 from .manifests import (APPROVAL_SAYS, APPROVAL_STATES, APPROVE, NOT_APPROVED, NOT_RECORDED, TOOL,  # noqa: F401 - read by plan.py and the tests
                         approval as _approval, contract_record as _contract_record, file_hashes as _file_hashes,
                         policy_version, sha256, tool_version)
@@ -78,6 +80,7 @@ WORDING = {
     "model": "Schemalyser has stopped, because this question needs parts that the role model does not yet describe. The feasibility report in {folder} lists them, and no script has been written.",
     "period": "The period is two dates, the first no later than the second, written as YYYY-MM-DD.",
     "decisions": "{name} is not a decisions file that Schemalyser can read: it holds one JSON object with a list of decisions.",
+    "package": "{name} is a question package that breaks a rule of its format, so nothing is built from it:\n{problems}",
     "changed": "An input of the package has changed since it was built, so its execution class, any plan review and any approval no longer apply. The clinician builds the package again before a plan is reviewed or an approval recorded.",
     "built": "Schemalyser wrote the package to {folder}. The script is of class {grade}, and the policy {outcome}.",
     "reviewed": "Schemalyser reviewed the plan, and its review is: {state}.",
@@ -267,8 +270,13 @@ def build(schema_path, query_path, out, period=None, decisions_path=None, large=
     schema_path, query_path, out = Path(schema_path), Path(query_path), Path(out)
     date = date or dt.date.today().isoformat()
     schema = feasibility.Schema.load(schema_path)
-    audit_sql = query_path.read_text(encoding="utf-8")
-    decisions = _decisions(decisions_path)
+    # A question package supplies its SQL and its decisions; a plain .sql file supplies the SQL, and the decisions come
+    # from decisions.json where one is given.
+    try:
+        audit_sql, package_decisions, _ = question.sql_and_decisions(query_path)
+    except question.QuestionError as error:
+        raise AuditError(WORDING["package"].format(name=query_path.name, problems=str(error))) from None
+    decisions = _decisions(decisions_path) if decisions_path or package_decisions is None else package_decisions
     blank = not decisions["exact_small_numbers"]
     # The period is settled once, before anything is written, and the assessment and the compilation both take it, so
     # that the coverage of the recording pathways is read over the period that the script runs.

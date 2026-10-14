@@ -1,13 +1,16 @@
 """The check of the contract's shape, for whoever adds a part, a column or a kind to the role model.
 
-    python -m schemalyser.contractcheck [CONTRACT.json] [--roles ROLES.md]
+    python -m schemalyser.contractcheck [CONTRACT.json] [--roles ROLES.md] [--lock parts.lock.json] [--write-lock]
 
 The checker reads the contract as data and the roles document as text and says, one sentence to a line, what breaks a
 rule of the role model: a part or a column without the words a proposer searches for, a kind column whose vocabulary
-does not exist, a link to a key that no part has, a vocabulary with no kinds, and a roles document that has fallen out
-of step with the contract. It changes nothing. The tests run it over the contract that ships with the page, so that no
-version of the contract is published with a shape the page cannot work from, and the try command of the hospital
-schema runs it over a candidate contract before opening a saved schema under it.
+does not exist, a link to a key that no part has, a vocabulary with no kinds, a roles document that has fallen out of
+step with the contract, and a part whose definition changed without its version being raised. It changes nothing,
+unless asked to write the lock file: the lock holds each part's version and semantic hash as last published, and
+--write-lock records a new part or a raised version there once the contract passes every other rule. The tests run the
+check over the contract that ships with the page, so that no version of the contract is published with a shape the
+page cannot work from, and the try command of the hospital schema runs it over a candidate contract before opening a
+saved schema under it.
 
 The rules are the ones a new part needs to be proposable and readable, not a full schema of the file: a field the
 checker does not name is left to the code that reads it.
@@ -18,8 +21,11 @@ import re
 import sys
 from pathlib import Path
 
+from . import contract as model_reader
+
 CONTRACT = Path(__file__).parent / "rolemodel" / "contract.json"
 ROLES = Path(__file__).parent / "rolemodel" / "roles.md"
+LOCK = model_reader.LOCK
 
 NAME = re.compile(r"[a-z][a-z0-9_]*")
 # A kind is a lower-case name, or a phrase where the vocabulary says where a thing came from.
@@ -36,9 +42,12 @@ HELD_VOCABULARIES = ("source_kind", "mapping_status", "mapping_provenance")
 TOP = ("version", "views", "types", "kinds", "vocabularies", "mapping_views", "capabilities")
 
 
-def check_contract(model, roles_text=None):
+def check_contract(model, roles_text=None, lock=None, published=True):
     """The problems of a contract, as sentences; an empty list is a contract whose shape the page can work from. With
-    the text of the roles document, the document's parts, vocabularies, kinds and capabilities are checked against it."""
+    the text of the roles document, the document's parts, vocabularies, kinds and capabilities are checked against it.
+    With a lock, as parts.lock.json holds it, each part's definition is compared with the one last published and a
+    change without a raised version is refused; a candidate that is not yet published is held only to that, and not
+    to the lock file being written."""
     problems = []
     if not isinstance(model, dict):
         return ["The contract is not a JSON object."]
@@ -71,6 +80,8 @@ def check_contract(model, roles_text=None):
             problems.append(f"{where} has a status that is not one of {', '.join(STATUSES)}.")
         if "required" in view:
             problems.append(f"{where} carries required, which the contract no longer uses: its status says what every gate may do with it.")
+        if not _version(view.get("version")):
+            problems.append(f"{where} has no version, or its version is not a whole number from 1.")
         for field in ("title", "description", "one_row_per", "holds"):
             if not _text(view.get(field)):
                 problems.append(f"{where} has no {field.replace('_', ' ')}.")
@@ -113,6 +124,9 @@ def check_contract(model, roles_text=None):
                 problems.append(f"{where} gives the kind {kind['kind']} no meaning.")
         if name not in used_vocabularies:
             problems.append(f"{where} is named by no column of any part.")
+    for mapping in model["mapping_views"] if isinstance(model["mapping_views"], list) else []:
+        if isinstance(mapping, dict) and isinstance(mapping.get("name"), str) and not _version(mapping.get("version")):
+            problems.append(f"The mapping view {mapping['name']} has no version, or its version is not a whole number from 1.")
     reading_kinds = [k.get("kind") if isinstance(k, dict) else None for k in model["kinds"]]
     for kind in reading_kinds:
         if not isinstance(kind, str) or not NAME.fullmatch(kind):
@@ -121,7 +135,54 @@ def check_contract(model, roles_text=None):
             problems.append(f"The kind of reading {kind} is defined more than once.")
     if roles_text is not None:
         problems += check_roles(model, roles_text)
+    if lock is not None and not problems:
+        problems += check_lock(model, lock, published)
     return problems
+
+
+def _version(value):
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 1
+
+
+def check_lock(model, lock, published=True):
+    """The contract's parts and mapping views compared with the lock file: a part whose definition (its name, key,
+    links and columns, in what they are and not in their words) differs from the one last published must carry a
+    higher version than the lock holds, and a version is never lowered. For a published contract, the lock file must
+    also be written: a new part, a raised version and a part the contract no longer defines are each named until it
+    is. Returns the problems as sentences."""
+    problems, unwritten = [], []
+    held = (lock or {}).get("parts") or {}
+    hashes, versions = model_reader.part_hashes(model), model_reader.part_versions(model)
+    for name in sorted(hashes):
+        where = f"The part {name}"
+        if name not in held:
+            unwritten.append(f"{where} is not in the lock file: write it there with --write-lock once the part is as it should be.")
+            continue
+        locked_version, locked_hash = held[name].get("version"), held[name].get("hash")
+        if versions[name] < locked_version:
+            problems.append(f"{where} has version {versions[name]}, and the lock file has {locked_version}: a version is never lowered.")
+        elif hashes[name] != locked_hash and versions[name] == locked_version:
+            problems.append(f"{where} has changed in what it is and its version is still {locked_version}: raise it to {locked_version + 1}.")
+        elif hashes[name] != locked_hash:
+            unwritten.append(f"{where} has changed to version {versions[name]}: write the lock file with --write-lock.")
+        elif versions[name] > locked_version:
+            unwritten.append(f"{where} has version {versions[name]} and the lock file has {locked_version}, and nothing of the part changed: write the lock file with --write-lock, or leave the version as it was.")
+    for name in sorted(set(held) - set(hashes)):
+        unwritten.append(f"The lock file has {name}, which the contract no longer defines: write the lock file with --write-lock.")
+    return problems + (unwritten if published else [])
+
+
+def write_lock(model, path=None):
+    """Writes the lock of the given contract, and returns the path written. Nothing is written for a contract whose
+    change breaks a rule that --write-lock cannot settle: a definition changed without a raised version, or a
+    version lowered."""
+    path = Path(path) if path else LOCK
+    held = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+    unsettled = check_lock(model, held, published=False)
+    if unsettled:
+        raise ValueError("\n".join(unsettled))
+    path.write_text(json.dumps(model_reader.lock(model), indent=1) + "\n", encoding="utf-8")
+    return path
 
 
 def _column(column, view, types, vocabularies, mappings, used):
@@ -217,19 +278,37 @@ def main(argv=None):
     parser.add_argument("contract", nargs="?", default=str(CONTRACT), help="the contract to check; the page's own when left out")
     parser.add_argument("--roles", default=str(ROLES), help="the roles document to check against it; the page's own when left out")
     parser.add_argument("--no-roles", action="store_true", help="check the contract alone")
+    parser.add_argument("--lock", default=str(LOCK), help="the lock file of the parts' versions and hashes; the page's own when left out")
+    parser.add_argument("--no-lock", action="store_true", help="do not compare the parts with the lock file")
+    parser.add_argument("--write-lock", action="store_true",
+                        help="once the contract passes every other rule, write the lock file from it")
     args = parser.parse_args(argv)
     try:
         model = json.loads(Path(args.contract).read_text(encoding="utf-8"))
         roles = None if args.no_roles else Path(args.roles).read_text(encoding="utf-8")
+        lock = None if args.no_lock else (model_reader.read_lock(args.lock) or {})
     except (OSError, ValueError) as error:
         print(f"The contract could not be read: {error}", file=sys.stderr)
         return 2
-    problems = check_contract(model, roles)
+    problems = []
+    if args.write_lock:
+        # The lock is written only from a contract that keeps every other rule.
+        problems = check_contract(model, roles)
+        if not problems:
+            try:
+                written = write_lock(model, args.lock)
+                print(f"The lock file {written} is written from the contract.")
+                lock = model_reader.read_lock(args.lock)
+            except ValueError as error:
+                problems = str(error).splitlines()
+    if not problems:
+        problems = check_contract(model, roles, lock)
     for problem in problems:
         print(problem)
     if not problems:
         print("The contract keeps every rule of the role model's shape"
-              + (", and the roles document is in step with it." if roles is not None else "."))
+              + (", and the roles document is in step with it." if roles is not None else ".")
+              + ("" if lock is None else " Every part is at the version the lock file holds."))
     return 1 if problems else 0
 
 

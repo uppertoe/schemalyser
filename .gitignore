@@ -74,3 +74,8 @@ core/schemalyser/workbench/static/*.min.js
 
 # The testbed example in the docs is kept, although its names match the ignored outputs.
 !docs/testbed-example/*
+
+# The clinician-facing service embeds the repository's contract and the question schema, copied in by go generate or
+# by its Dockerfile at build; the copies are never committed, so that there is one contract and one schema.
+ask/internal/rolemodel/contract.json
+ask/internal/rolemodel/question.schema.json

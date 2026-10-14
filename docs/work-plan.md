@@ -32,7 +32,11 @@ References to a review are written as A (architecture), G (goals) and E (examina
 
 ## Decisions taken
 
-On 14 October 2026 the owner took the first three decisions as recommended. The rehearsed ceiling is option (b): a package over a rehearsed part may reach mapping supported and run on production, and production validated requires a reconciliation that covers each rehearsed part by name, to be written into the contract as a dated amendment under package 17. The examiner runs on the owner's own machine for now, with its signed report uploaded to the service, and moves to a container beside the service once colleagues use it. The service opens to colleagues only once package 34 runs the examination on its output and package 35 records the asker's signature of meaning; until then the owner uses it alone. The question log began the same day with six requests, classified in `docs/demand.md`.
+On 14 October 2026 the owner took the first three decisions as recommended. The rehearsed ceiling is option (b): a package over a rehearsed part may reach mapping supported and run on production, and production validated requires a reconciliation that covers each rehearsed part by name, to be written into the contract as a dated amendment under package 17. The examiner runs on the owner's own machine for now, with its signed report uploaded to the service, and moves to a container beside the service once colleagues use it. The service opens to colleagues only once package 34 runs the examination on its output and package 35 records the asker's signature of meaning; until then the owner uses it alone. The question log began the same day with six requests, classified in `docs/demand.md`. The fifth decision was taken the same day as recommended: `docs/product.md` puts the catalogue first, the export of sections second and free questions third, and a standing monthly run of the catalogue waits for the question log.
+
+## Progress
+
+On 14 October 2026 packages 4, 5, 6 and 13 were done, and packages 7, 8 and 9 the same day: parts carry semantic hashes and versions with the lock file `core/schemalyser/rolemodel/parts.lock.json`, the question package has its schema beside the contract and its one reader `question.py`, and Ask writes that package and publishes each version at an address of its own with the hash of its bytes. Package 10 followed the same day: the workspace import and the audit build read the package file, and the folder form is gone. The next package in order is 11, Ask's prompt matching what the core admits.
 
 ## Decisions for the owner
 

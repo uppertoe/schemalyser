@@ -516,12 +516,15 @@ def test_the_parts_of_version_1_keep_their_definitions_and_the_mapping_views_hav
     hashes = rolemap.part_hashes()
     assert set(rolemap.mapping_views()) <= set(hashes)
     model = rolemap.contract()
-    # A change to a mapping view is a change to every part that names it.
+    # A mapping view's words are not its definition: a changed description changes no hash.
     changed = json.loads(json.dumps(model))
     changed["mapping_views"][0]["description"] += " Changed."
+    assert rolemap.part_hashes(changed) == hashes
+    # A column added to a mapping view is a change to that view and to nothing else.
+    changed["mapping_views"][0]["columns"].append({"name": "note", "type": "text"})
     again = rolemap.part_hashes(changed)
-    assert again["map_drug_concept"] != hashes["map_drug_concept"] and again["role_drug"] != hashes["role_drug"]
-    assert again["role_patient"] == hashes["role_patient"] and again["role_lab"] == hashes["role_lab"]
+    assert again["map_drug_concept"] != hashes["map_drug_concept"]
+    assert {k: v for k, v in again.items() if k != "map_drug_concept"} == {k: v for k, v in hashes.items() if k != "map_drug_concept"}
 
 
 def test_a_map_s_concepts_and_pathways_are_checked_when_it_is_read(tmp_path):

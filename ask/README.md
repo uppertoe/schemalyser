@@ -8,14 +8,14 @@ The service sees the role contract and the invented world and nothing of any hos
 
 - Keeps each clinician's questions, with the whole conversation, in one SQLite file.
 - Reaches the model through one of three backends: `api`, the Anthropic API with a key; `cli`, the Claude Code command line on a subscription, for development on a machine that has it; and `fake`, a scripted reply for the tests and for trying the pages.
-- Reads the role contract embedded at build time from `core/schemalyser/rolemodel/contract.json`, so that the service and the page always speak the same version. A test refuses an embedded copy that has fallen behind the repository's.
-- Checks every question block the model writes: one SELECT over the roles, no invented part, no statement a question never makes. A block that breaks a rule is shown to the clinician as a problem and goes back to the model on the next turn.
-- Publishes the latest package of a question at `/q/TOKEN`, a 48-character secret, as JSON with its hash in a header, with no login, so that the page in a hospital can fetch it. Everything else is behind the login wall.
+- Reads the role contract and the question package's schema, copied in from `core/schemalyser/rolemodel/` by `go generate ./...` or by the Dockerfile when the service is built, so that the service and the page always speak the same version and read the one schema. Neither copy is committed, and a test fails when a copy has fallen behind the repository's or is missing.
+- Checks every question block the model writes: the package it makes from the block is validated against the schema, its SQL is one SELECT over the roles with no invented part and no statement a question never makes, read with its comments and string literals stripped, and every proposal and capability names what the contract has. A block that breaks a rule is shown to the clinician as a problem and goes back to the model on the next turn.
+- Publishes each version of a question's package at `/q/TOKEN/N`, where the token is a 48-character secret and N the version, as JSON that never changes once written, with the hash of its bytes in a header; the address the asker copies carries that hash as `#sha256=`, so that the page in a hospital can check what it fetched. `/q/TOKEN` serves the latest version as a convenience. The addresses need no login; everything else is behind the login wall.
 - Records, as a proposal in the contract's own shape, anything the question needs that the contract lacks. The model never invents a role in the SQL; the owner runs the proposal through the contract checker and the try command and decides.
 
 ## The package
 
-A question package is `schemalyser-question/1`: the title, the contract version, a specification in the clinician's terms with a cohort, an outcome and a result, the decisions made in the conversation, the SQL over the roles, a note, the parts used with the drafts marked, the proposals, the status, which model wrote it and when, and a hash of what it says. Its status is `drafted` until the examination of the roadmap exists, or `waits for the contract` while it holds a proposal.
+A question package is `schemalyser-question/1`, whose shape is `core/schemalyser/rolemodel/question.schema.json` and whose one reader in Python is `python -m schemalyser.question check`: the title; the contract version; the statement, the clinician's words for the cohort, the outcome and the result; the decisions, each typed with what it is about, the choice, a value and unit where one exists, the sentence, who made it and when; the capabilities of the catalogue it composes; the SQL over the roles; the parts the SQL reads, each at its version in the contract and with the contract's admission for a question, which marks a draft part as refused; any proposal for what the contract lacks; a note; and which model wrote it, when and for whom. The package carries no status and no hash of its own: the hash is of the bytes served, and what a package may claim is decided by the evidence recorded about it. The page's own state word for a question is `drafted`, or `waits for the contract` while the package holds a proposal.
 
 ## Who may use it, and what may be typed
 
@@ -28,7 +28,7 @@ Until the owner opens the service to colleagues, only the admin addresses and th
 
 opens the pages at `http://localhost:8080` with no model and no login wall. With `ASK_MODEL_BACKEND=cli` the assistant is the Claude Code command line on this machine's subscription; with `ASK_MODEL_BACKEND=api` and `ANTHROPIC_API_KEY` set, it is the API. `go run . -prompt` prints the system prompt the model reads.
 
-`go test ./...` runs the tests, which use the fake backend.
+`go generate ./...` copies the contract and the schema in from the repository, and `go test ./...` runs the tests, which use the fake backend. `fixtures/packages/ask-fake-backend.question.json` is the package the fake backend's settled reply produces, committed so that the core's reader is tested against what the service writes; run the tests with `ASK_WRITE_FIXTURE=1` to write it again after a change.
 
 ## Deploying it
 

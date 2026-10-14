@@ -31,7 +31,7 @@ WORKSPACE=/path/to/workspace WORKSPACE_IMAGE=my-agent:latest \
   docker compose -f tools/workspace/compose.yaml run --rm -e AGENT_API_KEY workspace
 ```
 
-Inside the shell, start the agent in `/workspace` and give it the task, such as writing a question in `queries/NAME/`. Once it has finished, run `python -m schemalyser.workspace check queries/NAME` yourself before the folder goes to the hospital's side.
+Inside the shell, start the agent in `/workspace` and give it the task, such as writing a question package `queries/NAME.question.json`. Once it has finished, run `python -m schemalyser.workspace check queries/NAME.question.json` yourself before the file goes to the hospital's side.
 
 The container keeps the default network, because the agent needs to reach its model provider. Run it on a computer that holds no hospital data and that cannot reach a hospital's network, because the container can still reach anything that the computer's network can.
 

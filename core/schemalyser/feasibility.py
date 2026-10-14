@@ -51,7 +51,7 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.optimizer.scope import traverse_scope
 
-from . import describe, evidence, normalise, rolemap
+from . import describe, evidence, normalise, question, rolemap
 
 # The summary states, in order. The first is a requirement that the role model itself cannot meet.
 NOT_DESCRIBED = "not described by the role model"
@@ -1620,7 +1620,11 @@ def main(argv=None):
             _write(sections_markdown(found), found, args.out)
         elif args.command == "report":
             path = Path(args.query)
-            found = assess(schema, path.read_text(encoding="utf-8"), path.name, args.period)
+            try:
+                sql, _, _ = question.sql_and_decisions(path)
+            except question.QuestionError as error:
+                raise FeasibilityError(f"{path.name} is a question package that breaks a rule of its format:\n{error}") from None
+            found = assess(schema, sql, path.name, args.period)
             _write(markdown(found), found, args.out)
         else:
             queries = [(p.name, p.read_text(encoding="utf-8")) for p in sorted(Path(args.folder).glob("*.sql"))]
