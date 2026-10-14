@@ -316,3 +316,14 @@ def describe_hospital_run(request):
     r = json.loads(request)
     given = {k: r[k] for k in ("key", "year", "name", "about") if k in r}
     return _reply(lambda: {"receipt": _describing().run_invented(_hospital, r["query"], r["read"], **given)})
+
+
+# A question package, opened by file with the examiner's signed report, compiled through the hospital schema the
+# sitting holds. The work is the workspace's (orchestration), which the command line shares.
+
+def describe_question_open(package, report):
+    """Opens a question package and its report from their bytes, and returns what the page shows: the question in
+    words, its level, each part it reads with what the schema holds for it, and the script where it compiles."""
+    from . import workspace
+    d = _describing()
+    return _reply(lambda: workspace.open_question(d, _bytes(package), _bytes(report)))

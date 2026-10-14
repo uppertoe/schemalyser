@@ -107,7 +107,7 @@ async function recordCalls(page: Page) {
 }
 
 // The calls that change nothing that the saved hospital schema holds, which the command line need not repeat.
-const READS = new Set(['describe_model', 'describe_check', 'describe_compare', 'describe_dictionary_query', 'describe_names',
+const READS = new Set(['describe_model', 'describe_check', 'describe_compare', 'describe_question_open', 'describe_dictionary_query', 'describe_names',
   'describe_columns', 'describe_joins', 'describe_schema_files']);
 
 // The recorded calls up to the first save, as the file of calls that python -m schemalyser.describe walk reads.
@@ -498,7 +498,9 @@ test('the record is described, saved as a hospital schema and opened again', asy
   await expect(page.locator('#step-4')).toHaveAttribute('data-state', 'waiting');
   await page.locator('#schema-file').setInputFiles(zipPath);
   await expect(page.locator('#t-folder-status')).toContainText('The page has opened the hospital schema from the saved file.');
-  await expect(page.locator('#receipt-2')).toHaveText(d.dictionaryReceipt({ tables: 25, columns: 98, described: 98, keyed: 25, skipped: 0, source: 'saved' }));
+  // The restored tables result adds the three columns of DRUG_GIVEN that the database holds and the vendor's dictionary
+  // does not describe, so the dictionary counts 101 columns of which 98 have a description.
+  await expect(page.locator('#receipt-2')).toHaveText(d.dictionaryReceipt({ tables: 25, columns: 101, described: 98, keyed: 25, skipped: 0, source: 'saved' }));
   await expect(page.locator('#step-2')).toHaveAttribute('data-state', 'done');
   // The Yes given after the file was saved is not in it, so the restored tally is the one that was saved.
   await expect(page.locator('#t-tally')).toHaveText(tally(1, 1, 1, 0));
@@ -544,18 +546,14 @@ test('each kind of correction is tested on made-up rows before it is kept', asyn
   await page.locator('#tables-read').click();
   await expect(page.locator('#t-tables-status')).toContainText('The page has read the result');
 
-  // The hospital schema as it stands, tested with no change; each finding is in plain words and leads to its column.
+  // The hospital schema as it stands, tested with no change: the three parts of the contract run on the proposal, and
+  // the parts no person has answered for are left out and named in words until someone does.
   await page.locator('#model-check').click();
-  await expect(page.locator('#model-check-result')).toContainText('The hospital schema as it stands has', { timeout: 120_000 });
+  await expect(page.locator('#model-check-result')).toContainText('The hospital schema as it stands is whole', { timeout: 120_000 });
+  await expect(page.locator('#model-check-result')).toContainText(c.notesLabel);
+  await expect(page.locator('#model-check-result .notes')).toContainText('No person has yet answered for');
+  await expect(page.locator('#model-check-result .notes')).toContainText('Drugs given');
   expect(await page.locator('#model-check-result').innerText()).not.toMatch(/\brole_[a-z]|contract/);
-  const finding = page.locator('#model-check-result a.finding-link').first();
-  const sought = (await finding.getAttribute('data-about'))!;
-  // Each finding carries the id of its row, so that its link leads there without the script too.
-  const soughtId = await page.locator(`#confirm [data-about="${sought}"]`).getAttribute('id');
-  expect(soughtId).toBeTruthy();
-  await expect(finding).toHaveAttribute('href', `#${soughtId}`);
-  await finding.click();
-  await expect(page.locator(`#confirm [data-about="${sought}"]`)).toBeInViewport();
   // The first row that shows a link, and the first that shows a confidence, each say once what it means.
   await expect(page.locator('#confirm .gloss-link')).toHaveCount(1);
   await expect(page.locator('#confirm .gloss-confidence')).toHaveCount(1);
@@ -632,10 +630,9 @@ test('each kind of correction is tested on made-up rows before it is kept', asyn
   await column(about, c.columnLabel, 'BIRTH_TS');
   await check(about, true);
   await keep(about);
-  // A finding of the test of the whole schema lands at its row.
-  about = 'role_operation.anaesthetic_key';
-  await page.locator(`#model-check-result a.finding-link[data-about="${about}"]`).first().click();
-  await expect(entry(about).locator('.landed')).toHaveCount(1);
+  // The parts no person has answered for stay out of the test of the whole schema, and its note names them in words.
+  await page.locator('#model-check').click();
+  await expect(page.locator('#model-check-result .notes')).toContainText('Procedures done under an anaesthetic', { timeout: 120_000 });
   // Text with its spaces removed, on the staff member's key. The unit of a dose is a local key of a mapping view now,
   // which no derived form may give.
   about = 'role_staff.person_key';
@@ -757,6 +754,15 @@ test('each kind of correction is tested on made-up rows before it is kept', asyn
   await expect(broken).toContainText('This change breaks the hospital schema in 2 places:');
   await expect(broken).toContainText('values of the column that identifies a row appear more than once');
   await expect(broken).toContainText('readings appear twice, each linked to a second anaesthetic, so a reading no longer links to exactly one anaesthetic.');
+  // Each finding is in plain words and carries the id of its row, so that its link leads there without the script too.
+  expect(await broken.innerText()).not.toMatch(/\brole_[a-z]|contract/);
+  const finding = broken.locator('a.finding-link').first();
+  const sought = (await finding.getAttribute('data-about'))!;
+  const soughtId = await page.locator(`#confirm li.binding[data-about="${sought}"]`).getAttribute('id');
+  expect(soughtId).toBeTruthy();
+  await expect(finding).toHaveAttribute('href', `#${soughtId}`);
+  await finding.click();
+  await expect(page.locator(`#confirm li.binding[data-about="${sought}"]`)).toBeInViewport();
   await stage(page, 'c6-broken', '#confirm [data-about="role_reading.anaesthetic_key"]');
   // After a failed test, only Discard and the ticked keep with its reason are offered.
   await expect(entry(about).getByRole('button', { name: c.keep, exact: true })).toHaveCount(0);
@@ -1099,8 +1105,9 @@ test('the invented hospital answers every query, and the walk reaches a complete
   await route.getByRole('button', { name: c.keep, exact: true }).click();
   // The route is a kind, so the row says that its codes are still to be translated in step 7.
   await expect(route).toContainText(/corrected to/i);
-  // Problems that stood before the change are not hidden behind a plain pass.
-  await expect(route.locator('.kept-correction')).toContainText(/broke nothing new; \d+ problems? (was|were) there before it and remains?\./);
+  // The parts no person has answered for are left out of the test, so nothing stood before the change and the pass is plain.
+  await expect(route.locator('.kept-correction')).toContainText('The test on made-up rows passed.');
+  await expect(route.locator('.kept-correction')).not.toContainText('broke nothing new');
   // The row says what the query of values showed, rather than that there is no test query.
   await expect(route.locator('.kept-correction')).toContainText(c.valuesKept(3));
   await expect(route.locator('.kept-correction')).not.toContainText(c.probeNone);
@@ -1427,4 +1434,41 @@ test('the page refuses to run inside another page', async ({ page, baseURL }) =>
   await expect(frame.locator('#t-load-failed')).toHaveText(d.framed);
   await expect(frame.locator('#t-loaded')).toBeHidden();
   await expect(frame.locator('#t-loading')).toBeHidden();
+});
+
+// A question package from the service, opened by file with its examiner's signed report once the hospital schema is
+// proposed: shown in words, compiled through the schema into the two-part script, and refused where the report is
+// unsigned.
+test('a question from the service is opened by file, shown in words and compiled, and an unsigned report is refused', async ({ page, context, browserName }) => {
+  test.setTimeout(240_000);
+  await loadAndGoOffline(page, context, browserName);
+  await loadDictionary(page);
+  await page.locator('#propose').click();
+  await expect(page.locator('#t-propose-status')).toContainText('The page has proposed', { timeout: 60_000 });
+  const step = page.locator('#step-question');
+  await expect(step).toHaveAttribute('data-state', 'available');
+  await expect(page.locator('#h-question')).toHaveText(d.questionHeading);
+  await page.locator('#question-open').click();
+  await expect(page.locator('#t-question-status')).toHaveText(d.questionNeedsBoth);
+  const packageFile = fixtures + 'packages/neonatal-low-mean-pressure.question.json';
+  const reportFile = fixtures + 'packages/neonatal-low-mean-pressure.examination.json';
+  await page.locator('#question-file').setInputFiles(packageFile);
+  await page.locator('#question-report').setInputFiles(reportFile);
+  await page.locator('#question-open').click();
+  await expect(page.locator('#t-question-status')).toContainText('The page has opened the question Minutes of low mean arterial pressure', { timeout: 90_000 });
+  await expect(page.locator('#t-question-status')).toContainText('stands at logic examined');
+  await expect(page.locator('#question-result')).toContainText(d.questionDecisions);
+  await expect(page.locator('#question-result')).toContainText('A neonate is a child whose age in days at the start of the anaesthetic');
+  await expect(page.locator('#question-result [data-part="role_reading"]')).toContainText('described in this hospital schema');
+  await expect(page.locator('#question-result')).toContainText(d.questionCompiled);
+  await expect(page.locator('#question-script')).toContainText('#cohort');
+  await expect(page.locator('#question-script')).toContainText('OBS_READING');
+  await stage(page, 'question-opened', '#step-question');
+  // The same package with its report unsigned is refused, and nothing of it is shown.
+  const unsigned = JSON.parse(readFileSync(reportFile, 'utf8')) as Record<string, unknown>;
+  delete unsigned.signature;
+  await page.locator('#question-report').setInputFiles({ name: 'unsigned.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(unsigned)) });
+  await page.locator('#question-open').click();
+  await expect(page.locator('#t-question-status')).toContainText('because its report cannot be relied on', { timeout: 60_000 });
+  await expect(page.locator('#question-result')).toBeEmpty();
 });

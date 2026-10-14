@@ -267,7 +267,7 @@
     "runs": [],
     "says": "The oracle does not cover the question (the package gives no examinable object), so its logic rests on cases written by hand."
   },
-  "examined_at": "2026-10-14T19:45:58+11:00",
+  "examined_at": "2026-10-14T20:05:02+11:00",
   "versions": {
     "contract": "1.1",
     "policy": "1",
@@ -281,6 +281,6 @@
   },
   "signature": {
     "public_key": "8298c2cb0f1382586732ed5489758b71d5b67b693724cafcfa032ab98dfc031a",
-    "signature": "5e02412af9f4614906c40d37dc6f558dc7ee54e1dfef2b2904b1d4aa5ee75f1fb4a085b73355ca205159f554d6151f0fd84c747f420d0fb62727c13d5d416306"
+    "signature": "f7baa03375fdb88eb6696e027af6ec6de00395e9b93cd3cc9e1dca79abd4dc87c4754b4a71da27d601c173e1ceeff19aed5e43ffa695050d2ebbd4afae7dcc09"
   }
 }

@@ -479,6 +479,22 @@ function show() {
   extraLink.append(el('span', '+', 'marker'), el('span', d.checkHeading, 'rail-name'), el('span', checkWait || d.state.optional, 'rail-state'));
   extra.append(extraLink);
   rail.append(extra);
+  // A question from the service, after the nine steps: it opens once the sitting holds a hospital schema.
+  const mapHeld = !!(model && Object.keys(model.roles ?? {}).length);
+  const questionWait = state === 'loading' ? d.waitingFor.loading : !ready ? d.waitingFor.offline : mapHeld ? '' : d.waitingFor.question;
+  const questionStep = $('step-question');
+  questionStep.dataset.state = questionWait ? 'waiting' : 'available';
+  questionStep.dataset.open = String(!questionWait);
+  text('state-question', questionWait ? d.state.waiting : d.state.optional);
+  text('waiting-question', questionWait);
+  $('waiting-question').hidden = !questionWait;
+  const extraQuestion = el('li', undefined, 'rail-step rail-extra');
+  extraQuestion.dataset.state = questionWait ? 'waiting' : 'available';
+  const questionLink = el('a');
+  questionLink.href = '#step-question';
+  questionLink.append(el('span', '+', 'marker'), el('span', d.questionHeading, 'rail-name'), el('span', questionWait || d.state.optional, 'rail-state'));
+  extraQuestion.append(questionLink);
+  rail.append(extraQuestion);
   const current = states.findIndex((value) => value === 'current' || value === 'problem');
   const at = current >= 0 ? current : states.lastIndexOf('done');
   text('rail-current', d.stepOf(at + 1, STEPS.length, d.steps[at].replace(/^\d+\.\s*/, '')));
@@ -2093,6 +2109,79 @@ $('write-save').addEventListener('click', async () => {
   setBusy(false);
 });
 
+// A question package from the service, opened by file with its signed report, shown in words and compiled through
+// the hospital schema this sitting holds.
+interface QuestionOpened {
+  question: { title: string; statement: { cohort: string; outcome: string; result: string }; decisions: string[]; examples: string[];
+    approval: { reference: string; use: string } | null; level: string; level_says: string };
+  policy: { outcome: string; failed: string[] };
+  parts: { name: string; title: string; admission: string; bound: boolean; table: string | null }[];
+  script: string | null; problem: string | null;
+}
+
+$('question-open').addEventListener('click', async () => {
+  const packageFile = $<HTMLInputElement>('question-file').files?.[0];
+  const reportFile = $<HTMLInputElement>('question-report').files?.[0];
+  if (!packageFile || !reportFile) {
+    status('t-question-status', d.questionNeedsBoth, 'problem');
+    return;
+  }
+  setBusy(true);
+  const box = $('question-result');
+  box.replaceChildren();
+  status('t-question-status', d.questionReading);
+  workerHasFiles = true;
+  sealPageNetwork();
+  try {
+    const reply = await ask('describe_question_open', [packageFile, reportFile]);
+    if (!reply.ok) {
+      status('t-question-status', d.questionRefused(reply.problem ?? d.failed), 'problem');
+    } else {
+      const found = reply as unknown as QuestionOpened;
+      const q = found.question;
+      status('t-question-status', `${d.questionOpened(q.title, q.level)} ${q.level_says}`, 'good');
+      box.append(el('h3', d.questionStatement));
+      const statement = el('dl', undefined, 'statement');
+      for (const [label, value] of [[d.questionCohort, q.statement.cohort], [d.questionOutcome, q.statement.outcome], [d.questionResult, q.statement.result]]) {
+        statement.append(el('dt', label), el('dd', value));
+      }
+      box.append(statement);
+      box.append(el('p', q.approval ? d.questionApproval(q.approval.use, q.approval.reference) : d.questionNoApproval, q.approval ? 'note' : 'status problem'));
+      if (q.decisions.length) {
+        box.append(el('h3', d.questionDecisions));
+        const list = el('ul', undefined, 'findings');
+        for (const decision of q.decisions) list.append(el('li', decision));
+        box.append(list);
+      }
+      if (q.examples.length) {
+        box.append(el('h3', d.questionExamples));
+        const list = el('ul', undefined, 'findings');
+        for (const example of q.examples) list.append(el('li', example));
+        box.append(list);
+      }
+      box.append(el('h3', d.questionParts));
+      const parts = el('ul', undefined, 'findings');
+      for (const part of found.parts) {
+        const item = el('li', d.questionPart(part.title, part.bound, part.table, part.admission));
+        item.dataset.part = part.name;
+        parts.append(item);
+      }
+      box.append(parts);
+      if (found.policy.outcome !== 'passed') box.append(el('p', d.questionPolicyFailed(found.policy.failed), 'status problem'));
+      box.append(el('h3', d.questionScript));
+      if (found.script) {
+        box.append(el('p', d.questionCompiled, 'status good'));
+        const script = el('pre', found.script, 'code');
+        script.id = 'question-script';
+        box.append(script, button(d.questionCopy, () => { void navigator.clipboard?.writeText(found.script ?? ''); }, 'secondary'));
+      } else box.append(el('p', d.questionNotCompiled(found.problem ?? ''), 'status problem'));
+    }
+  } catch {
+    status('t-question-status', d.failed, 'problem');
+  }
+  setBusy(false);
+});
+
 $('check').addEventListener('click', async () => {
   setBusy(true);
   const box = $('check-result');
@@ -2203,6 +2292,11 @@ const fixed: Record<string, string> = {
   'h-check': d.checkHeading,
   't-check-what': d.checkWhat,
   check: d.checkButton,
+  'h-question': d.questionHeading,
+  't-question-what': d.questionWhat,
+  't-question-package-label': d.questionPackageLabel,
+  't-question-report-label': d.questionReportLabel,
+  'question-open': d.questionButton,
   't-propose-what': d.proposeWhat,
   's-propose-about': d.proposeAboutSummary,
   't-propose-about': d.proposeAbout,

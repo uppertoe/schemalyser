@@ -14,7 +14,7 @@ func TestTheEmbeddedContractAndSchemaAreTheRepositorysOwn(t *testing.T) {
 	for _, held := range []struct {
 		name string
 		got  []byte
-	}{{"contract.json", Raw()}, {"question.schema.json", Schema()}} {
+	}{{"contract.json", Raw()}, {"question.schema.json", Schema()}, {"examiner.pub", []byte(examinerPublicKey)}} {
 		own, err := os.ReadFile("../../../core/schemalyser/rolemodel/" + held.name)
 		if err != nil {
 			t.Fatalf("the repository's %s is not beside the service: the service is built from the repository's root, and the tests run there", held.name)

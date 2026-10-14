@@ -21,7 +21,9 @@ from .. import manifests, policy, rolemap, rolepolicy, signing
 
 EXAMINER_VERSION = "1"
 LEVELS = ("not well formed", "well formed", "logic examined", "examined against held-out cases")
-PUBLIC_KEY = Path(__file__).resolve().parents[3] / "fixtures" / "examiner.pub"
+# The examiner's public key ships with the role model, so that the page in a hospital and the service verify the same
+# signatures; the private key lives in the examiner's private root alone.
+PUBLIC_KEY = rolemap.MODEL / "examiner.pub"
 
 
 def versions():

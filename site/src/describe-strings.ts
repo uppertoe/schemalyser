@@ -63,6 +63,7 @@ export const describeStrings = {
     dictionary: 'This step opens once the dictionary is loaded.',
     map: 'This step opens once the hospital schema is proposed.',
     folder: 'This opens once the clinician opens a saved hospital schema at step 3.',
+    question: 'This opens once the hospital schema is proposed at step 4, or opened from a saved file at step 3.',
   },
   showStep: 'Show this step',
   hideStep: 'Hide this step',
@@ -233,6 +234,39 @@ export const describeStrings = {
   checkCompare: 'Compare with the earlier result',
   checkNoChange: 'The new result is the same as the earlier one.',
   checkChanges: 'The new result differs from the earlier one:',
+
+  // A question package from the service, opened by file with its examiner's report.
+  questionHeading: 'Open a question from the service',
+  questionWhat:
+    'A clinician who asked a question of the service receives it as one package file, with the examiner\'s report beside it. The clinician chooses both files here. The page shows the question in words before any SQL, checks it against the rules of the roles, and compiles it through the hospital schema of this sitting into the script that the database analyst runs. Nothing of this hospital leaves the page.',
+  questionPackageLabel: 'The question package, a file named NAME.question.json:',
+  questionReportLabel: "The examiner's report of it, a file the examiner signed:",
+  questionButton: 'Open the question',
+  questionReading: 'The page is opening the question.',
+  questionNeedsBoth: 'Choose the question package and its report, then open the question.',
+  questionRefused: (problem: string) =>
+    problem.startsWith('report:')
+      ? `The page has not opened the question, because its report cannot be relied on. ${problem.slice(7).trim()}`
+      : problem.startsWith('question:')
+        ? `The page has not opened the question, because the package breaks a rule of its format. ${problem.slice(9).trim()}`
+        : `The page has not opened the question. ${problem}`,
+  questionOpened: (title: string, level: string) => `The page has opened the question ${title}. Its examination stands at ${level}.`,
+  questionStatement: 'What the question asks',
+  questionCohort: 'Who is counted:',
+  questionOutcome: 'What is measured:',
+  questionResult: 'What the result looks like:',
+  questionDecisions: 'The decisions behind it',
+  questionExamples: 'What it means, in examples the asker confirmed',
+  questionApproval: (use: string, reference: string) => `The question serves the ${use} with the reference ${reference}.`,
+  questionNoApproval: 'The package carries no approval reference, which the hospital needs before the question runs on its records.',
+  questionParts: 'The parts of the record it reads, and what this hospital schema holds for each',
+  questionPart: (title: string, bound: boolean, table: string | null, admission: string) =>
+    `${title}: ${bound ? `described in this hospital schema, from ${table}` : 'not described in this hospital schema'}${admission === 'admitted with a ceiling' ? '; rehearsed on the stand-in, so the result needs a reconciliation that covers it' : ''}.`,
+  questionPolicyFailed: (rules: string[]) => `The question breaks the rules ${rules.join(', ')} of the role policy, so the page has not compiled it.`,
+  questionScript: 'The script for the database analyst',
+  questionCompiled: 'The page has compiled the question through this hospital schema into the two-part script below.',
+  questionNotCompiled: (problem: string) => `The page has not compiled the question through this hospital schema. ${problem}`,
+  questionCopy: 'Copy the script',
 
   // 4. The proposal.
   proposeWhat:

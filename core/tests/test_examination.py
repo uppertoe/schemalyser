@@ -455,7 +455,13 @@ def test_a_production_build_needs_a_verified_report_at_logic_examined_and_a_vers
     key = signing.new_key()
     monkeypatch.setattr(status, "PUBLIC_KEY", tmp_path / "examiner.pub")
     (tmp_path / "examiner.pub").write_text(signing.public_key(key).hex())
-    package_path = FIXTURES / "neonatal-low-mean-pressure.question.json"
+    # The package carries its approval reference, and the custodian's signature accepts the logic for that use, so that
+    # the gates of package 35 pass and what is tested here is the examination's own.
+    held = json.loads((FIXTURES / "neonatal-low-mean-pressure.question.json").read_text(encoding="utf-8"))
+    held["approval"] = {"reference": "QA-2026-014", "use": "audit"}
+    package_path = write(tmp_path, "approved", held)
+    signatures = tmp_path / "signatures.json"
+    signatures.write_text(json.dumps({"logic": {"by": "the owner", "date": "2026-10-15", "use": "audit", "accepts": []}}), encoding="utf-8")
     examined = tmp_path / "examined.json"
     examined.write_text(static.to_json(_examined(package_path, key, cases=["neonatal_low_mean_pressure"])), encoding="utf-8")
     well_formed = tmp_path / "well-formed.json"
@@ -479,7 +485,8 @@ def test_a_production_build_needs_a_verified_report_at_logic_examined_and_a_vers
     with pytest.raises(audit.AuditError, match="grants the level well formed, and production needs logic examined"):
         audit.build(saved, package_path, tmp_path / "one", ("2024-01-01", "2024-12-31"), date=t.DATE, production=well_formed)
     assert not (tmp_path / "one").exists()
-    manifest = audit.build(saved, package_path, tmp_path / "two", ("2024-01-01", "2024-12-31"), date=t.DATE, production=examined)
+    manifest = audit.build(saved, package_path, tmp_path / "two", ("2024-01-01", "2024-12-31"), date=t.DATE, production=examined,
+                           signatures=signatures)
     assert manifest["execution_class"] in ("B", "C")
     # A report over another package, or one the examiner did not sign, is refused.
     with pytest.raises(audit.AuditError, match="not over the package"):
@@ -572,6 +579,7 @@ def test_a_production_build_needs_the_approval_reference_and_the_custodian_s_sig
     (tmp_path / "examiner.pub").write_text(signing.public_key(key).hex())
     # The service's package over the rehearsed fluids part, with and without its approval.
     held = json.loads((FIXTURES / "ask-fake-backend.question.json").read_text(encoding="utf-8"))
+    held.pop("approval", None)
     unapproved = write(tmp_path, "unapproved", held)
     held["approval"] = {"reference": "QA-2026-014", "use": "audit"}
     approved = write(tmp_path, "approved", held)
@@ -612,3 +620,45 @@ def test_a_production_build_needs_the_approval_reference_and_the_custodian_s_sig
     except audit.AuditError as error:
         # The invented hospital does not bind the fluids part, which is the build's own refusal, past every gate here.
         assert "production" not in str(error), error
+
+
+# The page opens a package by file, with its signed report, and compiles it through the hospital schema it holds.
+
+def test_the_page_opens_an_examined_package_shows_it_in_words_and_compiles_it_and_refuses_an_unsigned_report():
+    from schemalyser import browser
+    sys_path = str(Path(__file__).resolve().parent)
+    import sys
+    if sys_path not in sys.path:
+        sys.path.insert(0, sys_path)
+    from test_describe import DATE, fresh
+    browser._describe = fresh()
+    browser._describe.set_settings("production", 2024, "Australia/Sydney", True)
+    for about in ("role_patient rows", "role_patient.patient_key", "role_patient.birth_date", "role_anaesthetic rows",
+                  "role_anaesthetic.anaesthetic_key", "role_anaesthetic.patient_key", "role_reading rows", "role_reading.anaesthetic_key"):
+        browser._describe.confirm(about, "yes", date=DATE, actor="Dr A Clinician")
+    package = (FIXTURES / "neonatal-low-mean-pressure.question.json").read_bytes()
+    report = (FIXTURES / "neonatal-low-mean-pressure.examination.json").read_bytes()
+    reply = json.loads(browser.describe_question_open(package, report))
+    assert reply["ok"], reply
+    held = reply["question"]
+    assert held["title"].startswith("Minutes of low mean arterial pressure") and len(held["decisions"]) == 9 and held["level"] == "logic examined"
+    assert held["statement"]["cohort"].startswith("Every anaesthetic of a neonate")
+    assert reply["policy"]["outcome"] == "passed"
+    assert [p["name"] for p in reply["parts"]] == ["role_anaesthetic", "role_patient", "role_reading"] and all(p["bound"] for p in reply["parts"])
+    assert reply["problem"] is None and "#cohort" in reply["script"] and "role_reading AS (" in reply["script"]
+    # The service's package reads the fluids, which the invented hospital does not describe: the page says so and compiles nothing.
+    reply = json.loads(browser.describe_question_open((FIXTURES / "ask-fake-backend.question.json").read_bytes(),
+                                                      (FIXTURES / "ask-fake-backend.examination.json").read_bytes()))
+    assert reply["ok"] and reply["script"] is None and reply["problem"]
+    fluids = next(p for p in reply["parts"] if p["name"] == "role_fluid")
+    assert not fluids["bound"] and fluids["admission"] == "admitted with a ceiling"
+    # An unsigned report, a report over another package and a report below logic examined are each refused.
+    unsigned = json.loads(report)
+    del unsigned["signature"]
+    reply = json.loads(browser.describe_question_open(package, json.dumps(unsigned).encode()))
+    assert not reply["ok"] and reply["problem"].startswith("report:") and "signature" in reply["problem"]
+    reply = json.loads(browser.describe_question_open((FIXTURES / "ask-fake-backend.question.json").read_bytes(), report))
+    assert not reply["ok"] and "not over this package" in reply["problem"]
+    reply = json.loads(browser.describe_question_open(b"{", report))
+    assert not reply["ok"] and reply["problem"].startswith("question:")
+    browser._describe = None

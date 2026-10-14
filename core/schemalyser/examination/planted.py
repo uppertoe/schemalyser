@@ -5,7 +5,7 @@ cannot pass.
 A case is rows and an expected answer. The catalogue's capabilities and the neonatal audit keep their cases in the
 repository, rows public and answers held out of the workspace; a free question keeps both in the private examiner
 root, the folder that SCHEMALYSER_EXAMINATION names or reference/examination/questions, which the workspace export
-denies. The repository commits only the register, fixtures/examination-register.json, with each case's name, the hash
+denies. The repository commits only the register, examination-register.json beside the contract, with each case's name, the hash
 of each of its files and the date it was written, and a case whose files no longer match the register is refused, so
 that no case changes after a question was examined against it without the register showing it.
 
@@ -24,7 +24,8 @@ from pathlib import Path
 from .. import equivalence, rolemap, roleshadow
 
 REPO = Path(__file__).resolve().parents[3]
-REGISTER = REPO / "fixtures" / "examination-register.json"
+# The register ships with the role model, so that the page in a hospital and the service hash the same file.
+REGISTER = rolemap.MODEL / "examination-register.json"
 PUBLIC_ROWS = REPO / "fixtures" / "questions"
 HELD_OUT = REPO / "fixtures" / "held-out"
 STAGE = "planted"

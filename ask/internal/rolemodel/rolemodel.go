@@ -6,7 +6,7 @@ package rolemodel
 
 //go:generate cp ../../../core/schemalyser/rolemodel/contract.json contract.json
 //go:generate cp ../../../core/schemalyser/rolemodel/question.schema.json question.schema.json
-//go:generate cp ../../../fixtures/examiner.pub examiner.pub
+//go:generate cp ../../../core/schemalyser/rolemodel/examiner.pub examiner.pub
 
 import (
 	_ "embed"

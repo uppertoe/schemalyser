@@ -82,8 +82,8 @@ ALLOWLIST = tuple(
     [{"path": f"core/schemalyser/{p}", "tree": True, "suffixes": (".py",), "why": "a public package of the core"}
      for p in CORE_PACKAGES] + [
         {"path": "core/pyproject.toml", "why": "the core's version and its one dependency"},
-        {"path": "core/schemalyser/rolemodel", "tree": True, "suffixes": (".json", ".md", ".sql"),
-         "why": "the role contract, its description and the compiled neonatal audit"},
+        {"path": "core/schemalyser/rolemodel", "tree": True, "suffixes": (".json", ".md", ".sql", ".pub"),
+         "why": "the role contract, its description, the compiled neonatal audit and the examiner's public key"},
         {"path": "core/schemalyser/omop/cdm54_fields.csv", "why": "the published field list of OMOP CDM 5.4"},
         {"path": "core/schemalyser/omop/SOURCE.md", "why": "where the field list comes from"},
         {"path": "core/schemalyser/realism", "tree": True, "suffixes": (".csv", ".md", ".py"),
@@ -619,6 +619,63 @@ def import_question(path, hospital, schema=None, date=None):
     (record / "import-validation.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     _write_result(path, result)
     return result, checked, record
+
+
+# A question opened at the hospital, by file with the examiner's signed report: what the page Describe the record and
+# python -m schemalyser.describe question show after the nine steps.
+
+def open_question(sitting, package, report):
+    """Opens a question package and its report, given as bytes, against the hospital schema that sitting holds: the
+    package is checked as the import checks it, the report is verified as the examiner's over these bytes at logic
+    examined or above, and the question is compiled through the schema into the two-part script. Returns what the
+    page shows: the question in words, its level, each part it reads with what the schema holds for it, the script
+    where it compiles, and the reason where it does not. Raises DescribeError, with "question:" or "report:" first,
+    where the package or the report cannot be used."""
+    import datetime as dt
+    import hashlib
+    from .describe import DescribeError
+    from .examination import status
+    found = question.check(package.decode("utf-8", errors="replace"))
+    if found["failed"]:
+        raise DescribeError("question: " + " ".join(question.sentences(found)))
+    held = found["package"]
+    try:
+        signed = json.loads(report.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        raise DescribeError("report: the report is not a file the examiner writes.") from None
+    if (signed.get("package") or {}).get("sha256") != hashlib.sha256(package).hexdigest():
+        raise DescribeError("report: the report is not over this package as it is now.")
+    verified = status.verify(signed)
+    if not verified["verified"]:
+        raise DescribeError("report: " + verified["says"])
+    if verified["level"] not in status.LEVELS[2:]:
+        raise DescribeError(f"report: the examination grants the level {verified['level']}, and the page compiles a question "
+                            f"only at logic examined or above. {verified['says']}")
+    policy = rolepolicy.check(found["sql"], [c["name"] for c in held["capabilities"]])
+    readiness = (sitting.readiness() or {}).get("parts") or {}
+    parts = []
+    for part in held["parts"]:
+        role = (sitting.data or {}).get("roles", {}).get(part["name"]) or {}
+        binding = (role.get("rows") or {}).get("binding")
+        state = readiness.get(part["name"]) or {}
+        parts.append({"name": part["name"], "title": rolemap.view_title(part["name"], False), "admission": part["admission"],
+                      "bound": bool(binding), "table": (binding or {}).get("table"), "readiness": state.get("reached")})
+    year = sitting.settings.get("year") or dt.date.today().year
+    start, end = dt.date(int(year), 1, 1), dt.date(int(year), 12, 31)
+    script, problem = None, None
+    try:
+        schema = feasibility.Schema(sitting.folder_files())
+        compiled = audit.compile_audit(schema, found["sql"], start, end, blank=True)
+        meta = {"date": dt.date.today().isoformat(), "query": held["title"], "schema": sitting.file_name(), "question": held["title"],
+                "start": start.isoformat(), "end": end.isoformat(), "large": audit.policy.LARGE}
+        script = audit.script(compiled, meta, True)
+    except (audit.AuditError, feasibility.FeasibilityError, rolemap.MapError, DescribeError) as error:
+        problem = str(error)
+    return {"question": {"title": held["title"], "statement": held["statement"], "decisions": [x["decision"] for x in held["decisions"]],
+                         "examples": [e.get("says") for e in signed.get("examples") or []], "approval": held.get("approval"),
+                         "level": verified["level"], "level_says": verified["says"], "examined_at": signed.get("examined_at")},
+            "policy": {"outcome": policy["outcome"], "failed": policy["failed"], "admission": policy["admission"]},
+            "parts": parts, "script": script, "problem": problem}
 
 
 # The command line.

@@ -71,7 +71,7 @@ SAVED = "hospital-schema*.schemalyser.zip"
 BRIDGE = {
     "begin": "start", "dictionary": "start", "dictionary_upload": "start", "dictionary_database": "start",
     "dictionary_query": "dictionary-query", "dictionary_vendor": "add-descriptions",
-    "schema_open": "show", "model": "show", "schema_files": "show",
+    "schema_open": "show", "model": "show", "schema_files": "show", "question_open": "question",
     "propose": "propose", "settings": "settings",
     "tables_query": "query", "charted_query": "query", "counts": "query", "values_query": "query", "probe_query": "query",
     "tables_read": "paste", "charted_read": "paste", "count_read": "paste", "values_read": "paste", "probe_read": "paste",
@@ -463,6 +463,30 @@ def cmd_test(args, version):
     _write(sitting, args.out or path.parent)
 
 
+def cmd_question(args, version):
+    """Opens a question package from the service with its examiner's report, as the page does after the nine steps:
+    shows the question in words, what the hospital schema holds for each part it reads, and the two-part script it
+    compiles to, or the reason it does not."""
+    from .. import workspace
+    sitting, _ = _open(args, version)
+    try:
+        reply = workspace.open_question(sitting, Path(args.package).read_bytes(), Path(args.report).read_bytes())
+    except DescribeError as error:
+        raise Refused(str(error), 2) from None
+    if args.json:
+        print(json.dumps(reply, indent=1))
+        return
+    q = reply["question"]
+    print(f"{q['title']}: {q['level']}. {q['level_says']}")
+    for label, text in (("Who is counted", q["statement"]["cohort"]), ("What is measured", q["statement"]["outcome"]),
+                        ("What the result looks like", q["statement"]["result"])):
+        print(f"{label}: {text}")
+    for part in reply["parts"]:
+        held = f"described, from {part['table']}" if part["bound"] else "not described in this hospital schema"
+        print(f"- {part['title']}: {held}; {part['admission']}")
+    print(reply["script"] if reply["script"] else f"Not compiled. {reply['problem']}")
+
+
 def cmd_save(args, version):
     sitting, path = _open(args, version)
     _write(sitting, args.out or path.parent, tested=True)
@@ -679,6 +703,8 @@ def _argv(call, r, base, work, scratch, held):
                 *opt("--reason", r.get("reason")), *opt("--actor", r.get("actor"))]
     if call == "model_check":
         return ["test", s]
+    if call == "question_open":
+        return ["question", s, path("package"), path("report")]
     if call == "charted_query":
         return ["query", s, "codes", "--key", r["key"], "--year", str(r["year"]), *step]
     if call == "charted_read":
@@ -944,6 +970,11 @@ def parser():
                                                          "the journal and the files as JSON")
     add("check", "propose the hospital schema again from its dictionary and its answers, and say whether it is the same",
         [schema])
+    one = add("question", "open a question package from the service with its examiner's signed report, show it in words "
+                          "and compile it through the saved hospital schema into the two-part script", [schema])
+    one.add_argument("package", help="the package file, NAME.question.json")
+    one.add_argument("report", help="the examiner's signed report of it")
+    one.add_argument("--json", action="store_true", help="give what the page shows as JSON")
     one = add("try", "open a saved hospital schema under a candidate contract and report what its dictionary proposes "
                      "for the parts and columns the candidate added, without saving", [schema])
     one.add_argument("contract", help="the candidate contract.json, which the contract checker must pass")

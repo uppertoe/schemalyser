@@ -1,0 +1,313 @@
+{
+  "stage": "static",
+  "package": {
+    "path": "neonatal-low-mean-pressure.question.json",
+    "sha256": "6866415fa8150837a853843d85a3feb0aae94404095e3e67eacd82039edcbb0a",
+    "title": "Minutes of low mean arterial pressure during neonatal anaesthetics, and deaths within 90 days"
+  },
+  "rules": [
+    {
+      "id": "file",
+      "rule": "The question is one plain file named NAME.question.json, with a plain name, and not a folder.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "links",
+      "rule": "The file is not a link, symbolic or hard, and nothing beside it where the result is written is a link.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "executable",
+      "rule": "The file is not executable.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "size",
+      "rule": "The file is at most 256 KB.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "text",
+      "rule": "The file is UTF-8 text.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "json",
+      "rule": "the file holds one JSON object",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "schema",
+      "rule": "the package has the fields of schemalyser-question/1 and no other",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "format",
+      "rule": "the format is schemalyser-question/1",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "contract_version",
+      "rule": "the package was written against the contract that Schemalyser holds",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "parts",
+      "rule": "the parts are exactly the parts the SQL reads",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "part_version",
+      "rule": "each part is at its version in the contract",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "admission",
+      "rule": "each part's admission is what the contract gives it for a question",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "capabilities",
+      "rule": "each capability is in the catalogue at its version, with its parameters, and its SQL can be filled",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "proposals",
+      "rule": "each proposal keeps the contract's shape",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "dates",
+      "rule": "every date and time reads",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "examinable",
+      "rule": "the examinable object names its oracle or says why it has none",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "waits",
+      "rule": "The package waits for nothing: it holds no proposal and reads no part the contract refuses for a question.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "parse",
+      "rule": "The question is one statement that the parser understands.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "statements",
+      "rule": "The question is one SELECT, which may use common table expressions, and fills no table.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "dynamic",
+      "rule": "The question runs no procedure and no dynamic SQL, uses no variable and reaches no other server.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "names",
+      "rule": "The question names no other database, no linked server and no schema.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "tables",
+      "rule": "The question reads only the role views of the contract, the mapping views and its own steps.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "columns",
+      "rule": "Every column that the question reads is a column of the contract or of one of its own steps.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "functions",
+      "rule": "The question uses only the functions of the allowlist.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "kinds",
+      "rule": "Every kind that the question names is a kind of the contract's vocabularies.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "capabilities",
+      "rule": "Every capability that the question names is one of the catalogue's.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "dialect",
+      "rule": "The question keeps the portable dialect: a division with one side cast or a fraction, AVG of a number or a cast, text equality only on kinds and keys, CONCAT for text, a chosen row's order ending in a key, and DATEDIFF in days, minutes or seconds.",
+      "passed": true,
+      "fragments": []
+    },
+    {
+      "id": "columns",
+      "rule": "The columns the package declares in its examinable result are the columns its SQL returns, in that order.",
+      "passed": true,
+      "fragments": []
+    }
+  ],
+  "failed": [],
+  "form": [],
+  "admission": {
+    "ceiling": [],
+    "drafts": []
+  },
+  "dialect_version": 1,
+  "level": "well formed",
+  "says": "The package is well formed: it keeps every rule of its format and of the role policy, and its question has the two-part form.",
+  "shadow": {
+    "stage": "shadow",
+    "runs": [
+      {
+        "seed": 1,
+        "order": "given",
+        "ran": true,
+        "columns": [
+          "minutes_below_40",
+          "anaesthetics",
+          "died_within_90_days",
+          "children",
+          "children_died_within_90_days"
+        ],
+        "rows": 5
+      },
+      {
+        "seed": 1,
+        "order": "shuffled",
+        "ran": true,
+        "columns": [
+          "minutes_below_40",
+          "anaesthetics",
+          "died_within_90_days",
+          "children",
+          "children_died_within_90_days"
+        ],
+        "rows": 5
+      },
+      {
+        "seed": 2,
+        "order": "given",
+        "ran": true,
+        "columns": [
+          "minutes_below_40",
+          "anaesthetics",
+          "died_within_90_days",
+          "children",
+          "children_died_within_90_days"
+        ],
+        "rows": 5
+      },
+      {
+        "seed": 2,
+        "order": "shuffled",
+        "ran": true,
+        "columns": [
+          "minutes_below_40",
+          "anaesthetics",
+          "died_within_90_days",
+          "children",
+          "children_died_within_90_days"
+        ],
+        "rows": 5
+      }
+    ],
+    "problems": [],
+    "outcome": "passed",
+    "says": "The question runs on the shadow at 2 seeds in 2 insertion orders and gives one answer at each seed."
+  },
+  "metamorphic": {
+    "stage": "metamorphic",
+    "seed": 1,
+    "checks": {
+      "unrelated": {
+        "applied": true,
+        "samples": 8,
+        "failures": [],
+        "outcome": "passed"
+      },
+      "duplicates": {
+        "applied": false,
+        "samples": 0,
+        "failures": [],
+        "outcome": "not applied",
+        "says": "the examinable names no outcome part with a rule for duplicates"
+      },
+      "moved": {
+        "applied": true,
+        "samples": 8,
+        "failures": [],
+        "outcome": "passed"
+      }
+    },
+    "outcome": "passed",
+    "says": "The question passes the metamorphic checks applied (unrelated, moved) on a sample of 8 rows at seed 1."
+  },
+  "oracle": {
+    "stage": "oracle",
+    "outcome": "not applied",
+    "runs": [],
+    "says": "The oracle does not cover the question (The result counts anaesthetics and children in bands of one measure and the deaths after each, which the oracle's vocabulary has no words for; the question's held-out answer is the planted neonates' in the role model), so its logic rests on cases written by hand."
+  },
+  "planted": [
+    {
+      "name": "neonatal_low_mean_pressure",
+      "seed": 1,
+      "outcome": "passed",
+      "compared": {
+        "per_anaesthetic": {
+          "rows_a": 13,
+          "rows_b": 13,
+          "rows_shared": 13,
+          "same": true
+        }
+      },
+      "says": "The question gives the held-out answer of the case neonatal_low_mean_pressure under a fresh transform (per_anaesthetic: 13 of 13 expected rows matched by 13 returned)."
+    }
+  ],
+  "examined_at": "2026-10-14T20:04:54+11:00",
+  "versions": {
+    "contract": "1.1",
+    "policy": "1",
+    "dialect": 1,
+    "examiner": "1",
+    "register_sha256": "873d6dfc2037b7e80ec7b0ef386580a09470c8c3461175fa1cf5fc9e5b2d1d59"
+  },
+  "examples": [],
+  "status": {
+    "level": "logic examined",
+    "says": "The package's logic is examined: it runs on the shadow, passes the three metamorphic checks, and the oracle does not cover it, so its logic rests on cases written by hand. Its planted cases were registered on the day of the examination or later, so they do not yet count as held out."
+  },
+  "signature": {
+    "public_key": "8298c2cb0f1382586732ed5489758b71d5b67b693724cafcfa032ab98dfc031a",
+    "signature": "d3a9be9aac9e0ce54e6da69a6247cbbe56798634bea5b3903093b4ce9562db2c652a29c7648811f908142135ca84b84778e21e64278fdacc42ec16ac9b49a50e"
+  }
+}
