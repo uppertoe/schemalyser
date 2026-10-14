@@ -254,7 +254,33 @@ def _capability_case(run, sql, expected, transform, name, seed):
 def _audit_case(run, sql, expected, transform, name, seed):
     found = roleshadow.per_anaesthetic(run, sql)
     got = ("anaesthetic_key", "minutes_below_40", "died_within_90_days"), [[k, None if m is None else float(m), int(d)] for k, (m, d) in found.items()]
+    counted = [e for e in expected["expectations"] if e.get("counted")]
     want_rows = [[transform.key(e["anaesthetic_key"]), None if e["minutes_below_40"] is None else float(e["minutes_below_40"]), int(e["died_within_90_days"])]
-                 for e in expected["expectations"] if e.get("counted")]
-    want = (got[0], want_rows)
-    return _verdict(name, seed, {"per_anaesthetic": equivalence.compare_answers(_normal(*got), _normal(*want))})
+                 for e in counted]
+    comparisons = {"per_anaesthetic": equivalence.compare_answers(_normal(*got), _normal(*(got[0], want_rows)))}
+    # The band each neonate falls in, read from the audit's own banded step and named as its final SELECT names it,
+    # against the band the case expects.
+    words = _band_words(sql)
+    if words and all("band" in e for e in counted):
+        columns, rows = run(_from_step(sql, "banded", ["anaesthetic_key", "band"]))
+        bands = (columns, [[k, words.get(int(b), b)] for k, b in rows])
+        want = (columns, [[transform.key(e["anaesthetic_key"]), e["band"]] for e in counted])
+        comparisons["band"] = equivalence.compare_answers(_normal(*bands), _normal(*want))
+    return _verdict(name, seed, comparisons)
+
+
+def _band_words(sql):
+    """{band number: its words} from a CASE of the question that names each band, or {} where it has none."""
+    import sqlglot
+    from sqlglot import exp
+    tree = sqlglot.parse_one(sql, dialect="tsql")
+    for case in tree.find_all(exp.Case):
+        found = {}
+        for branch in case.args.get("ifs") or []:
+            test, words = branch.this, branch.args.get("true")
+            if isinstance(test, exp.EQ) and isinstance(test.expression, exp.Literal) and isinstance(words, exp.Literal) and words.is_string \
+                    and isinstance(test.this, exp.Column) and test.this.name.lower() == "band":
+                found[int(test.expression.this)] = words.this
+        if found:
+            return found
+    return {}

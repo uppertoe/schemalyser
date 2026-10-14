@@ -2,7 +2,7 @@
 import argparse
 import sys
 
-from . import metamorphic, oracle, planted, shadow, static
+from . import metamorphic, mutants, oracle, planted, shadow, static
 
 
 def main(argv=None):
@@ -14,6 +14,7 @@ def main(argv=None):
     run.add_argument("--json", action="store_true", help="print the report as JSON")
     run.add_argument("--case", action="append", default=[], help="a registered planted case to run the package against")
     run.add_argument("--seed", type=int, default=1, help="the seed of the transform applied to each case")
+    run.add_argument("--mutants", action="store_true", help="also run the fixed mutations of the question through the stages")
     enrol = commands.add_parser("register", help="Write or renew the register's entry for a planted case as its files are now.")
     enrol.add_argument("name")
     enrol.add_argument("--kind", choices=planted.KINDS, default="question")
@@ -28,6 +29,10 @@ def main(argv=None):
         if report["shadow"]["outcome"] == "passed":
             report["metamorphic"] = metamorphic.run(args.package, seed=args.seed)
             report["oracle"] = oracle.run(args.package)
+            if args.mutants:
+                from .. import question
+                sql, _, package = question.sql_and_decisions(args.package)
+                report["mutants"] = mutants.run(sql, package.get("examinable"), args.case, [c["name"] for c in package["capabilities"]], seed=args.seed)
         if args.case:
             from .. import question
             sql = question.sql_and_decisions(args.package)[0]
@@ -37,7 +42,7 @@ def main(argv=None):
     else:
         for line in static.sentences(report):
             print(line)
-        for stage in ("shadow", "metamorphic", "oracle"):
+        for stage in ("shadow", "metamorphic", "oracle", "mutants"):
             if stage in report:
                 print(report[stage]["says"])
         for case in report.get("planted", []):

@@ -18,7 +18,7 @@ import sqlglot
 from sqlglot import exp
 
 from . import contract, describe, policy, rolemap
-from .blanking import blanking, count_columns
+from .blanking import blanking, count_columns, small_cell_columns
 
 CAP = policy.CAP
 # The views of the record from which part 1 may choose the cohort: the small tables of patients and anaesthetics.
@@ -130,7 +130,7 @@ def _blanked_query(body, tree):
     the project's own rule for which columns are counts. The audit's common table expressions keep their own text."""
     counts = count_columns(tree)
     at = _final_select_at(body)
-    if not counts or at is None:
+    if not small_cell_columns(tree) or at is None:
         return body
     final = tree.copy()
     final.set("with_" if "with_" in final.arg_types else "with", None)
@@ -430,7 +430,7 @@ def compile_audit(schema, audit_sql, start, end, blank=True, final=None, large=p
     with_ = tree.args.get("with_") or tree.args.get("with")
     with_.set("expressions", added + list(with_.expressions))
     text = tree.sql(dialect="tsql", pretty=True)
-    if blank and counts:
+    if blank and small_cell_columns(tree):
         text = _blanked_part2(tree, counts)
     part2 = text.replace("   WITH (NOLOCK)", " WITH (NOLOCK)").rstrip().rstrip(";") + ";"
     coverage, coverage_tables, unmeasured = _coverage(schema, [v for v in still if reachable(v)],

@@ -87,10 +87,17 @@ def _copy_select(view, suffix, shift_years=0, link=None, value=None, overrides=N
 
 
 def _sample_anaesthetics(con, sample, offset=0):
-    return [k for (k,) in con.execute(
-        "SELECT a.anaesthetic_key FROM role_anaesthetic a JOIN role_patient p ON p.patient_key = a.patient_key "
-        "WHERE p.is_test = 0 AND a.start_time IS NOT NULL AND a.stop_time > a.start_time "
-        f"ORDER BY a.anaesthetic_key LIMIT {sample} OFFSET {offset}").fetchall()]
+    """A sample of anaesthetics, half of them planted neonates, which a neonatal question counts, and half of them
+    generated with rows of every further part, which a question over any part reads, so that a copy of one bears on
+    the answer of either kind of question."""
+    base = ("SELECT a.anaesthetic_key FROM role_anaesthetic a JOIN role_patient p ON p.patient_key = a.patient_key "
+            "WHERE p.is_test = 0 AND a.start_time IS NOT NULL AND a.stop_time > a.start_time ")
+    half = max(1, sample // 2)
+    planted = [k for (k,) in con.execute(base + "AND NOT EXISTS (SELECT 1 FROM role_anaesthetic_detail d WHERE d.anaesthetic_key = a.anaesthetic_key) "
+                                         f"ORDER BY a.anaesthetic_key LIMIT {half} OFFSET {offset}").fetchall()]
+    generated = [k for (k,) in con.execute(base + "AND EXISTS (SELECT 1 FROM role_anaesthetic_detail d WHERE d.anaesthetic_key = a.anaesthetic_key) "
+                                           f"ORDER BY a.anaesthetic_key LIMIT {half} OFFSET {offset}").fetchall()]
+    return planted + generated
 
 
 def _unrelated(con, run, sql, baseline, shape, sample):

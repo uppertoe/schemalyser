@@ -1,7 +1,8 @@
 """The blanking of small counts in a result, so that a result is safe by default.
 
-count_columns finds the output columns of a SELECT that are counts, and blanking reads the SELECT as result inside an
-outer SELECT that leaves blank any count from 1 to 4. The compiled audit (audit.py) and the compiled query through a
+count_columns finds the output columns of a SELECT that are counts, statistic_columns the medians and other order
+statistics over a group, and blanking reads the SELECT as result inside an outer SELECT that leaves blank any count
+from 1 to 4 and any order statistic over a group smaller than SMALLEST_GROUP. The compiled audit (audit.py) and the compiled query through a
 map (rolemap.py) both use them. Nothing here knows of any layer: it reads and writes T-SQL alone.
 """
 from sqlglot import exp
@@ -44,15 +45,40 @@ def count_columns(select):
     return found
 
 
+# The smallest group a median or any other order statistic may be reported over: below it, the statistic is a small
+# cell, as a count from 1 to 4 is, because a median of a handful of patients is as telling as their count.
+SMALLEST_GROUP = 5
+
+
+def statistic_columns(select):
+    """The output columns of a SELECT that are order statistics over a group: a PERCENTILE_CONT, the median, with the
+    window it is taken over, as {column: the window's PARTITION BY expressions as T-SQL, or ""}."""
+    root = select if isinstance(select, exp.Select) else select.find(exp.Select)
+    found = {}
+    for projection in root.expressions:
+        window = next((w for w in projection.find_all(exp.Window) if w.find(exp.PercentileCont) is not None), None)
+        if window is not None:
+            partition = window.args.get("partition_by") or []
+            found[projection.alias_or_name] = ", ".join(e.sql(dialect="tsql") for e in partition)
+    return found
+
+
+def small_cell_columns(select):
+    """The output columns that the blanking reads: the counts, and the order statistics over a group."""
+    return list(count_columns(select)) + list(statistic_columns(select))
+
+
 def blanking(select, counts=None):
     """A SELECT made safe by default, as (the inner SELECT, the outer SELECT), both as T-SQL text.
 
-    The inner SELECT is the query itself without its ORDER BY, with a column that keeps its order. The outer
-    SELECT reads it as result and leaves blank any count from 1 to 4. Where the query has no count, the outer
-    SELECT is "" and nothing changes.
+    The inner SELECT is the query itself without its ORDER BY, with a column that keeps its order and, for each order
+    statistic over a group, the size of that group. The outer SELECT reads it as result and leaves blank any count
+    from 1 to 4 and any order statistic over a group smaller than SMALLEST_GROUP. Where the query has neither, the
+    outer SELECT is "" and nothing changes.
     """
     counts = count_columns(select) if counts is None else counts
-    if not counts:
+    statistics = statistic_columns(select)
+    if not counts and not statistics:
         return select.sql(dialect="tsql", pretty=True), ""
     tree = select.copy()
     order = tree.args.get("order")
@@ -60,8 +86,12 @@ def blanking(select, counts=None):
     if order is not None:
         window = exp.Window(this=exp.RowNumber(), order=order.copy())
         tree.expressions.append(exp.alias_(window, "result_order"))
+    for name, partition in statistics.items():
+        tree.expressions.append(exp.alias_(exp.maybe_parse(f"COUNT(*) OVER ({'PARTITION BY ' + partition if partition else ''})", dialect="tsql"),
+                                           f"{name}_group"))
     names = [p.alias_or_name for p in select.expressions]
-    shown = [(f"CASE WHEN r.{name} BETWEEN 1 AND 4 THEN NULL ELSE r.{name} END AS {name}" if name in counts else f"r.{name}")
+    shown = [(f"CASE WHEN r.{name} BETWEEN 1 AND 4 THEN NULL ELSE r.{name} END AS {name}" if name in counts else
+              f"CASE WHEN r.{name}_group < {SMALLEST_GROUP} THEN NULL ELSE r.{name} END AS {name}" if name in statistics else f"r.{name}")
              for name in names]
     outer = "SELECT\n  " + ",\n  ".join(shown) + "\nFROM result AS r" + ("\nORDER BY\n  r.result_order" if order is not None else "")
     return tree.sql(dialect="tsql", pretty=True), outer

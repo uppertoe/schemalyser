@@ -344,3 +344,46 @@ def test_the_differential_run_agrees_for_a_correct_question_and_disagrees_for_a_
     report = oracle.differential(correct, {"oracle": "none", "because": "A sequence of events."}, seeds=(1,))
     assert report["outcome"] == "not applied" and "cases written by hand" in report["says"]
     assert oracle.run(FIXTURES / "neonatal-low-mean-pressure.question.json")["outcome"] == "not applied"
+
+
+# The mutants.
+
+from schemalyser.examination import mutants  # noqa: E402
+
+
+def test_the_mutations_of_the_neonatal_audit_are_each_killed_by_a_stage():
+    audit_sql = rolemap.AUDIT.read_text(encoding="utf-8")
+    names = [name for name, _ in mutants.mutations(audit_sql)]
+    assert {"drop_test_filter", "drop_accepted_flag", "key_join_to_time", "lt_to_lte", "drop_tie_break"} <= set(names)
+    # A reading that stands exactly five minutes is cut to five minutes whether the test is > or >= 300 seconds.
+    equivalent = {"gt_to_gte": "a reading standing exactly 300 seconds is cut to 300 either way"}
+    report = mutants.run(audit_sql, cases=["neonatal_low_mean_pressure"], equivalent=equivalent, seed=1, sample=2)
+    assert report["killed"]["static"] >= 1 and (report["killed"]["planted"] + report["killed"]["metamorphic"]) >= 1
+    assert all(m["killed_by"] or m["equivalent"] for m in report["mutants"] if m["mutation"] not in ("lt_to_lte", "left_to_inner_join")), report["says"]
+    # What survives is what no planted neonate decides: a reading of exactly 40, a band's edge at exactly 5 or 15
+    # minutes, and an empty band; each is a case for a person to write, named in the work plan.
+    assert {m["mutation"] for m in report["mutants"] if m["name"] in report["survivors"]} <= {"lt_to_lte", "left_to_inner_join"}, report["says"]
+
+
+# The mutants of each capability that no planted case decides, as the register of 14 October 2026 has them: a LEFT
+# JOIN made inner where no case holds an anaesthetic with nothing to count, the accepted flag dropped where no case
+# holds a reading that was not accepted, and a boundary moved where no case sits on it. Each is a case for a person to
+# write under package 26; a new survivor beyond these is a weakening of the examination.
+UNDECIDED = {"hypotension_burden": {"left_to_inner_join"}, "hypoxaemia_burden": {"drop_accepted_flag", "left_to_inner_join"},
+             "hypothermia": {"drop_accepted_flag", "lt_to_lte"}, "monitoring_completeness": {"gt_to_gte"},
+             "volatile_consumption": {"drop_accepted_flag", "gt_to_gte", "left_to_inner_join"}}
+
+
+@pytest.mark.slow
+def test_every_mutant_of_the_five_capabilities_is_killed_or_is_a_case_nobody_has_written():
+    for name in capability.with_sql():
+        sql = capability.fill(name, PLANTED[name]["parameters"])
+        report = mutants.run(sql, cases=[name], seed=1, sample=2)
+        survivors = {m["mutation"] for m in report["mutants"] if m["name"] in report["survivors"]}
+        assert survivors <= UNDECIDED[name], (name, report["says"])
+        assert sum(report["killed"].values()) == len(report["mutants"]) - len(report["survivors"])
+
+
+def test_a_question_that_fails_a_stage_itself_has_no_mutation_report():
+    report = mutants.run("SELECT COUNT(*) AS n FROM role_patient p WHERE p.patient_key = 'X'", seed=1)
+    assert report["outcome"] == "not applied" and "does not pass the stage static" in report["says"]

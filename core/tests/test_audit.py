@@ -890,3 +890,27 @@ def test_a_drug_row_with_no_anaesthetic_is_reached_through_the_stay_and_counted_
     assert manifest["role_policy"]["admission"]["ceiling"] == ["role_anaesthetic_detail", "role_drug", "role_stay"]
     # The stay itself is reached by its own key, which #cohort carries, and its coverage is counted.
     assert "role_stay AS (" in compiled["part2"] and "cohort_reaching_stay_by_stay" in compiled["coverage"]
+
+
+def test_a_median_over_a_small_group_is_blanked_as_a_count_is_and_reported_above_the_threshold():
+    import duckdb
+    import sqlglot
+    from schemalyser import blanking
+    from schemalyser.translate import to_duckdb
+    sql = ("SELECT DISTINCT g.band, PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY g.ml) OVER (PARTITION BY g.band) AS median_ml, "
+           "COUNT(*) OVER (PARTITION BY g.band) AS anaesthetics FROM given g")
+    select = sqlglot.parse_one(sql, dialect="tsql")
+    assert blanking.statistic_columns(select) == {"median_ml": "g.band"} and blanking.small_cell_columns(select) == ["median_ml"]
+    inner, outer = blanking.blanking(select)
+    assert "median_ml_group" in inner and "CASE WHEN r.median_ml_group < 5 THEN NULL ELSE r.median_ml END AS median_ml" in outer
+    con = duckdb.connect()
+    con.execute("CREATE TABLE given (band VARCHAR, ml DOUBLE)")
+    con.execute("INSERT INTO given VALUES " + ", ".join(f"('small', {v})" for v in (10, 20, 30)) + ", " + ", ".join(f"('large', {v})" for v in (1, 2, 3, 4, 5, 6)))
+    text = "WITH result AS (" + inner + ") " + outer
+    rows = {band: (median, n) for band, median, n in con.execute(to_duckdb(text)[0]).fetchall()}
+    assert rows["small"][0] is None and rows["large"][0] == 3.5
+    # A median over everything is blanked by the whole group's size, and a query without a statistic is unchanged.
+    whole = sqlglot.parse_one("SELECT DISTINCT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY g.ml) OVER () AS median_ml FROM given g", dialect="tsql")
+    inner, outer = blanking.blanking(whole)
+    assert "COUNT(*) OVER ()" in inner and "median_ml_group < 5" in outer
+    assert blanking.blanking(sqlglot.parse_one("SELECT g.band FROM given g", dialect="tsql"))[1] == ""

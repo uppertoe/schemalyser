@@ -12,6 +12,6 @@ run the package on the role-level shadow, apply the metamorphic checks, compare 
 cases, grant the levels above. The examiner runs on the owner's own machine, with the private case root, and its
 report is what the service shows beside a package.
 """
-from . import metamorphic, oracle, planted, shadow, static  # noqa: F401
+from . import metamorphic, mutants, oracle, planted, shadow, static  # noqa: F401
 
 LEVELS = ("not well formed", "well formed")
